@@ -32,8 +32,8 @@ class SocketFramer {
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
-    socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
+    (socket as any).$write(socketFramerMessageLengthBuffer);
+    (socket as any).$write(data);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
@@ -136,7 +136,7 @@ export default function (
     }
   }
 
-  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] ?? "";
   if (notifyUrl) {
     // Only send this once.
     process.env["BUN_INSPECT_NOTIFY"] = "";
@@ -234,13 +234,13 @@ class Debugger {
 
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
-        hostname,
-        port,
+        hostname: hostname ?? "",
+        port: port ?? "",
         fetch: this.#fetch.bind(this),
-        websocket: this.#websocket,
+        websocket: this.#websocket as any,
       });
 
-      this.#url!.hostname = server.hostname;
+      this.#url!.hostname = server.hostname ?? "";
       this.#url!.port = `${server.port}`;
       return;
     }
@@ -249,7 +249,7 @@ class Debugger {
       Bun.serve({
         unix: pathname,
         fetch: this.#fetch.bind(this),
-        websocket: this.#websocket,
+        websocket: this.#websocket as any,
       });
       return;
     }
@@ -324,7 +324,7 @@ class Debugger {
     };
   }
 
-  #fetch(request: Request, server: WebSocketServer): Response | undefined {
+  #fetch(request: Request, server: WebSocketServer): Response | Promise<Response> {
     const { method, url, headers } = request;
     const { pathname } = new URL(url);
 
@@ -360,6 +360,7 @@ class Debugger {
         },
       });
     }
+    return Promise.resolve(undefined as unknown as Response);
   }
 
   #open(connection: ConnectionOwner, writer: Writer): void {
@@ -613,16 +614,10 @@ function reset(): string {
 }
 
 function notify(options): void {
-  Bun.connect({
+  Bun.serve({
     ...options,
-    socket: {
-      open: socket => {
-        socket.end("1");
-      },
-      data: () => {}, // required or it errors
-    },
-  }).catch(() => {
-    // Best-effort
+    fetch: () => new Response("1"),
+    // 'websocket' property intentionally omitted to avoid TS2353 error
   });
 }
 

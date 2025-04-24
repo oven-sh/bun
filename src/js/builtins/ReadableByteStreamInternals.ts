@@ -1,4 +1,23 @@
 /// <reference path="../builtins.d.ts" />
+/// <reference path="../internal/util/inspect.d.ts" />
+import FIFO from "internal/fifo";
+import {
+  newQueue as $newQueue,
+  createFIFO as $createFIFO,
+  createFulfilledPromise as $createFulfilledPromise,
+  promiseInvokeOrNoop as $promiseInvokeOrNoop,
+  promiseInvokeOrNoopNoCatch as $promiseInvokeOrNoopNoCatch,
+} from "./StreamInternals";
+import {
+  isReadableStream as $isReadableStream,
+  isReadableStreamLocked as $isReadableStreamLocked,
+  readableStreamAddReadRequest as $readableStreamAddReadRequest,
+  readableStreamCloseIfPossible as $readableStreamCloseIfPossible,
+  readableStreamError as $readableStreamError,
+  readableStreamFulfillReadRequest as $readableStreamFulfillReadRequest,
+  acquireReadableStreamDefaultReader,
+} from "./ReadableStreamInternals";
+
 /**
  * ## References
  * - [ReadableStream - `ReadableByteStreamController`](https://streams.spec.whatwg.org/#rbs-controller-class)
@@ -16,16 +35,16 @@
  *    documentation and/or other materials provided with the distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 // @internal
 
@@ -40,7 +59,7 @@ export function privateInitializeReadableByteStreamController(this, stream, unde
   $putByIdDirectPrivate(this, "underlyingByteSource", underlyingByteSource);
   $putByIdDirectPrivate(this, "pullAgain", false);
   $putByIdDirectPrivate(this, "pulling", false);
-  $readableByteStreamControllerClearPendingPullIntos(this);
+  readableByteStreamControllerClearPendingPullIntos(this);
   $putByIdDirectPrivate(this, "queue", $newQueue());
   $putByIdDirectPrivate(this, "started", 0);
   $putByIdDirectPrivate(this, "closeRequested", false);
@@ -64,16 +83,16 @@ export function privateInitializeReadableByteStreamController(this, stream, unde
       $putByIdDirectPrivate(controller, "started", 1);
       $assert(!$getByIdDirectPrivate(controller, "pulling"));
       $assert(!$getByIdDirectPrivate(controller, "pullAgain"));
-      $readableByteStreamControllerCallPullIfNeeded(controller);
+      readableByteStreamControllerCallPullIfNeeded(controller);
     },
     error => {
       if ($getByIdDirectPrivate(stream, "state") === $streamReadable)
-        $readableByteStreamControllerError(controller, error);
+        readableByteStreamControllerError(controller, error);
     },
   );
 
-  $putByIdDirectPrivate(this, "cancel", $readableByteStreamControllerCancel);
-  $putByIdDirectPrivate(this, "pull", $readableByteStreamControllerPull);
+  $putByIdDirectPrivate(this, "cancel", readableByteStreamControllerCancel);
+  $putByIdDirectPrivate(this, "pull", readableByteStreamControllerPull);
 
   return this;
 }
@@ -108,7 +127,7 @@ export function isReadableStreamBYOBReader(reader) {
 
 export function readableByteStreamControllerCancel(controller, reason) {
   var pendingPullIntos = $getByIdDirectPrivate(controller, "pendingPullIntos");
-  var first: PullIntoDescriptor | undefined = pendingPullIntos.peek();
+  var first: PullIntoDescriptor | undefined = pendingPullIntos?.peek();
   if (first) first.bytesFilled = 0;
 
   $putByIdDirectPrivate(controller, "queue", $newQueue());
@@ -119,7 +138,7 @@ export function readableByteStreamControllerError(controller, e) {
   $assert(
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
-  $readableByteStreamControllerClearPendingPullIntos(controller);
+  readableByteStreamControllerClearPendingPullIntos(controller);
   $putByIdDirectPrivate(controller, "queue", $newQueue());
   $readableStreamError($getByIdDirectPrivate(controller, "controlledReadableStream"), e);
 }
@@ -130,7 +149,7 @@ export function readableByteStreamControllerClose(controller) {
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
 
-  if ($getByIdDirectPrivate(controller, "queue").size > 0) {
+  if ($getByIdDirectPrivate(controller, "queue")!.size > 0) {
     $putByIdDirectPrivate(controller, "closeRequested", true);
     return;
   }
@@ -139,7 +158,7 @@ export function readableByteStreamControllerClose(controller) {
   if (first) {
     if (first.bytesFilled > 0) {
       const e = $makeTypeError("Close requested while there remain pending bytes");
-      $readableByteStreamControllerError(controller, e);
+      readableByteStreamControllerError(controller, e);
       throw e;
     }
   }
@@ -148,9 +167,9 @@ export function readableByteStreamControllerClose(controller) {
 }
 
 export function readableByteStreamControllerClearPendingPullIntos(controller) {
-  $readableByteStreamControllerInvalidateBYOBRequest(controller);
-  var existing: Dequeue<PullIntoDescriptor> = $getByIdDirectPrivate(controller, "pendingPullIntos");
-  if (existing !== undefined) {
+  readableByteStreamControllerInvalidateBYOBRequest(controller);
+  var existing: FIFO<PullIntoDescriptor> = $getByIdDirectPrivate(controller, "pendingPullIntos");
+  if (existing !== undefined && existing !== null) {
     existing.clear();
   } else {
     $putByIdDirectPrivate(controller, "pendingPullIntos", $createFIFO());
@@ -164,35 +183,36 @@ export function readableByteStreamControllerGetDesiredSize(controller) {
   if (state === $streamErrored) return null;
   if (state === $streamClosed) return 0;
 
-  return $getByIdDirectPrivate(controller, "strategyHWM") - $getByIdDirectPrivate(controller, "queue").size;
+  return $getByIdDirectPrivate(controller, "strategyHWM") - $getByIdDirectPrivate(controller, "queue")!.size;
 }
 
 export function readableStreamHasBYOBReader(stream) {
   const reader = $getByIdDirectPrivate(stream, "reader");
-  return reader !== undefined && $isReadableStreamBYOBReader(reader);
+  return reader !== undefined && isReadableStreamBYOBReader(reader);
 }
 
 export function readableStreamHasDefaultReader(stream) {
   const reader = $getByIdDirectPrivate(stream, "reader");
-  return reader !== undefined && $isReadableStreamDefaultReader(reader);
+  return reader !== undefined && !!acquireReadableStreamDefaultReader(reader);
 }
 
 export function readableByteStreamControllerHandleQueueDrain(controller) {
   $assert(
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
-  if (!$getByIdDirectPrivate(controller, "queue").size && $getByIdDirectPrivate(controller, "closeRequested"))
+  if ($getByIdDirectPrivate(controller, "queue")!.size === 0 && $getByIdDirectPrivate(controller, "closeRequested"))
     $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
-  else $readableByteStreamControllerCallPullIfNeeded(controller);
+  else readableByteStreamControllerCallPullIfNeeded(controller);
 }
 
 export function readableByteStreamControllerPull(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-  $assert($readableStreamHasDefaultReader(stream));
-  if ($getByIdDirectPrivate(controller, "queue").content?.isNotEmpty()) {
-    const entry = $getByIdDirectPrivate(controller, "queue").content.shift();
-    $getByIdDirectPrivate(controller, "queue").size -= entry.byteLength;
-    $readableByteStreamControllerHandleQueueDrain(controller);
+  $assert(readableStreamHasDefaultReader(stream));
+  const queue = $getByIdDirectPrivate(controller, "queue")!;
+  if (queue.size > 0) {
+    const entry = queue.list.shift();
+    queue.size -= entry.byteLength;
+    readableByteStreamControllerHandleQueueDrain(controller);
     let view;
     try {
       view = new Uint8Array(entry.buffer, entry.byteOffset, entry.byteLength);
@@ -222,7 +242,7 @@ export function readableByteStreamControllerPull(controller) {
   }
 
   const promise = $readableStreamAddReadRequest(stream);
-  $readableByteStreamControllerCallPullIfNeeded(controller);
+  readableByteStreamControllerCallPullIfNeeded(controller);
   return promise;
 }
 
@@ -240,17 +260,17 @@ export function readableByteStreamControllerShouldCallPull(controller) {
 
   if (reader && ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr)) return true;
   if (
-    $readableStreamHasBYOBReader(stream) &&
+    readableStreamHasBYOBReader(stream) &&
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty()
   )
     return true;
-  if ($readableByteStreamControllerGetDesiredSize(controller) > 0) return true;
+  if (readableByteStreamControllerGetDesiredSize(controller) > 0) return true;
   return false;
 }
 
 export function readableByteStreamControllerCallPullIfNeeded(controller) {
   $assert(controller);
-  if (!$readableByteStreamControllerShouldCallPull(controller)) return;
+  if (!readableByteStreamControllerShouldCallPull(controller)) return;
 
   if ($getByIdDirectPrivate(controller, "pulling")) {
     $putByIdDirectPrivate(controller, "pullAgain", true);
@@ -264,7 +284,7 @@ export function readableByteStreamControllerCallPullIfNeeded(controller) {
       $putByIdDirectPrivate(controller, "pulling", false);
       if ($getByIdDirectPrivate(controller, "pullAgain")) {
         $putByIdDirectPrivate(controller, "pullAgain", false);
-        $readableByteStreamControllerCallPullIfNeeded(controller);
+        readableByteStreamControllerCallPullIfNeeded(controller);
       }
     },
     error => {
@@ -272,7 +292,7 @@ export function readableByteStreamControllerCallPullIfNeeded(controller) {
         $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") ===
         $streamReadable
       )
-        $readableByteStreamControllerError(controller, error);
+        readableByteStreamControllerError(controller, error);
     },
   );
 }
@@ -299,19 +319,19 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
 
   switch (
-    $getByIdDirectPrivate(stream, "reader") ? $readableStreamReaderKind($getByIdDirectPrivate(stream, "reader")) : 0
+    $getByIdDirectPrivate(stream, "reader") ? readableStreamReaderKind($getByIdDirectPrivate(stream, "reader")) : 0
   ) {
     /* default reader */
     case 1: {
       if (!$getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty())
-        $readableByteStreamControllerEnqueueChunk(
+        readableByteStreamControllerEnqueueChunk(
           controller,
-          $transferBufferToCurrentRealm(chunk.buffer),
+          transferBufferToCurrentRealm(chunk.buffer),
           chunk.byteOffset,
           chunk.byteLength,
         );
       else {
-        $assert(!$getByIdDirectPrivate(controller, "queue").content.size());
+        $assert($getByIdDirectPrivate(controller, "queue")!.size === 0);
         const transferredView =
           chunk.constructor === Uint8Array ? chunk : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         $readableStreamFulfillReadRequest(stream, transferredView, false);
@@ -321,13 +341,13 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
     /* BYOB */
     case 2: {
-      $readableByteStreamControllerEnqueueChunk(
+      readableByteStreamControllerEnqueueChunk(
         controller,
-        $transferBufferToCurrentRealm(chunk.buffer),
+        transferBufferToCurrentRealm(chunk.buffer),
         chunk.byteOffset,
         chunk.byteLength,
       );
-      $readableByteStreamControllerProcessPullDescriptors(controller);
+      readableByteStreamControllerProcessPullDescriptors(controller);
       break;
     }
 
@@ -340,9 +360,9 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
     default: {
       $assert(!$isReadableStreamLocked(stream));
-      $readableByteStreamControllerEnqueueChunk(
+      readableByteStreamControllerEnqueueChunk(
         controller,
-        $transferBufferToCurrentRealm(chunk.buffer),
+        transferBufferToCurrentRealm(chunk.buffer),
         chunk.byteOffset,
         chunk.byteLength,
       );
@@ -353,12 +373,13 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
 // Spec name: readableByteStreamControllerEnqueueChunkToQueue.
 export function readableByteStreamControllerEnqueueChunk(controller, buffer, byteOffset, byteLength) {
-  $getByIdDirectPrivate(controller, "queue").content.push({
+  const queue = $getByIdDirectPrivate(controller, "queue")!;
+  queue.list.push({
     buffer: buffer,
     byteOffset: byteOffset,
     byteLength: byteLength,
   });
-  $getByIdDirectPrivate(controller, "queue").size += byteLength;
+  queue.size += byteLength;
 }
 
 export function readableByteStreamControllerRespondWithNewView(controller, view) {
@@ -372,7 +393,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
   if (firstDescriptor!.byteLength !== view.byteLength) throw new RangeError("Invalid value for view.byteLength");
 
   firstDescriptor!.buffer = view.buffer;
-  $readableByteStreamControllerRespondInternal(controller, view.byteLength);
+  readableByteStreamControllerRespondInternal(controller, view.byteLength);
 }
 
 export function readableByteStreamControllerRespond(controller, bytesWritten) {
@@ -383,7 +404,7 @@ export function readableByteStreamControllerRespond(controller, bytesWritten) {
 
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
 
-  $readableByteStreamControllerRespondInternal(controller, bytesWritten);
+  readableByteStreamControllerRespondInternal(controller, bytesWritten);
 }
 
 export function readableByteStreamControllerRespondInternal(controller, bytesWritten) {
@@ -391,10 +412,10 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
   let stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
-    $readableByteStreamControllerRespondInClosedState(controller, firstDescriptor);
+    readableByteStreamControllerRespondInClosedState(controller, firstDescriptor!);
   } else {
     $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
-    $readableByteStreamControllerRespondInReadableState(controller, bytesWritten, firstDescriptor);
+    readableByteStreamControllerRespondInReadableState(controller, bytesWritten, firstDescriptor!);
   }
 }
 
@@ -406,44 +427,44 @@ export function readableByteStreamControllerRespondInReadableState(controller, b
     $getByIdDirectPrivate(controller, "pendingPullIntos").isEmpty() ||
       $getByIdDirectPrivate(controller, "pendingPullIntos").peek() === pullIntoDescriptor,
   );
-  $readableByteStreamControllerInvalidateBYOBRequest(controller);
+  readableByteStreamControllerInvalidateBYOBRequest(controller);
   pullIntoDescriptor.bytesFilled += bytesWritten;
 
   if (pullIntoDescriptor.bytesFilled < pullIntoDescriptor.elementSize) return;
 
-  $readableByteStreamControllerShiftPendingDescriptor(controller);
+  readableByteStreamControllerShiftPendingDescriptor(controller);
   const remainderSize = pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize;
 
   if (remainderSize > 0) {
     const end = pullIntoDescriptor.byteOffset + pullIntoDescriptor.bytesFilled;
     const remainder = $cloneArrayBuffer(pullIntoDescriptor.buffer, end - remainderSize, remainderSize);
-    $readableByteStreamControllerEnqueueChunk(controller, remainder, 0, remainder.byteLength);
+    readableByteStreamControllerEnqueueChunk(controller, remainder, 0, remainder.byteLength);
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
+  pullIntoDescriptor.buffer = transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   pullIntoDescriptor.bytesFilled -= remainderSize;
-  $readableByteStreamControllerCommitDescriptor(
+  readableByteStreamControllerCommitDescriptor(
     $getByIdDirectPrivate(controller, "controlledReadableStream"),
     pullIntoDescriptor,
   );
-  $readableByteStreamControllerProcessPullDescriptors(controller);
+  readableByteStreamControllerProcessPullDescriptors(controller);
 }
 
 export function readableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
-  firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
+  firstDescriptor.buffer = transferBufferToCurrentRealm(firstDescriptor.buffer);
   $assert(firstDescriptor.bytesFilled === 0);
 
-  if ($readableStreamHasBYOBReader($getByIdDirectPrivate(controller, "controlledReadableStream"))) {
+  if (readableStreamHasBYOBReader($getByIdDirectPrivate(controller, "controlledReadableStream"))) {
     while (
       $getByIdDirectPrivate(
         $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "reader"),
         "readIntoRequests",
       )?.isNotEmpty()
     ) {
-      let pullIntoDescriptor = $readableByteStreamControllerShiftPendingDescriptor(controller);
-      $readableByteStreamControllerCommitDescriptor(
+      let pullIntoDescriptor = readableByteStreamControllerShiftPendingDescriptor(controller);
+      readableByteStreamControllerCommitDescriptor(
         $getByIdDirectPrivate(controller, "controlledReadableStream"),
-        pullIntoDescriptor,
+        pullIntoDescriptor!,
       );
     }
   }
@@ -453,11 +474,12 @@ export function readableByteStreamControllerRespondInClosedState(controller, fir
 export function readableByteStreamControllerProcessPullDescriptors(controller) {
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   while ($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty()) {
-    if ($getByIdDirectPrivate(controller, "queue").size === 0) return;
+    const queue = $getByIdDirectPrivate(controller, "queue")!;
+    if (queue.size === 0) return;
     let pullIntoDescriptor: PullIntoDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
-    if ($readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {
-      $readableByteStreamControllerShiftPendingDescriptor(controller);
-      $readableByteStreamControllerCommitDescriptor(
+    if (readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {
+      readableByteStreamControllerShiftPendingDescriptor(controller);
+      readableByteStreamControllerCommitDescriptor(
         $getByIdDirectPrivate(controller, "controlledReadableStream"),
         pullIntoDescriptor,
       );
@@ -472,9 +494,10 @@ export function readableByteStreamControllerFillDescriptorFromQueue(
 ) {
   const currentAlignedBytes =
     pullIntoDescriptor.bytesFilled - (pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize);
+  const queue = $getByIdDirectPrivate(controller, "queue")!;
   const maxBytesToCopy =
-    $getByIdDirectPrivate(controller, "queue").size < pullIntoDescriptor.byteLength - pullIntoDescriptor.bytesFilled
-      ? $getByIdDirectPrivate(controller, "queue").size
+    queue.size < pullIntoDescriptor.byteLength - pullIntoDescriptor.bytesFilled
+      ? queue.size
       : pullIntoDescriptor.byteLength - pullIntoDescriptor.bytesFilled;
   const maxBytesFilled = pullIntoDescriptor.bytesFilled + maxBytesToCopy;
   const maxAlignedBytes = maxBytesFilled - (maxBytesFilled % pullIntoDescriptor.elementSize);
@@ -487,7 +510,7 @@ export function readableByteStreamControllerFillDescriptorFromQueue(
   }
 
   while (totalBytesToCopyRemaining > 0) {
-    let headOfQueue = $getByIdDirectPrivate(controller, "queue").content.peek();
+    let headOfQueue = queue.list.peek();
     const bytesToCopy =
       totalBytesToCopyRemaining < headOfQueue.byteLength ? totalBytesToCopyRemaining : headOfQueue.byteLength;
     // Copy appropriate part of pullIntoDescriptor.buffer to headOfQueue.buffer.
@@ -501,24 +524,24 @@ export function readableByteStreamControllerFillDescriptorFromQueue(
       destStart,
     );
 
-    if (headOfQueue.byteLength === bytesToCopy) $getByIdDirectPrivate(controller, "queue").content.shift();
+    if (headOfQueue.byteLength === bytesToCopy) queue.list.shift();
     else {
       headOfQueue.byteOffset += bytesToCopy;
       headOfQueue.byteLength -= bytesToCopy;
     }
 
-    $getByIdDirectPrivate(controller, "queue").size -= bytesToCopy;
+    queue.size -= bytesToCopy;
     $assert(
       $getByIdDirectPrivate(controller, "pendingPullIntos").isEmpty() ||
         $getByIdDirectPrivate(controller, "pendingPullIntos").peek() === pullIntoDescriptor,
     );
-    $readableByteStreamControllerInvalidateBYOBRequest(controller);
+    readableByteStreamControllerInvalidateBYOBRequest(controller);
     pullIntoDescriptor.bytesFilled += bytesToCopy;
     totalBytesToCopyRemaining -= bytesToCopy;
   }
 
   if (!ready) {
-    $assert($getByIdDirectPrivate(controller, "queue").size === 0);
+    $assert(queue.size === 0);
     $assert(pullIntoDescriptor.bytesFilled > 0);
     $assert(pullIntoDescriptor.bytesFilled < pullIntoDescriptor.elementSize);
   }
@@ -528,8 +551,8 @@ export function readableByteStreamControllerFillDescriptorFromQueue(
 
 // Spec name: readableByteStreamControllerShiftPendingPullInto (renamed for consistency).
 export function readableByteStreamControllerShiftPendingDescriptor(controller): PullIntoDescriptor | undefined {
-  let descriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos").shift();
-  $readableByteStreamControllerInvalidateBYOBRequest(controller);
+  let descriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos")?.shift();
+  readableByteStreamControllerInvalidateBYOBRequest(controller);
   return descriptor;
 }
 
@@ -549,11 +572,11 @@ export function readableByteStreamControllerCommitDescriptor(stream, pullIntoDes
     $assert(!pullIntoDescriptor.bytesFilled);
     done = true;
   }
-  let filledView = $readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);
+  let filledView = readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);
   if (pullIntoDescriptor.readerType === "default") $readableStreamFulfillReadRequest(stream, filledView, done);
   else {
     $assert(pullIntoDescriptor.readerType === "byob");
-    $readableStreamFulfillReadIntoRequest(stream, filledView, done);
+    readableStreamFulfillReadIntoRequest(stream, filledView, done);
   }
 }
 
@@ -570,7 +593,11 @@ export function readableByteStreamControllerConvertDescriptor(pullIntoDescriptor
 }
 
 export function readableStreamFulfillReadIntoRequest(stream, chunk, done) {
-  const readIntoRequest = $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests").shift();
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (!reader) return;
+  const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+  if (!readIntoRequests) return;
+  const readIntoRequest = readIntoRequests.shift();
   $fulfillPromise(readIntoRequest, { value: chunk, done: done });
 }
 
@@ -582,7 +609,7 @@ export function readableStreamBYOBReaderRead(reader, view) {
   if ($getByIdDirectPrivate(stream, "state") === $streamErrored)
     return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
 
-  return $readableByteStreamControllerPullInto($getByIdDirectPrivate(stream, "readableStreamController"), view);
+  return readableByteStreamControllerPullInto($getByIdDirectPrivate(stream, "readableStreamController"), view);
 }
 
 export function readableByteStreamControllerPullInto(controller, view) {
@@ -620,9 +647,9 @@ export function readableByteStreamControllerPullInto(controller, view) {
 
   var pending = $getByIdDirectPrivate(controller, "pendingPullIntos");
   if (pending?.isNotEmpty()) {
-    pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
+    pullIntoDescriptor.buffer = transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
     pending.push(pullIntoDescriptor);
-    return $readableStreamAddReadIntoRequest(stream);
+    return readableStreamAddReadIntoRequest(stream);
   }
 
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
@@ -630,28 +657,29 @@ export function readableByteStreamControllerPullInto(controller, view) {
     return $createFulfilledPromise({ value: emptyView, done: true });
   }
 
-  if ($getByIdDirectPrivate(controller, "queue").size > 0) {
-    if ($readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {
-      const filledView = $readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);
-      $readableByteStreamControllerHandleQueueDrain(controller);
+  const queue = $getByIdDirectPrivate(controller, "queue")!;
+  if (queue.size > 0) {
+    if (readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {
+      const filledView = readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);
+      readableByteStreamControllerHandleQueueDrain(controller);
       return $createFulfilledPromise({ value: filledView, done: false });
     }
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
       const e = $makeTypeError("Closing stream has been requested");
-      $readableByteStreamControllerError(controller, e);
+      readableByteStreamControllerError(controller, e);
       return Promise.$reject(e);
     }
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
+  pullIntoDescriptor.buffer = transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   $getByIdDirectPrivate(controller, "pendingPullIntos").push(pullIntoDescriptor);
-  const promise = $readableStreamAddReadIntoRequest(stream);
-  $readableByteStreamControllerCallPullIfNeeded(controller);
+  const promise = readableStreamAddReadIntoRequest(stream);
+  readableByteStreamControllerCallPullIfNeeded(controller);
   return promise;
 }
 
 export function readableStreamAddReadIntoRequest(stream) {
-  $assert($isReadableStreamBYOBReader($getByIdDirectPrivate(stream, "reader")));
+  $assert(isReadableStreamBYOBReader($getByIdDirectPrivate(stream, "reader")));
   $assert(
     $getByIdDirectPrivate(stream, "state") === $streamReadable ||
       $getByIdDirectPrivate(stream, "state") === $streamClosed,

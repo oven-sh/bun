@@ -32,7 +32,10 @@ type NativeReadable = typeof import("node:stream").Readable &
     [kHighWaterMark]: number;
     [kHasResized]: boolean;
     [kRemainingChunk]: Buffer;
-    debugId: number;
+    $debugId?: number;
+    ref: (this: NativeReadable) => void;
+    unref: (this: NativeReadable) => void;
+    $start?: (this: NativeReadable, cb: null | (() => void)) => void;
   };
 
 interface NativePtr {
@@ -52,12 +55,12 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
   if (!!$debug) {
-    stream.debugId = ++debugId;
+    stream.$debugId = ++debugId;
   }
 
   stream.$bunNativePtr = bunNativePtr;
@@ -87,13 +90,13 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // So we instead mark it as no longer usable, and create a new NativeReadable
   transferToNativeReadable(readableStream);
 
-  $debug(`[${stream.debugId}] constructed!`);
+  $debug(`[${stream.$debugId}] constructed!`);
 
   return stream;
 }
 
 function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
-  $debug(`[${this.debugId}] ensureConstructed`);
+  $debug(`[${this.$debugId}] ensureConstructed`);
   if (this[kConstructed]) return;
   this[kConstructed] = true;
   const ptr = this.$bunNativePtr;
@@ -114,24 +117,24 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
     var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
     stream[kRemainingChunk] = chunk = Buffer.alloc(size);
   }
-  $debug(`[${stream.debugId}] getRemainingChunk, ${chunk?.byteLength} bytes`);
+  $debug(`[${stream.$debugId}] getRemainingChunk, ${chunk?.byteLength} bytes`);
   return chunk;
 }
 
 function read(this: NativeReadable, maxToRead: number) {
-  $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
+  $debug(`[${this.$debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   if (this[kPendingRead]) {
     return;
   }
   var ptr = this.$bunNativePtr;
   if (!ptr) {
-    $debug(`[${this.debugId}] read, no ptr`);
+    $debug(`[${this.$debugId}] read, no ptr`);
     this.push(null);
     return;
   }
   if (!this[kConstructed]) {
     const result: any = ptr.start(this[kHighWaterMark]);
-    $debug(`[${this.debugId}] start, initial hwm:`, result);
+    $debug(`[${this.$debugId}] start, initial hwm:`, result);
     if (typeof result === "number" && result > 1) {
       this[kHasResized] = true;
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
@@ -141,7 +144,7 @@ function read(this: NativeReadable, maxToRead: number) {
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;
-    $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
+    $debug(`[${this.$debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
     if ((drainResult?.byteLength ?? 0) > 0) {
       this.push(drainResult);
     }
@@ -150,13 +153,13 @@ function read(this: NativeReadable, maxToRead: number) {
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(
-    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
+    `[${this.$debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
     return result.then(
       result => {
-        $debug(`[${this.debugId}] pull, resolved: ${result}, closeState: ${this[kCloseState][0]}`);
+        $debug(`[${this.$debugId}] pull, resolved: ${result}, closeState: ${this[kCloseState][0]}`);
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
@@ -171,13 +174,13 @@ function read(this: NativeReadable, maxToRead: number) {
 
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClosed: boolean) {
   if (typeof result === "number") {
-    $debug(`[${stream.debugId}] handleResult(${result})`);
+    $debug(`[${stream.$debugId}] handleResult(${result})`);
     if (result >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);
     }
     return handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
-    $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
+    $debug(`[${stream.$debugId}] handleResult(${result})`, chunk, isClosed);
     process.nextTick(() => {
       stream.push(null);
     });

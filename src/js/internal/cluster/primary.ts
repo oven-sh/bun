@@ -13,7 +13,24 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
-const cluster = new EventEmitter();
+// Patch EventEmitter type to allow cluster properties
+type ClusterType = InstanceType<typeof EventEmitter> & {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  Worker: typeof Worker;
+  workers: Record<string, any>;
+  settings: Record<string, any>;
+  SCHED_NONE: number;
+  SCHED_RR: number;
+  schedulingPolicy: number;
+  setupPrimary: (options?: Record<string, any>) => void;
+  setupMaster: (options?: Record<string, any>) => void;
+  fork: (env?: Record<string, any>) => any;
+  disconnect: (cb?: (...args: any[]) => void) => void;
+};
+
+const cluster = new EventEmitter() as ClusterType;
 const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
@@ -101,7 +118,7 @@ function createWorkerProcess(id, env) {
   });
 }
 
-function removeWorker(worker) {
+function removeWorker(worker: any) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
   delete cluster.workers[worker.id];
 
@@ -111,7 +128,7 @@ function removeWorker(worker) {
   }
 }
 
-function removeHandlesForWorker(worker) {
+function removeHandlesForWorker(worker: any) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
@@ -123,7 +140,7 @@ cluster.fork = function (env) {
   cluster.setupPrimary();
   const id = ++ids;
   const workerProcess = createWorkerProcess(id, env);
-  const worker = new Worker({
+  const worker = new (Worker as any)({
     id: id,
     process: workerProcess,
   });
@@ -209,7 +226,7 @@ const methodMessageMapping = {
 };
 
 function onmessage(message, _handle) {
-  const worker = this;
+  const worker = this as any;
 
   const fn = methodMessageMapping[message.act];
 
@@ -305,7 +322,7 @@ function send(worker, message, handle?, cb?) {
 }
 
 // Extend generic Worker with methods specific to the primary process.
-Worker.prototype.disconnect = function () {
+(Worker.prototype as any).disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
   this.process.disconnect();
@@ -314,7 +331,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype.destroy = function (signo) {
+(Worker.prototype as any).destroy = function (signo) {
   const proc = this.process;
   const signal = signo || "SIGTERM";
 

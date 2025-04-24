@@ -3,7 +3,7 @@
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
+const { myersDiff, printMyersDiff, printSimpleMyersDiff, Operation } = require("internal/assert/myers_diff") as unknown as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ObjectAssign = Object.assign;
@@ -195,11 +195,11 @@ function createErrDiff(actual, expected, operator, customMessage) {
   if (showSimpleDiff) {
     const simpleDiff = getSimpleDiff(actual, inspectedSplitActual[0], expected, inspectedSplitExpected[0]);
     message = simpleDiff.message;
-    if (typeof simpleDiff.header !== "undefined") {
-      header = simpleDiff.header;
+    if (typeof (simpleDiff as { header?: string }).header !== "undefined") {
+      header = (simpleDiff as { header?: string }).header!;
     }
-    if (simpleDiff.skipped) {
-      skipped = true;
+    if ("skipped" in simpleDiff && (simpleDiff as { skipped?: boolean }).skipped) {
+      skipped = (simpleDiff as { skipped?: boolean }).skipped!;
     }
   } else if (inspectedActual === inspectedExpected) {
     // Handles the case where the objects are structurally the same but different references
@@ -218,8 +218,8 @@ function createErrDiff(actual, expected, operator, customMessage) {
     const myersDiffMessage = printMyersDiff(diff);
     message = myersDiffMessage.message;
 
-    if (myersDiffMessage.skipped) {
-      skipped = true;
+    if ("skipped" in myersDiffMessage && myersDiffMessage.skipped) {
+      skipped = myersDiffMessage.skipped;
     }
   }
 

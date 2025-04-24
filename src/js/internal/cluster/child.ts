@@ -9,9 +9,26 @@ const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ObjectAssign = Object.assign;
 
-const cluster = new EventEmitter();
-const handles = new Map();
-const indexes = new Map();
+type WorkerType = InstanceType<ReturnType<typeof $toClass> & { new (...args: any[]): any }>;
+
+// Fix: EventEmitter is a function, not a class, so we need to use $toClass to make it a class-like constructor
+$toClass(EventEmitter, "EventEmitter");
+const EventEmitterClass = EventEmitter as unknown as { new (...args: any[]): any };
+
+// ClusterChild interface
+interface ClusterChild extends InstanceType<typeof EventEmitterClass> {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  worker: WorkerType | null;
+  Worker: typeof Worker;
+  _setupWorker: () => void;
+  _getServer: (obj: any, options: any, cb: any) => void;
+}
+
+const cluster = new (EventEmitterClass as { new (): ClusterChild })() as ClusterChild;
+const handles = new Map<any, any>();
+const indexes = new Map<string, { nextIndex: number; set: Set<number> }>();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
@@ -26,8 +43,11 @@ cluster.worker = null;
 cluster.Worker = Worker;
 
 cluster._setupWorker = function () {
-  const worker = new Worker({
-    id: +process.env.NODE_UNIQUE_ID | 0,
+  // Fix: Worker is a function, not a class, so we need to use $toClass to make it a class-like constructor
+  $toClass(Worker, "Worker");
+  const WorkerClass = Worker as unknown as { new (options: any): WorkerType };
+  const worker = new WorkerClass({
+    id: +(process.env.NODE_UNIQUE_ID ?? 0) | 0,
     process: process,
     state: "online",
   });
@@ -36,9 +56,9 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
+  ($newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0) as () => void)();
   process.once("disconnect", () => {
-    process.channel = null;
+    process.channel = undefined;
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {
@@ -51,14 +71,14 @@ cluster._setupWorker = function () {
   onInternalMessage(worker, onmessage);
   send({ act: "online" });
 
-  function onmessage(message, handle) {
+  function onmessage(message: any, handle: any) {
     if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+    else if (message.act === "disconnect") (worker as any)._disconnect(true);
   }
 };
 
 // `obj` is a net#Server or a dgram#Socket object.
-cluster._getServer = function (obj, options, cb) {
+cluster._getServer = function (obj: any, options: any, cb: any) {
   let address = options.address;
 
   // Resolve unix socket paths to absolute paths
@@ -69,13 +89,13 @@ cluster._getServer = function (obj, options, cb) {
   let indexSet = indexes.get(indexesKey);
 
   if (indexSet === undefined) {
-    indexSet = { nextIndex: 0, set: new Set() };
+    indexSet = { nextIndex: 0, set: new Set<number>() };
     indexes.set(indexesKey, indexSet);
   }
   const index = indexSet.nextIndex++;
   indexSet.set.add(index);
 
-  const message = {
+  const message: any = {
     act: "queryServer",
     index,
     data: null,
@@ -87,7 +107,7 @@ cluster._getServer = function (obj, options, cb) {
   // Set custom data on handle (i.e. tls tickets key)
   if (obj._getServerData) message.data = obj._getServerData();
 
-  send(message, (reply, handle) => {
+  send(message, (reply: any, handle: any) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
     if (handle) {
@@ -104,7 +124,7 @@ cluster._getServer = function (obj, options, cb) {
     if (!indexes.has(indexesKey)) {
       return;
     }
-    cluster.worker.state = "listening";
+    cluster.worker!.state = "listening";
     const address = obj.address();
     message.act = "listening";
     message.port = (address && address.port) || options.port;
@@ -112,7 +132,7 @@ cluster._getServer = function (obj, options, cb) {
   });
 };
 
-function removeIndexesKey(indexesKey, index) {
+function removeIndexesKey(indexesKey: string, index: number) {
   const indexSet = indexes.get(indexesKey);
   if (!indexSet) {
     return;
@@ -125,7 +145,7 @@ function removeIndexesKey(indexesKey, index) {
 }
 
 // Shared listen socket.
-function shared(message, { handle, indexesKey, index }, cb) {
+function shared(message: any, { handle, indexesKey, index }: any, cb: any) {
   const key = message.key;
   // Monkey-patch the close() method so we can keep track of when it's
   // closed. Avoids resource leaks when the handle is short-lived.
@@ -143,27 +163,28 @@ function shared(message, { handle, indexesKey, index }, cb) {
 }
 
 // Round-robin. Master distributes handles across workers.
-function rr(message, { indexesKey, index }, cb) {
+function rr(message: any, { indexesKey, index }: any, cb: any) {
   if (message.errno) return cb(message.errno, null);
 
   let key = message.key;
 
-  let fakeHandle: Timer | null = null;
+  // Use the Timeout constructor from $ZigGeneratedClasses for type safety
+  let fakeHandle: $ZigGeneratedClasses.Timeout | undefined = undefined;
 
   function ref() {
     if (!fakeHandle) {
-      fakeHandle = setInterval(noop, TIMEOUT_MAX);
+      fakeHandle = setInterval(noop as () => void, TIMEOUT_MAX) as unknown as $ZigGeneratedClasses.Timeout;
     }
   }
 
   function unref() {
     if (fakeHandle) {
-      clearInterval(fakeHandle);
-      fakeHandle = null;
+      clearInterval(fakeHandle as any);
+      fakeHandle = undefined;
     }
   }
 
-  function listen(_backlog) {
+  function listen(_backlog: any) {
     // TODO(bnoordhuis) Send a message to the primary that tells it to
     // update the backlog size. The actual backlog should probably be
     // the largest requested size by any worker.
@@ -188,7 +209,7 @@ function rr(message, { indexesKey, index }, cb) {
     key = undefined;
   }
 
-  function getsockname(out) {
+  function getsockname(out: any) {
     if (key) ObjectAssign(out, message.sockname);
 
     return 0;
@@ -196,7 +217,13 @@ function rr(message, { indexesKey, index }, cb) {
 
   // Faux handle. net.Server is not associated with handle,
   // so we control its state(ref or unref) by setInterval.
-  const handle = { close, listen, ref, unref };
+  const handle: {
+    close: () => void;
+    listen: (_backlog: any) => number;
+    ref: () => void;
+    unref: () => void;
+    getsockname?: (out: any) => number;
+  } = { close, listen, ref, unref };
   handle.ref();
   if (message.sockname) {
     handle.getsockname = getsockname; // TCP handles only.
@@ -208,7 +235,7 @@ function rr(message, { indexesKey, index }, cb) {
 }
 
 // Round-robin connection.
-function onconnection(message, handle) {
+function onconnection(message: any, handle: any) {
   const key = message.key;
   const server = handles.get(key);
   let accepted = server !== undefined;
@@ -226,12 +253,15 @@ function onconnection(message, handle) {
   else handle.close();
 }
 
-function send(message, cb?) {
+function send(message: any, cb?: any) {
   return sendHelper(message, null, cb);
 }
 
 // Extend generic Worker with methods specific to worker processes.
-Worker.prototype.disconnect = function () {
+$toClass(Worker, "Worker");
+const WorkerClass = Worker as unknown as { new (options: any): WorkerType };
+
+(WorkerClass.prototype as any).disconnect = function () {
   if (this.state !== "disconnecting" && this.state !== "destroying") {
     this.state = "disconnecting";
     this._disconnect();
@@ -240,7 +270,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+(WorkerClass.prototype as any)._disconnect = function (primaryInitiated?: boolean) {
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 
@@ -260,7 +290,7 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
     }
   }
 
-  handles.forEach(handle => {
+  handles.forEach((handle: any) => {
     waitingCount++;
 
     if (handle[owner_symbol]) handle[owner_symbol].close(checkWaitingCount);
@@ -271,7 +301,7 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
   checkWaitingCount();
 };
 
-Worker.prototype.destroy = function () {
+(WorkerClass.prototype as any).destroy = function () {
   if (this.state === "destroying") return;
 
   this.exitedAfterDisconnect = true;

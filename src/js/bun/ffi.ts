@@ -17,6 +17,9 @@ const FFIType = {
   "15": 15,
   "16": 16,
   "17": 17,
+  "18": 18,
+  "19": 19,
+  "20": 20,
   bool: 11,
   c_int: 5,
   c_uint: 6,
@@ -436,7 +439,7 @@ function normalizePath(path) {
     } else if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
-      path = path.name;
+      path = (path as $ZigGeneratedClasses.Blob).name;
     }
   }
 
@@ -481,7 +484,7 @@ function cc(options) {
     throw new Error("Expected options to be an object");
   }
 
-  let path = options?.source;
+  let path = (options as { source: any }).source;
   if (!path) {
     throw new Error("Expected source to be a string to a file path");
   }
@@ -492,7 +495,7 @@ function cc(options) {
   } else {
     path = normalizePath(path);
   }
-  options.source = path;
+  (options as { source: any }).source = path;
 
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
@@ -509,7 +512,7 @@ function cc(options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        (typeof path === "string" && path.includes("/")) ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
       );
     } else {
       // consistentcy

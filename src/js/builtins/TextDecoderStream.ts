@@ -23,92 +23,130 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function initializeTextDecoderStream() {
+// Note: This file has been modified from the original WebKit source code.
+
+// TextDecoderOptions is globally available or defined elsewhere
+import type { TransformStreamDefaultController } from "node:stream/web";
+
+// Add missing types for BufferSource and TextDecoderOptions
+type BufferSource = ArrayBufferView | ArrayBuffer;
+interface TextDecoderOptions {
+  fatal?: boolean;
+  ignoreBOM?: boolean;
+}
+
+interface TextDecoderStream {
+  readonly encoding: string;
+  readonly fatal: boolean;
+  readonly ignoreBOM: boolean;
+  readonly readable: ReadableStream<string>;
+  readonly writable: WritableStream<BufferSource>;
+
+  $fatal: boolean;
+  $ignoreBOM: boolean;
+  $encoding: string;
+  $textDecoder: $ZigGeneratedClasses.TextDecoder;
+  $textDecoderStreamTransform: TransformStream<BufferSource, string>;
+}
+
+export function initializeTextDecoderStream(this: TextDecoderStream) {
   const label = arguments.length >= 1 ? arguments[0] : "utf-8";
-  const options = arguments.length >= 2 ? arguments[1] : {};
+  const options: TextDecoderOptions = arguments.length >= 2 ? arguments[1] : {};
 
   const startAlgorithm = () => {
-    return Promise.$resolve();
+    return $Promise.$resolve();
   };
-  const transformAlgorithm = chunk => {
-    const decoder = $getByIdDirectPrivate(this, "textDecoder");
+  const transformAlgorithm = (chunk: BufferSource) => {
+    const decoder = $getByIdDirectPrivate(this, "textDecoder") as $ZigGeneratedClasses.TextDecoder;
     let buffer;
     try {
-      buffer = decoder.decode(chunk, { stream: true });
+      // Accept only ArrayBuffer or ArrayBufferView<ArrayBufferLike>
+      let input: ArrayBuffer | ArrayBufferView<ArrayBufferLike>;
+      if (ArrayBuffer.isView(chunk)) {
+        input = chunk as ArrayBufferView<ArrayBufferLike>;
+      } else if (chunk instanceof ArrayBuffer) {
+        input = chunk as ArrayBuffer;
+      } else {
+        // fallback, should not happen
+        input = chunk as ArrayBuffer;
+      }
+      buffer = decoder.decode(input, { stream: true });
     } catch (e) {
-      return Promise.$reject(e);
+      return $Promise.$reject(e);
     }
     if (buffer) {
       const transformStream = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
-      const controller = $getByIdDirectPrivate(transformStream, "controller");
+      const controller = $getByIdDirectPrivate(transformStream, "controller") as TransformStreamDefaultController<string>;
       $transformStreamDefaultControllerEnqueue(controller, buffer);
     }
-    return Promise.$resolve();
+    return $Promise.$resolve();
   };
   const flushAlgorithm = () => {
-    const decoder = $getByIdDirectPrivate(this, "textDecoder");
+    const decoder = $getByIdDirectPrivate(this, "textDecoder") as $ZigGeneratedClasses.TextDecoder;
     let buffer;
     try {
       buffer = decoder.decode(undefined, { stream: false });
     } catch (e) {
-      return Promise.$reject(e);
+      return $Promise.$reject(e);
     }
     if (buffer) {
       const transformStream = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
-      const controller = $getByIdDirectPrivate(transformStream, "controller");
+      const controller = $getByIdDirectPrivate(transformStream, "controller") as TransformStreamDefaultController<string>;
       $transformStreamDefaultControllerEnqueue(controller, buffer);
     }
-    return Promise.$resolve();
+    return $Promise.$resolve();
   };
 
-  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
+  // Provide default arguments for queuing strategies
+  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm, 1, () => 1, 0, () => 1);
   $putByIdDirectPrivate(this, "textDecoderStreamTransform", transform);
 
   const fatal = !!options.fatal;
   const ignoreBOM = !!options.ignoreBOM;
-  const decoder = new TextDecoder(label, { fatal, ignoreBOM });
+  // Use the Zig-generated TextDecoder constructor and cast to $ZigGeneratedClasses.TextDecoder
+  const decoder = new (globalThis.TextDecoder as unknown as $ZigGeneratedClasses.TextDecoderConstructor)(label, { fatal, ignoreBOM }) as $ZigGeneratedClasses.TextDecoder;
 
   $putByIdDirectPrivate(this, "fatal", fatal);
   $putByIdDirectPrivate(this, "ignoreBOM", ignoreBOM);
-  $putByIdDirectPrivate(this, "encoding", decoder.encoding);
+  $putByIdDirectPrivate(this, "encoding", decoder.encoding as string);
   $putByIdDirectPrivate(this, "textDecoder", decoder);
 
   return this;
 }
 
 $getter;
-export function encoding() {
+export function encoding(this: TextDecoderStream): string {
   if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "encoding");
 }
 
 $getter;
-export function fatal() {
+export function fatal(this: TextDecoderStream): boolean {
   if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "fatal");
 }
 
 $getter;
-export function ignoreBOM() {
+export function ignoreBOM(this: TextDecoderStream): boolean {
   if (!$getByIdDirectPrivate(this, "textDecoderStreamTransform")) throw $ERR_INVALID_THIS("TextDecoderStream");
 
   return $getByIdDirectPrivate(this, "ignoreBOM");
 }
 
 $getter;
-export function readable() {
+export function readable(this: TextDecoderStream): ReadableStream<string> {
   const transform = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
   if (!transform) throw $ERR_INVALID_THIS("TextDecoderStream");
 
-  return $getByIdDirectPrivate(transform, "readable");
+  return $getByIdDirectPrivate(transform, "readable") as ReadableStream<string>;
 }
 
 $getter;
-export function writable() {
+export function writable(this: TextDecoderStream): WritableStream<BufferSource> {
   const transform = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
   if (!transform) throw $ERR_INVALID_THIS("TextDecoderStream");
 
-  return $getByIdDirectPrivate(transform, "writable");
+  return $getByIdDirectPrivate(transform, "writable") as WritableStream<BufferSource>;
 }

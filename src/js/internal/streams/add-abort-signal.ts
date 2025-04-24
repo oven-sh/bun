@@ -40,7 +40,7 @@ function addAbortSignalNoValidate(signal, stream) {
   } else {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(signal, onAbort);
-    eos(stream, disposable[SymbolDispose]);
+    eos(stream, disposable[SymbolDispose], undefined);
   }
   return stream;
 }

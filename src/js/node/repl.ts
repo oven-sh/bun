@@ -88,6 +88,8 @@ export default {
       getOwnPropertyDescriptor: () => undefined,
       set() {
         throwNotImplemented("node:repl");
+        // This satisfies the type checker, though the throw prevents it from being reached.
+        return true;
       },
     },
   ),
@@ -116,6 +118,8 @@ export default {
       getOwnPropertyDescriptor: () => undefined,
       set() {
         throwNotImplemented("node:repl");
+        // This satisfies the type checker, though the throw prevents it from being reached.
+        return true;
       },
     },
   ),

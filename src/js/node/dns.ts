@@ -1,5 +1,5 @@
 // Hardcoded module "node:dns"
-const dns = Bun.dns;
+const dns = Bun.dns as unknown as $ZigGeneratedClasses.DNSResolver;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("./net");
 const {
@@ -41,7 +41,8 @@ const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
-function translateErrorCode(promise: Promise<any>) {
+// Make translateErrorCode generic to preserve promise resolution type
+function translateErrorCode<T>(promise: Promise<T>): Promise<T> {
   return promise.catch(error => {
     return Promise.reject(withTranslatedError(error));
   });
@@ -51,54 +52,57 @@ function translateErrorCode(promise: Promise<any>) {
 // Node does not do this, so we have to translate.
 function withTranslatedError(error: any) {
   const code = error?.code;
-  if (code?.startsWith?.("DNS_")) {
+  if (typeof code === "string" && code.startsWith("DNS_")) {
     error.code = code.slice(4);
   }
   return error;
 }
 
 function getServers() {
-  return dns.getServers();
+  // Assume getServers returns string[] based on usage
+  return dns.getServers() as string[];
 }
 
 function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $newZigFunction(
+const getRuntimeDefaultResultOrderOption = $newZigFunction<() => "ipv4first" | "ipv6first" | "verbatim">(
   "dns_resolver.zig",
   "DNSResolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
+let newResolverZigFn: (options: any) => $ZigGeneratedClasses.DNSResolver;
 function newResolver(options) {
-  if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
+  if (!newResolverZigFn) {
+    newResolverZigFn = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
   }
-  return newResolver.zig(options);
+  return newResolverZigFn(options);
 }
 
+let defaultResultOrderValue: "ipv4first" | "ipv6first" | "verbatim" | undefined;
 function defaultResultOrder() {
-  if (typeof defaultResultOrder.value === "undefined") {
-    defaultResultOrder.value = getRuntimeDefaultResultOrderOption();
+  if (typeof defaultResultOrderValue === "undefined") {
+    defaultResultOrderValue = getRuntimeDefaultResultOrderOption();
   }
 
-  return defaultResultOrder.value;
+  return defaultResultOrderValue;
 }
 
 function setDefaultResultOrder(order) {
   validateOrder(order);
-  defaultResultOrder.value = order;
+  defaultResultOrderValue = order;
 }
 
 function getDefaultResultOrder() {
-  return defaultResultOrder;
+  return defaultResultOrderValue;
 }
 
-function setServersOn(servers, object) {
+function setServersOn(servers, object: $ZigGeneratedClasses.DNSResolver) {
   validateArray(servers, "servers");
 
-  const triples = [];
+  const triples: Array<[number, string, number]> = [];
 
   servers.forEach((server, i) => {
     validateString(server, `servers[${i}]`);
@@ -115,7 +119,7 @@ function setServersOn(servers, object) {
     if (match) {
       ipVersion = isIP(match[1]);
       if (ipVersion !== 0) {
-        const port = parseInt(addrSplitRE[Symbol.replace](server, "$2")) || IANA_DNS_PORT;
+        const port = parseInt(addrSplitRE[Symbol.replace](server, "$2")!) || IANA_DNS_PORT;
         triples.push([ipVersion, match[1], port]);
         return;
       }
@@ -126,7 +130,7 @@ function setServersOn(servers, object) {
 
     if (addrSplitMatch) {
       const hostIP = addrSplitMatch[1];
-      const port = addrSplitMatch[2] || IANA_DNS_PORT;
+      const port = addrSplitMatch[2] || String(IANA_DNS_PORT);
 
       ipVersion = isIP(hostIP);
 
@@ -139,6 +143,7 @@ function setServersOn(servers, object) {
     throw $ERR_INVALID_IP_ADDRESS(server);
   });
 
+  // Assume setServers returns void or similar, no need to cast return value
   object.setServers(triples);
 }
 
@@ -147,9 +152,11 @@ function validateFlagsOption(options) {
     return;
   }
 
-  validateNumber(options.flags);
+  validateNumber(options.flags, "flags");
 
-  if ((options.flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
+  // Assume these constants exist on the dns object
+  const dnsAny = dns as any;
+  if ((options.flags & ~(dnsAny.ALL | dnsAny.ADDRCONFIG | dnsAny.V4MAPPED)) != 0) {
     throw $ERR_INVALID_ARG_VALUE("hints", options.flags, "is invalid");
   }
 }
@@ -211,18 +218,19 @@ function validateResolve(hostname, callback) {
 }
 
 function validateLocalAddresses(first, second) {
-  validateString(first);
+  validateString(first, "first");
   if (typeof second !== "undefined") {
-    validateString(second);
+    validateString(second, "second");
   }
 }
 
+let invalidHostnameWarned = false;
 function invalidHostname(hostname) {
-  if (invalidHostname.warned) {
+  if (invalidHostnameWarned) {
     return;
   }
 
-  invalidHostname.warned = true;
+  invalidHostnameWarned = true;
   process.emitWarning(
     `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
     "DeprecationWarning",
@@ -259,6 +267,9 @@ function validateLookupOptions(options) {
   validateVerbatimOption(options);
   validateOrderOption(options);
 }
+
+// Define expected lookup result type
+type LookupResult = Array<{ address: string; family: number }>;
 
 function lookup(hostname, options, callback) {
   if (typeof hostname !== "string" && hostname) {
@@ -302,23 +313,36 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns.lookup(hostname, options).then(res => {
-    throwIfEmpty(res);
+  // Cast the promise immediately after the call
+  // Use `as any` because the type definition might be incomplete
+  const lookupPromise = (dns as any).lookup(hostname, options) as Promise<LookupResult>;
 
-    if (options.order == "ipv4first") {
-      res.sort((a, b) => a.family - b.family);
-    } else if (options.order == "ipv6first") {
-      res.sort((a, b) => b.family - a.family);
-    }
+  lookupPromise.then(
+    results => {
+      throwIfEmpty(results);
 
-    if (options?.all) {
-      callback(null, res.map(mapLookupAll));
-    } else {
-      const [{ address, family }] = res;
-      callback(null, address, family);
-    }
-  }, callback);
+      if (options.order == "ipv4first") {
+        results.sort((a, b) => a.family - b.family);
+      } else if (options.order == "ipv6first") {
+        results.sort((a, b) => b.family - a.family);
+      }
+
+      if (options?.all) {
+        callback(null, results.map(mapLookupAll));
+      } else {
+        const [{ address, family }] = results;
+        callback(null, address, family);
+      }
+    },
+    (error: any) => {
+      // Handle potential errors from the promise itself or from throwIfEmpty
+      callback(withTranslatedError(error));
+    },
+  );
 }
+
+// Define expected lookupService result type
+type LookupServiceResult = [string, string];
 
 function lookupService(address, port, callback) {
   if (arguments.length < 3) {
@@ -329,13 +353,23 @@ function lookupService(address, port, callback) {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
-  validateString(address);
+  validateString(address, "address");
 
-  dns.lookupService(address, port).then(
+  // Assume port is number or string convertible to number
+  const portNum = Number(port);
+  if (!Number.isInteger(portNum) || portNum < 0 || portNum > 65535) {
+    throw $ERR_INVALID_ARG_VALUE("port", port, "must be a valid port number");
+  }
+
+  // Cast the promise immediately
+  // Use `as any` because the type definition might be incomplete
+  const lookupServicePromise = (dns as any).lookupService(address, portNum) as Promise<LookupServiceResult>;
+
+  lookupServicePromise.then(
     results => {
       callback(null, ...results);
     },
-    error => {
+    (error: any) => {
       callback(withTranslatedError(error));
     },
   );
@@ -362,24 +396,40 @@ function validateResolverOptions(options) {
   }
 }
 
+// Define expected types for various resolve results
+type ResolveAResult = Array<{ address: string; ttl?: number }>;
+type ResolveAAAAResult = Array<{ address: string; ttl?: number }>;
+type ResolveAnyResult = any[]; // Type varies based on records
+type ResolveCnameResult = string[];
+type ResolveMxResult = Array<{ exchange: string; priority: number }>;
+type ResolveNaptrResult = Array<{ flags: string; service: string; regexp: string; replacement: string; order: number; preference: number }>;
+type ResolveNsResult = string[];
+type ResolvePtrResult = string[];
+type ResolveSrvResult = Array<{ name: string; port: number; priority: number; weight: number }>;
+type ResolveCaaResult = Array<{ critical: number; issue?: string; issuewild?: string; iodef?: string; contactemail?: string; contactphone?: string }>;
+type ResolveTxtResult = string[][];
+type ResolveSoaResult = { nsname: string; hostmaster: string; serial: number; refresh: number; retry: number; expire: number; minttl: number };
+type ReverseResult = string[];
+
 var InternalResolver = class Resolver {
-  #resolver;
+  #resolver: $ZigGeneratedClasses.DNSResolver;
 
   constructor(options) {
     validateResolverOptions(options);
-    this.#resolver = this._handle = newResolver(options);
+    this.#resolver = newResolver(options);
   }
 
   cancel() {
     this.#resolver.cancel();
   }
 
-  static #getResolver(object) {
-    return typeof object !== "undefined" && #resolver in object ? object.#resolver : dns;
+  static #getResolver(object?: Resolver): $ZigGeneratedClasses.DNSResolver {
+    return object instanceof Resolver ? object.#resolver : dns;
   }
 
   getServers() {
-    return Resolver.#getResolver(this).getServers() || [];
+    // Assume getServers returns string[]
+    return Resolver.#getResolver(this).getServers() as string[] || [];
   }
 
   resolve(hostname, rrtype, callback) {
@@ -394,24 +444,25 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
-              callback(null, hostname, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolve(hostname, rrtype) as Promise<unknown>;
+
+    resolvePromise.then(
+      results => {
+        switch (rrtype?.toLowerCase()) {
+          case "a":
+          case "aaaa":
+            callback(null, (results as ResolveAResult | ResolveAAAAResult).map(mapResolveX));
+            break;
+          default:
+            callback(null, results as any[]); // Cast to any[] as the type depends on rrtype
+            break;
+        }
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve4(hostname, options, callback) {
@@ -422,16 +473,17 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "A")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolve(hostname, "A") as Promise<ResolveAResult>;
+
+    resolvePromise.then(
+      addresses => {
+        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve6(hostname, options, callback) {
@@ -442,121 +494,129 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "AAAA")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolve(hostname, "AAAA") as Promise<ResolveAAAAResult>;
+
+    resolvePromise.then(
+      addresses => {
+        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveAny(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveAny(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveAny(hostname) as Promise<ResolveAnyResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCname(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveCname(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveCname(hostname) as Promise<ResolveCnameResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveMx(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveMx(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveMx(hostname) as Promise<ResolveMxResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNaptr(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNaptr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveNaptr(hostname) as Promise<ResolveNaptrResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNs(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNs(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveNs(hostname) as Promise<ResolveNsResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolvePtr(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolvePtr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolvePtr(hostname) as Promise<ResolvePtrResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveSrv(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveSrv(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveSrv(hostname) as Promise<ResolveSrvResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCaa(hostname, callback) {
@@ -564,16 +624,17 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveCaa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveCaa(hostname) as Promise<ResolveCaaResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveTxt(hostname, callback) {
@@ -581,32 +642,34 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveTxt(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveTxt(hostname) as Promise<ResolveTxtResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
   resolveSoa(hostname, callback) {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveSoa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const resolvePromise = Resolver.#getResolver(this).resolveSoa(hostname) as Promise<ResolveSoaResult>;
+
+    resolvePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   reverse(ip, callback) {
@@ -614,20 +677,22 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .reverse(ip)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // Cast the promise immediately
+    const reversePromise = Resolver.#getResolver(this).reverse(ip) as Promise<ReverseResult>;
+
+    reversePromise.then(
+      results => {
+        callback(null, results);
+      },
+      (error: any) => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   setLocalAddress(first, second) {
     validateLocalAddresses(first, second);
+    // Assume setLocalAddress returns void or similar
     Resolver.#getResolver(this).setLocalAddress(first, second);
   }
 
@@ -660,14 +725,19 @@ var {
   resolveTxt,
 } = InternalResolver.prototype;
 
-const mapLookupAll = res => {
+const mapLookupAll = (res: { address: string; family: number }) => {
   const { address, family } = res;
   return { address, family };
 };
 
-function throwIfEmpty(res) {
-  if (res.length === 0) {
-    const err = new Error("No records found");
+function throwIfEmpty(res: unknown) {
+  if (!Array.isArray(res) || res.length === 0) {
+    const err = new Error("No records found") as Error & {
+      name: string;
+      code: string;
+      errno: number;
+      syscall: string;
+    };
     err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
@@ -678,34 +748,34 @@ function throwIfEmpty(res) {
 }
 Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
-const promisifyLookup = order => res => {
-  throwIfEmpty(res);
+const promisifyLookup = order => (results: LookupResult) => {
+  throwIfEmpty(results);
   if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
+    results.sort((a, b) => a.family - b.family);
   } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
+    results.sort((a, b) => b.family - a.family);
   }
-  const [{ address, family }] = res;
+  const [{ address, family }] = results;
   return { address, family };
 };
 
-const promisifyLookupAll = order => res => {
-  throwIfEmpty(res);
+const promisifyLookupAll = order => (results: LookupResult) => {
+  throwIfEmpty(results);
   if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
+    results.sort((a, b) => a.family - b.family);
   } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
+    results.sort((a, b) => b.family - a.family);
   }
-  return res.map(mapLookupAll);
+  return results.map(mapLookupAll);
 };
 
-const mapResolveX = a => a.address;
+const mapResolveX = (a: { address: string; ttl?: number }) => a.address;
 
 const promisifyResolveX = ttl => {
   if (ttl) {
-    return res => res;
+    return (res: ResolveAResult | ResolveAAAAResult) => res;
   } else {
-    return res => {
+    return (res: ResolveAResult | ResolveAAAAResult) => {
       return res?.map(mapResolveX);
     };
   }
@@ -748,10 +818,14 @@ const promises = {
       return Promise.resolve(options.all ? [obj] : obj);
     }
 
+    // Cast the promise immediately
+    // Use `as any` because the type definition might be incomplete
+    const lookupPromise = (dns as any).lookup(hostname, options) as Promise<LookupResult>;
+
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(lookupPromise.then(res => promisifyLookupAll(options.order)(res)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(lookupPromise.then(res => promisifyLookup(options.order)(res)));
   },
 
   lookupService(address, port) {
@@ -759,14 +833,26 @@ const promises = {
       throw $ERR_MISSING_ARGS("address", "port");
     }
 
-    validateString(address);
+    validateString(address, "address");
+    const portNum = Number(port);
+    if (!Number.isInteger(portNum) || portNum < 0 || portNum > 65535) {
+      throw $ERR_INVALID_ARG_VALUE("port", port, "must be a valid port number");
+    }
 
     try {
-      return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
-        hostname,
-        service,
-      }));
-    } catch (err) {
+      // Cast the promise immediately
+      // Use `as any` because the type definition might be incomplete
+      const lookupServicePromise = (dns as any).lookupService(address, portNum) as Promise<LookupServiceResult>;
+      return translateErrorCode(lookupServicePromise).then(
+        results => {
+          const [hostname, service] = results;
+          return {
+            hostname,
+            service,
+          };
+        },
+      );
+    } catch (err: any) {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
       }
@@ -785,152 +871,231 @@ const promises = {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
+    // Cast the promise immediately
+    const resolvePromise = dns.resolve(hostname, rrtype) as Promise<unknown>;
+
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())));
+        return translateErrorCode(
+          (resolvePromise as Promise<ResolveAResult | ResolveAAAAResult>).then(res => {
+            return promisifyResolveX(false)(res);
+          }),
+        );
       default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
+        return translateErrorCode(resolvePromise as Promise<any[]>); // Type depends on rrtype
     }
   },
 
   resolve4(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolve(hostname, "A") as Promise<ResolveAResult>;
+    return translateErrorCode(
+      resolvePromise.then(res => {
+        return promisifyResolveX(options?.ttl)(res);
+      }),
+    );
   },
 
   resolve6(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolve(hostname, "AAAA") as Promise<ResolveAAAAResult>;
+    return translateErrorCode(
+      resolvePromise.then(res => {
+        return promisifyResolveX(options?.ttl)(res);
+      }),
+    );
   },
 
   resolveAny(hostname) {
-    return translateErrorCode(dns.resolveAny(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveAny(hostname) as Promise<ResolveAnyResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveSrv(hostname) {
-    return translateErrorCode(dns.resolveSrv(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveSrv(hostname) as Promise<ResolveSrvResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveTxt(hostname) {
-    return translateErrorCode(dns.resolveTxt(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveTxt(hostname) as Promise<ResolveTxtResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveSoa(hostname) {
-    return translateErrorCode(dns.resolveSoa(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveSoa(hostname) as Promise<ResolveSoaResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveNaptr(hostname) {
-    return translateErrorCode(dns.resolveNaptr(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveNaptr(hostname) as Promise<ResolveNaptrResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveMx(hostname) {
-    return translateErrorCode(dns.resolveMx(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveMx(hostname) as Promise<ResolveMxResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveCaa(hostname) {
-    return translateErrorCode(dns.resolveCaa(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveCaa(hostname) as Promise<ResolveCaaResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveNs(hostname) {
-    return translateErrorCode(dns.resolveNs(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveNs(hostname) as Promise<ResolveNsResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolvePtr(hostname) {
-    return translateErrorCode(dns.resolvePtr(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolvePtr(hostname) as Promise<ResolvePtrResult>;
+    return translateErrorCode(resolvePromise);
   },
   resolveCname(hostname) {
-    return translateErrorCode(dns.resolveCname(hostname));
+    // Cast the promise immediately
+    const resolvePromise = dns.resolveCname(hostname) as Promise<ResolveCnameResult>;
+    return translateErrorCode(resolvePromise);
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    // Cast the promise immediately
+    const reversePromise = dns.reverse(ip) as Promise<ReverseResult>;
+    return translateErrorCode(reversePromise);
   },
 
   Resolver: class Resolver {
-    #resolver;
+    #resolver: $ZigGeneratedClasses.DNSResolver;
 
     constructor(options) {
       validateResolverOptions(options);
-      this.#resolver = this._handle = newResolver(options);
+      this.#resolver = newResolver(options);
     }
 
     cancel() {
       this.#resolver.cancel();
     }
 
-    static #getResolver(object) {
-      return typeof object !== "undefined" && #resolver in object ? object.#resolver : dns;
+    static #getResolver(object?: Resolver): $ZigGeneratedClasses.DNSResolver {
+      return object instanceof Resolver ? object.#resolver : dns;
     }
 
     getServers() {
-      return Resolver.#getResolver(this).getServers() || [];
+      // Assume getServers returns string[]
+      return Resolver.#getResolver(this).getServers() as string[] || [];
     }
 
     resolve(hostname, rrtype) {
       if (typeof rrtype === "undefined") {
         rrtype = "A";
       } else if (typeof rrtype !== "string") {
-        rrtype = null;
+        throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
       }
+
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolve(hostname, rrtype) as Promise<unknown>;
+
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())),
+            (resolvePromise as Promise<ResolveAResult | ResolveAAAAResult>).then(res => {
+              return promisifyResolveX(false)(res);
+            }),
           );
         default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+          return translateErrorCode(resolvePromise as Promise<any[]>); // Type depends on rrtype
       }
     }
 
     resolve4(hostname, options) {
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolve(hostname, "A") as Promise<ResolveAResult>;
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+        resolvePromise.then(res => {
+          return promisifyResolveX(options?.ttl)(res);
+        }),
       );
     }
 
     resolve6(hostname, options) {
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolve(hostname, "AAAA") as Promise<ResolveAAAAResult>;
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+        resolvePromise.then(res => {
+          return promisifyResolveX(options?.ttl)(res);
+        }),
       );
     }
 
     resolveAny(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveAny(hostname) as Promise<ResolveAnyResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveCname(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveCname(hostname) as Promise<ResolveCnameResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveMx(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveMx(hostname) as Promise<ResolveMxResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveNaptr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveNaptr(hostname) as Promise<ResolveNaptrResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveNs(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveNs(hostname) as Promise<ResolveNsResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolvePtr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolvePtr(hostname) as Promise<ResolvePtrResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveSoa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveSoa(hostname) as Promise<ResolveSoaResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveSrv(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveSrv(hostname) as Promise<ResolveSrvResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveCaa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveCaa(hostname) as Promise<ResolveCaaResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     resolveTxt(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
+      // Cast the promise immediately
+      const resolvePromise = Resolver.#getResolver(this).resolveTxt(hostname) as Promise<ResolveTxtResult>;
+      return translateErrorCode(resolvePromise);
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      // Cast the promise immediately
+      const reversePromise = Resolver.#getResolver(this).reverse(ip) as Promise<ReverseResult>;
+      return translateErrorCode(reversePromise);
     }
 
     setLocalAddress(first, second) {
       validateLocalAddresses(first, second);
+      // Assume setLocalAddress returns void or similar
       Resolver.#getResolver(this).setLocalAddress(first, second);
     }
 
@@ -962,13 +1127,16 @@ for (const [method, pMethod] of [
   [resolveTxt, promises.resolveTxt],
   [resolveNaptr, promises.resolveNaptr],
 ]) {
-  method[utilPromisifyCustomSymbol] = pMethod;
+  (method as any)[utilPromisifyCustomSymbol] = pMethod;
 }
 
+// Assume these constants exist on the dns object
+const dnsAny = dns as any;
+
 export default {
-  ADDRCONFIG: dns.ADDRCONFIG,
-  ALL: dns.ALL,
-  V4MAPPED: dns.V4MAPPED,
+  ADDRCONFIG: dnsAny.ADDRCONFIG,
+  ALL: dnsAny.ALL,
+  V4MAPPED: dnsAny.V4MAPPED,
 
   // ERROR CODES
   ...errorCodes,

@@ -8,13 +8,14 @@ const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
 );
 
 var {
-  Performance,
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
   PerformanceObserver,
   PerformanceObserverEntryList,
-} = globalThis;
+} = globalThis as any; // TS2339 fix: Access potentially missing global types
+
+var Performance = globalThis['Performance']; // TS2339 fix
 
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
@@ -98,7 +99,7 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
+function eventLoopUtilization(_utilization1?: any, _utilization2?: any) {
   return {
     idle: 0,
     active: 0,
@@ -117,35 +118,45 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
   performance: {
-    mark(_) {
-      return performance.mark(...arguments);
+    mark() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.mark.apply(performance, arguments as any);
     },
-    measure(_) {
-      return performance.measure(...arguments);
+    measure() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.measure.apply(performance, arguments as any);
     },
-    clearMarks(_) {
-      return performance.clearMarks(...arguments);
+    clearMarks() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.clearMarks.apply(performance, arguments as any);
     },
-    clearMeasures(_) {
-      return performance.clearMeasures(...arguments);
+    clearMeasures() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.clearMeasures.apply(performance, arguments as any);
     },
-    getEntries(_) {
-      return performance.getEntries(...arguments);
+    getEntries() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.getEntries.apply(performance, arguments as any);
     },
-    getEntriesByName(_) {
-      return performance.getEntriesByName(...arguments);
+    getEntriesByName() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.getEntriesByName.apply(performance, arguments as any);
     },
-    getEntriesByType(_) {
-      return performance.getEntriesByType(...arguments);
+    getEntriesByType() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.getEntriesByType.apply(performance, arguments as any);
     },
-    setResourceTimingBufferSize(_) {
-      return performance.setResourceTimingBufferSize(...arguments);
+    setResourceTimingBufferSize() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.setResourceTimingBufferSize.apply(performance, arguments as any);
     },
     timeOrigin: performance.timeOrigin,
-    toJSON(_) {
-      return performance.toJSON(...arguments);
+    toJSON() {
+      // TS2556 fix: Use apply instead of spread
+      return performance.toJSON.apply(performance, arguments as any);
     },
-    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
+    // TS2339 fix: Use index access for potentially non-standard property
+    onresourcetimingbufferfull: performance['onresourcetimingbufferfull' as keyof Performance],
     nodeTiming: createPerformanceNodeTiming(),
     now: () => performance.now(),
     eventLoopUtilization: eventLoopUtilization,

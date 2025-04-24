@@ -5,7 +5,7 @@ const ObjectFreeze = Object.freeze;
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 
 function Worker(options) {
-  if (!(this instanceof Worker)) return new Worker(options);
+  if (!(this instanceof (Worker as any))) return new (Worker as any)(options);
 
   EventEmitter.$apply(this, []);
 

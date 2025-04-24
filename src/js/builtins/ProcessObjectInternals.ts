@@ -3,8 +3,8 @@
  * Copyright 2023 Codeblog Corp. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
+ * modification, are permitted provided that the following conditions are
+ * met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
  * 2. Redistributions in binary form must reproduce the above copyright
@@ -12,17 +12,22 @@
  *    documentation and/or other materials provided with the distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
  * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
  * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+// @ts-ignore
+import type { ReadableStreamDefaultReader } from "stream/web";
+import type FileSink from "bun:sqlite";
+import kWriteStreamFastPath from "internal/fs/streams";
+import type { ReadStream as TTYReadStream, WriteStream as TTYWriteStream } from "node:tty";
+import type { ReadStream as FSReadStream, WriteStream as FSWriteStream } from "node:fs";
 
 const enum BunProcessStdinFdType {
   file = 0,
@@ -30,35 +35,42 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
+export function getStdioWriteStream(
+  fd: number,
+  isTTY: boolean,
+  _fdType: BunProcessStdinFdType,
+): [TTYWriteStream | FSWriteStream, FileSink | null | undefined] {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
 
-  let stream;
+  let stream: TTYWriteStream | FSWriteStream;
+  let underlyingSink: FileSink | null | undefined = undefined;
+
   if (isTTY) {
     const tty = require("node:tty");
-    stream = new tty.WriteStream(fd);
-    // TODO: this is the wrong place for this property.
-    // but the TTY is technically duplex
-    // see test-fs-syncwritestream.js
-    stream.readable = true;
+    stream = new tty.WriteStream(fd) as TTYWriteStream;
+    (stream as any).readable = true; // Node.js compatibility quirk
     process.on("SIGWINCH", () => {
-      stream._refreshSize();
+      (stream as any)._refreshSize();
     });
-    stream._type = "tty";
+    (stream as any)._type = "tty";
+    // TTY streams don't have the kWriteStreamFastPath sink
   } else {
     const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
-    stream.readable = false;
-    stream._type = "fs";
+    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true }) as FSWriteStream;
+    (stream as any).readable = false;
+    (stream as any)._type = "fs";
+    // Access the fast path sink only for FSWriteStream
+    underlyingSink = (stream as any)[(kWriteStreamFastPath as unknown as PropertyKey)];
+    $assert(underlyingSink, "FSWriteStream for stdio should have an underlying sink");
   }
 
   if (fd === 1 || fd === 2) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
+    (stream as any).destroySoon = (stream as any).destroy;
+    (stream as any)._destroy = function (err, cb) {
       cb(err);
-      this._undestroy();
+      (this as any)._undestroy();
 
-      if (!this._writableState.emitClose) {
+      if (!(this as any)._writableState.emitClose) {
         process.nextTick(() => {
           this.emit("close");
         });
@@ -66,18 +78,15 @@ export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdin
     };
   }
 
-  stream._isStdio = true;
-  stream.fd = fd;
+  (stream as any)._isStdio = true;
+  (stream as any).fd = fd;
 
-  const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdinStream(fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
-  // @ts-expect-error
-  const source = native.$bunNativePtr;
+  const source = native.$bunNativePtr as $ZigGeneratedClasses.FileInternalReadableStreamSource;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -117,54 +126,45 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  const stream: TTYReadStream | FSReadStream = new (ReadStream as { new (...args: any[]): TTYReadStream | FSReadStream })(null, { fd, autoClose: false });
 
-  const originalOn = stream.on;
+  const originalOn = (stream as any).on;
 
   let stream_destroyed = false;
   let stream_endEmitted = false;
-  stream.addListener = stream.on = function (event, listener) {
-    // Streams don't generally required to present any data when only
-    // `readable` events are present, i.e. `readableFlowing === false`
-    //
-    // However, Node.js has a this quirk whereby `process.stdin.read()`
-    // blocks under TTY mode, thus looping `.read()` in this particular
-    // case would not result in truncation.
-    //
-    // Therefore the following hack is only specific to `process.stdin`
-    // and does not apply to the underlying Stream implementation.
+  (stream as any).addListener = (stream as any).on = function (event, listener) {
     if (event === "readable") {
       ref();
     }
     return originalOn.$call(this, event, listener);
   };
 
-  stream.fd = fd;
+  (stream as any).fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
-    stream.ref = function () {
+    (stream as any).ref = function () {
       ref();
       return this;
     };
 
-    stream.unref = function () {
+    (stream as any).unref = function () {
       unref();
       return this;
     };
   }
 
-  const originalPause = stream.pause;
-  stream.pause = function () {
+  const originalPause = (stream as any).pause;
+  (stream as any).pause = function () {
     $debug("pause();");
     let r = originalPause.$call(this);
     unref();
     return r;
   };
 
-  const originalResume = stream.resume;
-  stream.resume = function () {
+  const originalResume = (stream as any).resume;
+  (stream as any).resume = function () {
     $debug("resume();");
     ref();
     return originalResume.$call(this);
@@ -174,32 +174,32 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { value } = await reader.read();
+      const { value } = await reader!.read();
 
       if (value) {
-        stream.push(value);
+        (stream as any).push(value);
 
         if (shouldUnref) unref();
       } else {
         if (!stream_endEmitted) {
           stream_endEmitted = true;
-          stream.emit("end");
+          (stream as any).emit("end");
         }
         if (!stream_destroyed) {
           stream_destroyed = true;
-          stream.destroy();
+          (stream as any).destroy();
           unref();
         }
       }
     } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+      if ((err as Error)?.code === "ERR_STREAM_RELEASE_LOCK") {
         // The stream was unref()ed. It may be ref()ed again in the future,
         // or maybe it has already been ref()ed again and we just need to
         // restart the internalRead() function. triggerRead() will figure that out.
-        triggerRead.$call(stream, undefined);
+        (triggerRead as any).$call(stream);
         return;
       }
-      stream.destroy(err);
+      (stream as any).destroy(err);
     }
   }
 
@@ -214,31 +214,31 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       needsInternalReadRefresh = true;
     }
   }
-  stream._read = triggerRead;
+  (stream as any)._read = triggerRead;
 
-  stream.on("resume", () => {
-    if (stream.isPaused()) return; // fake resume
+  (stream as any).on("resume", () => {
+    if ((stream as any).isPaused()) return; // fake resume
     $debug('on("resume");');
     ref();
-    stream._undestroy();
+    (stream as any)._undestroy();
     stream_destroyed = false;
   });
 
-  stream._readableState.reading = false;
+  (stream as any)._readableState.reading = false;
 
-  stream.on("pause", () => {
+  (stream as any).on("pause", () => {
     process.nextTick(() => {
-      if (!stream.readableFlowing) {
-        stream._readableState.reading = false;
+      if (!(stream as any).readableFlowing) {
+        (stream as any)._readableState.reading = false;
       }
     });
   });
 
-  stream.on("close", () => {
+  (stream as any).on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
-        stream.destroy();
+        (stream as any).destroy();
         unref();
       });
     }
@@ -359,7 +359,7 @@ export function windowsEnv(
   //
   // it throws "Cannot convert a Symbol value to a string"
 
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  (internalEnv as any)[require("node:util").inspect.custom as typeof Bun.inspect.custom] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];
@@ -379,8 +379,8 @@ export function windowsEnv(
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
-        envMapList.push(p);
+      if (!(k in internalEnv) && !envMapList.includes(p as string)) {
+        envMapList.push(p as string);
       }
       if (internalEnv[k] !== value) {
         editWindowsEnvVar(k, value);
@@ -403,11 +403,12 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
-        envMapList.push(p);
+      if (!(k in internalEnv) && !envMapList.includes(p as string)) {
+        envMapList.push(p as string);
       }
       editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      Object.defineProperty(internalEnv, k, attributes);
+      return true; // Return boolean as required by ProxyHandler
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
@@ -421,18 +422,6 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
-  return new (class Control extends EventEmitter {
-    constructor() {
-      super();
-    }
-
-    ref() {
-      setRef(true);
-    }
-
-    unref() {
-      setRef(false);
-    }
-  })();
+  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 3);
+  return new (EventEmitter as { new (): any })();
 }

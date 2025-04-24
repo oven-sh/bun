@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateString, validateOneOf, validateFunction } = require("internal/validators");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
@@ -183,17 +183,21 @@ var _extend = function (origin, add) {
   return origin;
 };
 
-function callbackifyOnRejected(reason, cb) {
+function callbackifyOnRejected(reason: any, cb: (err: any) => void) {
+  // The reason can be anything, check for falsy values
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    const newReason = new Error("Promise was rejected with a falsy value") as any;
+    // Attach the original falsy reason to the new error object
     newReason.reason = reason;
     newReason.code = "ERR_FALSY_VALUE_REJECTION";
-    reason = newReason;
+    // Pass the new error object to the callback
+    return cb(newReason);
   }
+  // If reason is truthy, pass it directly to the callback
   return cb(reason);
 }
+
 function callbackify(original) {
-  const { validateFunction } = require("internal/validators");
   validateFunction(original, "original");
 
   // We DO NOT return the promise as it gives the user a false sense that

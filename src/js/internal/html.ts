@@ -134,7 +134,8 @@ yourself with Bun.serve().
     return acc.slice(0, i);
   });
 
-  if (path.platform === "win32") {
+  // Fix: Use process.platform instead of path.platform
+  if ((typeof process.platform === "function" ? process.platform() === "win32" : process.platform === "win32") || path.sep === "\\") {
     longestCommonPath = longestCommonPath.replaceAll("\\", "/");
   }
 
@@ -149,7 +150,7 @@ yourself with Bun.serve().
   // - "about/foo.html" -> "/about/foo"
   // - "foo.html" -> "/foo"
   const servePaths = args.map(arg => {
-    if (process.platform === "win32") {
+    if (process.platform === "win32" || path.sep === "\\") {
       arg = arg.replaceAll("\\", "/");
     }
     const basename = path.basename(arg);
@@ -316,6 +317,7 @@ yourself with Bun.serve().
       for (let i = 0, length = pairs.length; i < length; i++) {
         const { route, importPath } = pairs[i];
         const isLast = i === length - 1;
+        // Fix: Use a valid ASCII character for the prefix
         const prefix = isLast ? "  └── " : "  ├── ";
         if (enableANSIColors) {
           console.log(`${prefix}\x1b[36m/${route}\x1b[0m \x1b[2m→ ${path.relative(process.cwd(), importPath)}\x1b[0m`);
@@ -344,7 +346,7 @@ yourself with Bun.serve().
     process.on("SIGINT", () => process.exit());
     process.on("SIGHUP", () => process.exit());
     process.on("SIGTERM", () => process.exit());
-    process.stdin.on("data", data => {
+    process.stdin.on("data", (data: Buffer) => {
       const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 
       switch (key) {
@@ -362,12 +364,11 @@ yourself with Bun.serve().
           const url = server.url.toString();
 
           if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
+            (Bun.spawn as (args: string[]) => any)(["open", url])?.exited?.catch(() => {});
           } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
+            (Bun.spawn as (args: string[]) => any)(["start", url])?.exited?.catch(() => {});
           } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
+            (Bun.spawn as (args: string[]) => any)(["xdg-open", url])?.exited?.catch(() => {});
           }
           break;
 

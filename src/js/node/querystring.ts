@@ -30,9 +30,20 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
 
-var __commonJS =
-  (cb, mod: typeof module | undefined = undefined) =>
-  () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __commonJS = (
+  cb: (exports: any, module: JSCommonJSModule) => void,
+  mod?: JSCommonJSModule,
+) => {
+  return () => {
+    if (!mod) {
+      // Cast to satisfy TS2740, assuming the callback doesn't need a full module object.
+      mod = { exports: {} } as JSCommonJSModule;
+      cb(mod.exports, mod);
+    }
+    // 'mod' is now definitely assigned, satisfying TS18048.
+    return mod.exports;
+  };
+};
 
 var require_src = __commonJS((exports, module) => {
   /**

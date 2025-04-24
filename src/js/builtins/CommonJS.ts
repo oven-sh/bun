@@ -1,3 +1,5 @@
+import type Dequeue from "internal/fifo";
+
 // This file contains functions used for the CommonJS module loader
 
 $getter;
@@ -107,7 +109,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       out = $requireESM(id);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
-      $requireMap.$delete(id);
+      $requireMap.delete(id);
       throw exception;
     }
 
@@ -115,7 +117,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-      const namespace = Loader.getModuleNamespaceObject(esm!.module);
+      const namespace = $getByIdDirect(Loader, "getModuleNamespaceObject")(esm!.module);
       // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
       // Various libraries expect __esModule to be set when using ESM from require().
       // We don't want to always inject the __esModule export into every module,
@@ -171,8 +173,8 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string) {
   var loader = Loader;
-  var queue = $createFIFO();
-  let key = resolvedSpecifier;
+  const queue: Dequeue<string> = $createFIFO() as unknown as Dequeue<string>;
+  let key: string | undefined = resolvedSpecifier;
   const registry = loader.registry;
 
   while (key) {
@@ -180,7 +182,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
     // it will throw this error if we do not:
     //    $throwTypeError("Requested module is already fetched.");
     let entry = registry.$get(key)!,
-      moduleRecordPromise,
+      moduleRecordPromise: Promise<LoaderModule> | LoaderModule | undefined,
       state = 0,
       // entry.fetch is a Promise<SourceCode>
       // SourceCode is not a string, it's a JSC::SourceCode object
@@ -221,12 +223,16 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
       // this pulls it out of the promise without delaying by a tick
       // the promise is already fulfilled by $fulfillModuleSync
       const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
-      moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
+      moduleRecordPromise = $getByIdDirect(Loader, "parseModule")(key, sourceCodeObject);
+      entry.instantiate = moduleRecordPromise as Promise<any>;
     }
     let mod = entry?.module;
 
     if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      let reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
+      let reactionsOrResult = $getPromiseInternalField<typeof $promiseFieldReactionsOrResult, LoaderModule>(
+        moduleRecordPromise,
+        $promiseFieldReactionsOrResult,
+      );
       let flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
       let state = flags & $promiseStateMask;
       // this branch should never happen, but just to be safe
@@ -243,44 +249,44 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
         throw reactionsOrResult;
       }
-      entry.module = mod = reactionsOrResult;
+      entry.module = mod = reactionsOrResult as any;
     } else if (moduleRecordPromise && !mod) {
-      entry.module = mod = moduleRecordPromise as LoaderModule;
+      entry.module = mod = moduleRecordPromise as any;
     }
 
     // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
     $setStateToMax(entry, $ModuleLink);
     const dependenciesMap = mod.dependenciesMap;
-    const requestedModules = loader.requestedModules(mod);
+    const requestedModules = $getByIdDirect(Loader, "requestedModules")(mod);
     const dependencies = $newArrayWithSize<string>(requestedModules.length);
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
       const depName = requestedModules[i];
       // optimization: if it starts with a slash then it's an absolute path
       // we don't need to run the resolver a 2nd time
       const depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
-      const depEntry = loader.ensureRegistered(depKey);
+      const depEntry = $getByIdDirect(Loader, "ensureRegistered")(depKey);
 
       if (depEntry.state < $ModuleLink) {
         queue.push(depKey);
       }
 
-      $putByValDirect(dependencies, i, depEntry);
+      $putByValDirect(dependencies, i, depKey);
       dependenciesMap.$set(depName, depEntry);
     }
 
-    entry.dependencies = dependencies;
+    entry.dependencies = dependencies as any;
     // All dependencies resolved, set instantiate and satisfy field directly.
     entry.instantiate = Promise.$resolve(entry);
     entry.satisfy = Promise.$resolve(entry);
-    entry.isSatisfied = true;
+    // entry.isSatisfied = true; // This property is a getter, cannot assign to it.
 
     key = queue.shift();
     while (key && (registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
-      key = queue.shift();
+      key = queue.shift() as string | undefined;
     }
   }
 
-  var linkAndEvaluateResult = loader.linkAndEvaluateModule(resolvedSpecifier, undefined);
+  var linkAndEvaluateResult = $getByIdDirect(Loader, "linkAndEvaluateModule")(resolvedSpecifier, undefined);
   if (linkAndEvaluateResult && $isPromise(linkAndEvaluateResult)) {
     // if you use top-level await, or any dependencies use top-level await, then we throw here
     // this means the module will still actually load eventually, but that's okay.
@@ -289,7 +295,7 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
     );
   }
 
-  return registry.$get(resolvedSpecifier);
+  return Loader.registry.$get(resolvedSpecifier);
 }
 
 $visibility = "Private";
@@ -303,7 +309,7 @@ export function requireESM(this, resolved: string) {
   if (!entry || !entry.evaluated || !entry.module) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
-  var exports = Loader.getModuleNamespaceObject(entry.module);
+  var exports = $getByIdDirect(Loader, "getModuleNamespaceObject")(entry.module);
 
   return exports;
 }
@@ -314,7 +320,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
-    $requireMap.$delete(id);
+    $requireMap.delete(id);
     throw exception;
   }
 
@@ -322,7 +328,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 
   // If we can pull out a ModuleNamespaceObject, let's do it.
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const namespace = Loader.getModuleNamespaceObject(esm!.module);
+    const namespace = $getByIdDirect(Loader, "getModuleNamespaceObject")(esm!.module);
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
     // Various libraries expect __esModule to be set when using ESM from require().
     // We don't want to always inject the __esModule export into every module,
@@ -358,15 +364,15 @@ export function createRequireCache() {
 
       const esm = Loader.registry.$get(key);
       if (esm?.evaluated) {
-        const namespace = Loader.getModuleNamespaceObject(esm.module);
+        const namespace = $getByIdDirect(Loader, "getModuleNamespaceObject")(esm.module);
         const mod = $createCommonJSModule(key, namespace, true, undefined);
         $requireMap.$set(key, mod);
         return mod;
       }
 
-      return inner[key];
+      return (inner as any)[key];
     },
-    set(_target, key: string, value) {
+    set(_target, key: string, value: any) {
       $requireMap.$set(key, value);
       return true;
     },
@@ -376,9 +382,9 @@ export function createRequireCache() {
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
-      $requireMap.$delete(key);
-      Loader.registry.$delete(key);
+      moduleMap.delete(key);
+      $requireMap.delete(key);
+      Loader.registry.delete(key);
       return true;
     },
 

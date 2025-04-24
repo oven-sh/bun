@@ -152,9 +152,9 @@ async function pumpToWeb(readable, writable, finish, { end }) {
   } catch (err) {
     try {
       await writer.abort(err);
-      finish(err);
-    } catch (err) {
-      finish(err);
+      finish(err, false);
+    } catch (err2) {
+      finish(err2, false);
     }
   }
 }
@@ -169,7 +169,7 @@ function pipelineImpl(streams, callback, opts?) {
   }
 
   if (streams.length < 2) {
-    throw $ERR_MISSING_ARGS("streams");
+    throw $ERR_MISSING_ARGS(["streams"]);
   }
 
   const ac = new AbortController();
@@ -183,7 +183,7 @@ function pipelineImpl(streams, callback, opts?) {
   validateAbortSignal(outerSignal, "options.signal");
 
   function abort() {
-    finishImpl($makeAbortError(undefined, { cause: outerSignal?.reason }));
+    finishImpl($makeAbortError(undefined, { cause: outerSignal?.reason }), true);
   }
 
   addAbortListener ??= require("internal/abort_listener").addAbortListener;
@@ -192,7 +192,7 @@ function pipelineImpl(streams, callback, opts?) {
     disposable = addAbortListener(outerSignal, abort);
   }
 
-  let error;
+  let error: Error | undefined;
   let value;
   const destroys: ((err: Error) => void)[] = [];
 
@@ -216,7 +216,7 @@ function pipelineImpl(streams, callback, opts?) {
     }
 
     while (destroys.length) {
-      destroys.shift()?.(error);
+      destroys.shift()?.(error!);
     }
 
     disposable?.[SymbolDispose]();
@@ -280,7 +280,7 @@ function pipelineImpl(streams, callback, opts?) {
       }
     } else if (typeof stream === "function") {
       if (isTransformStream(ret)) {
-        ret = makeAsyncIterable(ret?.readable);
+        ret = makeAsyncIterable((ret as TransformStream<any, any>).readable);
       } else {
         ret = makeAsyncIterable(ret);
       }
@@ -328,7 +328,7 @@ function pipelineImpl(streams, callback, opts?) {
           finishCount++;
           pumpToNode(ret, pt, finish, { end });
         } else if (isReadableStream(ret) || isTransformStream(ret)) {
-          const toRead = ret.readable || ret;
+          const toRead = (isTransformStream(ret) ? (ret as TransformStream<any, any>).readable : ret);
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
@@ -351,7 +351,9 @@ function pipelineImpl(streams, callback, opts?) {
           lastStreamCleanup.push(cleanup);
         }
       } else if (isTransformStream(ret) || isReadableStream(ret)) {
-        const toRead = ret.readable || ret;
+        const toRead = isTransformStream(ret)
+          ? (ret as TransformStream<any, any>).readable
+          : ret;
         finishCount++;
         pumpToNode(toRead, stream, finish, { end });
       } else if (isIterable(ret)) {
@@ -374,7 +376,7 @@ function pipelineImpl(streams, callback, opts?) {
         pumpToWeb(ret, stream, finish, { end });
       } else if (isTransformStream(ret)) {
         finishCount++;
-        pumpToWeb(ret.readable, stream, finish, { end });
+        pumpToWeb((ret as TransformStream<any, any>).readable, stream, finish, { end });
       } else {
         throw $ERR_INVALID_ARG_TYPE(
           "val",

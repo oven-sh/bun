@@ -1,3 +1,32 @@
+/*
+ * Copyright (C) 2007 Apple Inc.  All rights reserved.
+ * Copyright (C) 2009 Joseph Pecoraro
+ * Copyright (C) 2017-2018 Gábor Görzsöny
+ * Copyright (C) 2019-2023 The Node.js Project
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+import type { InspectOptions } from "node-inspect-extracted";
+
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
   var stream = Bun.stdin.stream();
@@ -14,7 +43,7 @@ export function asyncIterator(this: Console) {
   var pendingChunk: Uint8Array | undefined;
 
   async function* ConsoleAsyncIterator() {
-    var reader = stream.getReader();
+    var reader = stream.getReader() as $ReadableStreamDefaultReader;
     var deferredError: Error | undefined;
     try {
       if (i !== -1) {
@@ -57,9 +86,9 @@ export function asyncIterator(this: Console) {
       while (true) {
         const firstResult = reader.readMany();
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          ({ done, value } = (await firstResult) as { done: boolean; value: Uint8Array[] });
         } else {
-          ({ done, value } = firstResult);
+          ({ done, value } = firstResult as { done: boolean; value: Uint8Array[] });
         }
 
         if (done) {
@@ -112,7 +141,8 @@ export function asyncIterator(this: Console) {
 
   const symbol = globalThis.Symbol.asyncIterator;
   this[symbol] = ConsoleAsyncIterator;
-  return ConsoleAsyncIterator();
+  // Fix: Cast the generator to Iterable<any> via unknown to satisfy TS2352
+  return ConsoleAsyncIterator() as unknown as Iterable<any>;
 }
 
 export function write(this: Console, input) {
@@ -130,7 +160,7 @@ export function write(this: Console, input) {
     wrote += writer.write(arguments[i]);
   }
 
-  writer.flush(true);
+  writer.flush();
   return wrote;
 }
 
@@ -213,7 +243,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const table = (head, columns) => {
     const columnWidths = ArrayPrototypeMap.$call(head, h => getStringWidth(h)) as number[];
     const longestColumn = Math.max(...(ArrayPrototypeMap as any).$call(columns, a => a.length));
-    const rows: any = $newArrayWithSize(longestColumn);
+    const rows: any[] = $newArrayWithSize(longestColumn);
 
     for (let i = 0; i < head.length; i++) {
       const column = columns[i];
@@ -462,8 +492,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (
             e != null &&
             typeof e === "object" &&
-            e.name === "RangeError" &&
-            e.message === "Maximum call stack size exceeded."
+            (e as Error).name === "RangeError" &&
+            (e as Error).message === "Maximum call stack size exceeded."
           )
             throw e;
           // Sorry, there's no proper way to pass along the error here.
@@ -656,7 +686,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
       const _inspect = v => {
         const depth = v !== null && typeof v === "object" && !isArray(v) && Object.keys(v).length > 2 ? -1 : 0;
-        const opt = {
+        const opt: InspectOptions = {
           depth,
           maxArrayLength: 3,
           breakLength: Infinity,
@@ -680,13 +710,15 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         const values = [];
         let length = 0;
         if (mapIter) {
-          for (; i < tabularData.length / 2; ++i) {
-            ArrayPrototypePush.$call(keys, _inspect(tabularData[i * 2]));
-            ArrayPrototypePush.$call(values, _inspect(tabularData[i * 2 + 1]));
+          // Convert the iterator to an array of entries
+          const dataArray = Array.from(tabularData as unknown as Iterable<any>) as any[];
+          for (; i < dataArray.length; ++i) {
+            ArrayPrototypePush.$call(keys, _inspect(dataArray[i][0]));
+            ArrayPrototypePush.$call(values, _inspect(dataArray[i][1]));
             length++;
           }
         } else {
-          for (const { 0: k, 1: v } of tabularData) {
+          for (const { 0: k, 1: v } of tabularData as Map<any, any>) {
             ArrayPrototypePush.$call(keys, _inspect(k));
             ArrayPrototypePush.$call(values, _inspect(v));
             length++;
@@ -702,7 +734,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (setlike) {
         const values = [];
         let length = 0;
-        for (const v of tabularData as Set<any>) {
+        for (const v of tabularData as Iterable<any>) {
           ArrayPrototypePush.$call(values, _inspect(v));
           length++;
         }

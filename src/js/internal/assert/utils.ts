@@ -241,6 +241,7 @@ function getErrMessage(_message: string, _value: unknown, _fn: Function): string
   //     if (fd !== undefined)
   //       closeSync(fd);
   //   }
+  return undefined;
 }
 
 export function innerOk(fn, argLen, value, message) {

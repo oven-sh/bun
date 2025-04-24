@@ -72,7 +72,7 @@ export default function compose(...streams) {
   }
 
   const head = streams[0];
-  const tail = pipeline(streams, onfinished);
+  const tail = pipeline(streams, undefined, undefined, onfinished);
 
   const writable = !!(isWritable(head) || isWritableStream(head) || isTransformStream(head));
   const readable = !!(isReadable(tail) || isReadableStream(tail) || isTransformStream(tail));
@@ -84,8 +84,9 @@ export default function compose(...streams) {
     // TODO (ronag): highWaterMark?
     writableObjectMode: !!head?.writableObjectMode,
     readableObjectMode: !!tail?.readableObjectMode,
-    writable,
-    readable,
+    // Remove 'writable' and 'readable' from options, as DuplexOptions does not allow them
+    // writable,
+    // readable,
   });
 
   if (writable) {
@@ -112,7 +113,8 @@ export default function compose(...streams) {
       });
     } else if (isWebStream(head)) {
       const writable = isTransformStream(head) ? head.writable : head;
-      const writer = writable.getWriter();
+      // Use $getWriter for internal compatibility
+      const writer = (writable as any).$getWriter();
 
       d._write = async function (chunk, encoding, callback) {
         try {
@@ -175,7 +177,8 @@ export default function compose(...streams) {
       };
     } else if (isWebStream(tail)) {
       const readable = isTransformStream(tail) ? tail.readable : tail;
-      const reader = readable.getReader();
+      // Use $getReader for internal compatibility
+      const reader = (readable as any).$getReader();
       d._read = async function () {
         while (true) {
           try {
@@ -207,13 +210,13 @@ export default function compose(...streams) {
     onfinish = null;
 
     if (isNodeStream(tail)) {
-      destroyer(tail, err);
-    }
-
-    if (onclose === null) {
-      callback(err);
+      destroyer(tail, err, callback, false, false);
     } else {
-      onclose = callback;
+      if (onclose === null) {
+        callback(err);
+      } else {
+        onclose = callback;
+      }
     }
   };
 

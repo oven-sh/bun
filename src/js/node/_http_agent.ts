@@ -1,8 +1,17 @@
-const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
+import type { EventEmitter as EEType } from "node:events";
+const EventEmitter: typeof EEType = require("node:events");
 
 const { kEmptyObject } = require("internal/http");
 
-const { FakeSocket } = require("internal/http/FakeSocket");
+// Import the type for casting require
+import type Socket from "internal/http/FakeSocket";
+// The require call might return an object with the class as a property,
+// or the class directly depending on module format and bundler behavior.
+// We expect { FakeSocket: class } based on the original code and errors.
+// Use 'unknown' first to satisfy TS2352 if the types are truly incompatible structurally.
+const FakeSocketModule = require("internal/http/FakeSocket") as { FakeSocket: typeof Socket };
+// Ensure FakeSocket is correctly typed as the constructor
+const FakeSocket: typeof Socket = FakeSocketModule.FakeSocket;
 
 const ObjectDefineProperty = Object.defineProperty;
 
@@ -12,6 +21,7 @@ const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
 // Define Agent interface
+// Use `any` for kfakeSocket to avoid TS4023 errors leaking internal types.
 interface Agent extends InstanceType<typeof EventEmitter> {
   defaultPort: number;
   protocol: string;
@@ -26,15 +36,15 @@ interface Agent extends InstanceType<typeof EventEmitter> {
   scheduling: string;
   maxTotalSockets: any;
   totalSocketCount: number;
-  [kfakeSocket]?: any;
+  [kfakeSocket]?: any; // Use `any` to prevent leaking internal types
 
-  createConnection(): any;
+  createConnection(options?: any, cb?: (err: Error | null, socket: any) => void): any;
   getName(options?: any): string;
-  addRequest(): void;
-  createSocket(req: any, options: any, cb: (err: any, socket: any) => void): void;
-  removeSocket(): void;
-  keepSocketAlive(): boolean;
-  reuseSocket(): void;
+  addRequest(req: any, options: any, port?: number | null, localAddress?: string | null): void;
+  createSocket(req: any, options: any, cb: (err: Error | null, socket: any) => void): void;
+  removeSocket(socket: any, options: any, port?: number | null, localAddress?: string | null): void;
+  keepSocketAlive(socket: any): boolean;
+  reuseSocket(socket: any, req: any): void;
   destroy(): void;
 }
 
@@ -47,8 +57,10 @@ interface AgentConstructor {
   prototype: Agent;
 }
 
-function Agent(options = kEmptyObject) {
-  if (!(this instanceof Agent)) return new Agent(options);
+function Agent(this: Agent | void, options = kEmptyObject) {
+  // When called as a function, call as a constructor.
+  // Use 'Agent as AgentConstructor' to assert the type for the 'new' call.
+  if (!(this instanceof (Agent as AgentConstructor))) return new (Agent as AgentConstructor)(options);
 
   EventEmitter.$apply(this, []);
 
@@ -65,7 +77,8 @@ function Agent(options = kEmptyObject) {
 
   this.keepAliveMsecs = options.keepAliveMsecs || 1000;
   this.keepAlive = options.keepAlive || false;
-  this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
+  // Access static property via cast
+  this.maxSockets = options.maxSockets || (Agent as unknown as AgentConstructor).defaultMaxSockets;
   this.maxFreeSockets = options.maxFreeSockets || 256;
   this.scheduling = options.scheduling || "lifo";
   this.maxTotalSockets = options.maxTotalSockets;
@@ -78,20 +91,30 @@ $toClass(Agent, "Agent", EventEmitter);
 // Type assertion to help TypeScript understand Agent has static properties
 const AgentClass = Agent as unknown as AgentConstructor;
 
-ObjectDefineProperty(AgentClass, "globalAgent", {
-  get: function () {
-    return globalAgent;
-  },
-});
-
+// Define static properties after the function definition and $toClass call
+// It's generally safer to define statics after the class-like structure is set up.
 ObjectDefineProperty(AgentClass, "defaultMaxSockets", {
   get: function () {
     return Infinity;
   },
+  configurable: true,
+  enumerable: true,
 });
 
-Agent.prototype.createConnection = function () {
+// Define globalAgent after AgentClass is fully defined with its statics
+var globalAgent = new AgentClass();
+
+ObjectDefineProperty(AgentClass, "globalAgent", {
+  get: function () {
+    return globalAgent;
+  },
+  configurable: true,
+  enumerable: true,
+});
+
+Agent.prototype.createConnection = function (this: Agent) {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
+  // Use the FakeSocket constructor obtained from the require result.
   return (this[kfakeSocket] ??= new FakeSocket());
 };
 
@@ -111,8 +134,9 @@ Agent.prototype.addRequest = function () {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
 };
 
-Agent.prototype.createSocket = function (req, options, cb) {
+Agent.prototype.createSocket = function (this: Agent, req, options, cb) {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
+  // Use the FakeSocket constructor obtained from the require result.
   cb(null, (this[kfakeSocket] ??= new FakeSocket()));
 };
 
@@ -132,8 +156,6 @@ Agent.prototype.reuseSocket = function () {
 Agent.prototype.destroy = function () {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
 };
-
-var globalAgent = new Agent();
 
 const http_agent_exports = {
   Agent: AgentClass,

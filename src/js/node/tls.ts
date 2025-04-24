@@ -4,7 +4,8 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, isValidTLSArray } = require("internal/tls");
+const { _normalizeArgs } = require("internal/net") as any;
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -194,7 +195,7 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
-var InternalSecureContext = class SecureContext {
+class InternalSecureContext {
   context;
   key;
   cert;
@@ -245,14 +246,17 @@ var InternalSecureContext = class SecureContext {
     }
     this.context = context;
   }
-};
+}
 
 function SecureContext(options) {
   return new InternalSecureContext(options);
 }
 
 function createSecureContext(options) {
-  return new SecureContext(options);
+  if (options instanceof InternalSecureContext) {
+    return options;
+  }
+  return SecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -292,7 +296,7 @@ function TLSSocket(socket?, options?) {
 
   options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
 
-  NetSocket.$call(this, options);
+  (NetSocket as Function).$call(this, options);
 
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
@@ -471,12 +475,13 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-function Server(options, secureConnectionListener): void {
+function Server(options, secureConnectionListener) {
   if (!(this instanceof Server)) {
-    return new Server(options, secureConnectionListener);
+    // Use `any` to bypass TS2350
+    return new (Server as any)(options, secureConnectionListener);
   }
 
-  NetServer.$apply(this, [options, secureConnectionListener]);
+  (NetServer as Function).$apply(this, [options, secureConnectionListener]);
 
   this.key = undefined;
   this.cert = undefined;
@@ -598,7 +603,8 @@ function Server(options, secureConnectionListener): void {
 $toClass(Server, "Server", NetServer);
 
 function createServer(options, connectionListener) {
-  return new Server(options, connectionListener);
+  // Use `any` to bypass TS2350
+  return new (Server as any)(options, connectionListener);
 }
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
@@ -608,7 +614,7 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_MAX_VERSION = "TLSv1.3";
 
 function normalizeConnectArgs(listArgs) {
-  const args = net._normalizeArgs(listArgs);
+  const args = _normalizeArgs(listArgs);
   $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.
@@ -635,7 +641,8 @@ function connect(...args) {
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);
   }
-  return new TLSSocket(options).connect(normal);
+  // Use `any` to bypass TS2350
+  return new (TLSSocket as any)(options).connect(normal);
 }
 
 function getCiphers() {

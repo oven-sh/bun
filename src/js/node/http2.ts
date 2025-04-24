@@ -19,6 +19,9 @@ type Http2ConnectOptions = {
   settings?: Settings;
   protocol?: "https:" | "http:";
   createConnection?: Function;
+  port?: number | string; // Allow number for port internally
+  host?: string;
+  ALPNProtocols?: string[];
 };
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
@@ -400,6 +403,8 @@ class Http2ServerResponse extends Stream {
   [kHeaders];
   [kTrailers];
   [kStream];
+  req: Http2ServerRequest | undefined;
+  writable: boolean;
 
   constructor(stream, options?) {
     super(options);
@@ -868,13 +873,17 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   server.emit("request", request, response);
 }
 
-const proxySocketHandler = {
+const proxySocketHandler: ProxyHandler<Http2Session> = {
   get(session, prop) {
+    const socket = session[bunHTTP2Socket];
+    if (!socket) {
+      throw $ERR_HTTP2_SOCKET_UNBOUND();
+    }
     switch (prop) {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind.$call(session[prop], session);
+        return FunctionPrototypeBind.$call(socket[prop], socket);
       case "destroy":
       case "emit":
       case "end":
@@ -887,10 +896,6 @@ const proxySocketHandler = {
       case "setNoDelay":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
-        const socket = session[bunHTTP2Socket];
-        if (!socket) {
-          throw $ERR_HTTP2_SOCKET_UNBOUND();
-        }
         const value = socket[prop];
         return typeof value === "function" ? FunctionPrototypeBind.$call(value, socket) : value;
       }
@@ -904,11 +909,15 @@ const proxySocketHandler = {
     return ReflectGetPrototypeOf(socket);
   },
   set(session, prop, value) {
+    const socket = session[bunHTTP2Socket];
+    if (!socket) {
+      throw $ERR_HTTP2_SOCKET_UNBOUND();
+    }
     switch (prop) {
       case "setTimeout":
       case "ref":
       case "unref":
-        session[prop] = value;
+        socket[prop] = value;
         return true;
       case "destroy":
       case "emit":
@@ -922,10 +931,6 @@ const proxySocketHandler = {
       case "setNoDelay":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
-        const socket = session[bunHTTP2Socket];
-        if (!socket) {
-          throw $ERR_HTTP2_SOCKET_UNBOUND();
-        }
         socket[prop] = value;
         return true;
       }
@@ -1509,8 +1514,9 @@ type Settings = {
 };
 
 class Http2Session extends EventEmitter {
-  [bunHTTP2Socket]: TLSSocket | Socket | null;
+  [bunHTTP2Socket]: Socket | TLSSocket | null = null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+  [bunHTTP2Native]: typeof H2FrameParser | null = null;
 }
 
 function streamErrorFromCode(code: number) {
@@ -1570,7 +1576,7 @@ function markStreamClosed(stream: Http2Stream) {
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
-  [bunHTTP2StreamFinal]: VoidFunction | null = null;
+  [bunHTTP2StreamFinal]: (() => void) | null = null;
   [bunHTTP2StreamStatus]: number = 0;
 
   rstCode: number | undefined = undefined;
@@ -1579,6 +1585,8 @@ class Http2Stream extends Duplex {
   #sentTrailers: any;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  _writableState: any; // Added for compatibility
+
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -1607,7 +1615,7 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (!session) return 0;
     // native queued + socket queued
-    return session.bufferSize() + (session[bunHTTP2Socket]?.bufferSize || 0);
+    return session[bunHTTP2Native]?.bufferSize() + (session[bunHTTP2Socket]?.bufferSize || 0);
   }
 
   get sentHeaders() {
@@ -1659,7 +1667,7 @@ class Http2Stream extends Duplex {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+    session?.[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
     this.#sentTrailers = headers;
   }
 
@@ -1667,14 +1675,6 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (!session) return;
     session.setTimeout(timeout, callback);
-  }
-
-  get closed() {
-    return (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
-  }
-
-  get destroyed() {
-    return this[bunHTTP2Session] === null;
   }
 
   get state() {
@@ -1731,7 +1731,7 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    const { ending } = this._writableState;
+    const ending = this._writableState?.ending;
     this.push(null);
 
     if (!ending) {
@@ -1742,10 +1742,10 @@ class Http2Stream extends Duplex {
         this.emit("aborted");
       }
       // at this state destroyed will be true but we need to close the writable side
-      this._writableState.destroyed = false;
+      if (this._writableState) this._writableState.destroyed = false;
       this.end(); // why this is needed?
       // we now restore the destroyed flag
-      this._writableState.destroyed = true;
+      if (this._writableState) this._writableState.destroyed = true;
     }
 
     const session = this[bunHTTP2Session];
@@ -1771,7 +1771,7 @@ class Http2Stream extends Duplex {
     callback(err);
   }
 
-  _final(callback) {
+  _final(callback: (error?: Error | null) => void) {
     const status = this[bunHTTP2StreamStatus];
 
     if ((status & StreamState.WritableClosed) !== 0 || (status & StreamState.Closed) !== 0) {
@@ -1786,27 +1786,26 @@ class Http2Stream extends Duplex {
     // we always use the internal stream queue now
   }
 
-  end(chunk, encoding, callback) {
+  end(chunk?: any, encoding?: BufferEncoding | (() => void), cb?: () => void): this {
     const status = this[bunHTTP2StreamStatus];
-    if (typeof callback === "undefined") {
-      if (typeof chunk === "function") {
-        callback = chunk;
-        chunk = undefined;
-      } else if (typeof encoding === "function") {
-        callback = encoding;
-        encoding = undefined;
-      }
+    if (typeof chunk === "function") {
+      cb = chunk;
+      chunk = undefined;
+      encoding = undefined;
+    } else if (typeof encoding === "function") {
+      cb = encoding;
+      encoding = undefined;
     }
 
     if ((status & StreamState.EndedCalled) !== 0) {
-      typeof callback == "function" && callback();
-      return;
+      typeof cb == "function" && cb();
+      return this;
     }
     if (!chunk) {
       chunk = Buffer.alloc(0);
     }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
-    return super.end(chunk, encoding, callback);
+    return super.end(chunk, encoding as BufferEncoding, cb);
   }
 
   _writev(data, callback) {
@@ -1867,6 +1866,7 @@ class Http2Stream extends Duplex {
   }
 }
 class ClientHttp2Stream extends Http2Stream {
+  authority: string | undefined;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
@@ -1960,7 +1960,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   }
   try {
     this.respond(headers, options);
-    fs.createReadStream(null, {
+    fs.createReadStream(null as any, {
       fd: fd,
       autoClose: false,
       start: statOptions.offset ? statOptions.offset : undefined,
@@ -1988,7 +1988,7 @@ function afterOpen(options, headers, err, fd) {
     return;
   }
 
-  fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+  fs.fstat(fd, (err, stat) => doSendFileFD.call(this, options, fd, headers, err, stat));
 }
 
 class ServerHttp2Stream extends Http2Stream {
@@ -2039,7 +2039,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
-    fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
+    fs.open(path, "r", (err, fd) => afterOpen.call(this, options || {}, headers, err, fd));
   }
   respondWithFD(fd, headers, options) {
     if (this.destroyed || this.closed) {
@@ -2080,9 +2080,9 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
+      fs.fstat(fd.fd, (err, stat) => doSendFileFD.call(this, options, fd, headers, err, stat));
     } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+      fs.fstat(fd, (err, stat) => doSendFileFD.call(this, options, fd, headers, err, stat));
     }
   }
   additionalHeaders(headers) {
@@ -2224,9 +2224,9 @@ class ServerHttp2Stream extends Http2Stream {
 
 function connectWithProtocol(protocol: string, options: Http2ConnectOptions | string | URL, listener?: Function) {
   if (protocol === "http:") {
-    return net.connect(options, listener);
+    return net.connect(options as any, listener as any);
   }
-  return tls.connect(options, listener);
+  return tls.connect(options as any, listener as any);
 }
 
 function emitConnectNT(self, socket) {
@@ -2332,17 +2332,19 @@ function initOriginSet(session: Http2Session) {
   if (originSet === undefined) {
     const socket = session[bunHTTP2Socket];
     session[bunHTTP2OriginSet] = originSet = new Set<string>();
-    let hostName = socket.servername;
-    if (!hostName) {
-      if (socket.remoteFamily === "IPv6") {
-        hostName = `[${socket.remoteAddress}]`;
-      } else {
-        hostName = socket.remoteAddress;
+    if (socket) {
+      let hostName = (socket as TLSSocket).servername;
+      if (!hostName) {
+        if (socket.remoteFamily === "IPv6") {
+          hostName = `[${socket.remoteAddress}]`;
+        } else {
+          hostName = socket.remoteAddress;
+        }
       }
+      let originString = `https://${hostName}`;
+      if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+      originSet.add(originString);
     }
-    let originString = `https://${hostName}`;
-    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
-    originSet.add(originString);
   }
   return originSet;
 }
@@ -2354,15 +2356,15 @@ function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
   }
 }
 class ServerHttp2Session extends Http2Session {
-  [kServer]: Http2Server = null;
+  [kServer]: Http2Server | null = null;
   /// close indicates that we called closed
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
-  #socket_proxy: Proxy<TLSSocket | Socket>;
+  #socket_proxy: Proxy<Socket | TLSSocket>;
   #parser: typeof H2FrameParser | null;
-  #url: URL;
+  #url!: URL; // Initialized in constructor
   #isServer: boolean = false;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
@@ -2453,7 +2455,7 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
-        self[kServer].emit("stream", stream, headers, flags, rawheaders);
+        self[kServer]?.emit("stream", stream, headers, flags, rawheaders);
 
         stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         self.emit("stream", stream, headers, flags, rawheaders);
@@ -2506,7 +2508,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },
@@ -2622,9 +2624,9 @@ class ServerHttp2Session extends Http2Session {
     parser.origin(validOrigins);
   }
 
-  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
+  constructor(socket: Socket | TLSSocket, options?: Http2ConnectOptions, server?: Http2Server) {
     super();
-    this[kServer] = server;
+    this[kServer] = server || null;
     this.#connected = true;
     if (socket instanceof TLSSocket) {
       // server will receive the preface to know if is or not h2
@@ -2635,6 +2637,15 @@ class ServerHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = socket;
     const nativeSocket = socket._handle;
     this.#encrypted = socket instanceof TLSSocket;
+
+    // TODO: Initialize properly based on socket or options
+    try {
+      this.#url = new URL(
+        `${this.#encrypted ? "https" : "http"}://${socket.localAddress || "localhost"}:${socket.localPort || 80}`,
+      );
+    } catch {
+      this.#url = new URL("http://localhost"); // Fallback
+    }
 
     this.#parser = new H2FrameParser({
       native: nativeSocket,
@@ -2701,7 +2712,7 @@ class ServerHttp2Session extends Http2Session {
     if (this.#socket_proxy) return this.#socket_proxy;
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
-    this.#socket_proxy = new Proxy(this, proxySocketHandler);
+    this.#socket_proxy = new Proxy(this, proxySocketHandler as ProxyHandler<Socket | TLSSocket>);
     return this.#socket_proxy;
   }
   get state() {
@@ -2775,11 +2786,11 @@ class ServerHttp2Session extends Http2Session {
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
   // If specified, the callback function is registered as a handler for the 'close' event.
-  close(callback: Function) {
+  close(callback?: (...args: any[]) => void) {
     this.#closed = true;
 
     if (typeof callback === "function") {
-      this.on("close", callback);
+      this.on("close", callback as (...args: any[]) => void);
     }
     if (this.#connections === 0) {
       this.destroy();
@@ -2817,7 +2828,7 @@ class ClientHttp2Session extends Http2Session {
   #connected: boolean = false;
   #connections: number = 0;
 
-  #socket_proxy: Proxy<TLSSocket | Socket>;
+  #socket_proxy: Proxy<Socket | TLSSocket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
   #alpnProtocol: string | undefined = undefined;
@@ -2842,7 +2853,7 @@ class ClientHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 0) {
         // pushStream
-        const stream = new ClientHttp2Session(stream_id, self, null);
+        const stream = new ClientHttp2Stream(stream_id, self, null);
         self.#parser?.setStreamContext(stream_id, stream);
       }
     },
@@ -2973,7 +2984,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+        self.#parser?.emitErrorToAllStreams(errorCode);
       }
       self.close();
     },
@@ -3042,10 +3053,10 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSocket = socket._handle;
     if (nativeSocket) {
-      this.#parser.setNativeSocket(nativeSocket);
+      this.#parser?.setNativeSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
-    this.#parser.flush();
+    this.#parser?.flush();
   }
 
   #onClose() {
@@ -3170,7 +3181,7 @@ class ClientHttp2Session extends Http2Session {
     if (this.#socket_proxy) return this.#socket_proxy;
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
-    this.#socket_proxy = new Proxy(this, proxySocketHandler);
+    this.#socket_proxy = new Proxy(this, proxySocketHandler as ProxyHandler<Socket | TLSSocket>);
     return this.#socket_proxy;
   }
   get state() {
@@ -3207,16 +3218,16 @@ class ClientHttp2Session extends Http2Session {
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
     function onConnect() {
-      this.#onConnect(arguments);
+      this.#onConnect();
       listener?.$call(this, this);
     }
 
     // h2 with ALPNProtocols
-    let socket;
+    let socket: Socket | TLSSocket;
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
-      if (socket.secureConnecting === true) {
+      if ((socket as TLSSocket).secureConnecting === true) {
         socket.on("secureConnect", onConnect.bind(this));
       } else if (socket.connecting === true) {
         socket.on("connect", onConnect.bind(this));
@@ -3224,22 +3235,13 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
       }
     } else {
-      socket = connectWithProtocol(
-        protocol,
-        options
-          ? {
-              host: url.hostname,
-              port,
-              ALPNProtocols: ["h2"],
-              ...options,
-            }
-          : {
-              host: url.hostname,
-              port,
-              ALPNProtocols: ["h2"],
-            },
-        onConnect.bind(this),
-      );
+      const connectOptions = {
+        host: url.hostname,
+        port,
+        ALPNProtocols: ["h2"],
+        ...(options || {}),
+      };
+      socket = connectWithProtocol(protocol, connectOptions as any, onConnect.bind(this));
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;
@@ -3259,11 +3261,11 @@ class ClientHttp2Session extends Http2Session {
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
   // If specified, the callback function is registered as a handler for the 'close' event.
-  close(callback: Function) {
+  close(callback?: (...args: any[]) => void) {
     this.#closed = true;
 
     if (typeof callback === "function") {
-      this.once("close", callback);
+      this.once("close", callback as (...args: any[]) => void);
     }
     if (this.#connections === 0) {
       this.destroy();
@@ -3301,9 +3303,7 @@ class ClientHttp2Session extends Http2Session {
         throw $ERR_HTTP2_INVALID_STREAM();
       }
 
-      if (this.sentTrailers) {
-        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
-      }
+      // Removed: if (this.sentTrailers) { throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(); }
 
       if (headers == undefined) {
         headers = {};
@@ -3365,7 +3365,7 @@ class ClientHttp2Session extends Http2Session {
           options = { ...options, endStream: true };
         }
       }
-      let stream_id: number = this.#parser.getNextStream();
+      let stream_id: number = this.#parser?.getNextStream() ?? -1;
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       if (stream_id < 0) {
@@ -3375,9 +3375,9 @@ class ClientHttp2Session extends Http2Session {
       }
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
       if (typeof options === "undefined") {
-        this.#parser.request(stream_id, req, headers, sensitiveNames);
+        this.#parser?.request(stream_id, req, headers, sensitiveNames);
       } else {
-        this.#parser.request(stream_id, req, headers, sensitiveNames, options);
+        this.#parser?.request(stream_id, req, headers, sensitiveNames, options);
       }
       req.emit("ready");
       return req;
@@ -3420,9 +3420,9 @@ function sessionOnTimeout() {
     this.destroy();
   }
 }
-function connectionListener(socket: Socket) {
+function connectionListener(socket: Socket | TLSSocket) {
   const options = this[bunSocketServerOptions] || {};
-  if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
+  if (socket instanceof TLSSocket && (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1")) {
     // TODO: Fallback to HTTP/1.1
     // if (options.allowHTTP1 === true) {
 
@@ -3505,6 +3505,9 @@ class Http2Server extends net.Server {
       options.settings = { ...options.settings, ...settings };
     }
   }
+  close(callback?: (err?: Error) => void): this {
+    return super.close(callback);
+  }
 }
 
 function onErrorSecureServerSession(err, socket) {
@@ -3542,6 +3545,9 @@ class Http2SecureServer extends tls.Server {
     if (options) {
       options.settings = { ...options.settings, ...settings };
     }
+  }
+  close(callback?: (err?: Error) => void): this {
+    return super.close(callback);
   }
 }
 function createServer(options, onRequestHandler) {

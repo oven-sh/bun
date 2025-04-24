@@ -67,7 +67,12 @@ var promisify = function promisify(original) {
   defineCustomPromisify(fn, fn);
   return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
 };
-promisify.custom = kCustomPromisifiedSymbol;
+Object.defineProperty(promisify, "custom", {
+  value: kCustomPromisifiedSymbol,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 
 // Load node:timers/promises promisified functions onto the global timers.
 {

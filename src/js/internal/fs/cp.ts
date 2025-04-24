@@ -83,7 +83,7 @@ function getStats(src, dest, opts) {
   const statFunc = opts.dereference ? file => stat(file, { bigint: true }) : file => lstat(file, { bigint: true });
   return Promise.all([
     statFunc(src),
-    PromisePrototypeThen.$call(statFunc(dest), undefined, err => {
+    PromisePrototypeThen.$call(statFunc(dest), undefined, (err: any) => {
       if (err.code === "ENOENT") return null;
       throw err;
     }),
@@ -102,7 +102,7 @@ function pathExists(dest) {
   return PromisePrototypeThen.$call(
     stat(dest),
     () => true,
-    err => (err.code === "ENOENT" ? false : PromiseReject(err)),
+    (err: any) => (err.code === "ENOENT" ? false : PromiseReject(err)),
   );
 }
 
@@ -287,7 +287,7 @@ async function onLink(destStat, src, dest, opts) {
     resolvedSrc = resolve(dirname(src), resolvedSrc);
   }
   if (!destStat) {
-    return symlink(resolvedSrc, dest);
+    return symlink(resolvedSrc, dest, undefined, undefined);
   }
   let resolvedDest;
   try {
@@ -297,7 +297,7 @@ async function onLink(destStat, src, dest, opts) {
     // Windows may throw UNKNOWN error. If dest already exists,
     // fs throws error anyway, so no need to guard against it here.
     if (err.code === "EINVAL" || err.code === "UNKNOWN") {
-      return symlink(resolvedSrc, dest);
+      return symlink(resolvedSrc, dest, undefined, undefined);
     }
     throw err;
   }
@@ -333,7 +333,7 @@ async function onLink(destStat, src, dest, opts) {
 
 async function copyLink(resolvedSrc, dest) {
   await unlink(dest);
-  return symlink(resolvedSrc, dest);
+  return symlink(resolvedSrc, dest, undefined, undefined);
 }
 
 export default cpFn;

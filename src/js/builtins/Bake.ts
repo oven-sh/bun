@@ -129,16 +129,16 @@ export function renderRoutesForProdStatic(
           layouts,
         });
         if (paramGetter[Symbol.asyncIterator] != undefined) {
-          for await (const params of paramGetter) {
+          for await (const params of paramGetter as AsyncIterable<Record<string, string>>) {
             callRouteGenerator(type, i, layouts, pageModule, params);
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
-          for (const params of paramGetter) {
+          for (const params of paramGetter as Iterable<Record<string, string>>) {
             callRouteGenerator(type, i, layouts, pageModule, params);
           }
         } else {
           await Promise.all(
-            paramGetter.pages.map(params => {
+            (paramGetter as { pages: Array<Record<string, string>> }).pages.map(params => {
               callRouteGenerator(type, i, layouts, pageModule, params);
             }),
           );
@@ -147,5 +147,5 @@ export function renderRoutesForProdStatic(
         await doGenerateRoute(type, i, layouts, pageModule, null);
       }
     }),
-  );
+  ).then(() => {});
 }

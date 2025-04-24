@@ -80,7 +80,7 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
-function once(callback, { preserveReturnValue = false } = kEmptyObject) {
+function once(callback, { preserveReturnValue = false }: { preserveReturnValue?: boolean } = kEmptyObject as { preserveReturnValue?: boolean }) {
   let called = false;
   let returnValue;
   return function (...args) {

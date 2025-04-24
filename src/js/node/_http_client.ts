@@ -45,10 +45,13 @@ const {
 
 const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
-const { OutgoingMessage } = require("node:_http_outgoing");
+const { OutgoingMessage } = require("node:_http_outgoing") as {
+  OutgoingMessage: typeof import("node:_http_outgoing").OutgoingMessage;
+};
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
+const clearTimeout = globalThis.clearTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const fetch = Bun.fetch;
 
@@ -193,7 +196,7 @@ function ClientRequest(input, options, cb) {
 
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
-    this.socket.destroy(err);
+    this.socket?.destroy(err);
 
     return this;
   };
@@ -256,6 +259,7 @@ function ClientRequest(input, options, cb) {
     const protocol = this[kProtocol];
     const path = this[kPath];
     let host = this[kHost];
+    const port = this[kPort];
 
     const getURL = host => {
       if (isIPv6(host)) {
@@ -263,10 +267,10 @@ function ClientRequest(input, options, cb) {
       }
 
       if (path.startsWith("http://") || path.startsWith("https://")) {
-        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
+        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + port}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + port}${path}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw
@@ -282,7 +286,16 @@ function ClientRequest(input, options, cb) {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
-      const fetchOptions: any = {
+      const fetchOptions: RequestInit & {
+        timeout?: boolean;
+        decompress?: boolean;
+        keepalive?: boolean;
+        duplex?: "half" | "full";
+        tls?: any;
+        verbose?: boolean;
+        proxy?: string;
+        unix?: string;
+      } = {
         method,
         headers: this.getHeaders(),
         redirect: "manual",
@@ -307,7 +320,7 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          fetchOptions.body = async function* () {
+          fetchOptions.body = (async function* () {
             while (self[kBodyChunks]?.length > 0) {
               yield self[kBodyChunks].shift();
             }
@@ -334,7 +347,7 @@ function ClientRequest(input, options, cb) {
             }
 
             handleResponse?.();
-          };
+          })();
         }
       }
 
@@ -372,7 +385,7 @@ function ClientRequest(input, options, cb) {
           var res = (this.res = new IncomingMessage(response, {
             [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
             [reqSymbol]: this,
-          }));
+          } as any));
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           let timer;
@@ -467,7 +480,7 @@ function ClientRequest(input, options, cb) {
           const error = new Error(message);
           error.name = name;
           error.code = code;
-          error.syscall = syscall;
+          (error as any).syscall = syscall;
           if (!!$debug) globalReportError(error);
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
@@ -942,7 +955,7 @@ const ClientRequestPrototype = {
 };
 
 ClientRequest.prototype = ClientRequestPrototype;
-$setPrototypeDirect.$call(ClientRequest, OutgoingMessage);
+Object.setPrototypeOf(ClientRequest, OutgoingMessage);
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {

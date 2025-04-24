@@ -794,14 +794,23 @@ declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...
 declare function $rejectPromise(promise: Promise<unknown>, reason: unknown): void;
 declare function $resolvePromise(promise: Promise<unknown>, value: unknown): void;
 
-interface Map<K, V> {
-  $get: typeof Map.prototype.get;
-  $set: typeof Map.prototype.set;
-}
+declare global {
+  interface Map<K, V> {
+    $get: typeof Map.prototype.get;
+    $set: typeof Map.prototype.set;
+    $has: typeof Map.prototype.has;
+  }
 
-interface ObjectConstructor {
-  $defineProperty: typeof Object.defineProperty;
-  $defineProperties: typeof Object.defineProperties;
+  interface Set<T> {
+    $add: typeof Set.prototype.add;
+    $delete: typeof Set.prototype.delete;
+    $has: typeof Set.prototype.has;
+  }
+
+  interface ObjectConstructor {
+    $defineProperty: typeof Object.defineProperty;
+    $defineProperties: typeof Object.defineProperties;
+  }
 }
 
 declare const $Object: ObjectConstructor;

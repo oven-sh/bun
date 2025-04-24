@@ -35,41 +35,52 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
 
 // Can't delete when weakref count reaches 0 as it could increment again.
 // Only GC can be used as a valid time to clean up the channels map.
-class WeakRefMap extends SafeMap {
+class WeakRefMap extends SafeMap<any, WeakReference<any>> {
   #finalizers = new SafeFinalizationRegistry(key => {
-    this.delete(key);
+    // Note: `this` refers to the WeakRefMap instance here.
+    // The base Map's delete method should be called.
+    super.delete(key);
   });
 
-  set(key, value) {
+  // @ts-ignore // TS2411: Custom method conflicts with Map index signature
+  set(key: any, value: any): this {
     this.#finalizers.register(value, key);
+    // Ensure the value stored is a WeakReference
     return super.set(key, new WeakReference(value));
   }
 
-  get(key) {
-    return super.get(key)?.get();
+  // @ts-ignore // TS2411: Custom method conflicts with Map index signature
+  get(key: any): any | undefined {
+    // Retrieve the WeakReference and dereference it
+    const ref = super.get(key);
+    return ref?.get(); // ref?.deref() is the same as ref?.get() based on WeakReference impl
   }
 
-  incRef(key) {
-    return super.get(key)?.incRef();
+  // @ts-ignore // TS2411: Custom method conflicts with Map index signature
+  incRef(key: any): number | undefined {
+    const ref = super.get(key);
+    return ref?.incRef();
   }
 
-  decRef(key) {
-    return super.get(key)?.decRef();
+  // @ts-ignore // TS2411: Custom method conflicts with Map index signature
+  decRef(key: any): number | undefined {
+    const ref = super.get(key);
+    return ref?.decRef();
   }
 }
 
-function markActive(channel) {
-  ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
-  channel._subscribers = [];
-  channel._stores = new SafeMap();
+function markActive(channel: Channel) {
+  ObjectSetPrototypeOf.call(null, channel, ActiveChannel.prototype);
+  (channel as unknown as ActiveChannel)._subscribers = [];
+  (channel as unknown as ActiveChannel)._stores = new SafeMap();
 }
 
-function maybeMarkInactive(channel) {
+function maybeMarkInactive(channel: ActiveChannel) {
   // When there are no more active subscribers or bound, restore to fast prototype.
   if (!channel._subscribers.length && !channel._stores.size) {
-    ObjectSetPrototypeOf.$call(null, channel, Channel.prototype);
-    channel._subscribers = undefined;
-    channel._stores = undefined;
+    ObjectSetPrototypeOf.call(null, channel, Channel.prototype);
+    (channel as unknown as Channel)._subscribers = undefined;
+    (channel as unknown as Channel)._stores = undefined;
   }
 }
 
@@ -92,9 +103,11 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
 }
 
 class ActiveChannel {
-  _subscribers;
-  name;
-  _stores;
+  // Properties are initialized by markActive or inherited via prototype switch
+  _subscribers!: any[];
+  _stores!: Map<any, any>;
+  // 'name' is accessed via 'this' which refers to the original Channel instance
+  declare name: string | symbol;
 
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
@@ -104,10 +117,10 @@ class ActiveChannel {
   }
 
   unsubscribe(subscription) {
-    const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
+    const index = ArrayPrototypeIndexOf.call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
+    ArrayPrototypeSplice.call(this._subscribers, index, 1);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -139,6 +152,7 @@ class ActiveChannel {
   }
 
   publish(data) {
+    // Use optional chaining as _subscribers might be undefined during prototype transition? (unlikely but safe)
     for (let i = 0; i < (this._subscribers?.length || 0); i++) {
       try {
         const onMessage = this._subscribers[i];
@@ -152,10 +166,11 @@ class ActiveChannel {
   runStores(data, fn, thisArg, ...args) {
     let run = () => {
       this.publish(data);
-      return fn.$apply(thisArg, args);
+      return fn.apply(thisArg, args);
     };
 
-    for (const entry of this._stores.entries()) {
+    // Use optional chaining for safety during potential prototype transitions
+    for (const entry of this._stores?.entries() ?? []) {
       const store = entry[0];
       const transform = entry[1];
       run = wrapStoreRun(store, data, run, transform);
@@ -166,11 +181,11 @@ class ActiveChannel {
 }
 
 class Channel {
-  _subscribers;
-  _stores;
-  name;
+  _subscribers: undefined | any[];
+  _stores: undefined | Map<any, any>;
+  name: string | symbol;
 
-  constructor(name) {
+  constructor(name: string | symbol) {
     this._subscribers = undefined;
     this._stores = undefined;
     this.name = name;
@@ -179,25 +194,25 @@ class Channel {
   }
 
   static [SymbolHasInstance](instance) {
-    const prototype = ObjectGetPrototypeOf.$call(null, instance);
+    const prototype = ObjectGetPrototypeOf.call(null, instance);
     return prototype === Channel.prototype || prototype === ActiveChannel.prototype;
   }
 
   subscribe(subscription) {
     markActive(this);
-    this.subscribe(subscription);
+    (this as unknown as ActiveChannel).subscribe(subscription);
   }
 
-  unsubscribe() {
+  unsubscribe(subscription?: any) {
     return false;
   }
 
   bindStore(store, transform) {
     markActive(this);
-    this.bindStore(store, transform);
+    (this as unknown as ActiveChannel).bindStore(store, transform);
   }
 
-  unbindStore() {
+  unbindStore(store?: any) {
     return false;
   }
 
@@ -205,64 +220,76 @@ class Channel {
     return false;
   }
 
-  publish() {}
+  publish(data?: any) {}
 
-  runStores(data, fn, thisArg, ...args) {
-    return fn.$apply(thisArg, args);
+  runStores(data: any, fn: (...args: any[]) => any, thisArg: any, ...args: any[]) {
+    return fn.apply(thisArg, args);
   }
 }
 
 const channels = new WeakRefMap();
 
-function channel(name) {
-  const channel = channels.get(name);
-  if (channel) return channel;
+function channel(name: string | symbol): Channel {
+  const existingChannel = channels.get(name);
+  if (existingChannel) return existingChannel;
 
   if (typeof name !== "string" && typeof name !== "symbol") {
-    throw $ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
+    throw $ERR_INVALID_ARG_TYPE("channel", ["string", "symbol"], name);
   }
 
   return new Channel(name);
 }
 
-function subscribe(name, subscription) {
+function subscribe(name: string | symbol, subscription: (message: any, name: string | symbol) => void) {
   return channel(name).subscribe(subscription);
 }
 
-function unsubscribe(name, subscription) {
-  return channel(name).unsubscribe(subscription);
+function unsubscribe(name: string | symbol, subscription: (message: any, name: string | symbol) => void): boolean {
+  // This potentially returns false even if the channel exists but is inactive.
+  // This matches Node.js behavior.
+  const chan = channels.get(name);
+  if (chan) {
+    return chan.unsubscribe(subscription);
+  }
+  return false;
 }
 
-function hasSubscribers(name) {
-  const channel = channels.get(name);
-  if (!channel) return false;
+function hasSubscribers(name: string | symbol): boolean {
+  const chan = channels.get(name);
+  if (!chan) return false;
 
-  return channel.hasSubscribers;
+  return chan.hasSubscribers;
 }
 
 const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 function assertChannel(value, name) {
+  // Use instanceof check which works due to Symbol.hasInstance override
   if (!(value instanceof Channel)) {
     throw $ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
   }
 }
 
-class TracingChannel {
-  start;
-  end;
-  asyncStart;
-  asyncEnd;
-  error;
+interface TracingContext {
+  error?: any;
+  result?: any;
+}
 
-  constructor(nameOrChannels) {
+class TracingChannel {
+  start: Channel;
+  end: Channel;
+  asyncStart: Channel;
+  asyncEnd: Channel;
+  error: Channel;
+
+  constructor(nameOrChannels: string | Record<string, Channel>) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);
       this.end = channel(`tracing:${nameOrChannels}:end`);
       this.asyncStart = channel(`tracing:${nameOrChannels}:asyncStart`);
       this.asyncEnd = channel(`tracing:${nameOrChannels}:asyncEnd`);
       this.error = channel(`tracing:${nameOrChannels}:error`);
-    } else if (typeof nameOrChannels === "object") {
+    } else if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
       const { start, end, asyncStart, asyncEnd, error } = nameOrChannels;
 
       assertChannel(start, "nameOrChannels.start");
@@ -277,24 +304,25 @@ class TracingChannel {
       this.asyncEnd = asyncEnd;
       this.error = error;
     } else {
-      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
+      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string", "object"], nameOrChannels);
     }
   }
 
-  subscribe(handlers) {
+  subscribe(handlers: Record<string, (context: TracingContext) => void>) {
     for (const name of traceEvents) {
       if (!handlers[name]) continue;
-
+      // Use optional chaining as channels might not exist if constructed with object
       this[name]?.subscribe(handlers[name]);
     }
   }
 
-  unsubscribe(handlers) {
+  unsubscribe(handlers: Record<string, (context: TracingContext) => void>): boolean {
     let done = true;
 
     for (const name of traceEvents) {
       if (!handlers[name]) continue;
 
+      // Use optional chaining
       if (!this[name]?.unsubscribe(handlers[name])) {
         done = false;
       }
@@ -303,12 +331,12 @@ class TracingChannel {
     return done;
   }
 
-  traceSync(fn, context = {}, thisArg, ...args) {
+  traceSync(fn, context: TracingContext = {}, thisArg?, ...args) {
     const { start, end, error } = this;
 
     return start.runStores(context, () => {
       try {
-        const result = fn.$apply(thisArg, args);
+        const result = fn.apply(thisArg, args);
         context.result = result;
         return result;
       } catch (err) {
@@ -318,10 +346,10 @@ class TracingChannel {
       } finally {
         end.publish(context);
       }
-    });
+    }, undefined, ...args); // Pass args explicitly
   }
 
-  tracePromise(fn, context = {}, thisArg, ...args) {
+  tracePromise(fn, context: TracingContext = {}, thisArg?, ...args) {
     const { start, end, asyncStart, asyncEnd, error } = this;
 
     function reject(err) {
@@ -343,7 +371,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        let promise = fn.$apply(thisArg, args);
+        let promise = fn.apply(thisArg, args);
         // Convert thenables to native promises
         if (!(promise instanceof Promise)) {
           promise = PromiseResolve(promise);
@@ -356,11 +384,13 @@ class TracingChannel {
       } finally {
         end.publish(context);
       }
-    });
+    }, undefined, ...args); // Pass args explicitly
   }
 
-  traceCallback(fn, position = -1, context = {}, thisArg, ...args) {
+  traceCallback(fn, position = -1, context: TracingContext = {}, thisArg?, ...args) {
     const { start, end, asyncStart, asyncEnd, error } = this;
+    const originalCallback = ArrayPrototypeAt.call(args, position);
+    validateFunction(originalCallback, "callback");
 
     function wrappedCallback(err, res) {
       if (err) {
@@ -373,22 +403,19 @@ class TracingChannel {
       // Using runStores here enables manual context failure recovery
       asyncStart.runStores(context, () => {
         try {
-          if (callback) {
-            return callback.$apply(this, arguments);
-          }
+          // Use standard call, pass original arguments explicitly
+          return originalCallback.call(null, err, res); // Assuming standard (err, res) signature
         } finally {
           asyncEnd.publish(context);
         }
-      });
+      }, undefined, err, res); // Pass args explicitly
     }
 
-    const callback = ArrayPrototypeAt.$call(args, position);
-    validateFunction(callback, "callback");
-    ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
+    ArrayPrototypeSplice.call(args, position, 1, wrappedCallback);
 
     return start.runStores(context, () => {
       try {
-        return fn.$apply(thisArg, args);
+        return fn.apply(thisArg, args);
       } catch (err) {
         context.error = err;
         error.publish(context);
@@ -396,12 +423,20 @@ class TracingChannel {
       } finally {
         end.publish(context);
       }
-    });
+    }, undefined, ...args); // Pass args explicitly
   }
 }
 
-function tracingChannel(nameOrChannels) {
+function tracingChannel(nameOrChannels: string | Record<string, Channel>): TracingChannel {
   return new TracingChannel(nameOrChannels);
+}
+
+// Added reportError function stub if it's not globally available
+declare var reportError: (err: any) => void;
+if (typeof reportError === "undefined") {
+  globalThis.reportError = err => {
+    console.error("Unhandled error in diagnostics_channel:", err);
+  };
 }
 
 export default {

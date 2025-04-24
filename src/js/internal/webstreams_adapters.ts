@@ -17,6 +17,8 @@ const { Buffer } = require("node:buffer");
 const { kEmptyObject } = require("internal/shared");
 const { validateBoolean, validateObject } = require("internal/validators");
 const finished = require("internal/streams/end-of-stream");
+import NativeReadableModule from "internal/streams/native-readable";
+type NativeReadable = ReturnType<typeof NativeReadableModule.constructNativeReadable>;
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
 
@@ -30,21 +32,22 @@ const SafePromisePrototypeFinally = Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-function tryTransferToNativeReadable(stream, options) {
+function tryTransferToNativeReadable(stream: ReadableStream, options: any): NativeReadable | undefined {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
     return undefined;
   }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
+  // TS2349 fixed by accessing the function property on the imported module object.
+  return NativeReadableModule.constructNativeReadable(stream, options);
 }
 
 class ReadableFromWeb extends Readable {
-  #reader;
-  #closed;
-  #pendingChunks;
-  #stream;
+  #reader: $ReadableStreamDefaultReader | undefined;
+  #closed: boolean;
+  #pendingChunks: any[];
+  #stream: ReadableStream | undefined;
 
-  constructor(options, stream) {
+  constructor(options: any, stream: ReadableStream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
     super({
       objectMode,
@@ -79,7 +82,7 @@ class ReadableFromWeb extends Readable {
     return false;
   }
 
-  #handleDone(reader) {
+  #handleDone(reader: $ReadableStreamDefaultReader) {
     reader.releaseLock();
     this.#reader = undefined;
     this.#closed = true;
@@ -88,11 +91,11 @@ class ReadableFromWeb extends Readable {
   }
 
   async _read() {
-    $debug("ReadableFromWeb _read()", this.__id);
+    $debug("ReadableFromWeb _read()", (this as any).__id);
     var stream = this.#stream,
       reader = this.#reader;
     if (stream) {
-      reader = this.#reader = stream.getReader();
+      reader = this.#reader = stream.getReader() as $ReadableStreamDefaultReader;
       this.#stream = undefined;
     } else if (this.#drainPending()) {
       return;
@@ -103,21 +106,22 @@ class ReadableFromWeb extends Readable {
       do {
         var done = false,
           value;
-        const firstResult = reader.readMany();
+        // reader must be defined here based on the logic above
+        const firstResult = reader!.readMany();
 
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          ({ done, value } = (await firstResult) as { done: boolean; value: any[] });
 
           if (this.#closed) {
             this.#pendingChunks.push(...value);
             return;
           }
         } else {
-          ({ done, value } = firstResult);
+          ({ done, value } = firstResult as { done: boolean; value: any[] });
         }
 
         if (done) {
-          this.#handleDone(reader);
+          this.#handleDone(reader!);
           return;
         }
 
@@ -149,6 +153,19 @@ class ReadableFromWeb extends Readable {
           this.#closed = true;
           callback(error);
         });
+      } else {
+        // If reader is not yet created, ensure stream is cancelled if it exists
+        if (this.#stream) {
+          this.#stream.cancel(error).finally(() => {
+            this.#closed = true;
+            callback(error);
+          });
+          this.#stream = undefined;
+        } else {
+          // Should not happen, but handle defensively
+          this.#closed = true;
+          callback(error);
+        }
       }
 
       return;
@@ -177,9 +194,9 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
     case cause?.code === "ERR_STREAM_PREMATURE_CLOSE": {
       return $makeAbortError(undefined, { cause });
     }
-    case ZLIB_FAILURES.has(cause?.code): {
-      const error = new TypeError(undefined, { cause });
-      error.code = cause.code;
+    case cause !== null && ZLIB_FAILURES.has(cause.code!): {
+      const error = new TypeError("", { cause });
+      error.code = cause!.code;
       return error;
     }
     default:
@@ -216,7 +233,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
     if (backpressurePromise !== undefined) backpressurePromise.resolve();
   }
 
-  const cleanup = finished(streamWritable, error => {
+  const cleanup = finished(streamWritable, undefined, error => {
     error = handleKnownInternalErrors(error);
 
     cleanup();
@@ -282,7 +299,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
   );
 }
 
-function newStreamWritableFromWritableStream(writableStream, options = kEmptyObject) {
+function newStreamWritableFromWritableStream(writableStream, options: any = kEmptyObject) {
   if (!$inheritsWritableStream(writableStream)) {
     throw $ERR_INVALID_ARG_TYPE("writableStream", "WritableStream", writableStream);
   }
@@ -430,7 +447,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
   return writable;
 }
 
-function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
+function newReadableStreamFromStreamReadable(streamReadable, options: any = kEmptyObject) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
   // whose readable option is false. For a Duplex that is not readable,
@@ -475,7 +492,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
 
   streamReadable.pause();
 
-  const cleanup = finished(streamReadable, error => {
+  const cleanup = finished(streamReadable, undefined, error => {
     error = handleKnownInternalErrors(error);
 
     cleanup();
@@ -511,7 +528,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   );
 }
 
-function newStreamReadableFromReadableStream(readableStream, options: Record<string, unknown> = kEmptyObject) {
+function newStreamReadableFromReadableStream(readableStream, options: any = kEmptyObject) {
   if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
   }
@@ -569,7 +586,7 @@ function newReadableWritablePairFromDuplex(duplex) {
   return { writable, readable };
 }
 
-function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = kEmptyObject) {
+function newStreamDuplexFromReadableWritablePair(pair: any = kEmptyObject, options: any = kEmptyObject) {
   validateObject(pair, "pair");
   const { readable: readableStream, writable: writableStream } = pair;
 

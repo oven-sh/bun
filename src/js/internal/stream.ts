@@ -15,11 +15,12 @@ const utils = require("internal/streams/utils");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
 const Stream = require("internal/streams/legacy").Stream;
 
-Stream.isDestroyed = utils.isDestroyed;
-Stream.isDisturbed = utils.isDisturbed;
-Stream.isErrored = utils.isErrored;
-Stream.isReadable = utils.isReadable;
-Stream.isWritable = utils.isWritable;
+// Add missing static methods/properties to Stream
+(Stream as any).isDestroyed = utils.isDestroyed;
+(Stream as any).isDisturbed = utils.isDisturbed;
+(Stream as any).isErrored = utils.isErrored;
+(Stream as any).isReadable = utils.isReadable;
+(Stream as any).isWritable = utils.isWritable;
 
 Stream.Readable = require("internal/streams/readable");
 const streamKeys = ObjectKeys(streamReturningOperators);
@@ -65,14 +66,14 @@ for (let i = 0; i < promiseKeys.length; i++) {
 Stream.Writable = require("internal/streams/writable");
 Stream.Duplex = require("internal/streams/duplex");
 Stream.Transform = require("internal/streams/transform");
-Stream.PassThrough = require("internal/streams/passthrough");
-Stream.duplexPair = require("internal/streams/duplexpair");
+Stream.PassThrough = require("internal/streams/passthrough").default;
+Stream.duplexPair = require("internal/streams/duplexpair").default;
 Stream.pipeline = pipeline;
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 Stream.addAbortSignal = addAbortSignal;
-Stream.finished = eos;
-Stream.destroy = destroyer;
-Stream.compose = compose;
+Stream.finished = eos.finished;
+(Stream as any).destroy = destroyer;
+(Stream as any).compose = compose;
 Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
 Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
 
@@ -93,7 +94,7 @@ ObjectDefineProperty(pipeline, customPromisify, {
   },
 });
 
-ObjectDefineProperty(eos, customPromisify, {
+ObjectDefineProperty(eos.finished, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {
@@ -101,13 +102,38 @@ ObjectDefineProperty(eos, customPromisify, {
   },
 });
 
+// Add __promisify__ for util.promisify compatibility
+ObjectDefineProperty(pipeline, "__promisify__", {
+  __proto__: null,
+  enumerable: false,
+  configurable: true,
+  writable: true,
+  value: promises.pipeline,
+});
+ObjectDefineProperty(eos.finished, "__promisify__", {
+  __proto__: null,
+  enumerable: false,
+  configurable: true,
+  writable: true,
+  value: promises.finished,
+});
+
 // Backwards-compat with node 0.4.x
 Stream.Stream = Stream;
 
-Stream._isArrayBufferView = isArrayBufferView;
-Stream._isUint8Array = isUint8Array;
-Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
-  return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+(Stream as any)._isArrayBufferView = isArrayBufferView;
+(Stream as any)._isUint8Array = isUint8Array;
+(Stream as any)._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk: Uint8Array) {
+  // chunk.buffer is ArrayBufferLike, but $Buffer expects ArrayBuffer.
+  // If chunk.buffer is not an ArrayBuffer, we need to copy it into a new ArrayBuffer.
+  // SharedArrayBuffer is not supported by Buffer, so we must copy.
+  let ab = chunk.buffer;
+  if (!(ab instanceof ArrayBuffer)) {
+    // Copy to a new ArrayBuffer
+    ab = new Uint8Array(chunk).buffer;
+    return new $Buffer(ab as ArrayBuffer, 0, chunk.byteLength);
+  }
+  return new $Buffer(ab as ArrayBuffer, chunk.byteOffset, chunk.byteLength);
 };
 
 export default Stream;

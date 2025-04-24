@@ -683,7 +683,10 @@ export function slice(this: BufferExt, start, end) {
 
   var start_ = adjustOffset(start, byteLength);
   var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;
-  return new $Buffer(buffer, byteOffset + start_, end_ > start_ ? end_ - start_ : 0);
+  // The $Buffer constructor overload expects ArrayBuffer, not ArrayBufferLike.
+  // So we must cast buffer to ArrayBuffer if it's a SharedArrayBuffer.
+  // This is safe because Buffer is always backed by ArrayBuffer in Bun.
+  return new $Buffer(buffer as ArrayBuffer, byteOffset + start_, end_ > start_ ? end_ - start_ : 0);
 }
 
 $getter;

@@ -8,21 +8,21 @@ function addAbortListener(signal: AbortSignal, listener: EventListener): Disposa
   validateAbortSignal(signal, "signal");
   validateFunction(listener, "listener");
 
-  let removeEventListener;
+  let removeEventListener: (() => void) | undefined;
   if (signal.aborted) {
     queueMicrotask(() => listener());
   } else {
     // TODO(atlowChemi) add { subscription: true } and return directly
     signal.addEventListener("abort", listener, { once: true, [kResistStopPropagation]: true });
     removeEventListener = () => {
-      signal.removeEventListener("abort", listener);
+      signal.removeEventListener("abort", listener, { [kResistStopPropagation]: true });
     };
   }
   return {
     [Symbol.dispose]() {
-      removeEventListener?.();
+      if (removeEventListener) removeEventListener();
     },
-  };
+  } as Disposable;
 }
 
 export default {

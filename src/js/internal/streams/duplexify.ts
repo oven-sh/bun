@@ -21,22 +21,24 @@ const from = require("internal/streams/from");
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 class Duplexify extends Duplex {
+  $readableState: any;
+  $writableState: any;
   constructor(options) {
     super(options);
 
     // https://github.com/nodejs/node/pull/34385
 
     if (options?.readable === false) {
-      this._readableState.readable = false;
-      this._readableState.ended = true;
-      this._readableState.endEmitted = true;
+      this.$readableState.readable = false;
+      this.$readableState.ended = true;
+      this.$readableState.endEmitted = true;
     }
 
     if (options?.writable === false) {
-      this._writableState.writable = false;
-      this._writableState.ending = true;
-      this._writableState.ended = true;
-      this._writableState.finished = true;
+      this.$writableState.writable = false;
+      this.$writableState.ending = true;
+      this.$writableState.ended = true;
+      this.$writableState.finished = true;
     }
   }
 }
@@ -96,8 +98,8 @@ function duplexify(body, name?) {
           }
         },
         err => {
-          destroyer(d, err);
-        },
+          destroyer(d, err, null, false);
+        }
       );
 
       return (d = new Duplexify({
@@ -167,8 +169,8 @@ function duplexify(body, name?) {
         d.push(null);
       },
       err => {
-        destroyer(d, err);
-      },
+        destroyer(d, err, null, false);
+      }
     );
 
     return (d = new Duplexify({
@@ -191,7 +193,7 @@ function duplexify(body, name?) {
       "{ readable, writable } pair",
       "Promise",
     ],
-    body,
+    body
   );
 }
 
@@ -212,7 +214,7 @@ function fromAsyncGen(fn) {
         yield chunk;
       }
     })(),
-    { signal },
+    { signal }
   );
 
   return {
@@ -235,7 +237,7 @@ function fromAsyncGen(fn) {
 }
 
 function _duplexify(pair) {
-  const r = pair.readable && typeof pair.readable.read !== "function" ? Readable.wrap(pair.readable) : pair.readable;
+  const r = pair.readable && typeof pair.readable.read !== "function" ? Readable["$wrap"](pair.readable) : pair.readable;
   const w = pair.writable;
 
   let readable = !!isReadable(r);
@@ -270,24 +272,24 @@ function _duplexify(pair) {
   });
 
   if (writable) {
-    eos(w, err => {
+    eos(w, (err) => {
       writable = false;
       if (err) {
-        destroyer(r, err);
+        destroyer(r, err, null, false);
       }
       onfinished(err);
     });
 
     d._write = function (chunk, encoding, callback) {
-      if (w.write(chunk, encoding)) {
-        callback();
+      if (w.write(chunk, encoding, callback)) {
+        // If write returns true, callback is called immediately
       } else {
         ondrain = callback;
       }
     };
 
     d._final = function (callback) {
-      w.end();
+      w.end(undefined, undefined, callback);
       onfinish = callback;
     };
 
@@ -309,10 +311,10 @@ function _duplexify(pair) {
   }
 
   if (readable) {
-    eos(r, err => {
+    eos(r, (err) => {
       readable = false;
       if (err) {
-        destroyer(r, err);
+        destroyer(r, err, null, false);
       }
       onfinished(err);
     });
@@ -358,8 +360,8 @@ function _duplexify(pair) {
       callback(err);
     } else {
       onclose = callback;
-      destroyer(w, err);
-      destroyer(r, err);
+      destroyer(w, err, null, false);
+      destroyer(r, err, null, false);
     }
   };
 

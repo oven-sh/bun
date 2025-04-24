@@ -6,7 +6,29 @@ const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
-const kDefaultOptions = kEmptyObject;
+const kDefaultFilePath = Bun.main; // Defined kDefaultFilePath
+
+// Define internal types used by create* functions
+type TestFnCallback = (ctx: TestContext) => unknown | Promise<unknown>;
+type DescribeFnCallback = (ctx: TestContext) => unknown | Promise<unknown>;
+type HookFnCallback = () => unknown | Promise<unknown>;
+
+type TestOptions = {
+  concurrency?: number | boolean | null;
+  only?: boolean;
+  signal?: AbortSignal;
+  skip?: boolean | string;
+  todo?: boolean | string;
+  timeout?: number;
+  plan?: number;
+};
+
+type HookOptions = {
+  signal?: AbortSignal;
+  timeout?: number;
+};
+
+const kDefaultOptions = kEmptyObject as TestOptions; // Cast here for default
 
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
@@ -16,11 +38,11 @@ function mock() {
   throwNotImplemented("mock()", 5090, "Use `bun:test` in the interim.");
 }
 
-function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
+function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject as { serializers?: Function[] }) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
 }
 
-function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmptyObject) {
+function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmptyObject as { serializers?: Function[] }) {
   throwNotImplemented("snapshot()", 5090, "Use `bun:test` in the interim.");
 }
 
@@ -32,14 +54,14 @@ const assert = {
 };
 
 // Delete deprecated methods on assert (required to pass node's tests)
-delete assert.AssertionError;
-delete assert.CallTracker;
-delete assert.strict;
+delete (assert as any).AssertionError;
+delete (assert as any).CallTracker;
+delete (assert as any).strict;
 
 /**
  * @link https://nodejs.org/api/test.html#class-suitecontext
  */
-class SuiteContext {
+export class SuiteContext { // Exported
   #name: string | undefined;
   #filePath: string | undefined;
   #abortController?: AbortController;
@@ -68,7 +90,7 @@ class SuiteContext {
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
  */
-class TestContext {
+export class TestContext { // Exported
   #insideTest: boolean;
   #name: string | undefined;
   #filePath: string | undefined;
@@ -116,7 +138,7 @@ class TestContext {
     console.log(message);
   }
 
-  plan(_count: number, _options: { wait?: boolean } = kEmptyObject) {
+  plan(_count: number, _options: { wait?: boolean } = kEmptyObject as { wait?: boolean }) {
     throwNotImplemented("plan()", 5090, "Use `bun:test` in the interim.");
   }
 
@@ -165,7 +187,7 @@ class TestContext {
     afterEach(fn);
   }
 
-  waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
+  waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject as { timeout?: number }) {
     throwNotImplemented("waitFor()", 5090, "Use `bun:test` in the interim.");
   }
 
@@ -176,15 +198,15 @@ class TestContext {
       throwNotImplemented("test() inside another test()", 5090, "Use `bun:test` in the interim.");
     }
 
-    const { test } = bunTest(this);
+    const { test: bunTestFn } = bunTest(this);
     if (options.only) {
-      test.only(name, fn);
+      bunTestFn.only(name, fn);
     } else if (options.todo) {
-      test.todo(name, fn);
+      bunTestFn.todo(name, fn);
     } else if (options.skip) {
-      test.skip(name, fn);
+      bunTestFn.skip(name, fn);
     } else {
-      test(name, fn);
+      bunTestFn(name, fn);
     }
   }
 
@@ -195,8 +217,8 @@ class TestContext {
       throwNotImplemented("describe() inside another test()", 5090, "Use `bun:test` in the interim.");
     }
 
-    const { describe } = bunTest(this);
-    describe(name, fn);
+    const { describe: bunDescribeFn } = bunTest(this);
+    bunDescribeFn(name, fn);
   }
 }
 
@@ -204,54 +226,54 @@ function bunTest(ctx: SuiteContext | TestContext) {
   return jest(ctx.filePath);
 }
 
-let ctx = new TestContext(false, undefined, Bun.main, undefined);
+let ctx: TestContext | SuiteContext = new TestContext(false, undefined, Bun.main, undefined); // Use union type
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
-  describe(name, fn);
+  const { describe: bunDescribeFn } = bunTest(ctx); // Use different name
+  bunDescribeFn(name, fn);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
-  describe.skip(name, fn);
+  const { describe: bunDescribeFn } = bunTest(ctx); // Use different name
+  bunDescribeFn.skip(name, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
-  describe.todo(name, fn);
+  const { describe: bunDescribeFn } = bunTest(ctx); // Use different name
+  bunDescribeFn.todo(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest(ctx);
-  describe.only(name, fn);
+  const { describe: bunDescribeFn } = bunTest(ctx); // Use different name
+  bunDescribeFn.only(name, fn);
 };
 
-function test(arg0: unknown, arg1: unknown, arg2: unknown) {
+function testFnWrapper(arg0: unknown, arg1: unknown, arg2: unknown) { // Renamed original test function
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
-  test(name, fn, options);
+  const { test: bunTestFn } = bunTest(ctx); // Use different name
+  bunTestFn(name, fn, options);
 }
 
-test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
+testFnWrapper.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
-  test.skip(name, fn, options);
+  const { test: bunTestFn } = bunTest(ctx); // Use different name
+  bunTestFn.skip(name, fn, options);
 };
 
-test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
+testFnWrapper.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
-  test.todo(name, fn, options);
+  const { test: bunTestFn } = bunTest(ctx); // Use different name
+  bunTestFn.todo(name, fn, options);
 };
 
-test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
+testFnWrapper.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest(ctx);
-  test.only(name, fn, options);
+  const { test: bunTestFn } = bunTest(ctx); // Use different name
+  bunTestFn.only(name, fn, options);
 };
 
 function before(arg0: unknown, arg1: unknown) {
@@ -268,59 +290,60 @@ function after(arg0: unknown, arg1: unknown) {
 
 function beforeEach(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { beforeEach } = bunTest(ctx);
-  beforeEach(fn);
+  const { beforeEach: bunBeforeEach } = bunTest(ctx); // Use different name
+  bunBeforeEach(fn);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
   const { fn } = createHook(arg0, arg1);
-  const { afterEach } = bunTest(ctx);
-  afterEach(fn);
+  const { afterEach: bunAfterEach } = bunTest(ctx); // Use different name
+  bunAfterEach(fn);
 }
 
-function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
+
+function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown): { name: string; options: TestOptions; fn: TestFnCallback | DescribeFnCallback } {
   let name: string;
   let options: unknown;
-  let fn: TestFn;
+  let fn: TestFnCallback | DescribeFnCallback; // Use union type
 
   if (typeof arg0 === "function") {
     name = arg0.name || kDefaultName;
-    fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
+    fn = arg0 as TestFnCallback | DescribeFnCallback;
+    if (typeof arg1 === "object" && arg1 !== null) { // Check for null
       options = arg1 as TestOptions;
     } else {
       options = kDefaultOptions;
     }
   } else if (typeof arg0 === "string") {
     name = arg0;
-    if (typeof arg1 === "object") {
+    if (typeof arg1 === "object" && arg1 !== null) { // Check for null
       options = arg1 as TestOptions;
       if (typeof arg2 === "function") {
-        fn = arg2 as TestFn;
+        fn = arg2 as TestFnCallback | DescribeFnCallback;
       } else {
-        fn = kDefaultFunction;
+        fn = kDefaultFunction as TestFnCallback | DescribeFnCallback; // Cast default
       }
     } else if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
+      fn = arg1 as TestFnCallback | DescribeFnCallback;
       options = kDefaultOptions;
     } else {
-      fn = kDefaultFunction;
+      fn = kDefaultFunction as TestFnCallback | DescribeFnCallback; // Cast default
       options = kDefaultOptions;
     }
   } else {
     name = kDefaultName;
-    fn = kDefaultFunction;
+    fn = kDefaultFunction as TestFnCallback | DescribeFnCallback; // Cast default
     options = kDefaultOptions;
   }
 
   return { name, options: options as TestOptions, fn };
 }
 
-function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
+function createTest(arg0: unknown, arg1: unknown, arg2: unknown): { name: string; options: TestOptions; fn: (done: (error?: unknown) => void) => void } {
+  const { name, options, fn: userFn } = parseTestOptions(arg0, arg1, arg2);
 
   const originalContext = ctx;
-  const context = new TestContext(true, name, ctx.filePath, originalContext);
+  const context = new TestContext(true, name, ctx.filePath, originalContext as TestContext); // Cast parent
 
   const runTest = (done: (error?: unknown) => void) => {
     ctx = context;
@@ -334,7 +357,8 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 
     let result: unknown;
     try {
-      result = fn(context);
+      // Ensure userFn is called with the correct context type (TestContext)
+      result = (userFn as TestFnCallback)(context);
     } catch (error) {
       endTest(error);
       return;
@@ -349,11 +373,12 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   return { name, options, fn: runTest };
 }
 
-function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn, options } = parseTestOptions(arg0, arg1, arg2);
+function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown): { name: string; options: TestOptions; fn: () => unknown } {
+  const { name, fn: userFn, options } = parseTestOptions(arg0, arg1, arg2);
 
   const originalContext = ctx;
-  const context = new TestContext(false, name, ctx.filePath, originalContext);
+  // Describe creates a new TestContext, not SuiteContext, based on implementation
+  const context = new TestContext(false, name, ctx.filePath, originalContext as TestContext); // Cast parent
 
   const runDescribe = () => {
     ctx = context;
@@ -362,7 +387,8 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
     };
 
     try {
-      return fn(context);
+      // Ensure userFn is called with the correct context type (TestContext)
+      return (userFn as DescribeFnCallback)(context);
     } finally {
       endDescribe();
     }
@@ -371,32 +397,32 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
   return { name, options, fn: runDescribe };
 }
 
-function parseHookOptions(arg0: unknown, arg1: unknown) {
-  let fn: HookFn | undefined;
+function parseHookOptions(arg0: unknown, arg1: unknown): { fn: HookFnCallback; options: HookOptions } {
+  let fn: HookFnCallback | undefined;
   let options: HookOptions;
 
   if (typeof arg0 === "function") {
-    fn = arg0 as HookFn;
+    fn = arg0 as HookFnCallback;
   } else {
-    fn = kDefaultFunction;
+    fn = kDefaultFunction as HookFnCallback; // Cast default
   }
 
-  if (typeof arg1 === "object") {
+  if (typeof arg1 === "object" && arg1 !== null) { // Check for null
     options = arg1 as HookOptions;
   } else {
-    options = kDefaultOptions;
+    options = kEmptyObject as HookOptions; // Use casted default
   }
 
   return { fn, options };
 }
 
-function createHook(arg0: unknown, arg1: unknown) {
-  const { fn, options } = parseHookOptions(arg0, arg1);
+function createHook(arg0: unknown, arg1: unknown): { options: HookOptions; fn: (done: (error?: unknown) => void) => void } {
+  const { fn: userFn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
     let result: unknown;
     try {
-      result = fn();
+      result = userFn(); // Hook functions don't receive context in Node API
     } catch (error) {
       done(error);
       return;
@@ -411,23 +437,6 @@ function createHook(arg0: unknown, arg1: unknown) {
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
-
-type TestOptions = {
-  concurrency?: number | boolean | null;
-  only?: boolean;
-  signal?: AbortSignal;
-  skip?: boolean | string;
-  todo?: boolean | string;
-  timeout?: number;
-  plan?: number;
-};
-
-type HookOptions = {
-  signal?: AbortSignal;
-  timeout?: number;
-};
 
 function setDefaultSnapshotSerializer(_serializers: unknown[]) {
   throwNotImplemented("setDefaultSnapshotSerializer()", 5090, "Use `bun:test` in the interim.");
@@ -437,20 +446,24 @@ function setResolveSnapshotPath(_fn: unknown) {
   throwNotImplemented("setResolveSnapshotPath()", 5090, "Use `bun:test` in the interim.");
 }
 
-test.describe = describe;
-test.suite = describe;
-test.test = test;
-test.it = test;
-test.before = before;
-test.after = after;
-test.beforeEach = beforeEach;
-test.afterEach = afterEach;
-test.assert = assert;
-test.snapshot = {
+// Assign functions to the export object
+// Use the renamed test function wrapper
+const testExport = testFnWrapper as any; // Cast to any to allow adding properties
+
+testExport.describe = describe;
+testExport.suite = describe;
+testExport.test = testExport; // Alias to self
+testExport.it = testExport; // Alias to self
+testExport.before = before;
+testExport.after = after;
+testExport.beforeEach = beforeEach;
+testExport.afterEach = afterEach;
+testExport.assert = assert;
+testExport.snapshot = {
   setDefaultSnapshotSerializer,
   setResolveSnapshotPath,
 };
-test.run = run;
-test.mock = mock;
+testExport.run = run;
+testExport.mock = mock;
 
-export default test;
+export default testExport;

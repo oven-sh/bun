@@ -318,7 +318,7 @@ Readable.prototype[SymbolAsyncDispose] = function () {
     error = this.readableEnded ? null : $makeAbortError();
     this.destroy(error);
   }
-  return new Promise((resolve, reject) => eos(this, err => (err && err !== error ? reject(err) : resolve(null))));
+  return new Promise((resolve, reject) => eos(this, { writable: false }, err => (err && err !== error ? reject(err) : resolve(null))));
 };
 
 // Manually shove something into the read() buffer.
@@ -362,8 +362,8 @@ function readableAddChunkUnshiftByteMode(stream, state, chunk, encoding) {
         chunk = Buffer.from(chunk, encoding);
       }
     }
-  } else if (Stream._isArrayBufferView(chunk)) {
-    chunk = Stream._uint8ArrayToBuffer(chunk);
+  } else if (Stream.$_isArrayBufferView(chunk)) {
+    chunk = Stream.$_uint8ArrayToBuffer(chunk);
   } else if (chunk !== undefined && !(chunk instanceof Buffer)) {
     errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
     return false;
@@ -410,8 +410,8 @@ function readableAddChunkPushByteMode(stream, state, chunk, encoding) {
     }
   } else if (chunk instanceof Buffer) {
     encoding = "";
-  } else if (Stream._isArrayBufferView(chunk)) {
-    chunk = Stream._uint8ArrayToBuffer(chunk);
+  } else if (Stream.$_isArrayBufferView(chunk)) {
+    chunk = Stream.$_uint8ArrayToBuffer(chunk);
     encoding = "";
   } else if (chunk !== undefined) {
     errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
@@ -1250,7 +1250,7 @@ function streamToAsyncIterator(stream, options?) {
   }
 
   const iter = createAsyncIterator(stream, options);
-  iter.stream = stream;
+  (iter as any).stream = stream;
   return iter;
 }
 
@@ -1268,9 +1268,9 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error: Error | null;
+  let error: Error | null | undefined = undefined;
   const cleanup = eos(stream, { writable: false }, err => {
-    error = err ? aggregateTwoErrors(error as Error, err) : null;
+    error = err ? aggregateTwoErrors(error as Error, err as Error) : null;
     callback();
     callback = nop;
   });

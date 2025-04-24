@@ -5,8 +5,24 @@ const { validateBoolean, validateAbortSignal, validateObject, validateNumber } =
 
 const symbolAsyncIterator = Symbol.asyncIterator;
 
-function asyncIterator({ next: nextFunction, return: returnFunction }) {
-  const result = {};
+interface TimerOptions {
+  ref?: boolean;
+  signal?: AbortSignal;
+}
+
+interface AsyncIteratorInput {
+  next: () => any;
+  return?: () => any;
+}
+
+interface AsyncIteratorResult {
+  next?: () => any;
+  return?: () => any;
+  [Symbol.asyncIterator]?: () => any;
+}
+
+function asyncIterator({ next: nextFunction, return: returnFunction }: AsyncIteratorInput) {
+  const result: AsyncIteratorResult = {};
   if (typeof nextFunction === "function") {
     result.next = nextFunction;
   }
@@ -20,7 +36,7 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
   return result;
 }
 
-function setTimeoutPromise(after = 1, value, options = {}) {
+function setTimeoutPromise(after: number = 1, value?: any, options: TimerOptions = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -51,7 +67,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
   if (signal?.aborted) {
     return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => resolve(value), after, ...arguments_);
     if (!reference) {
@@ -66,11 +82,11 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
-function setImmediatePromise(value, options = {}) {
+function setImmediatePromise(value?: any, options: TimerOptions = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -90,7 +106,7 @@ function setImmediatePromise(value, options = {}) {
   if (signal?.aborted) {
     return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
-  let onCancel;
+  let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
     const immediate = setImmediate(() => resolve(value));
     if (!reference) {
@@ -105,11 +121,11 @@ function setImmediatePromise(value, options = {}) {
     }
   });
   return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal.removeEventListener("abort", onCancel))
+    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel!))
     : returnValue;
 }
 
-function setIntervalPromise(after = 1, value, options = {}) {
+function setIntervalPromise(after: number = 1, value?: any, options: TimerOptions = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
   try {
     // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
@@ -123,6 +139,9 @@ function setIntervalPromise(after = 1, value, options = {}) {
       next: function () {
         return Promise.reject(error);
       },
+      return: function () {
+        return Promise.resolve({ done: true, value: undefined });
+      },
     });
   }
   try {
@@ -131,6 +150,9 @@ function setIntervalPromise(after = 1, value, options = {}) {
     return asyncIterator({
       next: function () {
         return Promise.reject(error);
+      },
+      return: function () {
+        return Promise.resolve({ done: true, value: undefined });
       },
     });
   }
@@ -142,6 +164,9 @@ function setIntervalPromise(after = 1, value, options = {}) {
       next: function () {
         return Promise.reject(error);
       },
+      return: function () {
+        return Promise.resolve({ done: true, value: undefined });
+      },
     });
   }
   try {
@@ -151,6 +176,9 @@ function setIntervalPromise(after = 1, value, options = {}) {
       next: function () {
         return Promise.reject(error);
       },
+      return: function () {
+        return Promise.resolve({ done: true, value: undefined });
+      },
     });
   }
   if (signal?.aborted) {
@@ -158,14 +186,18 @@ function setIntervalPromise(after = 1, value, options = {}) {
       next: function () {
         return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
       },
+      return: function () {
+        return Promise.resolve({ done: true, value: undefined });
+      },
     });
   }
 
-  let onCancel, interval;
+  let onCancel: (() => void) | undefined;
+  let interval: Timer | undefined;
 
   try {
     let notYielded = 0;
-    let callback;
+    let callback: (() => void) | undefined;
     interval = setInterval(() => {
       notYielded++;
       if (callback) {
@@ -189,7 +221,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
 
     return asyncIterator({
       next: function () {
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
           if (!signal?.aborted) {
             if (notYielded === 0) {
               callback = resolve;
@@ -208,20 +240,28 @@ function setIntervalPromise(after = 1, value, options = {}) {
           } else if (signal?.aborted) {
             throw $makeAbortError(undefined, { cause: signal.reason });
           }
-          return { done: true };
+          return { done: true, value: undefined };
         });
       },
       return: function () {
         clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
-        return Promise.resolve({});
+        signal?.removeEventListener("abort", onCancel!);
+        return Promise.resolve({ done: true, value: undefined });
       },
     });
-  } catch {
+  } catch (err) {
+    // This catch block seems unlikely to be hit given the setup,
+    // but we'll provide a basic cleanup return function.
     return asyncIterator({
       next: function () {
         clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
+        signal?.removeEventListener("abort", onCancel!);
+        return Promise.resolve({ done: true, value: undefined });
+      },
+      return: function () {
+        clearInterval(interval);
+        signal?.removeEventListener("abort", onCancel!);
+        return Promise.resolve({ done: true, value: undefined });
       },
     });
   }
@@ -232,7 +272,7 @@ export default {
   setImmediate: setImmediatePromise,
   setInterval: setIntervalPromise,
   scheduler: {
-    wait: (delay, options) => setTimeoutPromise(delay, undefined, options),
-    yield: setImmediatePromise,
+    wait: (delay: number, options?: TimerOptions) => setTimeoutPromise(delay, undefined, options),
+    yield: (value?: any, options?: TimerOptions) => setImmediatePromise(value, options),
   },
 };

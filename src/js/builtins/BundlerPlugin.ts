@@ -33,6 +33,8 @@ interface BuildConfigExt extends BuildConfig {
   entryPoints?: string[];
   // plugins is guaranteed to not be null
   plugins: BunPlugin[];
+  experimentalCss?: boolean;
+  experimentalHtml?: boolean;
 }
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;
@@ -56,10 +58,13 @@ export function loadAndResolvePluginsForServe(
 ) {
   // Same config as created in HTMLBundle.init
   let config: BuildConfigExt = {
+    // These are added to fix TS2353
     experimentalCss: true,
     experimentalHtml: true,
     target: "browser",
     root: bunfig_folder,
+    plugins: [], // Initialize plugins array
+    entrypoints: [], // Added to satisfy BuildConfigExt
   };
 
   class InvalidBundlerPluginError extends TypeError {
@@ -138,7 +143,8 @@ export function runSetupFunction(
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
-      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+      // Fix TS2339: Cast callback to expected type before accessing internal property
+      if (!callback || !$isObject(callback) || !(callback as unknown as { $napiDlopenHandle: number }).$napiDlopenHandle) {
         throw new TypeError(
           "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
@@ -184,27 +190,31 @@ export function runSetupFunction(
     }
   }
 
-  function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
+  function onLoad(this: PluginBuilderExt, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilderExt {
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
     return this;
   }
 
-  function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
+  function onResolve(
+    this: PluginBuilderExt,
+    filterObject: PluginConstraints,
+    callback: OnResolveCallback,
+  ): PluginBuilderExt {
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
     return this;
   }
 
   function onBeforeParse(
-    this: PluginBuilder,
+    this: PluginBuilderExt,
     filterObject: PluginConstraints,
     { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
-  ): PluginBuilder {
+  ): PluginBuilderExt {
     validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
     return this;
   }
 
   const self = this;
-  function onStart(this: PluginBuilder, callback): PluginBuilder {
+  function onStart(this: PluginBuilderExt, callback: () => void | Promise<void>): PluginBuilderExt {
     if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
@@ -345,7 +355,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
   var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
     var { onResolve, onLoad } = this;
-    var results = onResolve.$get(inputNamespace);
+    var results = onResolve?.$get(inputNamespace); // Use optional chaining
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
@@ -357,7 +367,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
+          // Fix TS2322: Provide a default empty string if resolveDir is undefined
+          resolveDir: (inputNamespace === "file" ? require("node:path").dirname(importer) : undefined) ?? "",
           kind,
           // pluginData
         });
@@ -456,7 +467,7 @@ export function runOnLoadPlugins(
 
   const generateDefer = () => this.generateDeferPromise(internalID);
   var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
-    var results = this.onLoad.$get(namespace);
+    var results = this.onLoad?.$get(namespace); // Use optional chaining
     if (!results) {
       this.onLoadAsync(internalID, null, null);
       return null;

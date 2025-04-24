@@ -718,11 +718,11 @@ class SocketHandle {
   write() {
     $debug("SocketHandle.write");
     $assert(this.#socket != null);
-    return this.#socket.$write.$apply(this.#socket, arguments);
+    return this.#socket.$write(...arguments);
   }
   end() {
     $debug("SocketHandle.end");
-    return this.#socket?.end.$apply(this.#socket, arguments);
+    return this.#socket?.$end(...arguments);
   }
   close(cb) {
     $debug("SocketHandle.close");
@@ -1093,6 +1093,7 @@ Socket.prototype.connect = function connect(...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session } = options;
+    this.servername = options.servername;
     if (socket) {
       connection = socket;
     }

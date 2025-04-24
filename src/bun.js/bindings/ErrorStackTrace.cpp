@@ -726,7 +726,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 
                     // Lastly, try type-specific properties.
                     if (jstype == JSC::JSFunctionType) {
-                        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+                        auto* function = jsCast<JSC::JSFunction*>(object);
                         if (function) {
                             functionName = function->nameWithoutGC(vm);
                             if (functionName.isEmpty()) {
@@ -741,7 +741,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                             return functionName;
                         }
                     } else if (jstype == JSC::InternalFunctionType) {
-                        auto* function = jsDynamicCast<JSC::InternalFunction*>(object);
+                        auto* function = jsCast<JSC::InternalFunction*>(object);
                         if (function) {
                             functionName = function->name();
                             setTypeFlagsIfNecessary();

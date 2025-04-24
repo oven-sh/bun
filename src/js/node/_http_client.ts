@@ -198,7 +198,6 @@ function ClientRequest(input, options, cb) {
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
-
     return this;
   };
 

@@ -536,7 +536,8 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" void Server__setRequireHostHeader(EncodedJSValue, bool, JSC::JSGlobalObject*);
+extern "C" void Server__setAppFlags(EncodedJSValue, bool, bool, JSC::JSGlobalObject*);
+
 extern "C" void Server__setOnClientError(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -1319,19 +1320,16 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+    ASSERT(callFrame->argumentCount() == 4);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
+    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
+    JSValue callback = callFrame->uncheckedArgument(3);
 
-    ASSERT(callFrame->argumentCount() >= 2);
+    Server__setAppFlags(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), globalObject);
 
-    Server__setRequireHostHeader(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), globalObject);
-
-    if (callFrame->argumentCount() > 2) {
-        JSValue callback = callFrame->uncheckedArgument(2);
-        Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
-    }
+    Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
 
     return JSValue::encode(jsUndefined());
 }

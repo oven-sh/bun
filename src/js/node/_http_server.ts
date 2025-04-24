@@ -713,14 +713,21 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       err = $HPE_INVALID_EOF_STATE("Parse Error");
       break;
     case 9:
-      err = $HPE_INVALID_METHOD("Parse Error");
+      err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
+      err.bytesParsed = 1; // always 1 for now because is the first byte of the request line
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");
       break;
   }
   err.rawPacket = rawPacket;
-  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
+  const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
+
+  self.emit("connection", nodeSocket);
+  self.emit("clientError", err, nodeSocket);
+  if (nodeSocket.listenerCount("error") > 0) {
+    nodeSocket.emit("error", err);
+  }
 }
 const ServerPrototype = {
   constructor: Server,
@@ -1101,7 +1108,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
+      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, true, onServerClientError.bind(this));
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();

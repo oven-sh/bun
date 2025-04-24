@@ -40,6 +40,7 @@
 #include "HttpErrors.h"
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
 {
@@ -326,7 +327,12 @@ namespace uWS
             return (void *)p;
         }
 
-        static bool isValidMethod(std::string_view str) {
+        static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
+
+            if (useStrictMethodValidation) {
+                return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
+            }
+
             if (str.empty()) return false;
 
             for (char c : str) {
@@ -381,7 +387,7 @@ namespace uWS
         }
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
-        static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP) {
+        static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP, bool useStrictMethodValidation) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
@@ -399,7 +405,7 @@ namespace uWS
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
-                  if(!isValidMethod(header.key)) {
+                  if(!isValidMethod(header.key, useStrictMethodValidation)) {
                     return (char *) 0x3;
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
@@ -473,7 +479,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, unsigned int &err, HttpParserError &parserError, bool &isAncientHTTP) {
+        static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, unsigned int &err, HttpParserError &parserError, bool &isAncientHTTP, bool useStrictMethodValidation) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             #ifdef UWS_WITH_PROXY
@@ -503,7 +509,7 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            if ((char *) 4 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
+            if ((char *) 4 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP, useStrictMethodValidation))) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
@@ -626,7 +632,7 @@ namespace uWS
      * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
      * or [whatever, fullptr] for "break and close me, I am a parser error!" */
     template <bool ConsumeMinimally>
-    std::tuple<unsigned int, HttpParserError, void *> fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    std::tuple<unsigned int, HttpParserError, void *> fenceAndConsumePostPadded(bool useStrictMethodValidation, bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -638,7 +644,7 @@ namespace uWS
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         bool isAncientHTTP = false;
-        for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, parserError, isAncientHTTP)); ) {
+        for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, parserError, isAncientHTTP, useStrictMethodValidation)); ) {
             data += consumed;
             length -= consumed;
             consumedTotal += consumed;
@@ -769,7 +775,7 @@ namespace uWS
     }
 
 public:
-    std::tuple<unsigned int, HttpParserError, void *> consumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    std::tuple<unsigned int, HttpParserError, void *> consumePostPadded(bool useStrictMethodValidation,bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
 
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
@@ -818,7 +824,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<true>(useStrictMethodValidation, requireHostHeader, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             if (std::get<2>(consumed) != user) {
                 return consumed;
             }
@@ -873,7 +879,7 @@ public:
             }
         }
 
-        std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
+        std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<false>(useStrictMethodValidation, requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
         if (std::get<2>(consumed) != user) {
             return consumed;
         }

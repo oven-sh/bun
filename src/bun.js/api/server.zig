@@ -7743,7 +7743,7 @@ extern fn NodeHTTPServer__onRequest_http(
     response: *uws.NewApp(false).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
-) callconv(JSC.conv) JSC.JSValue;
+) JSC.JSValue;
 
 extern fn NodeHTTPServer__onRequest_https(
     any_server: usize,
@@ -7755,13 +7755,13 @@ extern fn NodeHTTPServer__onRequest_https(
     response: *uws.NewApp(true).Response,
     upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
-) callconv(JSC.conv) JSC.JSValue;
+) JSC.JSValue;
 
-extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
+extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *JSC.JSGlobalObject) JSC.JSValue;
 
-extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) callconv(JSC.conv) void;
+extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
 
-extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) callconv(JSC.conv) void;
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();

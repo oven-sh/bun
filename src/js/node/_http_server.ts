@@ -415,6 +415,7 @@ const ServerResponsePrototype = {
   },
 
   _implicitHeader() {
+    if (this.headersSent) return;
     // @ts-ignore
     this.writeHead(this.statusCode);
   },
@@ -457,11 +458,12 @@ const ServerResponsePrototype = {
   },
 
   writeHead(statusCode, statusMessage, headers) {
-    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-      _writeHead(statusCode, statusMessage, headers, this);
-      updateHasBody(this, statusCode);
-      this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+    if (this.headersSent) {
+      throw $ERR_HTTP_HEADERS_SENT("writeHead");
     }
+    _writeHead(statusCode, statusMessage, headers, this);
+    updateHasBody(this, statusCode);
+    this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 
     return this;
   },
@@ -524,6 +526,7 @@ const ServerResponsePrototype = {
     if (handle) {
       if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
       }
       handle.flushHeaders();
@@ -1389,9 +1392,6 @@ function _normalizeArgs(args) {
 }
 
 function _writeHead(statusCode, reason, obj, response) {
-  if (response.headersSent) {
-    throw $ERR_HTTP_HEADERS_SENT("writeHead");
-  }
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {

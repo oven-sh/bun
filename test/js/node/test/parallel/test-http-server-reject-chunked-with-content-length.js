@@ -6,6 +6,7 @@ const net = require('net');
 const assert = require('assert');
 
 const reqstr = 'POST / HTTP/1.1\r\n' +
+               'Host: localhost\r\n' +
                'Content-Length: 1\r\n' +
                'Transfer-Encoding: chunked\r\n\r\n';
 

@@ -28,6 +28,7 @@ server: AnyServer,
 /// So we need to buffer that data.
 /// This should be pretty uncommon though.
 buffered_request_body_data_during_pause: bun.ByteList = .{},
+bytes_written: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
@@ -817,6 +818,13 @@ fn writeOrEnd(
         break :brk .undefined;
     };
 
+    const strict_content_length: ?u32 = brk: {
+        if (arguments.len > 3 and arguments[3].isNumber()) {
+            break :brk arguments[3].toU32();
+        }
+        break :brk null;
+    };
+
     const string_or_buffer: JSC.Node.StringOrBuffer = brk: {
         if (input_value == .null or input_value == .undefined) {
             break :brk JSC.Node.StringOrBuffer.empty;
@@ -845,7 +853,7 @@ fn writeOrEnd(
     }
 
     const bytes = string_or_buffer.slice();
-
+    this.bytes_written +|= bytes.len;
     if (comptime is_end) {
         log("end('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
     } else {
@@ -853,6 +861,11 @@ fn writeOrEnd(
     }
 
     if (is_end) {
+        if (strict_content_length) |content_length| {
+            if (this.bytes_written != content_length) {
+                return globalObject.ERR(.HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch", .{}).throw();
+            }
+        }
         // Discard the body read ref if it's pending and no onData callback is set at this point.
         // This is the equivalent of req._dump().
         if (this.body_read_ref.has and this.body_read_state == .pending and (!this.flags.hasCustomOnData or js.onDataGetCached(this_value) == null)) {

@@ -114,6 +114,24 @@ function onServerResponseClose() {
   }
 }
 
+function contentLengthLimit(response) {
+  if (response.strictContentLength) {
+    let contentLength = response.getHeader("content-length");
+    if (
+      contentLength &&
+      response._hasBody &&
+      !response._removedContLen &&
+      !response.chunkedEncoding &&
+      !response.hasHeader("transfer-encoding")
+    ) {
+      contentLength = parseInt(contentLength, 10);
+      if (isNaN(contentLength)) {
+        return;
+      }
+      return contentLength;
+    }
+  }
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -230,13 +248,13 @@ const ServerResponsePrototype = {
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
         // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-        this._contentLength = handle.end(chunk, encoding);
+        this._contentLength = handle.end(chunk, encoding, undefined, contentLengthLimit(this));
       });
     } else {
       // If there's no data but you already called end, then you're done.
       // We can ignore it in that case.
       if (!(!chunk && handle.ended) && !handle.aborted) {
-        handle.end(chunk, encoding);
+        handle.end(chunk, encoding, undefined, contentLengthLimit(this));
       }
     }
     this._header = " ";
@@ -1397,8 +1415,8 @@ function _writeHead(statusCode, reason, obj, response) {
         // message will be terminated by the first empty line after the
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
-        if (this.chunkedEncoding !== true && state.trailer) {
-          throw new ERR_HTTP_TRAILER_INVALID();
+        if (response.chunkedEncoding !== true && response._trailer) {
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any

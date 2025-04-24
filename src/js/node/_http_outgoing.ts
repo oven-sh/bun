@@ -85,9 +85,11 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
       strictContentLength(msg) &&
       (fromEnd ? msg[kBytesWritten] + len !== msg._contentLength : msg[kBytesWritten] + len > msg._contentLength)
     ) {
-      throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(
+      const err = new Error(
         `Response body's content-length of ${len + msg[kBytesWritten]} byte(s) does not match the content-length of ${msg._contentLength} byte(s) set in header`,
       );
+
+      throw err;
     }
 
     msg[kBytesWritten] += len;

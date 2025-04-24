@@ -308,14 +308,19 @@ function TLSSocket(socket?, options?) {
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
-  NetSocket.$call(this, socket instanceof NetSocket || socket instanceof Duplex ? options : options || socket);
-  options = options || socket || {};
+  const isNetSocketOrDuplex = socket instanceof Duplex;
+
+  options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
+
+  NetSocket.$call(this, options);
+
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
-    if (socket instanceof NetSocket || socket instanceof Duplex) {
+
+    if (isNetSocketOrDuplex) {
       this._handle = socket;
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;

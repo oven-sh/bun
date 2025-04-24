@@ -8,7 +8,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const Loader = @import("../options.zig").Loader;
 const ComptimeStringMap = bun.ComptimeStringMap;

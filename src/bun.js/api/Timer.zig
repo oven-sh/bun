@@ -8,6 +8,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const uv = bun.windows.libuv;
+const api = bun.api;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
@@ -742,7 +743,7 @@ const TimerObjectInternals = struct {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
     id: i32 = -1,
     interval: u31 = 0,
-    strong_this: JSC.Strong = .empty,
+    strong_this: JSC.Strong.Optional = .empty,
     flags: Flags = .{},
 
     const Flags = packed struct(u32) {
@@ -1329,10 +1330,10 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
-            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
-            .ValkeyConnectionTimeout => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .ValkeyConnectionReconnect => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
+            .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
+            .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
             inline else => |t| {
                 if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

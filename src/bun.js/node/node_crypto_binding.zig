@@ -26,7 +26,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
         poll: Async.KeepAlive = .{},
-        callback: JSC.Strong,
+        callback: JSC.Strong.Optional,
 
         ctx: *Ctx,
 
@@ -46,7 +46,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx,
-                .callback = JSC.Strong.create(callback, global),
+                .callback = .create(callback, global),
             });
             job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
             return job;
@@ -134,7 +134,7 @@ fn CryptoJob(comptime Ctx: type) type {
         any_task: JSC.AnyTask,
         poll: Async.KeepAlive = .{},
 
-        callback: JSC.Strong,
+        callback: JSC.Strong.Optional,
 
         ctx: Ctx,
 
@@ -147,7 +147,7 @@ fn CryptoJob(comptime Ctx: type) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx.*,
-                .callback = JSC.Strong.create(callback, global),
+                .callback = .create(callback, global),
             });
             errdefer bun.destroy(job);
             try job.ctx.init(global);
@@ -534,7 +534,7 @@ const Scrypt = struct {
     keylen: u32,
 
     // used in async mode
-    buf: JSC.Strong = .empty,
+    buf: JSC.Strong.Optional = .empty,
     result: []u8 = &.{},
     err: ?u32 = null,
 
@@ -679,7 +679,7 @@ const Scrypt = struct {
 
         // to be filled in later
         this.result = bytes;
-        this.buf = JSC.Strong.create(buf, global);
+        this.buf = .create(buf, global);
     }
 
     fn runTask(this: *Scrypt, key: []u8) void {

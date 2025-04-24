@@ -1,6 +1,3 @@
-const { checkIsHttpToken } = require("internal/validators");
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
-
 const {
   getHeader,
   setHeader,
@@ -85,8 +82,6 @@ const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 const kDeferredTimeouts = Symbol("deferredTimeouts");
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
-
 const kEmptyObject = Object.freeze(Object.create(null));
 
 export const enum ClientRequestEmitState {
@@ -142,31 +137,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
     }
   }
 }
-const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
-/**
- * True if val contains an invalid field-vchar
- *  field-value    = *( field-content / obs-fold )
- *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
- *  field-vchar    = VCHAR / obs-text
- */
-function checkInvalidHeaderChar(val: string) {
-  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
-}
-
-const validateHeaderName = (name, label?) => {
-  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-  }
-};
-
-const validateHeaderValue = (name, value) => {
-  if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-  }
-  if (checkInvalidHeaderChar(value)) {
-    throw $ERR_INVALID_CHAR("header content", name);
-  }
-};
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -221,19 +191,6 @@ function validateMsecs(numberlike: any, field: string) {
   }
 
   return numberlike;
-}
-
-function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
-  if (Array.isArray(obj)) {
-    const length = obj.length;
-    for (var i = 0; i < length; i++) {
-      const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false; // prettier-ignore
-    }
-    return true;
-  }
-  return false;
 }
 
 class ConnResetException extends Error {
@@ -395,85 +352,82 @@ function emitErrorNt(msg, err, callback) {
 }
 
 export {
-  kDeprecatedReplySymbol,
-  kBodyChunks,
-  kPath,
-  kPort,
-  kMethod,
-  kHost,
-  kProtocol,
-  kAgent,
-  kFetchRequest,
-  kTls,
-  kUseDefaultPort,
-  kRes,
-  kUpgradeOrConnect,
-  kParser,
-  kMaxHeadersCount,
-  kReusedSocket,
-  kTimeoutTimer,
-  kOptions,
-  kSocketPath,
-  kSignal,
-  kMaxHeaderSize,
   abortedSymbol,
-  kClearTimeout,
-  emitErrorNextTickIfErrorListenerNT,
-  headerStateSymbol,
-  kEmitState,
+  assignHeadersFast,
   bodyStreamSymbol,
-  controllerSymbol,
-  runSymbol,
-  deferredSymbol,
-  eofInProgress,
-  fakeSocketSymbol,
-  firstWriteSymbol,
-  headersSymbol,
-  isTlsSymbol,
-  kHandle,
-  kRealListen,
-  noBodySymbol,
-  optionsSymbol,
-  reqSymbol,
-  timeoutTimerSymbol,
-  tlsSymbol,
-  typeSymbol,
-  webRequestOrResponse,
-  statusCodeSymbol,
-  kAbortController,
-  statusMessageSymbol,
-  kInternalSocketData,
-  serverSymbol,
-  kPendingCallbacks,
-  kRequest,
-  kCloseCallback,
-  kDeferredTimeouts,
-  validateHeaderName,
-  validateHeaderValue,
-  isAbortError,
-  kEmptyObject,
-  getIsNextIncomingMessageHTTPS,
-  setIsNextIncomingMessageHTTPS,
   callCloseCallback,
+  ConnResetException,
+  controllerSymbol,
+  deferredSymbol,
+  drainMicrotasks,
   emitCloseNT,
   emitCloseNTAndComplete,
   emitEOFIncomingMessage,
-  validateMsecs,
-  isValidTLSArray,
-  ConnResetException,
-  METHODS,
-  STATUS_CODES,
-  hasServerResponseFinished,
-  getHeader,
-  setHeader,
-  Headers,
-  assignHeadersFast,
-  setRequestTimeout,
-  headersTuple,
-  webRequestOrResponseHasBodyValue,
+  emitErrorNextTickIfErrorListenerNT,
+  eofInProgress,
+  fakeSocketSymbol,
+  firstWriteSymbol,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  drainMicrotasks,
-  setServerIdleTimeout,
+  getHeader,
+  getIsNextIncomingMessageHTTPS,
   getRawKeys,
+  hasServerResponseFinished,
+  Headers,
+  headersSymbol,
+  headerStateSymbol,
+  headersTuple,
+  isAbortError,
+  isTlsSymbol,
+  kAbortController,
+  kAgent,
+  kBodyChunks,
+  kClearTimeout,
+  kCloseCallback,
+  kDeferredTimeouts,
+  kDeprecatedReplySymbol,
+  kEmitState,
+  kEmptyObject,
+  kFetchRequest,
+  kHandle,
+  kHost,
+  kInternalSocketData,
+  kMaxHeadersCount,
+  kMaxHeaderSize,
+  kMethod,
+  kOptions,
+  kParser,
+  kPath,
+  kPendingCallbacks,
+  kPort,
+  kProtocol,
+  kRealListen,
+  kRequest,
+  kRes,
+  kReusedSocket,
+  kSignal,
+  kSocketPath,
+  kTimeoutTimer,
+  kTls,
+  kUpgradeOrConnect,
+  kUseDefaultPort,
+  METHODS,
+  noBodySymbol,
+  optionsSymbol,
+  reqSymbol,
+  runSymbol,
+  serverSymbol,
+  setHeader,
+  setIsNextIncomingMessageHTTPS,
+  setRequestTimeout,
   setRequireHostHeader,
+  setServerIdleTimeout,
+  STATUS_CODES,
+  statusCodeSymbol,
+  statusMessageSymbol,
+  timeoutTimerSymbol,
+  tlsSymbol,
+  typeSymbol,
+  validateMsecs,
+  webRequestOrResponse,
+  webRequestOrResponseHasBodyValue,
 };

@@ -41,6 +41,7 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
 } = require("internal/http");
+const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
@@ -128,7 +129,7 @@ function strictContentLength(response) {
         return contentLength;
       } else if (typeof contentLength === "string") {
         contentLength = parseInt(contentLength, 10);
-        if (isNaN(contentLength)) {
+        if (NumberIsNaN(contentLength)) {
           return;
         }
         return contentLength;

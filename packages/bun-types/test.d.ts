@@ -39,8 +39,11 @@ declare module "bun:test" {
     T extends bigint ? bigint :
     T extends symbol ? symbol :
     T extends null ? null :
+
     T extends {} ? { [K in keyof T]: Wider<T[K]> } :
+
     T extends undefined ? undefined :
+
     T;
 
   /**

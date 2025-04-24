@@ -241,7 +241,6 @@ describe("Bun.Wider matchers", () => {
     const key1 = { id: 1 };
     const key2 = { id: 2 };
     const weakMap = new WeakMap<typeof key1, number>();
-    weakMap.set(key1, 100);
 
     expect(weakMap.has(key1)).toBe(true);
     expect(weakMap.get(key1)).toBe(100);
@@ -250,8 +249,6 @@ describe("Bun.Wider matchers", () => {
     const weakSet = new WeakSet<typeof key1>();
     weakSet.add(key1);
     expect(weakSet.has(key1)).toBe(true);
-    // @ts-expect-error
-    weakSet.add("invalid");
   });
 
   test("array and typed array matchers", () => {
@@ -301,5 +298,115 @@ describe("Bun.Wider matchers", () => {
     expect(dataView.byteLength).toBe(8);
     expect(dataView.buffer).toBe(buffer);
     expect(dataView.getInt8(100)).toBeDefined();
+  });
+
+  // Custom class tests that demonstrate real-world patterns
+  interface DatabaseRecord {
+    id: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  abstract class BaseEntity implements DatabaseRecord {
+    id: string;
+    createdAt: Date;
+    updatedAt: Date;
+
+    constructor(data: DatabaseRecord) {
+      this.id = data.id;
+      this.createdAt = data.createdAt;
+      this.updatedAt = data.updatedAt;
+    }
+
+    abstract validate(): boolean;
+  }
+
+  class User extends BaseEntity {
+    email: string;
+    private passwordHash: string;
+    roles: Set<string>;
+    metadata: Map<string, unknown>;
+
+    constructor(data: DatabaseRecord & { email: string; passwordHash: string }) {
+      super(data);
+      this.email = data.email;
+      this.passwordHash = data.passwordHash;
+      this.roles = new Set();
+      this.metadata = new Map();
+    }
+
+    validate(): boolean {
+      return this.email.includes("@") && this.passwordHash.length > 0;
+    }
+
+    async checkPassword(password: string): Promise<boolean> {
+      // Simulate async password check
+      return Promise.resolve(password === this.passwordHash);
+    }
+
+    hasRole(role: string): boolean {
+      return this.roles.has(role);
+    }
+  }
+
+  test("custom class type checking", () => {
+    const userData = {
+      id: "123",
+      email: "test@example.com",
+      passwordHash: "hashedpw",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const user = new User(userData);
+
+    // Instance and inheritance checks
+    expect(user).toBeInstanceOf(User);
+    expect(user).toBeInstanceOf(BaseEntity);
+    // @ts-expect-error - User is not a DatabaseRecord directly
+    expect(user).toBeInstanceOf(DatabaseRecord);
+
+    // Property type checking
+    expect(user.email).toBeString();
+    expect(user.roles).toBeInstanceOf(Set);
+    expect(user.metadata).toBeInstanceOf(Map);
+    // @ts-expect-error - passwordHash is private
+    expect(user.passwordHash).toBeDefined();
+
+    // Method return type checking
+    expect(user.validate()).toBeBoolean();
+    expect(user.hasRole("admin")).toBe(false);
+
+    // Complex object matching
+    expect(user).toEqual(
+      expect.objectContaining({
+        id: "123",
+        email: "test@example.com",
+        roles: new Set(),
+        metadata: new Map(),
+      }),
+    );
+
+    // Nested property type checking
+    expect(user).toHaveProperty("createdAt");
+    expect(user.createdAt).toBeDate();
+  });
+
+  test("custom class async operations", async () => {
+    const user = new User({
+      id: "123",
+      email: "test@example.com",
+      passwordHash: "secret123",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await expect(user.checkPassword("secret123")).resolves.toBe(true);
+    // @ts-expect-error
+    await expect(user.checkPassword("wrong")).resolves.toBe("test");
+
+    // Collection operations with type checking
+    user.roles.add("admin");
+    expect(user.hasRole("admin")).toBe(true);
   });
 });

@@ -1621,11 +1621,16 @@ static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject
     if (JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey))) {
         RETURN_IF_EXCEPTION(scope, {});
 
+        if (codeGenerationValue.isUndefined()) {
+            return std::nullopt;
+        }
+
         if (!codeGenerationValue.isObject()) {
             return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey), "object"_s, codeGenerationValue);
         }
 
         JSObject* codeGenerationObject = asObject(codeGenerationValue);
+
         if (JSValue allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s))) {
             RETURN_IF_EXCEPTION(scope, {});
             if (!allowStringsValue.isBoolean()) {

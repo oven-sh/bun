@@ -3354,8 +3354,30 @@ class ClientHttp2Session extends Http2Session {
         }
         headers[":scheme"] = scheme;
       }
+
       if (headers[":path"] == undefined) {
         headers[":path"] = "/";
+      }
+
+      if (options !== undefined) {
+        if (!$isObject(options)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+        }
+        if (options.endStream !== undefined && typeof options.endStream !== "boolean") {
+          throw $ERR_INVALID_ARG_TYPE("options.endStream", "boolean", options.endStream);
+        }
+        if (options.weight !== undefined && typeof options.weight !== "number") {
+          throw $ERR_INVALID_ARG_TYPE("options.weight", "number", options.weight);
+        }
+        if (options.parent !== undefined && typeof options.parent !== "number") {
+          throw $ERR_INVALID_ARG_TYPE("options.parent", "number", options.parent);
+        }
+        if (options.exclusive !== undefined && typeof options.exclusive !== "boolean") {
+          throw $ERR_INVALID_ARG_TYPE("options.exclusive", "boolean", options.exclusive);
+        }
+        if (options.silent !== undefined && typeof options.silent !== "boolean") {
+          throw $ERR_INVALID_ARG_TYPE("options.silent", "boolean", options.silent);
+        }
       }
 
       if (NoPayloadMethods.has(method.toUpperCase())) {

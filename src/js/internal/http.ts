@@ -1,4 +1,5 @@
 const { checkIsHttpToken } = require("internal/validators");
+const { isTypedArray, isArrayBuffer } = require("node:util/types");
 
 const {
   getHeader,
@@ -84,8 +85,6 @@ const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 const kDeferredTimeouts = Symbol("deferredTimeouts");
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
-
 const kEmptyObject = Object.freeze(Object.create(null));
 
 export const enum ClientRequestEmitState {
@@ -141,31 +140,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
     }
   }
 }
-const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
-/**
- * True if val contains an invalid field-vchar
- *  field-value    = *( field-content / obs-fold )
- *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
- *  field-vchar    = VCHAR / obs-text
- */
-function checkInvalidHeaderChar(val: string) {
-  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
-}
-
-const validateHeaderName = (name, label?) => {
-  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-  }
-};
-
-const validateHeaderValue = (name, value) => {
-  if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-  }
-  if (checkInvalidHeaderChar(value)) {
-    throw $ERR_INVALID_CHAR("header content", name);
-  }
-};
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -456,8 +430,24 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
-  validateHeaderName,
-  validateHeaderValue,
+  webRequestOrResponse,
+  statusCodeSymbol,
+  kAbortController,
+  statusMessageSymbol,
+  kInternalSocketData,
+  serverSymbol,
+  kPendingCallbacks,
+  kRequest,
+  kCloseCallback,
+  kDeferredTimeouts,
+  isAbortError,
+  kEmptyObject,
+  getIsNextIncomingMessageHTTPS,
+  setIsNextIncomingMessageHTTPS,
+  callCloseCallback,
+  emitCloseNT,
+  emitCloseNTAndComplete,
+  emitEOFIncomingMessage,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

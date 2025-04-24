@@ -427,15 +427,23 @@ pub const AsyncModule = struct {
         this.poll_ref.unref(jsc_vm);
         outer: {
             errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
-                VirtualMachine.processFetchLog(
-                    this.globalThis,
-                    bun.String.init(this.specifier),
-                    bun.String.init(this.referrer),
-                    &log,
-                    &errorable,
-                    err,
-                );
-                break :outer;
+                switch (err) {
+                    error.JSError => {
+                        errorable = .err(error.JSError, this.globalThis.takeError(error.JSError).asVoid());
+                        break :outer;
+                    },
+                    else => {
+                        VirtualMachine.processFetchLog(
+                            this.globalThis,
+                            bun.String.init(this.specifier),
+                            bun.String.init(this.referrer),
+                            &log,
+                            &errorable,
+                            err,
+                        );
+                        break :outer;
+                    },
+                }
             });
         }
 
@@ -455,7 +463,7 @@ pub const AsyncModule = struct {
     pub fn fulfill(
         globalThis: *JSGlobalObject,
         promise: JSValue,
-        resolved_source: ResolvedSource,
+        resolved_source: *ResolvedSource,
         err: ?anyerror,
         specifier_: bun.String,
         referrer_: bun.String,
@@ -471,16 +479,27 @@ pub const AsyncModule = struct {
 
         var errorable: JSC.ErrorableResolvedSource = undefined;
         if (err) |e| {
-            VirtualMachine.processFetchLog(
-                globalThis,
-                specifier,
-                referrer,
-                log,
-                &errorable,
-                e,
-            );
+            defer {
+                if (resolved_source.source_code_needs_deref) {
+                    resolved_source.source_code_needs_deref = false;
+                    resolved_source.source_code.deref();
+                }
+            }
+
+            if (e == error.JSError) {
+                errorable = JSC.ErrorableResolvedSource.err(error.JSError, globalThis.takeError(error.JSError).asVoid());
+            } else {
+                VirtualMachine.processFetchLog(
+                    globalThis,
+                    specifier,
+                    referrer,
+                    log,
+                    &errorable,
+                    e,
+                );
+            }
         } else {
-            errorable = JSC.ErrorableResolvedSource.ok(resolved_source);
+            errorable = JSC.ErrorableResolvedSource.ok(resolved_source.*);
         }
         log.deinit();
 
@@ -1782,17 +1801,21 @@ pub export fn Bun__transpileFile(
             globalObject,
             FetchFlags.transpile,
         ) catch |err| {
-            if (err == error.AsyncModule) {
-                bun.assert(promise != null);
-                return promise;
+            switch (err) {
+                error.AsyncModule => {
+                    bun.assert(promise != null);
+                    return promise;
+                },
+                error.PluginError => return null,
+                error.JSError => {
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    return null;
+                },
+                else => {
+                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
+                    return null;
+                },
             }
-
-            if (err == error.PluginError) {
-                return null;
-            }
-
-            VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-            return null;
         },
     );
     return promise;
@@ -1816,8 +1839,9 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
     else
         specifier[@min(namespace.len + 1, specifier.len)..];
 
-    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse
+    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
         return JSValue.zero;
+    } orelse return .zero;
 }
 
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
@@ -1957,11 +1981,17 @@ export fn Bun__transpileVirtualModule(
             globalObject,
             FetchFlags.transpile,
         ) catch |err| {
-            if (err == error.PluginError) {
-                return true;
+            switch (err) {
+                error.PluginError => return true,
+                error.JSError => {
+                    ret.* = JSC.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError).asVoid());
+                    return true;
+                },
+                else => {
+                    VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
+                    return true;
+                },
             }
-            VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
-            return true;
         },
     );
     Analytics.Features.virtual_modules += 1;
@@ -2258,7 +2288,7 @@ pub const RuntimeTranspilerStore = struct {
 
             _ = vm.transpiler_store.store.put(this);
 
-            ModuleLoader.AsyncModule.fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
+            ModuleLoader.AsyncModule.fulfill(globalThis, promise, &resolved_source, parse_error, specifier, referrer, &log);
         }
 
         pub fn schedule(this: *TranspilerJob) void {
@@ -2670,6 +2700,12 @@ pub const HardcodedModule = enum {
     @"node:_stream_wrap",
     @"node:_stream_writable",
     @"node:_tls_common",
+    @"node:_http_agent",
+    @"node:_http_client",
+    @"node:_http_common",
+    @"node:_http_incoming",
+    @"node:_http_outgoing",
+    @"node:_http_server",
     /// This is gated behind '--expose-internals'
     @"bun:internal-for-testing",
 
@@ -2748,6 +2784,12 @@ pub const HardcodedModule = enum {
         .{ "node:_stream_wrap", .@"node:_stream_wrap" },
         .{ "node:_stream_writable", .@"node:_stream_writable" },
         .{ "node:_tls_common", .@"node:_tls_common" },
+        .{ "node:_http_agent", .@"node:_http_agent" },
+        .{ "node:_http_client", .@"node:_http_client" },
+        .{ "node:_http_common", .@"node:_http_common" },
+        .{ "node:_http_incoming", .@"node:_http_incoming" },
+        .{ "node:_http_outgoing", .@"node:_http_outgoing" },
+        .{ "node:_http_server", .@"node:_http_server" },
 
         .{ "node-fetch", HardcodedModule.@"node-fetch" },
         .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2899,18 +2941,26 @@ pub const HardcodedModule = enum {
             nodeEntry("worker_threads"),
             nodeEntry("zlib"),
 
+            nodeEntry("node:_http_agent"),
+            nodeEntry("node:_http_client"),
+            nodeEntry("node:_http_common"),
+            nodeEntry("node:_http_incoming"),
+            nodeEntry("node:_http_outgoing"),
+            nodeEntry("node:_http_server"),
+
+            nodeEntry("_http_agent"),
+            nodeEntry("_http_client"),
+            nodeEntry("_http_common"),
+            nodeEntry("_http_incoming"),
+            nodeEntry("_http_outgoing"),
+            nodeEntry("_http_server"),
+
             // sys is a deprecated alias for util
             .{ "sys", .{ .path = "node:util", .node_builtin = true } },
             .{ "node:sys", .{ .path = "node:util", .node_builtin = true } },
 
             // These are returned in builtinModules, but probably not many
             // packages use them so we will just alias them.
-            .{ "node:_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "node:_http_server", .{ .path = "node:http", .node_builtin = true } },
             .{ "node:_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
             .{ "node:_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
             .{ "node:_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },
@@ -2919,12 +2969,6 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_writable", .{ .path = "node:_stream_writable", .node_builtin = true } },
             .{ "node:_tls_wrap", .{ .path = "node:tls", .node_builtin = true } },
             .{ "node:_tls_common", .{ .path = "node:_tls_common", .node_builtin = true } },
-            .{ "_http_agent", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_client", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_common", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_incoming", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_outgoing", .{ .path = "node:http", .node_builtin = true } },
-            .{ "_http_server", .{ .path = "node:http", .node_builtin = true } },
             .{ "_stream_duplex", .{ .path = "node:_stream_duplex", .node_builtin = true } },
             .{ "_stream_passthrough", .{ .path = "node:_stream_passthrough", .node_builtin = true } },
             .{ "_stream_readable", .{ .path = "node:_stream_readable", .node_builtin = true } },

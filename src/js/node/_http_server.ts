@@ -46,11 +46,11 @@ const { format } = require("internal/util/inspect");
 
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
+const { kIncomingMessage } = require("node:_http_common");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
-const kIncomingMessage = Symbol("IncomingMessage");
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const GlobalPromise = globalThis.Promise;

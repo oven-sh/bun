@@ -818,9 +818,9 @@ fn writeOrEnd(
         break :brk .undefined;
     };
 
-    const strict_content_length: ?u32 = brk: {
+    const strict_content_length: ?u64 = brk: {
         if (arguments.len > 3 and arguments[3].isNumber()) {
-            break :brk arguments[3].toU32();
+            break :brk @intCast(@max(arguments[3].toInt64(), 0));
         }
         break :brk null;
     };
@@ -1017,7 +1017,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(4).slice();
+    const arguments = callframe.arguments();
 
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
@@ -1028,7 +1028,7 @@ pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.Cal
 }
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(4).slice();
+    const arguments = callframe.arguments();
     //We dont wanna a paused socket when we call end, so is important to resume the socket
     resumeSocket(this);
     return writeOrEnd(this, globalObject, arguments, callframe.this(), true);

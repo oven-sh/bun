@@ -518,7 +518,7 @@ extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_so
     JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(
         vm,
         globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject),
-        (us_socket_t*)us_socket,
+        us_socket,
         isSSL, nullptr);
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -1319,19 +1319,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+    ASSERT(callFrame->argumentCount() == 3);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-
-    ASSERT(callFrame->argumentCount() >= 2);
+    JSValue callback = callFrame->uncheckedArgument(2);
 
     Server__setRequireHostHeader(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), globalObject);
 
-    if (callFrame->argumentCount() > 2) {
-        JSValue callback = callFrame->uncheckedArgument(2);
-        Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
-    }
+    Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
 
     return JSValue::encode(jsUndefined());
 }

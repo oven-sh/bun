@@ -7697,6 +7697,8 @@ pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, glo
             this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*DebugHTTPSServer, this, DebugHTTPSServer.onClientErrorCallback);
         }
+    } else {
+        bun.debugAssert(false);
     }
 }
 pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) void {

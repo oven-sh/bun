@@ -674,22 +674,22 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
 }
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
-  const err = new Error("Parse Error");
+  let err;
   switch (errorCode) {
     case 2:
-      err.code = "HPE_UNEXPECTED_CONTENT_LENGTH";
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
       break;
     case 3:
-      err.code = "HPE_INVALID_TRANSFER_ENCODING";
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
       break;
     case 8:
-      err.code = "HPE_INVALID_EOF_STATE";
+      err = $HPE_INVALID_EOF_STATE("Parse Error");
       break;
     case 9:
-      err.code = "HPE_INVALID_METHOD";
+      err = $HPE_INVALID_METHOD("Parse Error");
       break;
     default:
-      err.code = "HPE_INTERNAL";
+      err = $HPE_INTERNAL("Parse Error");
       break;
   }
   err.rawPacket = rawPacket;

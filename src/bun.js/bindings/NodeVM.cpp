@@ -51,8 +51,7 @@ using namespace WebCore;
 /// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
 static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
 static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
-
-NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
+static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions);
 
 /// For some reason Node has this error message with a grammar error and we have to match it so the tests pass:
 /// `The "<name>" argument must be an vm.Context`
@@ -149,10 +148,10 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNodeVMGlobalObject; });
 }
 
-NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
+NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options)
 {
     auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure);
-    cell->finishCreation(vm);
+    cell->finishCreation(vm, options);
     return cell;
 }
 
@@ -162,9 +161,11 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
-void NodeVMGlobalObject::finishCreation(JSC::VM&)
+void NodeVMGlobalObject::finishCreation(JSC::VM&, NodeVMContextOptions options)
 {
     Base::finishCreation(vm());
+    m_allowStrings = options.allowStrings;
+    m_allowWasm = options.allowWasm;
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)
@@ -944,7 +945,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     // Create context and run code
     auto* context = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
+        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
+        {});
 
     context->setContextifiedObject(sandbox);
 
@@ -1148,7 +1150,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobal->NodeVMGlobalObjectStructure());
+        vm, zigGlobal->NodeVMGlobalObjectStructure(), {});
 
     return runInContext(targetContext, script, context, callFrame->argument(1));
 }
@@ -1156,21 +1158,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
 {
     return NodeVMGlobalObject::createStructure(vm, jsNull());
-}
-
-NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox)
-{
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
-
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
-    return targetContext;
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1194,31 +1181,17 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
     }
 
-    // If options is provided, validate name and origin properties
-    if (optionsArg.isObject()) {
-        JSObject* options = asObject(optionsArg);
+    NodeVMContextOptions contextOptions {};
 
-        // Check name property
-        if (JSValue nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!nameValue.isUndefined() && !nameValue.isString()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.name"_s, "string"_s, nameValue);
-            }
-        }
-
-        // Check origin property
-        if (JSValue originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s))) {
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!originValue.isUndefined() && !originValue.isString()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.origin"_s, "string"_s, originValue);
-            }
-        }
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions)) {
+        return *encodedException;
     }
 
     JSObject* sandbox = asObject(contextArg);
 
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
+        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
+        contextOptions);
 
     // Set sandbox as contextified object
     targetContext->setContextifiedObject(sandbox);
@@ -1571,8 +1544,8 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function () {"_s, body, "})"_s);
-        *outOffset = "(function () {"_s.length();
+        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        *outOffset = "(function () {\n"_s.length();
 
         if (UNLIKELY(!program)) {
             throwOutOfMemoryError(globalObject, scope);
@@ -1596,8 +1569,8 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
-        *outOffset = "(function ("_s.length() + paramString.length() + ") {"_s.length();
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        *outOffset = "(function ("_s.length() + paramString.length() + ") {\n"_s.length();
 
         if (UNLIKELY(!program)) {
             throwOutOfMemoryError(globalObject, scope);
@@ -1606,6 +1579,64 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
     }
 
     return program;
+}
+
+// Returns an encoded exception if the options are invalid.
+// Otherwise, returns an empty optional.
+static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions)
+{
+    outOptions = {};
+
+    // If options is provided, validate name and origin properties
+    if (!optionsArg.isObject()) {
+        return std::nullopt;
+    }
+
+    JSObject* options = asObject(optionsArg);
+
+    // Check name property
+    if (JSValue nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s))) {
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!nameValue.isUndefined() && !nameValue.isString()) {
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.name"_s, "string"_s, nameValue);
+        }
+    }
+
+    // Check origin property
+    if (JSValue originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s))) {
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!originValue.isUndefined() && !originValue.isString()) {
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.origin"_s, "string"_s, originValue);
+        }
+    }
+
+    if (JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "codeGeneration"_s))) {
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!codeGenerationValue.isObject()) {
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration"_s, "object"_s, codeGenerationValue);
+        }
+
+        JSObject* codeGenerationObject = asObject(codeGenerationValue);
+        if (JSValue allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!allowStringsValue.isBoolean()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration.strings"_s, "boolean"_s, allowStringsValue);
+            }
+
+            outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
+        }
+
+        if (JSValue allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!allowWasmValue.isBoolean()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration.wasm"_s, "boolean"_s, allowWasmValue);
+            }
+
+            outOptions.allowWasm = allowWasmValue.toBoolean(globalObject);
+        }
+    }
+
+    return std::nullopt;
 }
 
 } // namespace Bun

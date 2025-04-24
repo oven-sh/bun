@@ -13,6 +13,11 @@
 #include <JavaScriptCore/Nodes.h>
 
 namespace Bun {
+class NodeVMContextOptions final {
+public:
+    bool allowStrings = true;
+    bool allowWasm = true;
+};
 
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
@@ -23,13 +28,13 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
+    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options);
     static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, NodeVMContextOptions options);
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     void clearContextifiedObject();
@@ -41,12 +46,18 @@ public:
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
 
+    inline bool allowStrings() const { return m_allowStrings; }
+    inline bool allowWasm() const { return m_allowWasm; }
+
 private:
     NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure);
     ~NodeVMGlobalObject();
 
     // The contextified object that acts as the global proxy
     mutable JSC::WriteBarrier<JSC::JSObject> m_sandbox;
+
+    mutable bool m_allowStrings = true;
+    mutable bool m_allowWasm = true;
 };
 
 // Helper functions to create vm contexts and run code

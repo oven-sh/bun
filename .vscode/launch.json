@@ -27,8 +27,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -47,8 +49,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -59,8 +63,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -79,8 +85,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -99,8 +107,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -119,8 +129,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -139,8 +151,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -160,8 +174,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -186,8 +202,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -212,8 +230,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -235,8 +255,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -254,8 +276,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -273,8 +297,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -292,8 +318,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -313,8 +341,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -339,8 +369,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -365,8 +397,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -385,8 +419,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -405,8 +441,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -425,8 +463,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -445,8 +485,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -466,8 +508,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -492,8 +536,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -517,8 +563,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     // bun test [*]
@@ -537,8 +585,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -556,8 +606,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -576,8 +628,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
@@ -600,8 +654,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     {
@@ -619,8 +675,10 @@
       "sourceMap": {
         // macOS
         "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
       },
     },
     // Windows: bun test [file]

@@ -3,7 +3,7 @@ const { Duplex, Stream } = require("node:stream");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -25,7 +25,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  isValidTLSArray,
   ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
@@ -602,47 +601,38 @@ const Server = function Server(options, callback) {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    let key = options.key;
-    if (key) {
-      if (!isValidTLSArray(key)) {
-        throw new TypeError(
-          "key argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
-      this[isTlsSymbol] = true;
-    }
+
     let cert = options.cert;
     if (cert) {
-      if (!isValidTLSArray(cert)) {
-        throw new TypeError(
-          "cert argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
+      throwOnInvalidTLSArray("options.cert", cert);
+      this[isTlsSymbol] = true;
+    }
+
+    let key = options.key;
+    if (key) {
+      throwOnInvalidTLSArray("options.key", key);
       this[isTlsSymbol] = true;
     }
 
     let ca = options.ca;
     if (ca) {
-      if (!isValidTLSArray(ca)) {
-        throw new TypeError(
-          "ca argument must be a string, Buffer, TypedArray or BunFile, or an array containing string, Buffer, TypedArray or BunFile",
-        );
-      }
+      throwOnInvalidTLSArray("options.ca", ca);
       this[isTlsSymbol] = true;
     }
+
     let passphrase = options.passphrase;
     if (passphrase && typeof passphrase !== "string") {
-      throw new TypeError("passphrase argument must be a string");
+      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
     }
 
     let serverName = options.servername;
     if (serverName && typeof serverName !== "string") {
-      throw new TypeError("serverName argument must be a string");
+      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
     }
 
     let secureOptions = options.secureOptions || 0;
     if (secureOptions && typeof secureOptions !== "number") {
-      throw new TypeError("secureOptions argument must be an number");
+      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
     if (this[isTlsSymbol]) {

@@ -222,7 +222,7 @@ pub const Result = union(Tag) {
         Error: Syscall.Error,
         AbortReason: JSC.CommonAbortReason,
 
-        // TODO: use an explicit JSC.Strong here.
+        // TODO: use an explicit JSC.Strong.Optional here.
         JSValue: JSC.JSValue,
         WeakJSValue: JSC.JSValue,
 

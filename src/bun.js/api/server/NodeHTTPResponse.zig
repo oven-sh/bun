@@ -20,7 +20,7 @@ js_ref: JSC.Ref = .{},
 
 body_read_state: BodyReadState = .none,
 body_read_ref: JSC.Ref = .{},
-promise: JSC.Strong = .empty,
+promise: JSC.Strong.Optional = .empty,
 server: AnyServer,
 
 /// When you call pause() on the node:http IncomingMessage

@@ -80,6 +80,7 @@ private:
                             us_socket_close(SSL, s, 0, nullptr);
                             return;
                         }
+                        httpContextData->flags.isSecure = true;
                     }
 
                     /* Any connected socket should timeout until it has a request */

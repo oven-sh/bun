@@ -199,7 +199,8 @@ pub fn build(b: *Build) !void {
 
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
-    b.reference_trace = b.reference_trace orelse 32;
+    // Lower the default reference trace for incremental
+    b.reference_trace = b.reference_trace orelse if (b.graph.incremental == true) 8 else 16;
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 

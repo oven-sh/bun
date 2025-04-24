@@ -4,7 +4,7 @@ value: JSValue,
 ptr: Source,
 
 pub const Strong = struct {
-    held: JSC.Strong = .empty,
+    held: JSC.Strong.Optional = .empty,
 
     pub fn has(this: *Strong) bool {
         return this.held.has();
@@ -20,7 +20,7 @@ pub const Strong = struct {
 
     pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
         return .{
-            .held = JSC.Strong.create(this.value, global),
+            .held = .create(this.value, global),
         };
     }
 
@@ -437,7 +437,7 @@ pub fn NewSource(
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
-        close_jsvalue: JSC.Strong = .empty,
+        close_jsvalue: JSC.Strong.Optional = .empty,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: JSC.JSValue = .zero,
         is_closed: bool = false,

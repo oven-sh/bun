@@ -98,12 +98,12 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   function connectionCorkNT(conn) {
     conn.uncork();
   }
-  let __crlf_buf;
+  let lazyCrlfBuf;
   function getCrlfBuf() {
-    if (!__crlf_buf) {
-      __crlf_buf = Buffer.from("\r\n");
+    if (!lazyCrlfBuf) {
+      lazyCrlfBuf = Buffer.from("\r\n");
     }
-    return __crlf_buf;
+    return lazyCrlfBuf;
   }
   function strictContentLength(msg) {
     return (

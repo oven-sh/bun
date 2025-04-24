@@ -116,7 +116,7 @@ pub const ArrayBuffer = extern struct {
 
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
-        held: JSC.Strong = .empty,
+        held: JSC.Strong.Optional = .empty,
 
         pub fn clear(this: *ArrayBuffer.Strong) void {
             var ref: *bun.api.napi.Ref = this.ref orelse return;

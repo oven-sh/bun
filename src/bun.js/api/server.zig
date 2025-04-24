@@ -328,7 +328,7 @@ pub const ServerInitContext = struct {
 
 const UserRouteBuilder = struct {
     route: RouteDeclaration,
-    callback: JSC.Strong = .empty,
+    callback: JSC.Strong.Optional = .empty,
 
     // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
     pub const RouteDeclaration = struct {
@@ -1402,7 +1402,7 @@ pub const ServerConfig = struct {
                                 .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                 .method = .any,
                             },
-                            .callback = JSC.Strong.create(value.withAsyncContextIfNeeded(global), global),
+                            .callback = .create(value.withAsyncContextIfNeeded(global), global),
                         }) catch bun.outOfMemory();
                         bun.default_allocator.free(path);
                         continue;
@@ -1433,7 +1433,7 @@ pub const ServerConfig = struct {
                                         .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                         .method = .{ .specific = method },
                                     },
-                                    .callback = JSC.Strong.create(function.withAsyncContextIfNeeded(global), global),
+                                    .callback = .create(function.withAsyncContextIfNeeded(global), global),
                                 }) catch bun.outOfMemory();
                             }
                         }
@@ -5177,7 +5177,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const App = uws.NewApp(ssl_enabled);
 
         listener: ?*App.ListenSocket = null,
-        js_value: JSC.Strong = .empty,
+        js_value: JSC.Strong.Optional = .empty,
         /// Potentially null before listen() is called, and once .destroy() is called.
         app: ?*App = null,
         vm: *JSC.VirtualMachine,
@@ -6106,7 +6106,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
-                        .strong = JSC.Strong.create(this.all_closed_promise.value(), this.globalThis),
+                        .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
                 });
@@ -6489,7 +6489,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 success: void,
                 pending: JSC.JSValue,
             };
-            var strong_promise: JSC.Strong = .empty;
+            var strong_promise: JSC.Strong.Optional = .empty;
             var needs_to_drain = true;
 
             defer {
@@ -6760,7 +6760,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 prepared.ctx.toAsync(req, prepared.request_object);
 
                 return .{
-                    .js_request = JSC.Strong.create(prepared.js_request, global),
+                    .js_request = .create(prepared.js_request, global),
                     .request = prepared.request_object,
                     .ctx = AnyRequestContext.init(prepared.ctx),
                     .response = uws.AnyResponse.init(resp),
@@ -7342,7 +7342,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 }
 
 pub const SavedRequest = struct {
-    js_request: JSC.Strong,
+    js_request: JSC.Strong.Optional,
     request: *Request,
     ctx: AnyRequestContext,
     response: uws.AnyResponse,

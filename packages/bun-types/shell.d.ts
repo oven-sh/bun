@@ -24,9 +24,9 @@ declare module "bun" {
    */
   function $(strings: TemplateStringsArray, ...expressions: ShellExpression[]): $.ShellPromise;
 
-  namespace $ {
-    const Shell: new () => typeof $;
+  type $ = typeof $;
 
+  namespace $ {
     /**
      * Perform bash-like brace expansion on the given pattern.
      * @param pattern - Brace pattern to expand
@@ -60,23 +60,23 @@ declare module "bun" {
      * // "bun"
      * ```
      */
-    function env(newEnv?: Record<string, string | undefined>): typeof $;
+    function env(newEnv?: Record<string, string | undefined>): $;
 
     /**
      *
      * @param newCwd Default working directory to use for shells created by this instance.
      */
-    function cwd(newCwd?: string): typeof $;
+    function cwd(newCwd?: string): $;
 
     /**
      * Configure the shell to not throw an exception on non-zero exit codes.
      */
-    function nothrow(): typeof $;
+    function nothrow(): $;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
      */
-    function throws(shouldThrow: boolean): typeof $;
+    function throws(shouldThrow: boolean): $;
 
     /**
      * The `Bun.$.ShellPromise` class represents a shell command that gets executed
@@ -375,5 +375,7 @@ declare module "bun" {
        */
       blob(): Blob;
     }
+
+    const Shell: new () => $;
   }
 }

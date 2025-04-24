@@ -120,8 +120,13 @@ expectType(myShellConstructor).is<typeof Bun.$.Shell>();
 expectType(myShellPromiseConstructor).is<typeof Bun.$.ShellPromise>();
 expectType(myShellErrorConstructor).is<typeof Bun.$.ShellError>();
 
-const myShellInstance = new Bun.$.Shell();
+const myShellInstance: Bun.$ = new Bun.$.Shell();
 await myShellInstance`hey`;
+
+expectType(Bun.$).is<Bun.$>();
+
+const myOtherShell = Bun.$.nothrow();
+expectType(myOtherShell).is<Bun.$>();
 
 expectType(myShellInstance).is<typeof Bun.$>();
 

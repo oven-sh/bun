@@ -1369,9 +1369,6 @@ configure_core_dumps() {
 		# %p = pid
 		append_file "$sysctl_file" "kernel.core_pattern = $cores_dir/%e-%p.core"
 
-		# load the new configuration
-		execute_sudo sysctl -p "$sysctl_file"
-
 		# disable apport.service if it exists since it will override the core_pattern
 		if which systemctl >/dev/null; then
 			if systemctl list-unit-files apport.service >/dev/null; then
@@ -1379,6 +1376,8 @@ configure_core_dumps() {
 			fi
 		fi
 
+		# load the new configuration
+		execute_sudo sysctl -p "$sysctl_file"
 
 		# ensure that a regular user will be able to run sysctl
 		if [ -d /sbin ]; then

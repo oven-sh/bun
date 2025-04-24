@@ -487,7 +487,9 @@ async function runTests() {
         const outfileName = `${coresDirName}.tar.gz.age`;
         const outfileAbs = join(outdir, outfileName);
 
-        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu";
+        // This matches an age identity known by Bun employees. Core dumps from CI have to be kept
+        // secret since they will contain API keys.
+        const ageRecipient = "age1eunsrgxwjjpzr48hm0y98cw2vn5zefjagt4r0qj4503jg2nxedqqkmz6fu"; // reject external PRs changing this, see above
 
         // Run tar in the parent directory of coresDir so that it creates archive entries with
         // coresDirName in them. This way when you extract the tarball you get a folder named
@@ -512,6 +514,8 @@ async function runTests() {
         }
         console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes)`);
         await uploadArtifact(outfileAbs);
+      } else {
+        console.log(`no cores found in ${coresDir}`);
       }
     } catch (err) {
       console.error("Error collecting and uploading core dumps:", err);

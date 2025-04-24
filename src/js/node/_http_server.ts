@@ -616,7 +616,7 @@ const Server = function Server(options, callback) {
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
   this[tlsSymbol] = null;
-
+  this.noDelay = true;
   if (typeof options === "function") {
     callback = options;
     options = {};

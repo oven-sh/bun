@@ -1117,19 +1117,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   [kHandle];
   server: Server;
   _httpMessage;
-
+  _secureEstablished = false;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
     this[kHandle] = handle;
+    this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
-  }
-
-  get _secureEstablished() {
-    return !!this[kHandle]?.secureEstablished;
   }
 
   #closeHandle(handle, callback) {

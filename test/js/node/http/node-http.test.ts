@@ -2431,7 +2431,7 @@ test("request.socket._secureEstablished should identify if the request is secure
 
     await once(server.listen(0), "listening");
     const port = server.address().port;
-    await fetch(`https://localhost:${port}`, {
+    await fetch(`https://127.0.0.1:${port}`, {
       tls: {
         ca: COMMON_TLS_CERT.cert,
       },
@@ -2450,7 +2450,7 @@ test("request.socket._secureEstablished should identify if the request is secure
 
     await once(server.listen(0), "listening");
     const port = server.address().port;
-    await fetch(`http://localhost:${port}`);
+    await fetch(`http://127.0.0.1:${port}`);
     expect(_secureEstablished).toBe(false);
   }
 });

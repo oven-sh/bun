@@ -1,5 +1,5 @@
 const { Stream } = require("internal/stream");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, isUint8Array } = require("internal/validators");
 
 const {
   headerStateSymbol,
@@ -21,9 +21,143 @@ const {
   getRawKeys,
 } = require("internal/http");
 
-const { validateHeaderName, validateHeaderValue } = require("node:_http_common");
-
+const {
+  validateHeaderName,
+  validateHeaderValue,
+  _checkInvalidHeaderChar: checkInvalidHeaderChar,
+} = require("node:_http_common");
+const kUniqueHeaders = Symbol("kUniqueHeaders");
+const kBytesWritten = Symbol("kBytesWritten");
+const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kCorked = Symbol("corked");
+const kChunkedBuffer = Symbol("kChunkedBuffer");
+const kHighWaterMark = Symbol("kHighWaterMark");
+const kChunkedLength = Symbol("kChunkedLength");
 const { FakeSocket } = require("internal/http/FakeSocket");
+const nop = () => {};
+
+function emitErrorNt(msg, err, callback) {
+  callback(err);
+  if (typeof msg.emit === "function" && !msg.destroyed) {
+    msg.emit("error", err);
+  }
+}
+
+function onError(msg, err, callback) {
+  if (msg.destroyed) {
+    return;
+  }
+
+  process.nextTick(emitErrorNt, msg, err, callback);
+}
+
+function write_(msg, chunk, encoding, callback, fromEnd) {
+  if (typeof callback !== "function") callback = nop;
+
+  if (chunk === null) {
+    throw $ERR_STREAM_NULL_VALUES();
+  } else if (typeof chunk !== "string" && !isUint8Array(chunk)) {
+    throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+  }
+
+  let err;
+  if (msg.finished) {
+    err = $ERR_STREAM_WRITE_AFTER_END();
+  } else if (msg.destroyed) {
+    err = $ERR_STREAM_DESTROYED("write");
+  }
+
+  if (err) {
+    if (!msg.destroyed) {
+      onError(msg, err, callback);
+    } else {
+      process.nextTick(callback, err);
+    }
+    return false;
+  }
+
+  let len;
+
+  if (msg.strictContentLength) {
+    len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+
+    if (
+      strictContentLength(msg) &&
+      (fromEnd ? msg[kBytesWritten] + len !== msg._contentLength : msg[kBytesWritten] + len > msg._contentLength)
+    ) {
+      const err = new Error(
+        `Response body's content-length of ${len + msg[kBytesWritten]} byte(s) does not match the content-length of ${msg._contentLength} byte(s) set in header`,
+      );
+      err.code = "ERR_HTTP_CONTENT_LENGTH_MISMATCH";
+      throw err;
+    }
+
+    msg[kBytesWritten] += len;
+  }
+
+  function connectionCorkNT(conn) {
+    conn.uncork();
+  }
+  let __crlf_buf;
+  function getCrlfBuf() {
+    if (!__crlf_buf) {
+      __crlf_buf = Buffer.from("\r\n");
+    }
+    return __crlf_buf;
+  }
+  function strictContentLength(msg) {
+    return (
+      msg.strictContentLength &&
+      msg._contentLength != null &&
+      msg._hasBody &&
+      !msg._removedContLen &&
+      !msg.chunkedEncoding &&
+      !msg.hasHeader("transfer-encoding")
+    );
+  }
+
+  if (!msg._header) {
+    if (fromEnd) {
+      len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+      msg._contentLength = len;
+    }
+    msg._implicitHeader();
+  }
+
+  if (!msg._hasBody) {
+    if (msg[kRejectNonStandardBodyWrites]) {
+      throw $ERR_HTTP_BODY_NOT_ALLOWED();
+    } else {
+      process.nextTick(callback);
+      return true;
+    }
+  }
+
+  if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
+    msg.socket.cork();
+    process.nextTick(connectionCorkNT, msg.socket);
+  }
+
+  let ret;
+  if (msg.chunkedEncoding && chunk.length !== 0) {
+    len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+    if (msg[kCorked] && msg._headerSent) {
+      msg[kChunkedBuffer].push(chunk, encoding, callback);
+      msg[kChunkedLength] += len;
+      ret = msg[kChunkedLength] < msg[kHighWaterMark];
+    } else {
+      const crlf_buf = getCrlfBuf();
+      msg._send(len.toString(16), "latin1", null);
+      msg._send(crlf_buf, null, null);
+      msg._send(chunk, encoding, null, len);
+      ret = msg._send(crlf_buf, null, callback);
+    }
+  } else {
+    ret = msg._send(chunk, encoding, callback, len);
+  }
+
+  return ret;
+}
 
 function OutgoingMessage(options) {
   if (!new.target) {
@@ -80,25 +214,12 @@ const OutgoingMessagePrototype = {
 
   // Overridden by ClientRequest and ServerResponse; this version will be called only if the user constructs OutgoingMessage directly.
   write(chunk, encoding, callback) {
-    if ($isCallable(chunk)) {
-      callback = chunk;
-      chunk = undefined;
-    } else if ($isCallable(encoding)) {
+    if (typeof encoding === "function") {
       callback = encoding;
-      encoding = undefined;
-    } else if (!$isCallable(callback)) {
-      callback = undefined;
-      encoding = undefined;
+      encoding = null;
     }
-    hasServerResponseFinished(this, chunk, callback);
-    if (chunk) {
-      const len = Buffer.byteLength(chunk, encoding || (typeof chunk === "string" ? "utf8" : "buffer"));
-      if (len > 0) {
-        this.outputSize += len;
-        this.outputData.push(chunk);
-      }
-    }
-    return this.writableHighWaterMark >= this.outputSize;
+
+    return write_(this, chunk, encoding, callback, false);
   },
 
   getHeaderNames() {
@@ -187,8 +308,48 @@ const OutgoingMessagePrototype = {
     this[headersSymbol] = new Headers(value);
   },
 
-  addTrailers(_headers) {
-    throw new Error("not implemented");
+  addTrailers(headers) {
+    this._trailer = "";
+    const keys = Object.keys(headers);
+    const isArray = $isArray(headers);
+    // Retain for(;;) loop for performance reasons
+    // Refs: https://github.com/nodejs/node/pull/30958
+    for (let i = 0, l = keys.length; i < l; i++) {
+      let field, value;
+      const key = keys[i];
+      if (isArray) {
+        field = headers[key][0];
+        value = headers[key][1];
+      } else {
+        field = key;
+        value = headers[key];
+      }
+      validateHeaderName(field, "Trailer name");
+
+      // Check if the field must be sent several times
+      const isArrayValue = $isArray(value);
+      if (
+        isArrayValue &&
+        value.length > 1 &&
+        (!this[kUniqueHeaders] || !this[kUniqueHeaders].has(field.toLowerCase()))
+      ) {
+        for (let j = 0, l = value.length; j < l; j++) {
+          if (checkInvalidHeaderChar(value[j])) {
+            throw $ERR_INVALID_CHAR("trailer content", field);
+          }
+          this._trailer += field + ": " + value[j] + "\r\n";
+        }
+      } else {
+        if (isArrayValue) {
+          value = value.join("; ");
+        }
+
+        if (checkInvalidHeaderChar(value)) {
+          throw $ERR_INVALID_CHAR("trailer content", field);
+        }
+        this._trailer += field + ": " + value + "\r\n";
+      }
+    }
   },
 
   setTimeout(msecs, callback) {
@@ -221,6 +382,9 @@ const OutgoingMessagePrototype = {
 
   get connection() {
     return this.socket;
+  },
+  set connection(value) {
+    this.socket = value;
   },
 
   get socket() {

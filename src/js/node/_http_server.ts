@@ -1393,7 +1393,13 @@ function _writeHead(statusCode, reason, obj, response) {
         if (length % 2 !== 0) {
           throw $ERR_INVALID_ARG_VALUE("headers", obj);
         }
-
+        // Test non-chunked message does not have trailer header set,
+        // message will be terminated by the first empty line after the
+        // header fields, regardless of the header fields present in the
+        // message, and thus cannot contain a message body or 'trailers'.
+        if (this.chunkedEncoding !== true && state.trailer) {
+          throw new ERR_HTTP_TRAILER_INVALID();
+        }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
         // existing conflicts, then use appendHeader.

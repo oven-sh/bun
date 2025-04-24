@@ -82,6 +82,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_CONTENT_LENGTH_MISMATCH", Error],
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_TRAILER_INVALID", Error],
   ["ERR_HTTP_SOCKET_ASSIGNED", Error],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],

@@ -1416,7 +1416,7 @@ function _writeHead(statusCode, reason, obj, response) {
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
         if (response.chunkedEncoding !== true && response._trailer) {
-          throw $ERR_HTTP_TRAILER_INVALID();
+          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any

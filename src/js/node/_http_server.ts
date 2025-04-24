@@ -338,10 +338,8 @@ const ServerResponsePrototype = {
 
     if (!handle) {
       if (this.socket) {
-        console.log("writing to socket");
         return this.socket.write(chunk, encoding, callback);
       } else {
-        console.log("writing to outgoing message");
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
@@ -699,20 +697,33 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
+// uWS::HttpParserError
+enum HttpParserError {
+  HTTP_PARSER_ERROR_NONE = 0,
+  HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
+  HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH = 2,
+  HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 3,
+  HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 4,
+  HTTP_PARSER_ERROR_INVALID_REQUEST = 5,
+  HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 6,
+  HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
+  HTTP_PARSER_ERROR_INVALID_EOF = 8,
+  HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+}
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   let err;
   switch (errorCode) {
-    case 2:
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
       err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
       break;
-    case 3:
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
       err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
       break;
-    case 8:
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
       err = $HPE_INVALID_EOF_STATE("Parse Error");
       break;
-    case 9:
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
       err = $HPE_INVALID_METHOD("Parse Error");
       break;
     default:

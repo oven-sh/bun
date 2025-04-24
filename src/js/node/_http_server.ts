@@ -747,6 +747,8 @@ const ServerPrototype = {
     }
     this[serverSymbol] = undefined;
     this[kConnectionsCheckingInterval]._destroyed = true;
+    this.listening = false;
+
     server.stop(true);
   },
 
@@ -763,6 +765,7 @@ const ServerPrototype = {
     this[serverSymbol] = undefined;
     this[kConnectionsCheckingInterval]._destroyed = true;
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
+    this.listening = false;
     server.stop();
   },
 

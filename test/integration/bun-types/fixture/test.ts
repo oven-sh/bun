@@ -130,3 +130,96 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<boolean>(b);
   expectType<5 | "asdf">(c);
 });
+
+describe("Bun.Wider matchers", () => {
+  test("toBe and resolves", async () => {
+    expect(5).toBe(5);
+    expect("hello").toBe("hello");
+    const promiseNumber = Promise.resolve(10 as number);
+    await expect(promiseNumber).resolves.toBe(10);
+    // @ts-expect-error
+    expect(5).toBe("5");
+  });
+
+  test("toEqual and generic overload", () => {
+    expect({ x: 1 }).toEqual({ x: 1 });
+    expect({ x: [1, 2] }).toEqual({ x: [1, 2] });
+    expect({ a: { b: true }, c: [1, "two"] }).toEqual({ a: { b: true }, c: [1, "two"] });
+    expect({ x: 1 }).toEqual<{ x: number }>({ x: 1 });
+    // @ts-expect-error
+    expect({ x: 1 }).toEqual<{ x: string }>({ x: 1 as any });
+  });
+
+  test("toStrictEqual", () => {
+    expect([{ a: 1 }]).toStrictEqual([{ a: 1 }]);
+    const sym = Symbol("foo");
+    expect([sym]).toStrictEqual([sym]);
+    expect([{ a: 1 }]).toStrictEqual([{ a: 2 }]);
+  });
+
+  test("toBeOneOf", () => {
+    expect(2).toBeOneOf([1, 2, 3]);
+    expect("b").toBeOneOf(new Set(["a", "b"]));
+    expect(true).toBeOneOf([false]);
+  });
+
+  test("toContain", () => {
+    expect([1, 2, 3]).toContain(2);
+    expect("abc").toContain("b");
+    // @ts-expect-error
+    expect([1, 2]).toContain("2");
+  });
+
+  test("key-based matchers", () => {
+    const obj = { foo: 1, bar: 2, baz: 3 };
+    expect(obj).toContainKey("foo");
+    expect(obj).toContainAllKeys(["foo", "baz"]);
+    expect(obj).toContainAnyKeys(["abc", "bar"]);
+    expect(obj).toContainKeys(["bar", "foo"]);
+    expect(obj).toContainKey("unknown");
+    expect(obj).toContainAllKeys(["foo", "unknown"]);
+    expect(obj).toContainAnyKeys(["unknown"]);
+    // @ts-expect-error
+    expect(obj).toContainKeys([1]);
+  });
+
+  test("toContainEqual", () => {
+    const arr = [{ x: 1 }, { x: 2 }];
+    expect(arr).toContainEqual({ x: 1 });
+    expect(arr).toContainEqual({ x: 3 });
+  });
+
+  test("custom type mismatch", () => {
+    interface User {
+      name: string;
+      age: number;
+    }
+    const aUser: User = { name: "Alice", age: 30 };
+    expect(aUser).toBe(aUser);
+    // @ts-expect-error
+    expect(aUser).toBe({ name: "Bob" });
+    // @ts-expect-error
+    expect(aUser).toBe({ name: "Bob", age: "thirty" });
+  });
+
+  test("Set and Map types", () => {
+    const numSet: Set<number> = new Set([1, 2, 3]);
+    expect(numSet).toContain(2);
+    // @ts-expect-error
+    expect(numSet).toContain("2");
+    const mapSN: Map<string, number> = new Map([["x", 10]]);
+    expect(mapSN).toEqual(new Map([["x", 10]]));
+    // @ts-expect-error
+    expect(mapSN).toEqual(new Map([["x", "10"]]));
+    expect(mapSN).toHaveProperty("size", 1);
+    expect(mapSN).toHaveProperty("unknown", 1);
+  });
+
+  test("object value containment", () => {
+    const nested = { a: { x: 1 }, b: { x: 2 } };
+    expect(nested).toContainValue({ x: 1 });
+    expect(nested).toContainValue({ x: 3 });
+    expect(nested).toContainValues([{ x: 1 }, { x: 2 }]);
+    expect(nested).toContainValues([{ x: 3 }]);
+  });
+});

@@ -1392,7 +1392,7 @@ jsc-build-linux-compile-build-debug:
 		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
 
-jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
+jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile
 jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy

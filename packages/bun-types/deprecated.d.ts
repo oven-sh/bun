@@ -142,7 +142,7 @@ declare module "bun" {
   type SignalsListener = (signal: NodeJS.Signals) => void;
 
   /**
-   * @deprecated This type is redundant with built-in types. Consider using {@link Bun.BodyInit} instead.
+   * @deprecated Consider using {@link Bun.BodyInit} instead. This may be removed in the near future.
    */
   type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
 }

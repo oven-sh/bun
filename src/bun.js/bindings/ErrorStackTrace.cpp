@@ -644,7 +644,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     {
         if (functionName.isEmpty()) {
             if (jstype == JSC::JSFunctionType) {
-                auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+                auto* function = jsCast<JSC::JSFunction*>(object);
                 if (function) {
                     functionName = function->nameWithoutGC(vm);
                     if (functionName.isEmpty()) {
@@ -657,7 +657,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                     }
                 }
             } else if (jstype == JSC::InternalFunctionType) {
-                auto* function = jsDynamicCast<JSC::InternalFunction*>(object);
+                auto* function = jsCast<JSC::InternalFunction*>(object);
                 if (function) {
                     functionName = function->name();
                 }

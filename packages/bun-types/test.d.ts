@@ -97,7 +97,6 @@ declare module "bun:test" {
     useFakeTimers(): void;
     useRealTimers(): void;
     spyOn: spyOn;
-    
   }
   export const jest: Jest;
   export namespace jest {

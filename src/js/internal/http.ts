@@ -1,6 +1,3 @@
-const { checkIsHttpToken } = require("internal/validators");
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
-
 const {
   getHeader,
   setHeader,
@@ -430,24 +427,6 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
-  webRequestOrResponse,
-  statusCodeSymbol,
-  kAbortController,
-  statusMessageSymbol,
-  kInternalSocketData,
-  serverSymbol,
-  kPendingCallbacks,
-  kRequest,
-  kCloseCallback,
-  kDeferredTimeouts,
-  isAbortError,
-  kEmptyObject,
-  getIsNextIncomingMessageHTTPS,
-  setIsNextIncomingMessageHTTPS,
-  callCloseCallback,
-  emitCloseNT,
-  emitCloseNTAndComplete,
-  emitEOFIncomingMessage,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

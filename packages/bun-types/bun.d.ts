@@ -46,30 +46,6 @@ declare module "bun" {
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
-  /**
-   * Maps specific union types to their primitive counterparts
-   * Recursively handles arrays, tuples, and object properties
-   */
-  // prettier-ignore
-  type Wider<T> =
-    T extends [] ? [] :
-    T extends [infer A, ...infer B] ? [Wider<A>, ...Wider<B>] :
-    T extends Array<infer U> ? Array<Wider<U>> :
-    T extends Set<infer U> ? Set<Wider<U>> :
-    T extends Map<infer K, infer V> ? Map<Wider<K>, Wider<V>> :
-    T extends Promise<infer U> ? Promise<Wider<U>> :
-    T extends WeakMap<infer K, infer V> ? WeakMap<Wider<K>, Wider<V>> :
-    T extends WeakSet<infer U> ? WeakSet<Wider<U>> :
-    T extends string ? string :
-    T extends number ? number :     
-    T extends boolean ? boolean :
-    T extends bigint ? bigint :
-    T extends symbol ? symbol :
-    T extends null ? null :
-    T extends {} ? { [K in keyof T]: Wider<T[K]> } :
-    T extends undefined ? undefined :
-    T;
-
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 

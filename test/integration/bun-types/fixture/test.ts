@@ -222,4 +222,84 @@ describe("Bun.Wider matchers", () => {
     expect(nested).toContainValues([{ x: 1 }, { x: 2 }]);
     expect(nested).toContainValues([{ x: 3 }]);
   });
+
+  test("promise matchers", async () => {
+    const successPromise = Promise.resolve({ data: 42 });
+    const failPromise = Promise.reject(new Error("fail"));
+
+    await expect(successPromise).resolves.toEqual({ data: 42 });
+    // @ts-expect-error
+    await expect(successPromise).resolves.toEqual({ data: "42" });
+
+    await expect(failPromise).rejects.toThrow("fail");
+    await expect(failPromise).rejects.toBeInstanceOf(Error);
+
+    await expect(successPromise).rejects.toThrow();
+  });
+
+  test("WeakMap and WeakSet types", () => {
+    const key1 = { id: 1 };
+    const key2 = { id: 2 };
+    const weakMap = new WeakMap<typeof key1, number>();
+    weakMap.set(key1, 100);
+
+    expect(weakMap.has(key1)).toBe(true);
+    expect(weakMap.get(key1)).toBe(100);
+    expect(weakMap.get(key2)).toBe(100);
+
+    const weakSet = new WeakSet<typeof key1>();
+    weakSet.add(key1);
+    expect(weakSet.has(key1)).toBe(true);
+    // @ts-expect-error
+    weakSet.add("invalid");
+  });
+
+  test("array and typed array matchers", () => {
+    const arr = [1, 2, 3];
+    const uint8 = new Uint8Array([1, 2, 3]);
+    const float64 = new Float64Array([1.1, 2.2]);
+
+    expect(arr).toBeArray();
+    expect(arr).toBeArrayOfSize(3);
+    expect(arr).toEqual(expect.arrayContaining([2, 1]));
+    expect(arr).toEqual(expect.arrayContaining(["1", "2"]));
+
+    expect(uint8).toHaveLength(3);
+    expect(uint8).toContain(1);
+    expect(uint8).toContain(256);
+    // @ts-expect-error
+    expect(uint8).toContain("cool");
+
+    expect(float64).toHaveLength(2);
+    expect(float64).toContain(1.1);
+    // @ts-expect-error
+    expect(float64).toContain("1.1");
+  });
+
+  test("built-in object type matchers", () => {
+    const date = new Date();
+    const regex = /test/;
+    const error = new Error("test");
+    const buffer = new ArrayBuffer(8);
+    const dataView = new DataView(buffer);
+
+    expect(date).toBeDate();
+    expect(date).toBeValidDate();
+    expect(date.getTime()).toBeNumber();
+    // @ts-expect-error
+    expect(date).toBe("2024-01-01");
+
+    expect(regex.test("test")).toBe(true);
+    expect("test").toMatch(regex);
+    expect(123).toMatch(regex);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe("test");
+    // @ts-expect-error
+    expect(error).toBe("test");
+
+    expect(dataView.byteLength).toBe(8);
+    expect(dataView.buffer).toBe(buffer);
+    expect(dataView.getInt8(100)).toBeDefined();
+  });
 });

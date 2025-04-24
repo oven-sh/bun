@@ -15,6 +15,35 @@
  */
 declare module "bun:test" {
   /**
+   * Maps specific union types to their primitive counterparts
+   * Recursively handles arrays, tuples, and object properties
+   */
+  // prettier-ignore
+  type Wider<T> =
+    T extends [] ? [] :
+    T extends [infer A, ...infer B] ? [Wider<A>, ...Wider<B>] :
+
+    T extends Array<infer U> ? Array<Wider<U>> :
+    T extends Set<infer U> ? Set<Wider<U>> :
+    T extends Map<infer K, infer V> ? Map<Wider<K>, Wider<V>> :
+    T extends Promise<infer U> ? Promise<Wider<U>> :
+    T extends WeakMap<infer K, infer V> ? WeakMap<Wider<K>, Wider<V>> :
+    T extends WeakSet<infer U> ? WeakSet<Wider<U>> :
+    T extends Error ? Error :
+    T extends RegExp ? RegExp :
+    T extends Date ? Date :
+  
+    T extends string ? string :
+    T extends number ? number :     
+    T extends boolean ? boolean :
+    T extends bigint ? bigint :
+    T extends symbol ? symbol :
+    T extends null ? null :
+    T extends {} ? { [K in keyof T]: Wider<T[K]> } :
+    T extends undefined ? undefined :
+    T;
+
+  /**
    * -- Mocks --
    *
    * @category Testing
@@ -530,7 +559,8 @@ declare module "bun:test" {
      * @param customFailMessage an optional custom message to display if the test fails.
      * */
 
-    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
+    <T = unknown>(actual: T, customFailMessage?: string): Matchers<T>;
+    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T | undefined>;
 
     /**
      * Access to negated asymmetric matchers.
@@ -825,7 +855,7 @@ declare module "bun:test" {
      * @example
      * expect(Promise.resolve(1)).resolves.toBe(1);
      */
-    resolves: Matchers<Bun.Wider<Awaited<T>>>;
+    resolves: Matchers<Wider<Awaited<T>>>;
 
     /**
      * Expects the value to be a promise that rejects.
@@ -848,6 +878,7 @@ declare module "bun:test" {
      * @param message the message to display if the test fails (optional)
      */
     pass: (message?: string) => void;
+
     /**
      * Assertion which fails.
      *
@@ -859,6 +890,7 @@ declare module "bun:test" {
      * expect().not.fail("hi");
      */
     fail: (message?: string) => void;
+
     /**
      * Asserts that a value equals what is expected.
      *
@@ -874,8 +906,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: Bun.Wider<T>): void;
-    toBe<X extends Bun.Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+    toBe(expected: Wider<T>): void;
+    toBe<X extends Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+
     /**
      * Asserts that a number is odd.
      *
@@ -885,6 +918,7 @@ declare module "bun:test" {
      * expect(2).not.toBeOdd();
      */
     toBeOdd(): void;
+
     /**
      * Asserts that a number is even.
      *
@@ -894,6 +928,7 @@ declare module "bun:test" {
      * expect(1).not.toBeEven();
      */
     toBeEven(): void;
+
     /**
      * Asserts that value is close to the expected by floating point precision.
      *
@@ -912,6 +947,7 @@ declare module "bun:test" {
      * @param numDigits the number of digits to check after the decimal point. Default is `2`
      */
     toBeCloseTo(expected: number, numDigits?: number): void;
+
     /**
      * Asserts that a value is deeply equal to what is expected.
      *
@@ -923,8 +959,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(expected: Bun.Wider<T>): void;
-    toEqual<X extends Bun.Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+    toEqual(expected: Wider<T>): void;
+    toEqual<X extends Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+
     /**
      * Asserts that a value is deeply and strictly equal to
      * what is expected.
@@ -948,8 +985,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual(expected: Bun.Wider<T>): void;
-    toStrictEqual<X extends Bun.Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+    toStrictEqual(expected: Wider<T>): void;
+    toStrictEqual<X extends Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
 
     /**
      * Asserts that the value is deep equal to an element in the expected array.
@@ -963,8 +1000,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Iterable<Bun.Wider<T>>): void;
-    toBeOneOf<X extends Iterable<Bun.Wider<T>>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+    toBeOneOf(expected: Iterable<Wider<T>>): void;
+    toBeOneOf<X extends Iterable<Wider<T>>>(expected: NoInfer<X>): void; // Overload for exact assignability match
 
     /**
      * Asserts that a value contains what is expected.
@@ -979,8 +1016,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: T extends Iterable<infer U> ? Bun.Wider<U> : Bun.Wider<T>): void;
-    toContain<X extends T extends Iterable<infer U> ? Bun.Wider<U> : Bun.Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
+    toContain(expected: T extends Iterable<infer U> ? Wider<U> : Wider<T>): void;
+    toContain<X extends T extends Iterable<infer U> ? Wider<U> : Wider<T>>(expected: NoInfer<X>): void; // Overload for exact assignability match
 
     /**
      * Asserts that an `object` contains a key.
@@ -995,7 +1032,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: Bun.Wider<keyof T>): void;
+    toContainKey(expected: Wider<keyof T>): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1011,7 +1048,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: Array<Bun.Wider<keyof T>>): void;
+    toContainAllKeys(expected: Array<Wider<keyof T>>): void;
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
@@ -1027,7 +1064,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys(expected: Array<Bun.Wider<keyof T>>): void;
+    toContainAnyKeys(expected: Array<Wider<keyof T>>): void;
     /**
      * Asserts that an `object` contain the provided value.
      *
@@ -1110,7 +1147,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: Array<Bun.Wider<keyof T>>): void;
+    toContainKeys(expected: Array<Wider<keyof T>>): void;
     /**
      * Asserts that a value contains and equals what is expected.
      *
@@ -1123,7 +1160,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual(expected: T extends Iterable<infer U> ? Bun.Wider<U> : unknown): void;
+    toContainEqual(expected: T extends Iterable<infer U> ? Wider<U> : unknown): void;
     /**
      * Asserts that a value has a `.length` property
      * that is equal to the expected length.

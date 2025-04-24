@@ -197,7 +197,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        ipc_data.send_queue.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
+        ipc_data.send_queue.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.send_queue.internal_msg_queue.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder

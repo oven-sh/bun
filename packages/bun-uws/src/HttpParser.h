@@ -326,18 +326,18 @@ namespace uWS
             return (void *)p;
         }
 
-        static bool isAlpha(std::string_view str) {
+        static bool isValidMethod(std::string_view str) {
             if (str.empty()) return false;
 
             for (char c : str) {
-                if (!isAlphaChar(c))
+                if (!isValidMethodChar(c))
                     return false;
             }
             return true;
         }
 
-        static inline bool isAlphaChar(char c) {
-            return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+        static inline bool isValidMethodChar(char c) {
+            return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
         }
 
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
@@ -386,7 +386,7 @@ namespace uWS
             char *start = data;
             /* This catches the post padded CR and fails */
             while (data[0] > 32) {
-                if (!isAlphaChar(data[0])) {
+                if (!isValidMethodChar(data[0]) ) {
                     return (char *) 0x3;
                 }
                 data++;
@@ -399,7 +399,7 @@ namespace uWS
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
-                  if(!isAlpha(header.key)) {
+                  if(!isValidMethod(header.key)) {
                     return (char *) 0x3;
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */

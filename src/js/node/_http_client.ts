@@ -3,6 +3,7 @@ const { isIP, isIPv6 } = require("node:net");
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
+const { validateHeaderName } = require("node:_http_common");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -789,6 +790,7 @@ function ClientRequest(input, options, cb) {
           throw $ERR_INVALID_ARG_VALUE("options.headers", "expected array of [key, value]");
         }
         const key = actualHeader[0];
+        validateHeaderName(key);
         const lowerKey = key?.toLowerCase();
         if (lowerKey === "host") {
           if (!this.getHeader(key)) {

@@ -790,7 +790,13 @@ function ClientRequest(input, options, cb) {
   } else {
     if (headers) {
       for (let key in headers) {
-        this.setHeader(key, headers[key]);
+        const value = headers[key];
+        if (key === "host" || key === "hostname") {
+          if (value !== null && value !== undefined && typeof value !== "string") {
+            throw $ERR_INVALID_ARG_TYPE(`options.${key}`, ["string", "undefined", "null"], value);
+          }
+        }
+        this.setHeader(key, value);
       }
     }
 

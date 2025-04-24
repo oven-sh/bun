@@ -1,5 +1,5 @@
 const { Stream } = require("internal/stream");
-const { validateFunction, isUint8Array } = require("internal/validators");
+const { validateFunction, isUint8Array, validateString } = require("internal/validators");
 
 const {
   headerStateSymbol,
@@ -199,6 +199,7 @@ const OutgoingMessagePrototype = {
   _closed: false,
 
   appendHeader(name, value) {
+    validateString(name, "name");
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);
     return this;
@@ -209,6 +210,7 @@ const OutgoingMessagePrototype = {
   },
   flushHeaders() {},
   getHeader(name) {
+    validateString(name, "name");
     return getHeader(this[headersSymbol], name);
   },
 
@@ -241,6 +243,7 @@ const OutgoingMessagePrototype = {
   },
 
   removeHeader(name) {
+    validateString(name, "name");
     if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
       throw $ERR_HTTP_HEADERS_SENT("remove");
     }
@@ -294,6 +297,7 @@ const OutgoingMessagePrototype = {
     return this;
   },
   hasHeader(name) {
+    validateString(name, "name");
     const headers = this[headersSymbol];
     if (!headers) return false;
     return headers.has(name);

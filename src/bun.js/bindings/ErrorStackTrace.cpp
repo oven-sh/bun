@@ -122,7 +122,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     WTF::String callerName {};
     if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
         callerName = callerFunction->name(vm);
-        if (callerName.isEmpty() && callerFunction->jsExecutable()) {
+        if (callerName.isEmpty() && !callerFunction->isHostFunction() && callerFunction->jsExecutable()) {
             callerName = callerFunction->jsExecutable()->name().string();
         }
     } else if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
@@ -647,7 +647,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 auto* function = jsCast<JSC::JSFunction*>(object);
                 if (function) {
                     functionName = function->nameWithoutGC(vm);
-                    if (functionName.isEmpty()) {
+                    if (functionName.isEmpty() && !function->isHostFunction()) {
                         auto* executable = function->jsExecutable();
                         if (executable) {
                             if (!executable->ecmaName().isEmpty()) {
@@ -729,7 +729,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                         auto* function = jsCast<JSC::JSFunction*>(object);
                         if (function) {
                             functionName = function->nameWithoutGC(vm);
-                            if (functionName.isEmpty()) {
+                            if (functionName.isEmpty() && !function->isHostFunction()) {
                                 auto* executable = function->jsExecutable();
                                 if (executable) {
                                     if (!executable->ecmaName().isEmpty()) {

@@ -1,6 +1,6 @@
 // Things that maybe should go in Zig standard library at some point
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub fn Key(comptime Map: type) type {
     return FieldType(Map.KV, "key").?;
@@ -166,18 +166,6 @@ pub inline fn from(
     return fromSlice(Array, allocator, []const Of(Array), @as([]const Of(Array), default));
 }
 
-pub fn concat(
-    comptime T: type,
-    dest: []T,
-    src: []const []const T,
-) void {
-    var remain = dest;
-    for (src) |group| {
-        bun.copy(T, remain[0..group.len], group);
-        remain = remain[group.len..];
-    }
-}
-
 pub fn fromSlice(
     comptime Array: type,
     allocator: std.mem.Allocator,
@@ -239,44 +227,6 @@ pub fn fromSlice(
 
         return map;
     }
-}
-
-/// Say you need to allocate a bunch of tiny arrays
-/// You could just do separate allocations for each, but that is slow
-/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
-/// So a better idea is to batch up your allocations into one larger allocation
-/// and then just make all the arrays point to different parts of the larger allocation
-pub fn Batcher(comptime Type: type) type {
-    return struct {
-        head: []Type,
-
-        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
-            const all = try allocator.alloc(Type, count);
-            return @This(){ .head = all };
-        }
-
-        pub fn done(this: *@This()) void {
-            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
-        }
-
-        pub fn eat(this: *@This(), value: Type) *Type {
-            return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
-        }
-
-        pub fn eat1(this: *@This(), value: Type) []Type {
-            var prev = this.head[0..1];
-            prev[0] = value;
-            this.head = this.head[1..];
-            return prev;
-        }
-
-        pub fn next(this: *@This(), values: anytype) []Type {
-            this.head[0..values.len].* = values;
-            const prev = this.head[0..values.len];
-            this.head = this.head[values.len..];
-            return prev;
-        }
-    };
 }
 
 fn needsAllocator(comptime Fn: anytype) bool {

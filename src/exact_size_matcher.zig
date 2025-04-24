@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     switch (max_bytes) {
@@ -77,5 +77,4 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     };
 }
 
-const eight = ExactSizeMatcher(8);
 const expect = std.testing.expect;

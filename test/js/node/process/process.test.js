@@ -237,7 +237,7 @@ it("process.uptime()", () => {
 
 it("process.umask()", () => {
   expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
-  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received 'string'`); // prettier-ignore
   expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
   expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
   expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');
@@ -308,6 +308,7 @@ it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
       enable_lto: false,
+      node_module_version: expect.any(Number),
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
@@ -327,7 +328,7 @@ it("process.binding", () => {
   expect(() => process.binding("contextify")).toThrow();
   expect(() => process.binding("crypto")).toThrow();
   expect(() => process.binding("crypto/x509")).not.toThrow();
-  expect(() => process.binding("fs")).toThrow();
+  expect(() => process.binding("fs")).not.toThrow();
   expect(() => process.binding("fs_event_wrap")).toThrow();
   expect(() => process.binding("http_parser")).toThrow();
   expect(() => process.binding("icu")).toThrow();
@@ -374,7 +375,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ("potato")`,
+      `The "code" argument must be of type number. Received type string ('potato')`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,

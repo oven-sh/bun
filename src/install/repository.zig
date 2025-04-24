@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
@@ -110,7 +110,7 @@ const SloppyGlobalGitConfig = struct {
                 }
             } else {
                 if (!found_askpass) {
-                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["sshCommand".len]) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["core.askpass".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -120,7 +120,7 @@ const SloppyGlobalGitConfig = struct {
                 }
 
                 if (!found_ssh_command) {
-                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["sshCommand".len]) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["core.sshCommand".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -582,7 +582,7 @@ pub const Repository = extern struct {
                 "-c core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
-                try bun.getFdPath(repo_dir.fd, &final_path_buf),
+                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
                 target,
             }) catch |err| {
                 log.addErrorFmt(

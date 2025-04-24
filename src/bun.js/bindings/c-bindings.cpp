@@ -880,3 +880,44 @@ extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\W
 #else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
 #endif
+
+#if OS(DARWIN)
+#include <os/signpost.h>
+#include "generated_perf_trace_events.h"
+
+// The event names have to be compile-time constants.
+// So we trick the compiler into thinking they are by using a macro.
+extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_signpost_id_t spid, int trace_event_id)
+{
+#define EMIT_SIGNPOST(name, id)                                 \
+    case id:                                                    \
+        os_signpost_emit_with_type(log, type, spid, #name, ""); \
+        break;
+
+    switch (trace_event_id) {
+        FOR_EACH_TRACE_EVENT(EMIT_SIGNPOST)
+    default: {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid trace event id. Please run scripts/generate-perf-trace-events.sh to update the list of trace events.");
+    }
+    }
+}
+
+#undef EMIT_SIGNPOST
+#undef FOR_EACH_TRACE_EVENT
+
+#define BLOB_HEADER_ALIGNMENT 16 * 1024
+
+extern "C" {
+struct BlobHeader {
+    uint32_t size;
+    uint8_t data[];
+} __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
+}
+
+extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
+
+extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+{
+    return &BUN_COMPILED.size;
+}
+#endif

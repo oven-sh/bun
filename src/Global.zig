@@ -5,7 +5,7 @@ const Output = @import("output.zig");
 const use_mimalloc = bun.use_mimalloc;
 const StringTypes = @import("./string_types.zig");
 const Mimalloc = bun.Mimalloc;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const version_string = Environment.version_string;
 
@@ -91,6 +91,10 @@ export fn Bun__atexit(function: ExitFn) void {
     }
 }
 
+pub fn addExitCallback(function: ExitFn) void {
+    Bun__atexit(function);
+}
+
 pub fn runExitCallbacks() void {
     for (on_exit_callbacks.items) |callback| {
         callback();
@@ -119,7 +123,10 @@ pub fn exit(code: u32) noreturn {
             Bun__onExit();
             std.os.windows.kernel32.ExitProcess(code);
         },
-        else => bun.C.quick_exit(@bitCast(code)),
+        else => {
+            bun.c.quick_exit(@bitCast(code));
+            std.c.abort(); // quick_exit should be noreturn
+        },
     }
 }
 

@@ -1,8 +1,8 @@
 if(DEBUG)
   set(bun bun-debug)
-elseif(ENABLE_SMOL)
-  set(bun bun-smol-profile)
-  set(bunStrip bun-smol)
+# elseif(ENABLE_SMOL)
+#   set(bun bun-smol-profile)
+#   set(bunStrip bun-smol)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -10,6 +10,10 @@ elseif(ENABLE_ASSERTIONS)
 else()
   set(bun bun-profile)
   set(bunStrip bun)
+endif()
+
+if(TEST)
+  set(bun ${bun}-test)
 endif()
 
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
@@ -432,6 +436,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
@@ -444,6 +449,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
@@ -526,7 +532,6 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/src/main.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -548,7 +553,13 @@ else()
   list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 
-set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+if (TEST)
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
+  set(ZIG_STEPS test)
+else()
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  set(ZIG_STEPS obj)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
@@ -577,10 +588,10 @@ register_command(
   GROUP
     console
   COMMENT
-    "Building src/*.zig for ${ZIG_TARGET}"
+    "Building src/*.zig into ${BUN_ZIG_OUTPUT} for ${ZIG_TARGET}"
   COMMAND
     ${ZIG_EXECUTABLE}
-      build obj
+      build ${ZIG_STEPS}
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
       -Dobj_format=${ZIG_OBJECT_FORMAT}
@@ -594,6 +605,7 @@ register_command(
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
+      --summary all
       ${ZIG_FLAGS_BUN}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
@@ -620,6 +632,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/sqlite/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${CWD}/src/bake/*.cpp
@@ -632,6 +645,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
   ${BUN_USOCKETS_SOURCE}/src/internal/*.c
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
+  ${CWD}/src/bun.js/bindings/uv-posix-polyfills.c
+  ${CWD}/src/bun.js/bindings/uv-posix-stubs.c
 )
 
 if(WIN32)
@@ -735,7 +750,7 @@ endif()
 # --- C/C++ Properties ---
 
 set_target_properties(${bun} PROPERTIES
-  CXX_STANDARD 20
+  CXX_STANDARD 23
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
@@ -743,6 +758,18 @@ set_target_properties(${bun} PROPERTIES
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
+
+if (NOT WIN32)
+  # Enable precompiled headers
+  # Only enable in these scenarios:
+  # 1. NOT in CI, OR
+  # 2. In CI AND BUN_CPP_ONLY is enabled
+  if(NOT CI OR (CI AND BUN_CPP_ONLY))
+    target_precompile_headers(${bun} PRIVATE
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+    )
+  endif()
+endif()
 
 # --- C/C++ Includes ---
 
@@ -757,6 +784,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
+  ${CWD}/src/bun.js/bindings/node/crypto
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules
@@ -768,6 +796,10 @@ target_include_directories(${bun} PRIVATE
   ${VENDOR_PATH}/picohttpparser
   ${NODEJS_HEADERS_PATH}/include
 )
+
+if(NOT WIN32) 
+  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
+endif()
 
 if(LINUX)
   include(CheckIncludeFiles)
@@ -877,6 +909,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Werror=unused
       -Wno-unused-function
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )
@@ -893,10 +926,15 @@ if(NOT WIN32)
       -Werror=nonnull
       -Werror=move
       -Werror=sometimes-uninitialized
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )
   endif()
+else()
+  target_compile_options(${bun} PUBLIC
+    -Wno-nullability-completeness
+  )
 endif()
 
 # --- Linker options ---
@@ -939,28 +977,17 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
-  # on arm64
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=fcntl64
-      -Wl,--wrap=log
-      -Wl,--wrap=log2
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=pow
-      -Wl,--wrap=powf
-    )
-  else()
-    target_link_options(${bun} PUBLIC
-      -Wl,--wrap=exp
-      -Wl,--wrap=expf
-      -Wl,--wrap=log2f
-      -Wl,--wrap=logf
-      -Wl,--wrap=powf
-    )
-  endif()
+  target_link_options(${bun} PUBLIC
+    -Wl,--wrap=exp
+    -Wl,--wrap=expf
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=log
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=pow
+    -Wl,--wrap=powf
+  )
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -1062,6 +1089,7 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
+  Highway
   LibDeflate
   LolHtml
   Lshpack
@@ -1089,6 +1117,7 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 
 if(USE_STATIC_SQLITE)

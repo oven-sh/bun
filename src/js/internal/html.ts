@@ -223,7 +223,7 @@ yourself with Bun.serve().
         // use the default port via existing port detection code.
         // port: 3000,
 
-        fetch(req: Request) {
+        fetch(_req: Request) {
           return new Response("Not found", { status: 404 });
         },
       });
@@ -242,7 +242,7 @@ yourself with Bun.serve().
               // Retry with a different port up to 4 times.
               port: defaultPort++,
 
-              fetch(req: Request) {
+              fetch(_req: Request) {
                 return new Response("Not found", { status: 404 });
               },
             });
@@ -281,6 +281,9 @@ yourself with Bun.serve().
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
+      }
+      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_DevServer) {
+        topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
       }
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);

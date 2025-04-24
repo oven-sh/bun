@@ -207,7 +207,7 @@ var access = function access(path, mode, callback) {
         existed => callback(existed),
         _ => callback(false),
       );
-    } catch (e) {
+    } catch {
       callback(false);
     }
   },
@@ -528,25 +528,25 @@ var access = function access(path, mode, callback) {
   existsSync = function existsSync() {
     try {
       return fs.existsSync.$apply(fs, arguments);
-    } catch (e) {
+    } catch {
       return false;
     }
   },
-  chownSync = fs.chownSync.bind(fs),
-  chmodSync = fs.chmodSync.bind(fs),
-  fchmodSync = fs.fchmodSync.bind(fs),
-  fchownSync = fs.fchownSync.bind(fs),
-  fstatSync = fs.fstatSync.bind(fs),
-  fsyncSync = fs.fsyncSync.bind(fs),
-  ftruncateSync = fs.ftruncateSync.bind(fs),
-  futimesSync = fs.futimesSync.bind(fs),
+  chownSync = fs.chownSync.bind(fs) as unknown as typeof import("node:fs").chownSync,
+  chmodSync = fs.chmodSync.bind(fs) as unknown as typeof import("node:fs").chmodSync,
+  fchmodSync = fs.fchmodSync.bind(fs) as unknown as typeof import("node:fs").fchmodSync,
+  fchownSync = fs.fchownSync.bind(fs) as unknown as typeof import("node:fs").fchownSync,
+  fstatSync = fs.fstatSync.bind(fs) as unknown as typeof import("node:fs").fstatSync,
+  fsyncSync = fs.fsyncSync.bind(fs) as unknown as typeof import("node:fs").fsyncSync,
+  ftruncateSync = fs.ftruncateSync.bind(fs) as unknown as typeof import("node:fs").ftruncateSync,
+  futimesSync = fs.futimesSync.bind(fs) as unknown as typeof import("node:fs").futimesSync,
   lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
-  lchownSync = fs.lchownSync.bind(fs),
-  linkSync = fs.linkSync.bind(fs),
-  lstatSync = fs.lstatSync.bind(fs),
-  mkdirSync = fs.mkdirSync.bind(fs),
-  mkdtempSync = fs.mkdtempSync.bind(fs),
-  openSync = fs.openSync.bind(fs),
+  lchownSync = fs.lchownSync.bind(fs) as unknown as typeof import("node:fs").lchownSync,
+  linkSync = fs.linkSync.bind(fs) as unknown as typeof import("node:fs").linkSync,
+  lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
+  mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
+  mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  openSync = fs.openSync.bind(fs) as unknown as typeof import("node:fs").openSync,
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
     if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
@@ -710,9 +710,9 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-const realpathSync =
+const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
-    ? fs.realpathSync.bind(fs)
+    ? (fs.realpathSync.bind(fs) as any)
     : function realpathSync(p, options) {
         let encoding;
         if (options) {
@@ -813,9 +813,9 @@ const realpathSync =
 
         return encodeRealpathResult(p, encoding);
       };
-const realpath: any =
+const realpath: typeof import("node:fs").realpath =
   process.platform !== "win32"
-    ? function realpath(p, options, callback) {
+    ? (function realpath(p, options, callback) {
         if ($isCallable(options)) {
           callback = options;
           options = undefined;
@@ -825,8 +825,8 @@ const realpath: any =
         fs.realpath(p, options, false).then(function (resolvedPath) {
           callback(null, resolvedPath);
         }, callback);
-      }
-    : function realpath(p, options, callback) {
+      } as typeof import("node:fs").realpath)
+    : (function realpath(p, options, callback) {
         if ($isCallable(options)) {
           callback = options;
           options = undefined;
@@ -959,7 +959,7 @@ const realpath: any =
             process.nextTick(LOOP);
           }
         }
-      };
+      } as typeof import("node:fs").realpath);
 realpath.native = function realpath(p, options, callback) {
   if ($isCallable(options)) {
     callback = options;
@@ -983,7 +983,7 @@ function cpSync(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("../internal/fs/cp-sync")(src, dest, options);
+    return require("internal/fs/cp-sync")(src, dest, options);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
@@ -1098,11 +1098,11 @@ class Dir {
   }
 
   async *[Symbol.asyncIterator]() {
-    let entries = (this.#entries ??= await fs.readdir(this.#path, {
+    let entries = (this.#entries ??= (await fs.readdir(this.#path, {
       withFileTypes: true,
       encoding: this.#options?.encoding,
       recursive: this.#options?.recursive,
-    }));
+    })) as DirentType[]);
     yield* entries;
   }
 }
@@ -1247,7 +1247,7 @@ var exports = {
     });
   },
   get FileReadStream() {
-    return (exports.FileReadStream = require("internal/fs/streams").FileReadStream);
+    return (exports.FileReadStream = require("internal/fs/streams").ReadStream);
   },
   set FileReadStream(value) {
     Object.defineProperty(exports, "FileReadStream", {
@@ -1257,7 +1257,7 @@ var exports = {
     });
   },
   get FileWriteStream() {
-    return (exports.FileWriteStream = require("internal/fs/streams").FileWriteStream);
+    return (exports.FileWriteStream = require("internal/fs/streams").WriteStream);
   },
   set FileWriteStream(value) {
     Object.defineProperty(exports, "FileWriteStream", {

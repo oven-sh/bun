@@ -19,8 +19,6 @@ pub const UserOptions = struct {
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
-    frontend_only: bool = false,
-
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
         options.allocations.free();
@@ -69,7 +67,7 @@ pub const UserOptions = struct {
         return .{
             .arena = arena,
             .allocations = allocations,
-            .root = root,
+            .root = try alloc.dupeZ(u8, root),
             .framework = framework,
             .bundler_options = bundler_options,
         };
@@ -82,9 +80,9 @@ pub const StringRefList = struct {
 
     pub const empty: StringRefList = .{ .strings = .{} };
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.sliceZ();
+        return str.slice();
     }
 
     pub fn free(al: *StringRefList) void {
@@ -95,14 +93,12 @@ pub const StringRefList = struct {
 
 pub const SplitBundlerOptions = struct {
     plugin: ?*Plugin = null,
-    all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
 
     pub const empty: SplitBundlerOptions = .{
         .plugin = null,
-        .all = .{},
         .client = .{},
         .server = .{},
         .ssr = .{},
@@ -158,14 +154,7 @@ const BuildConfigSubset = struct {
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
     env: bun.Schema.Api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
-
-    // TODO: plugins
-
-    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
-        _ = config; // autofix
-        _ = value; // autofix
-        _ = arena; // autofix
-    }
+    define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
 };
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
@@ -229,16 +218,26 @@ pub const Framework = struct {
     /// - If `react-refresh` is installed, enable react fast refresh with it.
     ///     - Otherwise, if `react` is installed, use a bundled copy of
     ///     react-refresh so that it still works.
+    /// - If any file system router types are provided, configure using
+    ///   the above react configuration.
     /// The provided allocator is not stored.
-    pub fn auto(arena: std.mem.Allocator, resolver: *bun.resolver.Resolver) !Framework {
+    pub fn auto(
+        arena: std.mem.Allocator,
+        resolver: *bun.resolver.Resolver,
+        file_system_router_types: []FileSystemRouterType,
+    ) !Framework {
         var fw: Framework = Framework.none;
+
+        if (file_system_router_types.len > 0) {
+            fw = try react(arena);
+            arena.free(fw.file_system_router_types);
+            fw.file_system_router_types = file_system_router_types;
+        }
 
         if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
             fw.react_fast_refresh = .{ .import_source = rfr };
         } else if (resolveOrNull(resolver, "react")) |_| {
-            fw.react_fast_refresh = .{
-                .import_source = "react-refresh/runtime/index.js",
-            };
+            fw.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
             try fw.built_in_modules.put(
                 arena,
                 "react-refresh/runtime/index.js",
@@ -258,7 +257,7 @@ pub const Framework = struct {
         .file_system_router_types = &.{},
         .server_components = null,
         .react_fast_refresh = null,
-        .built_in_modules = .{},
+        .built_in_modules = .empty,
     };
 
     pub const FileSystemRouterType = struct {
@@ -291,7 +290,7 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun";
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun";
 
     pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
         try log.addMsg(.{
@@ -362,7 +361,7 @@ pub const Framework = struct {
         arena: Allocator,
     ) !Framework {
         if (opts.isString()) {
-            const str = try opts.toBunString2(global);
+            const str = try opts.toBunString(global);
             defer str.deref();
 
             // Deprecated
@@ -402,7 +401,7 @@ pub const Framework = struct {
                 return global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
             };
 
-            const str = try prop.toBunString2(global);
+            const str = try prop.toBunString(global);
             defer str.deref();
 
             break :brk .{
@@ -586,9 +585,9 @@ pub const Framework = struct {
         return framework;
     }
 
-    pub fn initBundler(
+    pub fn initTranspiler(
         framework: *Framework,
-        allocator: std.mem.Allocator,
+        arena: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
         renderer: Graph,
@@ -596,7 +595,7 @@ pub const Framework = struct {
         bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
-            allocator, // TODO: this is likely a memory leak
+            arena,
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
             null,
@@ -628,13 +627,16 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(allocator, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
         if (mode == .development) {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
+        }
+        if (bundler_options.conditions.count() > 0) {
+            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
 
         out.options.production = mode != .development;
@@ -644,10 +646,14 @@ pub const Framework = struct {
         out.options.minify_whitespace = mode != .development;
         out.options.css_chunking = true;
         out.options.framework = framework;
+        out.options.inline_entrypoint_import_meta_main = true;
+        if (bundler_options.ignoreDCEAnnotations) |ignore|
+            out.options.ignore_dce_annotations = ignore;
 
         out.options.source_map = switch (mode) {
-            // Source maps must always be linked, as DevServer special cases the
-            // linking and part of the generation of these.
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
             .development => .external,
             // TODO: follow user configuration
             else => .none,
@@ -663,10 +669,24 @@ pub const Framework = struct {
 
         out.options.jsx.development = mode == .development;
 
-        try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
+        try addImportMetaDefines(arena, out.options.define, mode, switch (renderer) {
             .client => .client,
             .server, .ssr => .server,
         });
+
+        if ((bundler_options.define.keys.len + bundler_options.drop.count()) > 0) {
+            for (bundler_options.define.keys, bundler_options.define.values) |k, v| {
+                const parsed = try bun.options.Define.Data.parse(k, v, false, false, log, arena);
+                try out.options.define.insert(arena, k, parsed);
+            }
+
+            for (bundler_options.drop.keys()) |drop_item| {
+                if (drop_item.len > 0) {
+                    const parsed = try bun.options.Define.Data.parse(drop_item, "", true, true, log, arena);
+                    try out.options.define.insert(arena, drop_item, parsed);
+                }
+            }
+        }
 
         if (mode != .development) {
             // Hide information about the source repository, at the cost of debugging quality.
@@ -690,7 +710,7 @@ fn getOptionalString(
         return null;
     if (value == .undefined or value == .null)
         return null;
-    const str = try value.toBunString2(global);
+    const str = try value.toBunString(global);
     return allocations.track(str.toUTF8(arena));
 }
 
@@ -788,14 +808,6 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
-
-    if (mode != .development) {
-        try define.insert(
-            allocator,
-            "import.meta.hot",
-            Define.Data.initBoolean(false),
-        );
-    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
@@ -864,7 +876,7 @@ pub fn printWarning() void {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const JSC = bun.JSC;

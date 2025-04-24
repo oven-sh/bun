@@ -24,6 +24,7 @@ test("reportError", () => {
                 ^
 error: reportError Test!
       at [file]:1:13
+      at loadAndEvaluateModule (2:1)
 error: true
 true
 error: false

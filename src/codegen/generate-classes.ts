@@ -1,6 +1,6 @@
 // @ts-nocheck
 import path from "path";
-import type { ClassDefinition, Field } from "./class-definitions";
+import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 import jsclasses from "./../bun.js/bindings/js_classes";
 
@@ -560,7 +560,7 @@ class ${name} final : public JSC::InternalFunction {
       )}* prototype);
 
       static constexpr unsigned StructureFlags = Base::StructureFlags;
-      static constexpr bool needsDestruction = false;
+      static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
       static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
       {
@@ -1163,6 +1163,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 
     if ("fn" in proto[name]) {
       const fn = proto[name].fn;
+      const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1172,8 +1173,13 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
   if (UNLIKELY(!thisObject)) {
-      scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
-      return {};
+      ${
+        invalidThisBehavior == InvalidThisBehavior.Throw
+          ? `
+    scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+    return {};`
+          : `return JSValue::encode(JSC::jsUndefined());`
+      }
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1855,7 +1861,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("memoryCost", symbolName(typeName, "memoryCost"));
       output += `
     pub fn ${symbolName(typeName, "memoryCost")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
-      return @call(.always_inline, ${typeName}.memoryCost, .{thisValue});
+      return @call(bun.callmod_inline, ${typeName}.memoryCost, .{thisValue});
     }
   `;
     }
@@ -1864,7 +1870,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
       output += `
         pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
-          return @call(.always_inline, ${typeName}.estimatedSize, .{thisValue});
+          return @call(bun.callmod_inline, ${typeName}.estimatedSize, .{thisValue});
         }
       `;
     } else if (!memoryCost && !estimatedSize) {
@@ -1877,7 +1883,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
       output += `
         pub fn ${symbolName(typeName, "hasPendingActivity")}(thisValue: *${typeName}) callconv(JSC.conv) bool {
-          return @call(.always_inline, ${typeName}.hasPendingActivity, .{thisValue});
+          return @call(bun.callmod_inline, ${typeName}.hasPendingActivity, .{thisValue});
         }
       `;
     }
@@ -1886,7 +1892,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("finalize", classSymbolName(typeName, "finalize"));
       output += `
         pub fn ${classSymbolName(typeName, "finalize")}(thisValue: *${typeName}) callconv(JSC.conv) void {
-          if (comptime Environment.enable_logs) zig("<d>~${typeName} 0x{x:8}<r>", .{@intFromPtr(thisValue)});
+          if (comptime Environment.enable_logs) log_zig_finalize("${typeName}", thisValue);
           @call(.always_inline, ${typeName}.finalize, .{thisValue});
         }
       `;
@@ -1896,7 +1902,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*anyopaque {
-          if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
+          if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
           return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
             error.JSError => return null,
             error.OutOfMemory => {
@@ -1912,8 +1918,8 @@ const JavaScriptCoreBindings = struct {
       exports.set("call", classSymbolName(typeName, "call"));
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
-          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.call), .{globalObject, callFrame});
+          if (comptime Environment.enable_logs) log_zig_call("${typeName}", callFrame);
+          return @call(.always_inline, JSC.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
         }
       `;
     }
@@ -1922,7 +1928,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("getInternalProperties", classSymbolName(typeName, "getInternalProperties"));
       output += `
         pub fn ${classSymbolName(typeName, "getInternalProperties")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) log_zig_get_internal_properties("${typeName}");
           return @call(.always_inline, ${typeName}.getInternalProperties, .{thisValue, globalObject, thisValue});
         }
       `;
@@ -1936,7 +1942,7 @@ const JavaScriptCoreBindings = struct {
         if (names.getter) {
           output += `
         pub fn ${names.getter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) zig("<r><blue>get<r> ${typeName}<d>.<r>${name}", .{});
+          if (comptime Environment.enable_logs) log_zig_getter("${typeName}", "${name}");
           return @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject});
         }
       `;
@@ -1945,7 +1951,7 @@ const JavaScriptCoreBindings = struct {
         if (names.setter) {
           output += `
         pub fn ${names.setter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
-          if (comptime Environment.enable_logs) zig("<r><blue>set<r> ${typeName}<d>.<r>${name} = {}", .{value});
+          if (comptime Environment.enable_logs) log_zig_setter("${typeName}", "${name}", value);
           return @call(.always_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
         }
       `;
@@ -1958,14 +1964,14 @@ const JavaScriptCoreBindings = struct {
           pub fn ${names.DOMJIT}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ${args
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(JSC.conv) JSC.JSValue {
-            return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
+            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
           }
 
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame${proto[name].passThis ? ", js_this_value: JSC.JSValue" : ""}) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
+          if (comptime Environment.enable_logs) log_zig_method("${typeName}", "${name}", callFrame);
           return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}})});
         }
         `;
@@ -1981,7 +1987,7 @@ const JavaScriptCoreBindings = struct {
         if (names.getter) {
           output += `
         pub fn ${names.getter}(globalObject: *JSC.JSGlobalObject, ${thisValue ? "thisValue: JSC.JSValue," : ""} propertyName: JSC.JSValue) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) log_zig_class_getter("${typeName}", "${name}");
           return @call(.always_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
         }
         `;
@@ -1990,7 +1996,7 @@ const JavaScriptCoreBindings = struct {
         if (names.setter) {
           output += `
         pub fn ${names.setter}(globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, target: JSC.JSValue) callconv(JSC.conv) bool {
-          if (comptime Environment.enable_logs) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) log_zig_class_setter("${typeName}", "${name}", target);
           return @call(.always_inline, ${typeName}.${setter || accessor.setter}, .{thisValue, globalObject, target});
         }
         `;
@@ -2004,7 +2010,7 @@ const JavaScriptCoreBindings = struct {
           pub fn ${names.DOMJIT}(globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, ${args
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(JSC.conv) JSC.JSValue {
-            if (comptime Environment.enable_logs) JSC.markBinding(@src());
+            if (comptime Environment.enable_logs) log_zig_class_domjit("${typeName}", "${name}");
             return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
@@ -2012,8 +2018,8 @@ const JavaScriptCoreBindings = struct {
 
           output += `
         pub fn ${names.fn}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.enable_logs) JSC.markBinding(@src());
-          return @call(.always_inline, JSC.toJSHostFunction(${typeName}.${fn}), .{globalObject, callFrame});
+          if (comptime Environment.enable_logs) log_zig_class_method("${typeName}", "${name}", callFrame);
+          return @call(.always_inline, JSC.toJSHostFn(${typeName}.${fn}), .{globalObject, callFrame});
         }
         `;
         }
@@ -2024,7 +2030,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredClone", symbolName(typeName, "onStructuredCloneSerialize"));
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneSerialize")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: WriteBytesFn) callconv(JSC.conv) void {
-        if (comptime Environment.enable_logs) JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) log_zig_structured_clone_serialize("${typeName}");
         @call(.always_inline, ${typeName}.onStructuredCloneSerialize, .{thisValue, globalObject, ctx, writeBytes});
       }
       `;
@@ -2033,7 +2039,7 @@ const JavaScriptCoreBindings = struct {
         exports.set("structuredClone_transferable", symbolName(typeName, "onStructuredCloneTransfer"));
         output += `
         pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(JSC.conv) void {
-          if (comptime Environment.enable_logs) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) log_zig_structured_clone_transfer("${typeName}");
           @call(.always_inline, ${typeName}.onStructuredCloneTransfer, .{thisValue, globalObject, ctx, write});
         }
         `;
@@ -2043,7 +2049,7 @@ const JavaScriptCoreBindings = struct {
 
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(JSC.conv) JSC.JSValue {
-        if (comptime Environment.enable_logs) JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
         return @call(.always_inline, JSC.toJSHostValue, .{ globalObject, @call(.always_inline, ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end}) });
       }
       `;
@@ -2077,7 +2083,7 @@ pub const ${className(typeName)} = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*${typeName} {
-        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>fromJS", .{});
+        if (comptime Environment.enable_logs) log_zig_from_js("${typeName}");
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
@@ -2086,7 +2092,7 @@ pub const ${className(typeName)} = struct {
     /// If the object is a subclass of the type or has mutated the structure, return null.
     /// Note: this may return null for direct instances of the type if the user adds properties to the object.
     pub fn fromJSDirect(value: JSC.JSValue) ?*${typeName} {
-        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>fromJSDirect", .{});
+        if (comptime Environment.enable_logs) log_zig_from_js_direct("${typeName}");
         return ${symbolName(typeName, "fromJSDirect")}(value);
     }
 
@@ -2098,7 +2104,7 @@ pub const ${className(typeName)} = struct {
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>getConstructor", .{});
+        if (comptime Environment.enable_logs) log_zig_get_constructor("${typeName}");
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
   `
@@ -2110,10 +2116,10 @@ pub const ${className(typeName)} = struct {
         ? `
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>toJS", .{});
+        if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(typeName, "create")}(globalObject, this);
-            @import("root").bun.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
+            @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
             return ${symbolName(typeName, "create")}(globalObject, this);
@@ -2323,10 +2329,15 @@ const ZIG_GENERATED_CLASSES_HEADER = `
 ///        - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
 ///  4. For the Zig code to successfully compile:
 ///        - Add it to generated_classes_list.zig
-///        - pub usingnamespace JSC.Codegen.JSMyClassName;
+///        - \`\`\`
+///          pub const js = JSC.Codegen.JSMyClassName;
+///          pub const toJS = js.toJS;
+///          pub const fromJS = js.fromJS;
+///          pub const fromJSDirect = js.fromJSDirect;
+///          \`\`\`
 ///  5. bun run build
 ///
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;
@@ -2342,7 +2353,7 @@ const wrapGetterWithValueCallback = bun.gen_classes_lib.wrapGetterWithValueCallb
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) bool;
-pub const StaticCallbackType = JSC.JSHostFunctionType;
+pub const StaticCallbackType = JSC.JSHostFn;
 pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(JSC.conv) void;
 
 `;
@@ -2463,6 +2474,118 @@ comptime {
   ${classes.map(a => `_ = ${className(a.name)};`).join("\n  ")}
 }
 
+
+
+// -- Avoid instantiating these log functions too many times
+fn log_zig_method_call(typename: []const u8, method_name: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<d>{s}<r>.{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
+  }
+}
+
+fn log_zig_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
+  }
+}
+
+fn log_zig_setter(typename: []const u8, property_name: []const u8, value: JSC.JSValue) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>set<r> {s}<d>.<r>{s} = {}", .{typename, property_name, value});
+  }
+}
+
+fn log_zig_finalize(typename: []const u8, ptr: *const anyopaque) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<d>~{s} 0x{x:8}<r>", .{typename, @intFromPtr(ptr)});
+  }
+}
+
+fn log_zig_function_call(typename: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
+  }
+}
+
+fn log_zig_constructor(typename: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>new<r> {s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
+  }
+}
+
+fn log_zig_call(typename: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<d>{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
+  }
+} 
+
+fn log_zig_get_internal_properties(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>getInternalProperties<r> {s}", .{typename});
+  }
+}
+
+fn log_zig_method(typename: []const u8, method_name: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<d>{s}.<r>{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
+  }
+}
+
+fn log_zig_structured_clone_serialize(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>structuredCloneSerialize<r> {s}", .{typename});
+  }
+}
+
+fn log_zig_structured_clone_transfer(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>structuredCloneTransfer<r> {s}", .{typename});
+  }
+}
+
+fn log_zig_structured_clone_deserialize(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>structuredCloneDeserialize<r> {s}", .{typename});
+  }
+}
+
+fn log_zig_from_js(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>{s}<r><d>.fromJS<r>", .{typename});
+  }
+}
+
+fn log_zig_from_js_direct(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>{s}<r><d>.fromJSDirect<r>", .{typename});
+  }
+}
+
+fn log_zig_get_constructor(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>{s}<r><d>.constructor<r>", .{typename});
+  }
+}
+
+
+fn log_zig_to_js(typename: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>{s}.toJS<r>", .{typename});
+  }
+}
+
+fn log_zig_class_method(typename: []const u8, method_name: []const u8, callframe: *JSC.CallFrame) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><blue>{s}<r><d>.{s}<d>({d} args)<r>", .{typename, method_name, callframe.arguments().len});
+  }
+}
+
+fn log_zig_class_getter(typename: []const u8, property_name: []const u8) callconv(bun.callconv_inline) void {
+  if (comptime Environment.enable_logs) {
+    zig("<r><d>static<r> <blue>get<r> {s}<d>.<r>{s}", .{typename, property_name});
+  }
+}
+
   `,
 ]);
 
@@ -2513,4 +2636,235 @@ if (!process.env.ONLY_ZIG) {
     `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
     initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
   );
+
+  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
+}
+
+/**
+ * Generates a basic TypeScript type signature string and corresponding Zig source comment
+ * for a given property definition.
+ * Returns null if the property should not be included in the types (e.g., private).
+ */
+function getPropertySignatureWithComment(
+  propName: string,
+  propDef: Field,
+  classDef: ClassDefinition,
+): { signature: string; comment: string | null } | null {
+  let tsPropName = propName;
+  // Handle well-known symbols
+  if (tsPropName.startsWith("@@")) {
+    tsPropName = `[Symbol.${tsPropName.slice(2)}]`;
+  } else if (/[^a-zA-Z0-9_$]/.test(tsPropName)) {
+    // Quote property names that are not valid JS identifiers (e.g., contain '-')
+    tsPropName = `"${tsPropName}"`;
+  }
+
+  if ("privateSymbol" in propDef) {
+    tsPropName = `$${propDef.privateSymbol}`;
+  }
+
+  // --- Skip internal/private properties ---
+  if ("internal" in propDef) {
+    return null;
+  }
+
+  // --- Determine Type and Readonly Status ---
+  let signature = "";
+  let isMethod = false;
+  let isReadOnly = false;
+  let commentLines: string[] = [];
+
+  if ("fn" in propDef || "builtin" in propDef) {
+    const length = propDef.length ?? 0;
+    let args = Array(length)
+      .fill(0)
+      .map((_, i) => `arg${i}?: unknown`)
+      .concat(...(length > 0 ? ["...args: unknown[]"] : []))
+      .join(", ");
+    let returnType = "unknown";
+    if (propDef.async) {
+      returnType = "Promise<unknown>";
+    }
+
+    signature = `${tsPropName}(${args}): ${returnType};`; // Basic method signature
+    isMethod = true;
+    if ("fn" in propDef) {
+      commentLines.push(
+        ` Look for a function like this:
+      * \`\`\`zig
+      * fn ${propDef.fn}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+      );
+    } else if ("builtin" in propDef) {
+      commentLines.push(`* C++ builtin name: \`${propDef.builtin}\``);
+    }
+  } else if ("accessor" in propDef) {
+    signature = `${tsPropName}: unknown;`; // Read-write accessor
+    commentLines.push(` zig ⚡ \`${propDef.accessor.getter}\``);
+    commentLines.push(
+      ` Look for a getter like this:
+      * \`\`\`zig
+      * fn ${propDef.accessor.getter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+    );
+    commentLines.push(
+      ` Look for a setter like this:
+      * \`\`\`zig
+      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void 
+      * \`\`\``,
+    );
+    if (propDef.cache) {
+      commentLines.push(` Cached value ${typeof propDef.cache === "string" ? `via m_${propDef.cache}` : ""}`);
+    }
+  } else if ("getter" in propDef) {
+    signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
+    isReadOnly = !propDef.writable; // Mark readonly if only getter or explicitly not writable
+    commentLines.push(
+      ` Look for a getter like this:
+      * \`\`\`zig
+      * fn ${propDef.getter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue { ... }
+      * \`\`\``,
+    );
+    if (propDef.writable) {
+      commentLines.push(` Writable`); // Implicitly means a setter exists or is generated
+    }
+  } else if ("setter" in propDef) {
+    // Can't represent pure write-only in interfaces easily, treat as read-write
+    signature = `${tsPropName}: unknown;`;
+    commentLines.push(
+      ` Look for a setter like this:
+      * \`\`\`zig
+      * fn ${propDef.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void { ... }
+      * \`\`\``,
+    );
+  } else {
+    // Unknown property type or skipped type (like internal)
+    return null;
+  }
+
+  // --- Add Modifiers ---
+  if (isReadOnly && !isMethod) {
+    signature = `readonly ${signature}`;
+  }
+  // --- Format Comment ---
+  const comment = commentLines.length > 0 ? `/**\n      *${commentLines.join("\n      *")}\n      */` : null;
+
+  return { signature, comment };
+}
+
+/**
+ * Generates TypeScript type definitions (interfaces) for all provided class definitions.
+ * Creates content for a single ambient declaration file (ZigGeneratedClasses.d.ts).
+ */
+export function generateBuiltinTypes(classes: ClassDefinition[]): string {
+  const typeDeclarations: string[] = [];
+
+  for (const classDef of classes) {
+    // Skip classes marked as zigOnly, as they shouldn't have JS/TS counterparts
+    if ((classDef as any).zigOnly) continue;
+
+    const instanceMembers: string[] = [];
+    const staticMembers: string[] = [];
+    const constructorInterfaceName = `${classDef.name}Constructor`;
+    const staticsInterfaceName = `${classDef.name}Statics`;
+
+    // --- Process Instance Members (proto, own, values) ---
+    for (const [propName, propDef] of Object.entries(classDef.proto || {})) {
+      const result = getPropertySignatureWithComment(propName, propDef, classDef);
+      if (result) {
+        if (result.comment) instanceMembers.push(`    ${result.comment}`);
+        instanceMembers.push(`    ${result.signature}`);
+      }
+    }
+
+    for (const [propName, zigFieldName] of Object.entries(classDef.own || {})) {
+      instanceMembers.push(`    readonly ${propName}: any;`);
+    }
+
+    // --- Process Static Members (klass) ---
+    for (const [propName, propDef] of Object.entries(classDef.klass || {})) {
+      const result = getPropertySignatureWithComment(propName, propDef, classDef);
+      if (result) {
+        if (result.comment) staticMembers.push(`    ${result.comment}`);
+        staticMembers.push(`    ${result.signature}`);
+      }
+    }
+
+    // --- Generate Instance Interface ---
+    typeDeclarations.push(`  interface ${classDef.name} {`);
+    if (instanceMembers.length === 0) {
+      typeDeclarations.push(`    /* Opaque interface */`);
+    } else {
+      typeDeclarations.push(...instanceMembers);
+    }
+    typeDeclarations.push(`  }`);
+    typeDeclarations.push(""); // Blank line separator
+
+    // --- Determine if Constructor/Static Interface is needed ---
+    const hasStaticMembers = staticMembers.length > 0;
+    const isConstructible = !!classDef.construct;
+    const isCallable = !!classDef.call;
+    const hasExplicitConstructor = !classDef.noConstructor;
+
+    const needsConstructorInterface = isConstructible || isCallable || (hasStaticMembers && hasExplicitConstructor);
+    const needsStaticInterface = hasStaticMembers && !hasExplicitConstructor && !isConstructible && !isCallable;
+    const needsGlobalVar = hasExplicitConstructor || needsStaticInterface;
+
+    // --- Generate Constructor Interface (if applicable) ---
+    if (needsConstructorInterface) {
+      typeDeclarations.push(`  interface ${constructorInterfaceName} {`);
+      if (isConstructible) {
+        typeDeclarations.push(`    new(...args: any[]): ${classDef.name};`);
+        typeDeclarations.push(`    prototype: ${classDef.name};`);
+      }
+      if (isCallable) {
+        // Add call signature if the constructor itself is callable
+        typeDeclarations.push(`    (...args: any[]): any;`);
+      }
+
+      // Add static members
+      if (staticMembers.length > 0) {
+        typeDeclarations.push(`\n    // Static members`);
+        typeDeclarations.push(...staticMembers);
+      }
+      typeDeclarations.push(`  }`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+
+    // --- Generate Statics Interface (if applicable, for noConstructor classes with statics) ---
+    if (needsStaticInterface) {
+      typeDeclarations.push(`  interface ${staticsInterfaceName} {`);
+      if (staticMembers.length > 0) {
+        typeDeclarations.push(`\n    // Static members`);
+        typeDeclarations.push(...staticMembers);
+      }
+      typeDeclarations.push(`  }`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+
+    // --- Generate Global Variable Declaration ---
+    if (needsGlobalVar) {
+      const interfaceToUse = needsConstructorInterface ? constructorInterfaceName : staticsInterfaceName;
+      // Declare the global variable holding the constructor or static methods/props
+      typeDeclarations.push(`  var ${classDef.name}: ${interfaceToUse};`);
+      typeDeclarations.push(""); // Blank line separator
+    }
+  } // End loop through classes
+
+  // --- Assemble Final File Content ---
+  return `// GENERATED CODE - DO NOT MODIFY BY HAND
+// Generated by generate-classes.ts
+
+
+/**
+ * Type definitions for Bun's built-in classes implemented in Zig.
+ * Do not edit this file directly.
+ * @generated
+ * 
+ * This namespace does not exist at runtime!
+ */
+declare namespace $ZigGeneratedClasses {
+${typeDeclarations.map(line => (line ? "  " + line : "")).join("\n")}
+}
+`;
 }

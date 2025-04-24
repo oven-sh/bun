@@ -56,7 +56,7 @@ struct StructuredSerializeOptions;
 struct WorkerOptions;
 
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED_EXPORT(Worker, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
@@ -137,7 +137,6 @@ private:
     Deque<RefPtr<Event>> m_pendingEvents;
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
-    bool m_didStartWorkerGlobalScope { false };
     // Tracks OnlineFlag and ClosingFlag
     std::atomic<uint8_t> m_onlineClosingFlags { 0 };
     // Tracks TerminateRequestedFlag and TerminatedFlag

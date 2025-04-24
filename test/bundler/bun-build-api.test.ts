@@ -1,8 +1,8 @@
+import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
-import assert from "assert";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -232,6 +232,7 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
       outdir,
     });
+    console.log(await x.outputs[0].text());
     const [blob] = x.outputs;
     expect(blob).toBeTruthy();
     expect(blob.type).toBe("text/javascript;charset=utf-8");

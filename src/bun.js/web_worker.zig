@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
 const log = Output.scoped(.Worker, true);
@@ -27,7 +27,12 @@ pub const WebWorker = struct {
     arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
-    mini: bool = false,
+    mini: bool,
+    // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
+    // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
+    // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
+    // Blob URL.
+    eval_mode: bool,
 
     /// `user_keep_alive` is the state of the user's .ref()/.unref() calls
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
@@ -35,7 +40,8 @@ pub const WebWorker = struct {
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
 
-    argv: ?[]const WTFStringImpl,
+    // kept alive by C++ Worker object
+    argv: []const WTFStringImpl,
     execArgv: ?[]const WTFStringImpl,
 
     pub const Status = enum(u8) {
@@ -153,7 +159,10 @@ pub const WebWorker = struct {
         }
 
         var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global) catch {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            };
             error_message.* = out;
             return null;
         };
@@ -175,12 +184,14 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        eval_mode: bool,
         argv_ptr: ?[*]WTFStringImpl,
-        argv_len: u32,
+        argv_len: usize,
+        inherit_execArgv: bool,
         execArgv_ptr: ?[*]WTFStringImpl,
-        execArgv_len: u32,
+        execArgv_len: usize,
         preload_modules_ptr: ?[*]bun.String,
-        preload_modules_len: u32,
+        preload_modules_len: usize,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
@@ -192,10 +203,7 @@ pub const WebWorker = struct {
         defer parent.transpiler.setLog(prev_log);
         defer temp_log.deinit();
 
-        const preload_modules = if (preload_modules_ptr) |ptr|
-            ptr[0..preload_modules_len]
-        else
-            &.{};
+        const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
         const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
             return null;
@@ -225,6 +233,7 @@ pub const WebWorker = struct {
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
+            .eval_mode = eval_mode,
             .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {
@@ -235,8 +244,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
-            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
-            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
+            .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
             .preloads = preloads.items,
         };
 
@@ -328,7 +337,7 @@ pub const WebWorker = struct {
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
-        const str = err.toBunString(vm.global);
+        const str = err.toBunString(vm.global) catch @panic("unexpected exception");
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
@@ -428,7 +437,7 @@ pub const WebWorker = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
+            _ = vm.arena.gc();
             _ = vm.global.vm().runGC(false);
         }
 
@@ -475,6 +484,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        // TODO(@heimskr): make WebWorker termination more immediate. Currently, console.log after process.exit will go through if in a WebWorker.
         if (this.status.load(.acquire) == .terminated) {
             return;
         }

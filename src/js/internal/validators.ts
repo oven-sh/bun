@@ -1,9 +1,6 @@
 const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypeJoin = Array.prototype.join;
-const ArrayPrototypeMap = Array.prototype.map;
 const ArrayIsArray = Array.isArray;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
@@ -67,44 +64,15 @@ function validateLinkHeaderValue(hints) {
   );
 }
 hideFromStack(validateLinkHeaderValue);
-// TODO: do it in NodeValidator.cpp
-function validateObject(value: unknown, name: string): asserts value is object {
-  if (typeof value !== "object" || value === null) throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-}
-hideFromStack(validateObject);
-
-function validateOneOf(value, name, oneOf) {
-  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin.$call(
-      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
-      ", ",
-    );
-    const reason = "must be one of: " + allowed;
-    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-}
-hideFromStack(validateOneOf);
 
 export default {
-  validateObject: validateObject,
+  /** (value, name) */
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
-  /**
-   * @param value the value that should be an int
-   * @paran name the name of the parameter. Used when creating error codes
-   * @param min minimum value, inclusive. Defaults to {@link Number.MIN_SAFE_INTEGER}.
-   * @param max maximum value, inclusive. Defaults to {@link Number.MAX_SAFE_INTEGER}.
-   *
-   * @throws if `value` is not an int
-   * @throws if `value` is outside `[min, max]`
-   */
+  /** `(value, name, min, max)` */
   validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
-  /**
-   * @param value the value that should be an int
-   * @paran name the name of the parameter. Used when creating error codes
-   * @param min minimum value, exclusive. Defaults to {@link Number.MIN_SAFE_INTEGER}.
-   * @param max maximum value, exclusive. Defaults to {@link Number.MAX_SAFE_INTEGER}.
-   */
+  /** `(value, name, min, max)` */
   validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
   /** `(value, name)` */
   validateString: $newCppFunction("NodeValidator.cpp", "jsFunction_validateString", 0),
@@ -137,5 +105,5 @@ export default {
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
-  validateOneOf,
+  validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
 };

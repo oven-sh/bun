@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const LineOffsetTable = bun.sourcemap.LineOffsetTable;
 const SourceMap = bun.sourcemap;
@@ -424,6 +424,7 @@ pub const ByteRangeMapping = struct {
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
         const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
+        defer if (parsed_mappings_) |parsed_mapping| parsed_mapping.deref();
         var line_hits = LinesHits{};
 
         var functions = std.ArrayListUnmanaged(Block){};

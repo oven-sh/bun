@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,6 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -212,8 +211,8 @@ pub const DataURL = struct {
                 first_byte == '#' or
                 i >= trailing_start or
                 (first_byte == '%' and i + 2 < text.len and
-                PercentEncoding.isHex(text[i + 1]) and
-                PercentEncoding.isHex(text[i + 2]));
+                    PercentEncoding.isHex(text[i + 1]) and
+                    PercentEncoding.isHex(text[i + 2]));
 
             if (needs_escape) {
                 if (run_start < i) {

@@ -101,7 +101,7 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 );
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "javascript.zig",
+  "virtual_machine_exports.zig",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
@@ -172,3 +172,15 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
   "jsFunction_arrayBufferViewHasBuffer",
   1,
 );
+
+export const timerInternals = {
+  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+};
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");

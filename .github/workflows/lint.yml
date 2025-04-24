@@ -5,8 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUN_VERSION: "1.2.0"
-  OXLINT_VERSION: "0.15.0"
+  BUN_VERSION: "1.2.10"
 
 jobs:
   lint-js:
@@ -19,4 +18,4 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Lint
-        run: bunx oxlint --config oxlint.json --quiet --format github
+        run: bun lint

@@ -16,20 +16,32 @@ declare global {
 plugin({
   name: "url text file loader",
   setup(builder) {
-    builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
+    var chainedThis = builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
       return {
         path,
         namespace: "url",
       };
     });
+    expect(chainedThis).toBe(builder);
 
-    builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
+    chainedThis = builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
       const res = await fetch("http://" + path);
       return {
         exports: { default: await res.text() },
         loader: "object",
       };
     });
+    expect(chainedThis).toBe(builder);
+  },
+});
+
+plugin({
+  name: "recursion",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "recursion" }, ({ path }) => ({
+      path: require.resolve("recursion:" + path),
+      namespace: "recursion",
+    }));
   },
 });
 
@@ -188,6 +200,7 @@ plugin({
 import "../../third_party/svelte";
 import "./module-plugins";
 import { render as svelteRender } from "svelte/server";
+import { bunEnv, bunExe } from "harness";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -507,4 +520,32 @@ it("import(...) with __esModule", async () => {
 it("import(...) without __esModule", async () => {
   const { default: mod } = await import("my-virtual-module-with-default");
   expect(mod).toBe("world");
+});
+
+it("recursion throws stack overflow", () => {
+  expect(() => {
+    require("recursion:recursion");
+  }).toThrow("Maximum call stack size exceeded");
+
+  try {
+    require("recursion:recursion");
+    throw -1;
+  } catch (e: any) {
+    if (e === -1) {
+      throw new Error("Expected error");
+    }
+    expect(e.message).toMatchInlineSnapshot(`"Maximum call stack size exceeded."`);
+  }
+});
+
+it("recursion throws stack overflow at entry point", () => {
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "--preload=./plugin-recursive-fixture.ts", "plugin-recursive-fixture-run.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });

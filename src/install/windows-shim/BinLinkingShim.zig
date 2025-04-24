@@ -12,7 +12,7 @@
 //! See 'bun_shim_impl.zig' for more details on how this file is consumed.
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const simdutf = bun.simdutf;
 
 const lastIndexOfScalar = std.mem.lastIndexOfScalar;
@@ -90,7 +90,7 @@ pub const Shebang = struct {
     pub fn init(launcher: []const u8, is_node_or_bun: bool) !Shebang {
         return .{
             .launcher = launcher,
-            // TODO(@paperdave): what if this is invalid utf8?
+            // TODO(@paperclover): what if this is invalid utf8?
             .utf16_len = @intCast(bun.simdutf.length.utf16.from.utf8(launcher)),
             .is_node_or_bun = is_node_or_bun,
         };
@@ -297,7 +297,7 @@ pub fn looseDecode(input: []const u8) ?Decoded {
         }
         break :bin_path_u8 input[0..bin_path_byte_len];
     } else (
-    // path slice is 0..flags-2
+        // path slice is 0..flags-2
         input[0 .. input.len - @sizeOf(Flags)]);
 
     if (bin_path_u8.len % 2 != 0) {

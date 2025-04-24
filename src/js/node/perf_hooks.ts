@@ -1,6 +1,12 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
+const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
+  "ZigGlobalObject.cpp",
+  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
+  2,
+);
+
 var {
   Performance,
   PerformanceEntry,
@@ -92,7 +98,7 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(utilization1, utilization2) {
+function eventLoopUtilization(_utilization1, _utilization2) {
   return {
     idle: 0,
     active: 0,
@@ -111,32 +117,32 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
   performance: {
-    mark(f) {
+    mark(_) {
       return performance.mark(...arguments);
     },
-    measure(f) {
+    measure(_) {
       return performance.measure(...arguments);
     },
-    clearMarks(f) {
+    clearMarks(_) {
       return performance.clearMarks(...arguments);
     },
-    clearMeasures(f) {
+    clearMeasures(_) {
       return performance.clearMeasures(...arguments);
     },
-    getEntries(f) {
+    getEntries(_) {
       return performance.getEntries(...arguments);
     },
-    getEntriesByName(f) {
+    getEntriesByName(_) {
       return performance.getEntriesByName(...arguments);
     },
-    getEntriesByType(f) {
+    getEntriesByType(_) {
       return performance.getEntriesByType(...arguments);
     },
-    setResourceTimingBufferSize(f) {
+    setResourceTimingBufferSize(_) {
       return performance.setResourceTimingBufferSize(...arguments);
     },
     timeOrigin: performance.timeOrigin,
-    toJSON(f) {
+    toJSON(_) {
       return performance.toJSON(...arguments);
     },
     onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
@@ -168,11 +174,9 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  monitorEventLoopDelay() {
-    throwNotImplemented("perf_hooks.monitorEventLoopDelay");
-  },
-  createHistogram() {
-    throwNotImplemented("perf_hooks.createHistogram");
-  },
+  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
+  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
+  // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
+  createHistogram: createFunctionThatMasqueradesAsUndefined("", 0),
   PerformanceResourceTiming,
 };

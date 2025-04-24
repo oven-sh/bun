@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -45,7 +45,7 @@ pub fn Size2D(comptime T: type) type {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            const second = input.tryParse(parseVal, .{}).unwrapOrNoOptmizations(first);
+            const second = input.tryParse(parseVal, .{}).unwrapOr(first);
             return .{ .result = Size2D(T){
                 .a = first,
                 .b = second,

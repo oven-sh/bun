@@ -179,6 +179,7 @@ function OutgoingMessage(options) {
   this._closed = false;
   this._header = null;
   this._headerSent = false;
+  this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
 }
 const OutgoingMessagePrototype = {
   constructor: OutgoingMessage,
@@ -432,12 +433,63 @@ const OutgoingMessagePrototype = {
     return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
   },
 
-  _send(data, encoding, callback, _byteLength) {
-    if (this.destroyed) {
+  // _send(data, encoding, callback, _byteLength) {
+  // if (this.destroyed) {
+  //   return false;
+  // }
+  // return this.write(data, encoding, callback);
+  // },
+  _send(data, encoding, callback, byteLength) {
+    // This is a shameful hack to get the headers and first body chunk onto
+    // the same packet. Future versions of Node are going to take care of
+    // this at a lower level and in a more general way.
+    if (!this._headerSent && this._header !== null) {
+      // `this._header` can be null if OutgoingMessage is used without a proper Socket
+      // See: /test/parallel/test-http-outgoing-message-inheritance.js
+      if (typeof data === "string" && (encoding === "utf8" || encoding === "latin1" || !encoding)) {
+        data = this._header + data;
+      } else {
+        const header = this._header;
+        this.outputData.unshift({
+          data: header,
+          encoding: "latin1",
+          callback: null,
+        });
+        this.outputSize += header.length;
+        this._onPendingData(header.length);
+      }
+      this._headerSent = true;
+    }
+    return this._writeRaw(data, encoding, callback, byteLength);
+  },
+  _writeRaw(data, encoding, callback, size) {
+    const conn = this[kHandle];
+    if (conn?.destroyed) {
+      // The socket was destroyed. If we're still trying to write to it,
+      // then we haven't gotten the 'close' event yet.
       return false;
     }
-    return this.write(data, encoding, callback);
+
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = null;
+    }
+
+    if (conn && conn._httpMessage === this && conn.writable) {
+      // There might be pending data in the this.output buffer.
+      if (this.outputData.length) {
+        this._flushOutput(conn);
+      }
+      // Directly write to socket.
+      return conn.write(data, encoding, callback);
+    }
+    // Buffer, as long as we're not destroyed.
+    this.outputData.push({ data, encoding, callback });
+    this.outputSize += data.length;
+    this._onPendingData(data.length);
+    return this.outputSize < this[kHighWaterMark];
   },
+
   end(_chunk, _encoding, _callback) {
     return this;
   },
@@ -452,6 +504,7 @@ const OutgoingMessagePrototype = {
   },
 };
 OutgoingMessage.prototype = OutgoingMessagePrototype;
+
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
 
 function onTimeout() {

@@ -1,5 +1,10 @@
 // Stress tests perform a large number of filesystem or network operations in a test.
-// Run with DEV_SERVER_STRESS=FILTER to have the test run forever.
+//
+// Run with `DEV_SERVER_STRESS=` to run tests for 10 minutes each.
+// - "DEV_SERVER_STRESS='crash #18910'" will run the first test for 10 min.
+// - "DEV_SERVER_STRESS=ALL" will run all for 10 min each.
+//
+// Without this flag, each test is a "smoke test", running the iteration once.
 import { expect } from "bun:test";
 import { devTest, minimalFramework } from "../bake-harness";
 

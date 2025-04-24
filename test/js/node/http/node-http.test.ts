@@ -2457,7 +2457,7 @@ test("request.socket._secureEstablished should identify if the request is secure
 
 test("should emit clientError when Content-Length is invalid", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
-  const server = http.createServer(reject);
+  await using server = http.createServer(reject);
 
   server.on("clientError", (err, socket) => {
     resolve(err);
@@ -2481,7 +2481,7 @@ test("should emit clientError when Content-Length is invalid", async () => {
 
 test("should emit clientError when mixing Content-Length and Transfer-Encoding", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
-  const server = http.createServer(reject);
+  await using server = http.createServer(reject);
 
   server.on("clientError", (err, socket) => {
     resolve(err);

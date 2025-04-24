@@ -643,8 +643,8 @@ class SocketHandle {
   }
   [kConnectTcp](self, addressType, req, address, port) {
     $debug("SocketHandle.kConnectTcp", addressType, address, port);
-    $assert(this.#promise == null);
-    $assert(this.#socket == null);
+    // $assert(this.#promise == null);
+    // $assert(this.#socket == null);
     const that = this;
     this.#promise = Bun.connect({
       hostname: address,
@@ -1473,7 +1473,7 @@ Object.defineProperty(Socket.prototype, "readyState", {
 
 Socket.prototype.ref = function ref() {
   const socket = this._handle;
-  if (!socket) {
+  if (!socket || !socket?.[ksocket]) {
     this.once("connect", this.ref);
     return this;
   }
@@ -1588,7 +1588,7 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 
 Socket.prototype.unref = function unref() {
   const socket = this._handle;
-  if (!socket) {
+  if (!socket || !socket?.[ksocket]) {
     this.once("connect", this.unref);
     return this;
   }
@@ -1974,6 +1974,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     self[kConnectOptions] = options;
     self.prependListener("end", onConnectEnd);
   }
+  self._undestroy();
   //TLS
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
@@ -2114,6 +2115,7 @@ function internalConnectMultiple(context, canceled?) {
     self[kConnectOptions] = context.options;
     self.prependListener("end", onConnectEnd);
   }
+  self._undestroy();
   //TLS
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);

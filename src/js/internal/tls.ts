@@ -19,7 +19,7 @@ function isValidTLSItem(obj: unknown) {
 
 function findInvalidTLSItem(obj: unknown) {
   if ($isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
+    for (var i = 0, length = obj.length; i < length; i++) {
       const item = obj[i];
       if (!isValidTLSItem(item)) return item;
     }
@@ -37,7 +37,7 @@ function isValidTLSArray(obj: unknown) {
   if (isValidTLSItem(obj)) return true;
 
   if ($isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
+    for (var i = 0, length = obj.length; i < length; i++) {
       const item = obj[i];
       if (!isValidTLSItem(item)) return false;
     }

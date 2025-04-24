@@ -73,14 +73,14 @@ private:
                 // if we are closing or already closed, we don't need to do anything
                 if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-                    httpContextData->flags.isSecure = success;
+                    httpContextData->flags.isAuthorized = success;
                     if(httpContextData->flags.rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
                             // we failed to handshake, close the socket
                             us_socket_close(SSL, s, 0, nullptr);
                             return;
                         }
-                        httpContextData->flags.isSecure = true;
+                        httpContextData->flags.isAuthorized = true;
                     }
 
                     /* Any connected socket should timeout until it has a request */

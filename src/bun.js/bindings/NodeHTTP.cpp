@@ -138,7 +138,11 @@ public:
     {
         return !socket || us_socket_is_closed(is_ssl, socket);
     }
-    bool isSecure() const
+    // This means:
+    // - [x] TLS
+    // - [x] Handshake has completed
+    // - [x] Handshake marked the connection as authorized
+    bool isAuthorized() const
     {
         // is secure means that tls was established successfully
         if (!is_ssl || !socket) return false;
@@ -146,7 +150,7 @@ public:
         if (!context) return false;
         auto* data = (uWS::HttpContextData<true>*)us_socket_context_ext(is_ssl, context);
         if (!data) return false;
-        return data->isSecure();
+        return data->isAuthorized();
     }
     ~JSNodeHTTPServerSocket()
     {
@@ -286,7 +290,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished, (JSC::
     if (UNLIKELY(!thisObject)) {
         return JSValue::encode(JSC::jsBoolean(false));
     }
-    return JSValue::encode(JSC::jsBoolean(thisObject->isSecure()));
+    return JSValue::encode(JSC::jsBoolean(thisObject->isAuthorized()));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

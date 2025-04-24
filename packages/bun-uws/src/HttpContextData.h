@@ -32,7 +32,7 @@ struct HttpFlags {
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
-    bool isSecure: 1 = false;
+    bool isAuthorized: 1 = false;
 };
 
 template <bool SSL>
@@ -72,8 +72,8 @@ private:
     }
 
     public:
-    bool isSecure() const {
-        return flags.isSecure;
+    bool isAuthorized() const {
+        return flags.isAuthorized;
     }
 };
 

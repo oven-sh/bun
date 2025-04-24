@@ -267,5 +267,11 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_RESPONSE_TYPE", Error, "RedisError"],
   ["ERR_REDIS_CONNECTION_TIMEOUT", Error, "RedisError"],
   ["ERR_REDIS_IDLE_TIMEOUT", Error, "RedisError"],
+  // HTTP Parser
+  ["HPE_UNEXPECTED_CONTENT_LENGTH", Error],
+  ["HPE_INVALID_TRANSFER_ENCODING", Error],
+  ["HPE_INVALID_EOF_STATE", Error],
+  ["HPE_INVALID_METHOD", Error],
+  ["HPE_INTERNAL", Error],
 ];
 export default errors;

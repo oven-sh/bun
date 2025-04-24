@@ -12,7 +12,6 @@ const {
   ClientRequestEmitState,
   kEmptyObject,
   validateMsecs,
-  hasServerResponseFinished,
   timeoutTimerSymbol,
   kHandle,
   getHeader,
@@ -462,7 +461,7 @@ const OutgoingMessagePrototype = {
     }
     return this._writeRaw(data, encoding, callback, byteLength);
   },
-  _writeRaw(data, encoding, callback, size) {
+  _writeRaw(data, encoding, callback, _size) {
     const conn = this[kHandle];
     if (conn?.destroyed) {
       // The socket was destroyed. If we're still trying to write to it,

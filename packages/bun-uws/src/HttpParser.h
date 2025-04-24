@@ -61,6 +61,15 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
     };
 
+
+    enum HTTPHeaderParserError: uint8_t {
+        HTTP_HEADER_PARSER_ERROR_NONE = 0,
+        HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION = 1,
+        HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST = 2,
+        HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
+    };
+    
+
     struct HttpRequest
     {
 
@@ -381,13 +390,14 @@ namespace uWS
         }
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
+        /* PS: this function on error can return char* to HTTPHeaderParserError enum, with is not the best design, this need to be refactor */
         static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
             while (data[0] > 32) {
                 if (!isValidMethodChar(data[0]) ) {
-                    return (char *) 0x3;
+                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
                 }
                 data++;
 
@@ -400,7 +410,7 @@ namespace uWS
                 header.key = {start, (size_t) (data - start)};
                 data++;
                   if(!isValidMethod(header.key)) {
-                    return (char *) 0x3;
+                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
                 start = data;
@@ -420,7 +430,7 @@ namespace uWS
                                 isAncientHTTP = true;
                                 return data + 11;
                             }
-                            return (char *) 0x1;
+                            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
                             return data + 11;
@@ -433,7 +443,7 @@ namespace uWS
                             return nullptr;
                         }
                         /* This is an error */
-                        return (char *) 0x1;
+                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
                     }
                 }
             }
@@ -450,11 +460,11 @@ namespace uWS
                         return nullptr;
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
-                        return (char *) 0x2;
+                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST;
                 }
             }
 
-            return (char *) 0x1;
+            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
         }
 
         /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed; htab (9) is also allowed)
@@ -507,15 +517,15 @@ namespace uWS
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
-                    case 0x1:
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION:
                         err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;
                         parserError = HTTP_PARSER_ERROR_INVALID_HTTP_VERSION;
                         break;
-                    case 0x2:
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST:
                         err = HTTP_ERROR_400_BAD_REQUEST;
                         parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
                         break;
-                    case 0x3:
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_METHOD:
                         err = HTTP_ERROR_400_BAD_REQUEST;
                         parserError = HTTP_PARSER_ERROR_INVALID_METHOD;
                         break;

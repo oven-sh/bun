@@ -15,17 +15,16 @@
  */
 declare module "bun" {
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
-  type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
-    | NodeJS.TypedArray<TArrayBuffer>
-    | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-
   type Transferable = ArrayBuffer | MessagePort;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type FormDataEntryValue = File | string;
   type BlobPart = string | Blob | BufferSource;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
+    | NodeJS.TypedArray<TArrayBuffer>
+    | DataView<TArrayBuffer>;
 
   namespace __internal {
     /**
@@ -1134,8 +1133,6 @@ declare module "bun" {
     ttl: number;
   }
 
-  /** @deprecated Use BunFile instead */
-  interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *

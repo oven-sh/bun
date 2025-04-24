@@ -1,4 +1,7 @@
 declare module "bun" {
+  /** @deprecated Use BunFile instead */
+  interface FileBlob extends BunFile {}
+
   interface BunMessageEvent<T> {
     /**
      * @deprecated

@@ -191,7 +191,7 @@ const OutgoingMessagePrototype = {
   },
 
   get socket() {
-    this[fakeSocketSymbol] = this[fakeSocketSymbol] ?? new FakeSocket();
+    this[fakeSocketSymbol] = this[fakeSocketSymbol] ?? new FakeSocket(this);
     return this[fakeSocketSymbol];
   },
 

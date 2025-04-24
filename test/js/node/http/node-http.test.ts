@@ -2421,45 +2421,37 @@ it("should reject non-standard body writes when rejectNonStandardBodyWrites is t
 
 test("request.socket._secureEstablished should identify if the request is secure", async () => {
   {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const server = createHttpsServer(COMMON_TLS_CERT, (request, response) => {
+    let _secureEstablished;
+    await using server = createHttpsServer(COMMON_TLS_CERT, (request, response) => {
       // Run the check function
-      expect(request.socket._secureEstablished).toBe(true);
+      _secureEstablished = request.socket._secureEstablished;
       response.writeHead(200, {});
       response.end("ok");
-      server.close();
-      resolve();
     });
 
-    server.listen(0, () => {
-      const port = server.address().port;
-      fetch(`https://localhost:${port}`, {
-        tls: {
-          ca: COMMON_TLS_CERT.cert,
-        },
-      }).catch(reject);
+    await once(server.listen(0), "listening");
+    const port = server.address().port;
+    await fetch(`https://localhost:${port}`, {
+      tls: {
+        ca: COMMON_TLS_CERT.cert,
+      },
     });
-
-    await promise;
+    expect(_secureEstablished).toBe(true);
   }
 
   {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const server = createServer((request, response) => {
+    let _secureEstablished;
+    await using server = createServer((request, response) => {
       // Run the check function
-      expect(request.socket._secureEstablished).toBe(false);
+      _secureEstablished = request.socket._secureEstablished;
       response.writeHead(200, {});
       response.end("ok");
-      server.close();
-      resolve();
     });
 
-    server.listen(0, () => {
-      const port = server.address().port;
-      fetch(`http://localhost:${port}`).catch(reject);
-    });
-
-    await promise;
+    await once(server.listen(0), "listening");
+    const port = server.address().port;
+    await fetch(`http://localhost:${port}`);
+    expect(_secureEstablished).toBe(false);
   }
 });
 

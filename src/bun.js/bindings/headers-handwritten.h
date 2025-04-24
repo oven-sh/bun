@@ -106,7 +106,7 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
-    uint32_t cjsCustomExtensionIndex;
+    JSC::EncodedJSValue cjsCustomExtension;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;

@@ -130,3 +130,141 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<boolean>(b);
   expectType<5 | "asdf">(c);
 });
+
+describe("Matcher Overload Type Tests", () => {
+  const num = 1;
+  const str = "hello";
+  const numArr = [1, 2, 3];
+  const strArr = ["a", "b", "c"];
+  const mixedArr = [1, "a", true];
+  const obj = { a: 1, b: "world", 10: true };
+  const numSet = new Set([10, 20]);
+
+  test("toBe", () => {
+    expect(num).toBe(1);
+    expect(str).toBe("hello");
+    // @ts-expect-error - Type 'string' is not assignable to type 'number'.
+    expect(num).toBe<number>("1");
+    // @ts-expect-error - Type 'number' is not assignable to type 'string'.
+    expect(str).toBe<string>(123);
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'number'.
+    expect(num).toBe<number>(true);
+    // @ts-expect-error - Too many arguments for specific overload
+    expect(num).toBe<number>(1, 2);
+    // @ts-expect-error - Expecting number, passed function
+    expect(num).toBe<number>(() => {});
+  });
+
+  test("toEqual", () => {
+    expect(numArr).toEqual([1, 2, 3]);
+    expect(obj).toEqual({ a: 1, b: "world", 10: true });
+    // @ts-expect-error - Type 'string' is not assignable to type 'number' at index 0.
+    expect(numArr).toEqual<number[]>(["1", 2, 3]);
+    // @ts-expect-error - Property 'c' is missing in type '{ a: number; b: string; 10: boolean; }'.
+    expect(obj).toEqual<typeof obj>({ a: 1, b: "world", c: false });
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'number[]'.
+    expect(numArr).toEqual<number[]>(true);
+    // @ts-expect-error - Too many arguments for specific overload
+    expect(numArr).toEqual<number[]>([1, 2], [3]);
+    // @ts-expect-error - Expecting object, passed number
+    expect(obj).toEqual<object>(123);
+  });
+
+  test("toStrictEqual", () => {
+    expect(numArr).toStrictEqual([1, 2, 3]);
+    expect(obj).toStrictEqual({ a: 1, b: "world", 10: true });
+    // @ts-expect-error - Type 'string' is not assignable to type 'number' at index 0.
+    expect(numArr).toStrictEqual<number[]>(["1", 2, 3]);
+    // @ts-expect-error - Properties are missing
+    expect(obj).toStrictEqual<typeof obj>({ a: 1 });
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'number[]'.
+    expect(numArr).toStrictEqual<number[]>(true);
+    // @ts-expect-error - Too many arguments for specific overload
+    expect(numArr).toStrictEqual<number[]>([1, 2], [3]);
+    // @ts-expect-error - Expecting object, passed number
+    expect(obj).toStrictEqual<object>(123);
+  });
+
+  test("toBeOneOf", () => {
+    expect(num).toBeOneOf([1, 2, 3]);
+    expect(str).toBeOneOf(strArr);
+    expect(num).toBeOneOf(numSet);
+    // @ts-expect-error - Argument of type 'number[]' is not assignable to parameter of type 'Iterable<string>'.
+    expect(str).toBeOneOf<Iterable<string>>(numArr);
+    // @ts-expect-error - Argument of type 'string[]' is not assignable to parameter of type 'Iterable<number>'.
+    expect(num).toBeOneOf<Iterable<number>>(strArr);
+    // @ts-expect-error - Argument of type 'Set<number>' is not assignable to parameter of type 'Iterable<string>'.
+    expect(str).toBeOneOf<Iterable<string>>(numSet);
+    // @ts-expect-error - Argument must be iterable
+    expect(num).toBeOneOf<number>(1);
+    // @ts-expect-error - Expecting string iterable, passed number iterable
+    expect(str).toBeOneOf<Iterable<string>>([1, 2, 3]);
+  });
+
+  test("toContainKey", () => {
+    expect(obj).toContainKey("a");
+    expect(obj).toContainKey(10); // object key is number
+    // @ts-expect-error - Argument of type '"c"' is not assignable to parameter of type 'number | "a" | "b"'.
+    expect(obj).toContainKey<keyof typeof obj>("c");
+    // @ts-expect-error - Argument of type 'boolean' is not assignable to parameter of type 'string | number'.
+    expect(obj).toContainKey<keyof typeof obj>(true);
+    // @ts-expect-error - Too many arguments for specific overload
+    expect(obj).toContainKey<keyof typeof obj>("a", "b");
+    // @ts-expect-error - Argument of type 'symbol' is not assignable to parameter of type 'string | number'.
+    expect(obj).toContainKey<keyof typeof obj>(Symbol("a"));
+  });
+
+  test("toContainAllKeys", () => {
+    expect(obj).toContainAllKeys(["a", "b"]);
+    expect(obj).toContainAllKeys([10, "a"]);
+    // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'.
+    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", "c"]);
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
+    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", true]);
+    // @ts-expect-error - Argument must be an array
+    expect(obj).toContainAllKeys<Array<keyof typeof obj>>("a");
+    // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
+    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", Symbol("b")]);
+  });
+
+  test("toContainAnyKeys", () => {
+    expect(obj).toContainAnyKeys(["a", "c"]); // c doesn't exist, but 'a' does
+    expect(obj).toContainAnyKeys([10, "d"]);
+    // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'. Type '"d"' is not assignable to type 'number | "a" | "b"'.
+    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>(["c", "d"]);
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
+    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>([true, false]);
+    // @ts-expect-error - Argument must be an array
+    expect(obj).toContainAnyKeys<Array<keyof typeof obj>>("a");
+    // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
+    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>([Symbol("a")]);
+  });
+
+  test("toContainKeys", () => {
+    // Alias for toContainAllKeys
+    expect(obj).toContainKeys(["a", "b"]);
+    expect(obj).toContainKeys([10, "a"]);
+    // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'.
+    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", "c"]);
+    // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
+    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", true]);
+    // @ts-expect-error - Argument must be an array
+    expect(obj).toContainKeys<Array<keyof typeof obj>>("a");
+    // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
+    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", Symbol("b")]);
+  });
+
+  test("toContainEqual", () => {
+    expect(mixedArr).toContainEqual(1);
+    expect(mixedArr).toContainEqual("a");
+    expect(mixedArr).toContainEqual(true);
+    // @ts-expect-error - Argument of type 'null' is not assignable to parameter of type 'string | number | boolean'.
+    expect(mixedArr).toContainEqual<string | number | boolean>(null);
+    // @ts-expect-error - Argument of type 'number[]' is not assignable to parameter of type 'string | number | boolean'.
+    expect(mixedArr).toContainEqual<string | number | boolean>(numArr);
+    // @ts-expect-error - Too many arguments for specific overload
+    expect(mixedArr).toContainEqual<string | number | boolean>(1, 2);
+    // @ts-expect-error - Expecting string | number | boolean, got object
+    expect(mixedArr).toContainEqual<string | number | boolean>({ a: 1 });
+  });
+});

@@ -738,7 +738,7 @@ const ServerPrototype = {
   __proto__: EventEmitter.prototype,
   [kIncomingMessage]: undefined,
   [kServerResponse]: undefined,
-  [kConnectionsCheckingInterval]: { _destroyed: false },
+  [kConnectionsCheckingInterval]: undefined,
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -1480,6 +1480,8 @@ function ServerResponse(req, options) {
   if (!(this instanceof ServerResponse)) {
     return new ServerResponse(req, options);
   }
+
+  this[kConnectionsCheckingInterval] = { _destroyed: false };
 
   if ((this[kDeprecatedReplySymbol] = options?.[kDeprecatedReplySymbol])) {
     this[controllerSymbol] = undefined;

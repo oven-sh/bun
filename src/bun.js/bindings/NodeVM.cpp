@@ -164,8 +164,8 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 void NodeVMGlobalObject::finishCreation(JSC::VM&, NodeVMContextOptions options)
 {
     Base::finishCreation(vm());
-    m_allowStrings = options.allowStrings;
-    m_allowWasm = options.allowWasm;
+    setEvalEnabled(options.allowStrings, "TODO(@heimskr)"_s);
+    setWebAssemblyEnabled(options.allowWasm, "TODO(@heimskr)"_s);
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)
@@ -943,10 +943,18 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     JSObject* sandbox = asObject(contextArg);
 
+    JSValue contextOptionsArg = callFrame->argument(2);
+
+    NodeVMContextOptions contextOptions {};
+
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions)) {
+        return *encodedException;
+    }
+
     // Create context and run code
     auto* context = NodeVMGlobalObject::create(vm,
         defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
-        {});
+        contextOptions);
 
     context->setContextifiedObject(sandbox);
 

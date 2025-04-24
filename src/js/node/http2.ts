@@ -3280,7 +3280,6 @@ class ClientHttp2Session extends Http2Session {
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
-      socket.destroy();
     }
     const parser = this.#parser;
     if (parser) {

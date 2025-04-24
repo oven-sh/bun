@@ -50,7 +50,7 @@ temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
 
-s3_default_client: JSC.Strong = .empty,
+s3_default_client: JSC.Strong.Optional = .empty,
 default_csrf_secret: []const u8 = "",
 
 valkey_context: ValkeyContext = .{},
@@ -470,7 +470,7 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSV
         });
         const js_client = client.toJS(globalThis);
         js_client.ensureStillAlive();
-        rare.s3_default_client = JSC.Strong.create(js_client, globalThis);
+        rare.s3_default_client = .create(js_client, globalThis);
         return js_client;
     };
 }

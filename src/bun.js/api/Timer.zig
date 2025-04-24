@@ -743,7 +743,7 @@ const TimerObjectInternals = struct {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
     id: i32 = -1,
     interval: u31 = 0,
-    strong_this: JSC.Strong = .empty,
+    strong_this: JSC.Strong.Optional = .empty,
     flags: Flags = .{},
 
     const Flags = packed struct(u32) {

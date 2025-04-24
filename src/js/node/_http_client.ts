@@ -2,6 +2,7 @@ const { isIP, isIPv6 } = require("node:net");
 
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
+const { isValidTLSArray } = require("internal/tls");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -39,7 +40,6 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   validateMsecs,
-  isValidTLSArray,
   ConnResetException,
 } = require("internal/http");
 
@@ -376,7 +376,7 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           let timer;
-          response.setTimeout = (msecs, callback) => {
+          res.setTimeout = (msecs, callback) => {
             if (timer) {
               clearTimeout(timer);
             }
@@ -870,7 +870,7 @@ function ClientRequest(input, options, cb) {
   this.setTimeout = (msecs, callback) => {
     if (this.destroyed) return this;
 
-    this.timeout = msecs = validateMsecs(msecs, "msecs");
+    this.timeout = msecs = validateMsecs(msecs, "timeout");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.

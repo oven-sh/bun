@@ -901,7 +901,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 {
     WTF::StringBuilder builder;
     builder.append("The "_s);
-    if (WTF::StringView(name).contains('.')) {
+    if (WTF::find(name.span(), '.') != WTF::notFound) {
         builder.append("property '"_s);
     } else {
         builder.append("argument '"_s);
@@ -929,7 +929,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 {
     WTF::StringBuilder builder;
     builder.append("The "_s);
-    if (WTF::StringView(name).contains('.')) {
+    if (WTF::find(name.span(), '.') != WTF::notFound) {
         builder.append("property '"_s);
     } else {
         builder.append("argument '"_s);

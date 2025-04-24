@@ -104,15 +104,15 @@ pub const UpgradedDuplex = struct {
     const WrapperType = SSLWrapper(*UpgradedDuplex);
 
     wrapper: ?WrapperType,
-    origin: JSC.Strong = .empty, // any duplex
+    origin: JSC.Strong.Optional = .empty, // any duplex
     global: ?*JSC.JSGlobalObject = null,
     ssl_error: CertError = .{},
     vm: *JSC.VirtualMachine,
     handlers: Handlers,
-    onDataCallback: JSC.Strong = .empty,
-    onEndCallback: JSC.Strong = .empty,
-    onWritableCallback: JSC.Strong = .empty,
-    onCloseCallback: JSC.Strong = .empty,
+    onDataCallback: JSC.Strong.Optional = .empty,
+    onEndCallback: JSC.Strong.Optional = .empty,
+    onWritableCallback: JSC.Strong.Optional = .empty,
+    onCloseCallback: JSC.Strong.Optional = .empty,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
@@ -349,7 +349,7 @@ pub const UpgradedDuplex = struct {
 
                 JSC.host_fn.setFunctionData(dataCallback, this);
 
-                this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+                this.onDataCallback = .create(dataCallback, globalThis);
                 break :brk dataCallback;
             };
             array.putIndex(globalThis, 0, callback);
@@ -369,7 +369,7 @@ pub const UpgradedDuplex = struct {
 
                 JSC.host_fn.setFunctionData(endCallback, this);
 
-                this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+                this.onEndCallback = .create(endCallback, globalThis);
                 break :brk endCallback;
             };
             array.putIndex(globalThis, 1, callback);
@@ -388,7 +388,7 @@ pub const UpgradedDuplex = struct {
                 writableCallback.ensureStillAlive();
 
                 JSC.host_fn.setFunctionData(writableCallback, this);
-                this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
+                this.onWritableCallback = .create(writableCallback, globalThis);
                 break :brk writableCallback;
             };
             array.putIndex(globalThis, 2, callback);
@@ -407,7 +407,7 @@ pub const UpgradedDuplex = struct {
                 closeCallback.ensureStillAlive();
 
                 JSC.host_fn.setFunctionData(closeCallback, this);
-                this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
+                this.onCloseCallback = .create(closeCallback, globalThis);
                 break :brk closeCallback;
             };
             array.putIndex(globalThis, 3, callback);

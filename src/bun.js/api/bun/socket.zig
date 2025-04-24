@@ -130,7 +130,7 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     active_connections: u32 = 0,
     is_server: bool = false,
-    promise: JSC.Strong = .empty,
+    promise: JSC.Strong.Optional = .empty,
 
     protection_count: bun.DebugOnly(u32) = if (Environment.isDebug) 0,
 
@@ -522,8 +522,8 @@ pub const Listener = struct {
     ssl: bool = false,
     protos: ?[]const u8 = null,
 
-    strong_data: JSC.Strong = .empty,
-    strong_self: JSC.Strong = .empty,
+    strong_data: JSC.Strong.Optional = .empty,
+    strong_self: JSC.Strong.Optional = .empty,
 
     pub const js = JSC.Codegen.JSListener;
     pub const toJS = js.toJS;
@@ -664,7 +664,7 @@ pub const Listener = struct {
                     socket.handlers.protect();
 
                     if (socket_config.default_data != .zero) {
-                        socket.strong_data = JSC.Strong.create(socket_config.default_data, globalObject);
+                        socket.strong_data = .create(socket_config.default_data, globalObject);
                     }
 
                     var this: *Listener = handlers.vm.allocator.create(Listener) catch bun.outOfMemory();
@@ -832,7 +832,7 @@ pub const Listener = struct {
         socket.handlers.protect();
 
         if (socket_config.default_data != .zero) {
-            socket.strong_data = JSC.Strong.create(socket_config.default_data, globalObject);
+            socket.strong_data = .create(socket_config.default_data, globalObject);
         }
 
         if (ssl) |ssl_config| {

@@ -2864,7 +2864,8 @@ pub const Formatter = struct {
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                    const tag = ConsoleObject.Formatter.Tag.get(result, this.globalThis);
+                    try this.format(tag, Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     return;
                 }
 

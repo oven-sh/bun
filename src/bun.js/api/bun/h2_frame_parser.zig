@@ -536,7 +536,7 @@ const Handlers = struct {
 
     vm: *JSC.VirtualMachine,
     globalObject: *JSC.JSGlobalObject,
-    strong_ctx: JSC.Strong = .empty,
+    strong_ctx: JSC.Strong.Optional = .empty,
 
     pub fn callEventHandler(this: *Handlers, comptime event: @Type(.enum_literal), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
@@ -672,7 +672,7 @@ pub const H2FrameParser = struct {
     const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
     pub threadlocal var pool: if (ENABLE_ALLOCATOR_POOL) ?*H2FrameParserHiveAllocator else u0 = if (ENABLE_ALLOCATOR_POOL) null else 0;
 
-    strong_ctx: JSC.Strong = .empty,
+    strong_ctx: JSC.Strong.Optional = .empty,
     globalThis: *JSC.JSGlobalObject,
     allocator: Allocator,
     handlers: Handlers,
@@ -753,7 +753,7 @@ pub const H2FrameParser = struct {
             HALF_CLOSED_REMOTE = 6,
             CLOSED = 7,
         } = .IDLE,
-        jsContext: JSC.Strong = .empty,
+        jsContext: JSC.Strong.Optional = .empty,
         waitForTrailers: bool = false,
         closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
@@ -866,7 +866,7 @@ pub const H2FrameParser = struct {
             end_stream: bool = false, // end_stream flag
             len: u32 = 0, // actually payload size
             buffer: []u8 = "", // allocated buffer if len > 0
-            callback: JSC.Strong = .empty, // JSCallback for done
+            callback: JSC.Strong.Optional = .empty, // JSCallback for done
 
             pub fn deinit(this: *PendingFrame, allocator: Allocator) void {
                 if (this.buffer.len > 0) {
@@ -984,7 +984,7 @@ pub const H2FrameParser = struct {
                         client.dispatchWriteCallback(old_callback);
                         last_frame.callback.deinit();
                     }
-                    last_frame.callback = JSC.Strong.create(callback, globalThis);
+                    last_frame.callback = .create(callback, globalThis);
                     return;
                 }
                 if (last_frame.len == 0) {
@@ -1012,7 +1012,7 @@ pub const H2FrameParser = struct {
                             client.dispatchWriteCallback(old_callback);
                             last_frame.callback.deinit();
                         }
-                        last_frame.callback = JSC.Strong.create(callback, globalThis);
+                        last_frame.callback = .create(callback, globalThis);
                         return;
                     }
                     // we keep the old callback because the new will be part of another frame
@@ -1026,7 +1026,7 @@ pub const H2FrameParser = struct {
                 .len = @intCast(bytes.len),
                 // we need to clone this data to send it later
                 .buffer = if (bytes.len == 0) "" else client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory(),
-                .callback = if (callback.isCallable()) JSC.Strong.create(callback, globalThis) else .empty,
+                .callback = if (callback.isCallable()) JSC.Strong.Optional.create(callback, globalThis) else .empty,
             };
             if (bytes.len > 0) {
                 @memcpy(frame.buffer[0..bytes.len], bytes);
@@ -1067,7 +1067,7 @@ pub const H2FrameParser = struct {
         pub fn setContext(this: *Stream, value: JSValue, globalObject: *JSC.JSGlobalObject) void {
             var context = this.jsContext;
             defer context.deinit();
-            this.jsContext = JSC.Strong.create(value, globalObject);
+            this.jsContext = .create(value, globalObject);
         }
 
         pub fn getIdentifier(this: *const Stream) JSValue {

@@ -4434,7 +4434,7 @@ pub const Interpreter = struct {
                         if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
                             const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
                                 .array_buffer = buf,
-                                .held = JSC.Strong.create(buf.value, global),
+                                .held = .create(buf.value, global),
                             } };
 
                             setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);

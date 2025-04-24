@@ -174,6 +174,10 @@ function ClientRequest(input, options, cb) {
     return this;
   };
 
+  this.flushHeaders = function () {
+    send();
+  };
+
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;

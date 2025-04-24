@@ -781,11 +781,31 @@ function ClientRequest(input, options, cb) {
   const headersArray = $isJSArray(headers);
   if (headersArray) {
     const length = headers.length;
-    if (length % 2 !== 0) {
-      throw $ERR_INVALID_ARG_VALUE("options.headers", "headers");
-    }
-    for (let i = 0; i < length; ) {
-      this.appendHeader(headers[i++], headers[i++]);
+    if ($isJSArray(headers[0])) {
+      // [[key, value], [key, value], ...]
+      for (let i = 0; i < length; i++) {
+        const actualHeader = headers[i];
+        if (actualHeader.length !== 2) {
+          throw $ERR_INVALID_ARG_VALUE("options.headers", "expected array of [key, value]");
+        }
+        const key = actualHeader[0];
+        const lowerKey = key?.toLowerCase();
+        if (lowerKey === "host") {
+          if (!this.getHeader(key)) {
+            this.setHeader(key, actualHeader[1]);
+          }
+        } else {
+          this.appendHeader(key, actualHeader[1]);
+        }
+      }
+    } else {
+      // [key, value, key, value, ...]
+      if (length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("options.headers", "expected [key, value, key, value, ...]");
+      }
+      for (let i = 0; i < length; ) {
+        this.appendHeader(headers[i++], headers[i++]);
+      }
     }
   } else {
     if (headers) {

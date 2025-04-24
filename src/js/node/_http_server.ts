@@ -433,7 +433,7 @@ const ServerResponsePrototype = {
   },
 
   writeHead(statusCode, statusMessage, headers) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
+    if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       _writeHead(statusCode, statusMessage, headers, this);
       updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
@@ -1391,7 +1391,16 @@ function _writeHead(statusCode, reason, obj, response) {
         }
       } else {
         if (length % 2 !== 0) {
-          throw new Error("raw headers must have an even number of elements");
+          throw $ERR_INVALID_ARG_VALUE("headers", obj);
+        }
+
+        // Headers in obj should override previous headers but still
+        // allow explicit duplicates. To do so, we first remove any
+        // existing conflicts, then use appendHeader.
+
+        for (let n = 0; n < length; n += 2) {
+          k = obj[n + 0];
+          response.removeHeader(k);
         }
 
         for (let n = 0; n < length; n += 2) {

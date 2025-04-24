@@ -129,7 +129,7 @@ const OutgoingMessagePrototype = {
   },
 
   setHeader(name, value) {
-    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] == NodeHTTPHeaderState.sent) {
       throw $ERR_HTTP_HEADERS_SENT("set");
     }
     validateHeaderName(name);
@@ -138,7 +138,40 @@ const OutgoingMessagePrototype = {
     setHeader(headers, name, value);
     return this;
   },
+  setHeaders(headers) {
+    if (this._header || this[headerStateSymbol] !== NodeHTTPHeaderState.none) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
 
+    if (!headers || $isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const { 0: key, 1: value } of headers) {
+      if (key === "set-cookie") {
+        if ($isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
+    }
+
+    return this;
+  },
   hasHeader(name) {
     const headers = this[headersSymbol];
     if (!headers) return false;

@@ -2429,7 +2429,8 @@ test("should emit clientError when Content-Length is invalid", async () => {
     socket.destroy();
   });
 
-  await once(server.listen(0), "listening");
+  server.listen(0);
+  await once(server, "listening");
 
   const client = connect(server.address().port, () => {
     // HTTP request with invalid Content-Length

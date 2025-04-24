@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const OOM = bun.OOM;
 
@@ -823,7 +823,7 @@ pub const CommandLineReporter = struct {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
-            var fs = bun.JSC.Node.NodeFS{};
+            var fs = bun.JSC.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.JSC.Node.PathLike{
@@ -944,7 +944,7 @@ pub const CommandLineReporter = struct {
             try lcov_buffered_writer.flush();
             lcov_file.close();
             const cwd = bun.FD.cwd();
-            bun.C.moveFileZ(
+            bun.sys.moveFileZ(
                 cwd,
                 lcov_name,
                 cwd,
@@ -1045,7 +1045,7 @@ pub const TestCommand = struct {
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
-        JSC.isBunTest = true;
+        JSC.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -1228,8 +1228,8 @@ pub const TestCommand = struct {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
-                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
             }
 

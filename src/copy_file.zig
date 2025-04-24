@@ -76,10 +76,10 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
         if (can_use_ioctl_ficlone() and !copy_file_state.has_seen_exdev and !copy_file_state.has_ioctl_ficlone_failed) {
             // We only check once if the ioctl is supported, and cache the result.
             // EXT4 does not support FICLONE.
-            const rc = bun.C.linux.ioctl_ficlone(out, in);
+            const rc = bun.linux.ioctl_ficlone(out, in);
             // the ordering is flipped but it is consistent with other system calls.
             bun.sys.syslog("ioctl_ficlone({}, {}) = {d}", .{ in, out, rc });
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => return CopyFileReturnType.success,
                 .XDEV => {
                     copy_file_state.has_seen_exdev = true;
@@ -215,7 +215,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
         while (true) {
             const rc = std.os.linux.copy_file_range(in, null, out, null, len, flags);
             bun.sys.syslog("copy_file_range({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => return .{ .result = @intCast(rc) },
                 // these may not be regular files, try fallback
                 .INVAL => {
@@ -246,7 +246,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
     while (!copy_file_state.has_sendfile_failed) {
         const rc = std.os.linux.sendfile(@intCast(out), @intCast(in), null, len);
         bun.sys.syslog("sendfile({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
-        switch (bun.C.getErrno(rc)) {
+        switch (bun.sys.getErrno(rc)) {
             .SUCCESS => return .{ .result = @intCast(rc) },
             .INTR => continue,
             // these may not be regular files, try fallback

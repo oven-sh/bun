@@ -199,7 +199,8 @@ pub fn build(b: *Build) !void {
 
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
 
-    b.reference_trace = b.reference_trace orelse 32;
+    // Lower the default reference trace for incremental
+    b.reference_trace = b.reference_trace orelse if (b.graph.incremental == true) 8 else 16;
 
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
@@ -331,6 +332,22 @@ pub fn build(b: *Build) !void {
 
         // For building Bun itself, one should run `bun setup`
         b.default_step.dependOn(step);
+    }
+
+    // zig build watch
+    // const enable_watch_step = b.option(bool, "watch_step", "Enable the watch step. This reads more files so it is off by default") orelse false;
+    // if (no_llvm or enable_watch_step) {
+    //     self_hosted_watch.selfHostedExeBuild(b, &build_options) catch @panic("OOM");
+    // }
+
+    // zig build check-debug
+    {
+        const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+        }, &.{.Debug});
     }
 
     // zig build check-all

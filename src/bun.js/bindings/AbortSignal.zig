@@ -89,7 +89,7 @@ pub const AbortSignal = opaque {
         pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
             return switch (this) {
                 .common => |reason| .{ .AbortReason = reason },
-                .js => |value| .{ .JSValue = JSC.Strong.create(value, globalObject) },
+                .js => |value| .{ .JSValue = .create(value, globalObject) },
             };
         }
 

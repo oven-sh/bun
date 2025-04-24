@@ -114,9 +114,9 @@ function onServerResponseClose() {
   }
 }
 
-function contentLengthLimit(response) {
+function strictContentLength(response) {
   if (response.strictContentLength) {
-    let contentLength = response.getHeader("content-length");
+    let contentLength = response._contentLength ?? response.getHeader("content-length");
     if (
       contentLength &&
       response._hasBody &&
@@ -124,11 +124,15 @@ function contentLengthLimit(response) {
       !response.chunkedEncoding &&
       !response.hasHeader("transfer-encoding")
     ) {
-      contentLength = parseInt(contentLength, 10);
-      if (isNaN(contentLength)) {
-        return;
+      if (typeof contentLength === "number") {
+        return contentLength;
+      } else if (typeof contentLength === "string") {
+        contentLength = parseInt(contentLength, 10);
+        if (isNaN(contentLength)) {
+          return;
+        }
+        return contentLength;
       }
-      return contentLength;
     }
   }
 }
@@ -248,13 +252,13 @@ const ServerResponsePrototype = {
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
         // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-        this._contentLength = handle.end(chunk, encoding, undefined, contentLengthLimit(this));
+        this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
       });
     } else {
       // If there's no data but you already called end, then you're done.
       // We can ignore it in that case.
       if (!(!chunk && handle.ended) && !handle.aborted) {
-        handle.end(chunk, encoding, undefined, contentLengthLimit(this));
+        handle.end(chunk, encoding, undefined, strictContentLength(this));
       }
     }
     this._header = " ";
@@ -334,8 +338,10 @@ const ServerResponsePrototype = {
 
     if (!handle) {
       if (this.socket) {
+        console.log("writing to socket");
         return this.socket.write(chunk, encoding, callback);
       } else {
+        console.log("writing to outgoing message");
         return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
       }
     }
@@ -354,10 +360,10 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
       });
     } else {
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
     }
 
     if (result < 0) {
@@ -443,10 +449,10 @@ const ServerResponsePrototype = {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        handle.write(data, encoding, callback);
+        handle.write(data, encoding, callback, strictContentLength(this));
       });
     } else {
-      handle.write(data, encoding, callback);
+      handle.write(data, encoding, callback, strictContentLength(this));
     }
   },
 
@@ -1126,7 +1132,6 @@ $setPrototypeDirect.$call(Server, EventEmitter);
 
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
-  bytesWritten = 0;
   connecting = false;
   timeout = 0;
   [kHandle];
@@ -1143,6 +1148,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
+
+  get bytesWritten() {
+    return this[kHandle]?.response?.getBytesWritten?.() ?? 0;
+  }
+  set bytesWritten(value) {}
 
   #closeHandle(handle, callback) {
     this[kHandle] = undefined;

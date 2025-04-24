@@ -853,19 +853,28 @@ fn writeOrEnd(
     }
 
     const bytes = string_or_buffer.slice();
-    this.bytes_written +|= bytes.len;
+
     if (comptime is_end) {
         log("end('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
     } else {
         log("write('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
     }
+    if (strict_content_length) |content_length| {
+        const bytes_written = this.bytes_written + bytes.len;
 
-    if (is_end) {
-        if (strict_content_length) |content_length| {
-            if (this.bytes_written != content_length) {
+        if (is_end) {
+            if (bytes_written != content_length) {
                 return globalObject.ERR(.HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch", .{}).throw();
             }
+        } else if (bytes_written > content_length) {
+            return globalObject.ERR(.HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch", .{}).throw();
         }
+        this.bytes_written = bytes_written;
+    } else {
+        this.bytes_written +|= bytes.len;
+    }
+    if (is_end) {
+
         // Discard the body read ref if it's pending and no onData callback is set at this point.
         // This is the equivalent of req._dump().
         if (this.body_read_ref.has and this.body_read_state == .pending and (!this.flags.hasCustomOnData or js.onDataGetCached(this_value) == null)) {
@@ -1008,7 +1017,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments_old(4).slice();
 
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
@@ -1019,10 +1028,14 @@ pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.Cal
 }
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments_old(4).slice();
     //We dont wanna a paused socket when we call end, so is important to resume the socket
     resumeSocket(this);
     return writeOrEnd(this, globalObject, arguments, callframe.this(), true);
+}
+
+pub fn getBytesWritten(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    return JSC.JSValue.jsNumber(this.bytes_written);
 }
 
 fn handleCorked(globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, result: *JSValue, is_exception: *bool) void {

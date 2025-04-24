@@ -2,6 +2,7 @@ const { isIP, isIPv6 } = require("node:net");
 
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
+const { isValidTLSArray } = require("internal/tls");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -39,7 +40,6 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   validateMsecs,
-  isValidTLSArray,
   ConnResetException,
 } = require("internal/http");
 

@@ -3235,11 +3235,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (file.flags.kind) {
                 .js, .asset => {
                     g.owner().allocator.free(file.jsCode());
-                    const map = &g.source_maps.items[index.get()];
-                    g.owner().allocator.free(map.vlq());
-                    if (map.quoted_contents_flags.is_owned) {
-                        map.quotedContentsCowString().deinit(g.owner().allocator);
-                    }
+                    g.source_maps.items[index.get()].clearRetainingCapacity(g.owner().allocator);
                 },
                 .css => if (css == .unref_css) {
                     g.owner().assets.unrefByPath(key);
@@ -3306,6 +3302,37 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             pub fn quotedContents(self: @This()) []const u8 {
                 return self.quoted_contents_ptr[0..self.quoted_contents_flags.len];
+            }
+
+            pub fn clearRetainingCapacity(map: *@This(), alloc: Allocator) void {
+                alloc.free(map.vlq());
+                if (map.quoted_contents_flags.is_owned) {
+                    map.quotedContentsCowString().deinit(alloc);
+                }
+                map.* = .{
+                    // preserve `html_bundle_route_index` when the file is being
+                    // cleared so a route file can locate it's RouteBundle. It
+                    // is a bit jank that this data is stored in the PackedMap,
+                    // but it is a very convenient piece of unused memory
+                    // (remember, HTML has no source maps).
+                    .extra = if (map.vlq_len == 0)
+                        .{ .empty = .{
+                            .line_count = .none,
+                            .html_bundle_route_index = map.extra.empty.html_bundle_route_index,
+                        } }
+                    else
+                        .{ .end_state = .{
+                            .original_line = 0,
+                            .original_column = 0,
+                        } },
+                    .vlq_ptr = comptime &[0]u8{},
+                    .vlq_len = 0,
+                    .quoted_contents_ptr = comptime &[0]u8{},
+                    .quoted_contents_flags = .{
+                        .len = 0,
+                        .is_owned = false,
+                    },
+                };
             }
 
             pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.ptr.CowString) !PackedMap {
@@ -6415,9 +6442,7 @@ const WatcherAtomics = struct {
         var ev: *HotReloadEvent = &state.events[state.current];
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
-                // New event, initialize the timer if it is empty.
-                if (ev.isEmpty())
-                    ev.timer = std.time.Timer.start() catch unreachable;
+                // New event is unreferenced by the DevServer thread.
             },
             1 => {
                 @branchHint(.unlikely);
@@ -6431,6 +6456,10 @@ const WatcherAtomics = struct {
             },
             else => unreachable,
         }
+
+        // Initialize the timer if it is empty.
+        if (ev.isEmpty())
+            ev.timer = std.time.Timer.start() catch unreachable;
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 

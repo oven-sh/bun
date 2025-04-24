@@ -51,7 +51,7 @@ using namespace WebCore;
 /// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
 static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
 static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
-static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions);
+static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey);
 
 /// For some reason Node has this error message with a grammar error and we have to match it so the tests pass:
 /// `The "<name>" argument must be an vm.Context`
@@ -947,7 +947,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     NodeVMContextOptions contextOptions {};
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions)) {
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration")) {
         return *encodedException;
     }
 
@@ -1191,7 +1191,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     NodeVMContextOptions contextOptions {};
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions)) {
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration")) {
         return *encodedException;
     }
 
@@ -1591,7 +1591,7 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
 
 // Returns an encoded exception if the options are invalid.
 // Otherwise, returns an empty optional.
-static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions)
+static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey)
 {
     outOptions = {};
 
@@ -1618,17 +1618,18 @@ static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject
         }
     }
 
-    if (JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "codeGeneration"_s))) {
+    if (JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey))) {
         RETURN_IF_EXCEPTION(scope, {});
+
         if (!codeGenerationValue.isObject()) {
-            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration"_s, "object"_s, codeGenerationValue);
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey), "object"_s, codeGenerationValue);
         }
 
         JSObject* codeGenerationObject = asObject(codeGenerationValue);
         if (JSValue allowStringsValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "strings"_s))) {
             RETURN_IF_EXCEPTION(scope, {});
             if (!allowStringsValue.isBoolean()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration.strings"_s, "boolean"_s, allowStringsValue);
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".strings"_s), "boolean"_s, allowStringsValue);
             }
 
             outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
@@ -1637,7 +1638,7 @@ static std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject
         if (JSValue allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s))) {
             RETURN_IF_EXCEPTION(scope, {});
             if (!allowWasmValue.isBoolean()) {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.codeGeneration.wasm"_s, "boolean"_s, allowWasmValue);
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, WTF::makeString("options."_s, codeGenerationKey, ".wasm"_s), "boolean"_s, allowWasmValue);
             }
 
             outOptions.allowWasm = allowWasmValue.toBoolean(globalObject);

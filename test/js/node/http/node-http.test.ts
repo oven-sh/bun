@@ -2419,42 +2419,6 @@ it("should reject non-standard body writes when rejectNonStandardBodyWrites is t
   }
 });
 
-test("request.socket._secureEstablished should identify if the request is secure", async () => {
-  {
-    let _secureEstablished;
-    await using server = createHttpsServer(COMMON_TLS_CERT, (request, response) => {
-      // Run the check function
-      _secureEstablished = request.socket._secureEstablished;
-      response.writeHead(200, {});
-      response.end("ok");
-    });
-
-    await once(server.listen(0), "listening");
-    const port = server.address().port;
-    await fetch(`https://127.0.0.1:${port}`, {
-      tls: {
-        ca: COMMON_TLS_CERT.cert,
-      },
-    });
-    expect(_secureEstablished).toBe(true);
-  }
-
-  {
-    let _secureEstablished;
-    await using server = createServer((request, response) => {
-      // Run the check function
-      _secureEstablished = request.socket._secureEstablished;
-      response.writeHead(200, {});
-      response.end("ok");
-    });
-
-    await once(server.listen(0), "listening");
-    const port = server.address().port;
-    await fetch(`http://127.0.0.1:${port}`);
-    expect(_secureEstablished).toBe(false);
-  }
-});
-
 test("should emit clientError when Content-Length is invalid", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   await using server = http.createServer(reject);

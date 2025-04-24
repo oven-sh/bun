@@ -48,6 +48,7 @@ const { format } = require("internal/util/inspect");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { kIncomingMessage } = require("node:_http_common");
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
@@ -706,6 +707,7 @@ const ServerPrototype = {
   __proto__: EventEmitter.prototype,
   [kIncomingMessage]: undefined,
   [kServerResponse]: undefined,
+  [kConnectionsCheckingInterval]: { _destroyed: false },
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -724,6 +726,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    this[kConnectionsCheckingInterval]._destroyed = true;
     server.stop(true);
   },
 
@@ -738,6 +741,7 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    this[kConnectionsCheckingInterval]._destroyed = true;
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     server.stop();
   },
@@ -1715,4 +1719,5 @@ function ensureReadableStreamController(run) {
 export default {
   Server,
   ServerResponse,
+  kConnectionsCheckingInterval,
 };

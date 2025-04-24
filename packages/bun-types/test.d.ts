@@ -95,6 +95,9 @@ declare module "bun:test" {
     setSystemTime(now?: number | Date): void;
     setTimeout(milliseconds: number): void;
     useFakeTimers(): void;
+    useRealTimers(): void;
+    spyOn: spyOn;
+    
   }
   export const jest: Jest;
   export namespace jest {

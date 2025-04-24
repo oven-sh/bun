@@ -2571,7 +2571,7 @@ pub const Formatter = struct {
                 } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.FetchHeaders) != null) {
+                } else if (value.as(bun.webcore.FetchHeaders) != null) {
                     if (value.get_unsafe(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
                         writer.writeAll(comptime Output.prettyFmt("<r>Headers ", enable_ansi_colors));
@@ -2608,7 +2608,7 @@ pub const Formatter = struct {
 
                     // this case should never happen
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
-                } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
+                } else if (value.as(bun.api.Timer.TimeoutObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                     if (timer.internals.flags.kind == .setInterval) {
                         this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
@@ -2622,17 +2622,17 @@ pub const Formatter = struct {
                     }
 
                     return;
-                } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
+                } else if (value.as(bun.api.Timer.ImmediateObject)) |immediate| {
                     this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
                     writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
                         immediate.internals.id,
                     });
 
                     return;
-                } else if (value.as(JSC.BuildMessage)) |build_log| {
+                } else if (value.as(bun.api.BuildMessage)) |build_log| {
                     build_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
+                } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                     resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
@@ -2864,7 +2864,8 @@ pub const Formatter = struct {
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                    const tag = ConsoleObject.Formatter.Tag.get(result, this.globalThis);
+                    try this.format(tag, Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     return;
                 }
 

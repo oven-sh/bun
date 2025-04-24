@@ -1679,9 +1679,7 @@ pub const SideEffects = enum(u1) {
             .e_arrow,
             .e_import_meta,
             .e_inlined_enum,
-            => {
-                return null;
-            },
+            => return null,
 
             .e_dot => |dot| {
                 if (dot.can_be_removed_if_unused) {
@@ -1755,7 +1753,7 @@ pub const SideEffects = enum(u1) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
                     } else {
-                        return Expr.empty;
+                        return null;
                     }
                 }
             },

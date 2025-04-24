@@ -49,14 +49,25 @@ pub fn getRandomValues(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+    const arguments = callframe.arguments();
     if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
+        return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
     }
 
     var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-        return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
+        return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
     };
+
+    switch (array_buffer.typed_array_type) {
+        .Float16Array, .Float32Array, .Float64Array, .DataView => {
+            return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
+        },
+        else => {},
+    }
+
+    if (array_buffer.byte_len > 65536) {
+        return globalThis.throwDOMException(.QuotaExceededError, "The requested length exceeds 65,536 bytes", .{});
+    }
     const slice = array_buffer.byteSlice();
 
     randomData(globalThis, slice.ptr, slice.len);
@@ -70,6 +81,9 @@ pub fn getRandomValuesWithoutTypeChecks(
     array: *JSC.JSUint8Array,
 ) JSC.JSValue {
     const slice = array.slice();
+    if (slice.len > 65536) {
+        return globalThis.throwDOMException(.QuotaExceededError, "The requested length exceeds 65,536 bytes", .{});
+    }
     randomData(globalThis, slice.ptr, slice.len);
     return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
 }

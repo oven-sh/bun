@@ -296,6 +296,20 @@ pub const JSGlobalObject = opaque {
         }
     }
 
+    pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.slice());
+            return str.toDOMExceptionInstance(this, code);
+        } else {
+            return ZigString.static(fmt).toDOMExceptionInstance(this, code);
+        }
+    }
+
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
@@ -410,6 +424,11 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
         const instance = this.createTypeErrorInstance(fmt, args);
+        return this.throwValue(instance);
+    }
+
+    pub fn throwDOMException(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = this.createDOMExceptionInstance(code, fmt, args);
         return this.throwValue(instance);
     }
 

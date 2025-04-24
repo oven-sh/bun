@@ -2537,15 +2537,12 @@ test("req.connection.bytesWritten must be supported on the https server", async 
       // Also, mix up the encodings a bit.
       const chunk = "7".repeat(1024);
       const bchunk = Buffer.from(chunk);
-      for (let i = 0; i < 1024; i++) {
-        res.write(chunk);
-        res.write(bchunk);
-        res.write(chunk, "hex");
-      }
+      res.write(chunk);
+      res.write(bchunk);
       // Get .bytesWritten while buffer is not empty
-      expect(res.connection.bytesWritten).toBeGreaterThan(0);
+      expect(res.connection.bytesWritten).toBe(1024 * 2);
 
-      res.end("bunbubun");
+      res.end("bunbunbun");
     });
 
     await once(httpServer.listen(0), "listening");
@@ -2554,7 +2551,7 @@ test("req.connection.bytesWritten must be supported on the https server", async 
     await once(req, "response");
     const bytesWritten = await promise;
     expect(typeof bytesWritten).toBe("number");
-    expect(bytesWritten).toBeGreaterThan(0);
+    expect(bytesWritten).toBe(1024 * 2 + 9);
     req.destroy();
   } finally {
     httpServer?.closeAllConnections();

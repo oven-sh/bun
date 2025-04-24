@@ -612,6 +612,7 @@ type Server = InstanceType<typeof Server>;
 const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
+  this[kConnectionsCheckingInterval] = { _destroyed: false };
 
   this.listening = false;
   this._unref = false;
@@ -715,7 +716,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   const self = this as Server;
   let err;
   switch (errorCode) {
-    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
       err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
@@ -758,7 +759,10 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
-    this[kConnectionsCheckingInterval]._destroyed = true;
+    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+    if (connectionsCheckingInterval) {
+      connectionsCheckingInterval._destroyed = true;
+    }
     this.listening = false;
 
     server.stop(true);
@@ -775,7 +779,10 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
-    this[kConnectionsCheckingInterval]._destroyed = true;
+    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+    if (connectionsCheckingInterval) {
+      connectionsCheckingInterval._destroyed = true;
+    }
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     this.listening = false;
     server.stop();
@@ -1130,7 +1137,7 @@ const ServerPrototype = {
         delete this[kDeferredTimeouts];
       }
 
-      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
+      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
     }
   },
 
@@ -1481,8 +1488,6 @@ function ServerResponse(req, options) {
   if (!(this instanceof ServerResponse)) {
     return new ServerResponse(req, options);
   }
-
-  this[kConnectionsCheckingInterval] = { _destroyed: false };
 
   if ((this[kDeprecatedReplySymbol] = options?.[kDeprecatedReplySymbol])) {
     this[controllerSymbol] = undefined;

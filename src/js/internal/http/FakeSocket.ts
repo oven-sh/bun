@@ -21,7 +21,7 @@ var FakeSocket = class Socket extends Duplex {
     // Call server.requestIP() without doing any property getter twice.
     var internalData;
     return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
+      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {

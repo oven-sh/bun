@@ -7675,25 +7675,25 @@ pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, glo
 
     if (server.as(HTTPServer)) |this| {
         if (this.app) |app| {
-            this.on_clienterror.clearWithoutDeallocation();
+            this.on_clienterror.deinit();
             this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*HTTPServer, this, HTTPServer.onClientErrorCallback);
         }
     } else if (server.as(HTTPSServer)) |this| {
         if (this.app) |app| {
-            this.on_clienterror.clearWithoutDeallocation();
+            this.on_clienterror.deinit();
             this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*HTTPSServer, this, HTTPSServer.onClientErrorCallback);
         }
     } else if (server.as(DebugHTTPServer)) |this| {
         if (this.app) |app| {
-            this.on_clienterror.clearWithoutDeallocation();
+            this.on_clienterror.deinit();
             this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*DebugHTTPServer, this, DebugHTTPServer.onClientErrorCallback);
         }
     } else if (server.as(DebugHTTPSServer)) |this| {
         if (this.app) |app| {
-            this.on_clienterror.clearWithoutDeallocation();
+            this.on_clienterror.deinit();
             this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
             app.onClientError(*DebugHTTPSServer, this, DebugHTTPSServer.onClientErrorCallback);
         }

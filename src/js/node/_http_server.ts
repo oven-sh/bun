@@ -1389,6 +1389,9 @@ function _normalizeArgs(args) {
 }
 
 function _writeHead(statusCode, reason, obj, response) {
+  if (response.headersSent) {
+    throw $ERR_HTTP_HEADERS_SENT("writeHead");
+  }
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {

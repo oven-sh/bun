@@ -3032,7 +3032,7 @@ pub const ListenSocket = opaque {
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
 extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
-extern fn uws_app_set_on_clienterror(ssl: i32, app: *uws_app_s, handler: *const fn (*anyopaque, i32, *Socket, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
+extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *Socket, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
 
 pub const SocketAddress = struct {
     ip: []const u8,
@@ -3484,16 +3484,16 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime handler: fn (data: UserData, socket: *Socket, error_code: u8, rawPacket: []const u8) void,
         ) void {
             const Wrapper = struct {
-                pub fn handle(data: *anyopaque, _: i32, socket: *Socket, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
+                pub fn handle(data: *anyopaque, _: c_int, socket: *Socket, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
                     @call(bun.callmod_inline, handler, .{
                         @as(UserData, @ptrCast(@alignCast(data))),
                         socket,
                         error_code,
-                        if (raw_packet) |bytes| bytes[0..@intCast(@max(raw_packet_length, 0))] else "",
+                        if (raw_packet) |bytes| bytes[0..(@max(raw_packet_length, 0))] else "",
                     });
                 }
             };
-            return uws_app_set_on_clienterror(ssl_flag, @as(*uws_app_t, @ptrCast(app)), Wrapper.handle, @ptrCast(user_data));
+            return uws_app_set_on_clienterror(ssl_flag, @ptrCast(app), Wrapper.handle, @ptrCast(user_data));
         }
 
         pub fn listenWithConfig(

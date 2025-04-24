@@ -2909,6 +2909,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             hashHeaderConst("Content-Length"),
             => {
                 original_content_length = this.headerStr(header_values[i]);
+                continue;
             },
             hashHeaderConst("Connection") => {
                 if (!this.flags.disable_keepalive) {

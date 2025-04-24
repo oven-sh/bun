@@ -125,8 +125,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         if (callerName.isEmpty() && callerFunction->jsExecutable()) {
             callerName = callerFunction->jsExecutable()->name().string();
         }
-    }
-    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
+    } else if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
         callerName = callerFunctionInternal->name();
     }
 
@@ -253,116 +252,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
         return (i == framesCount) ? WTF::IterationStatus::Done : WTF::IterationStatus::Continue;
     });
-}
-
-JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller)
-{
-    auto& vm = JSC::getVM(globalObject);
-    if (!callFrame) {
-        return JSCStackTrace();
-    }
-
-    WTF::Vector<JSCStackFrame> stackFrames;
-    size_t framesCount = 0;
-
-    bool belowCaller = false;
-    int32_t skipFrames = 0;
-
-    WTF::String callerName {};
-    if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
-        callerName = callerFunction->name(vm);
-        if (!callerFunction->name(vm).isEmpty() || callerFunction->isHostOrBuiltinFunction()) {
-            callerName = callerFunction->name(vm);
-        } else {
-            callerName = callerFunction->jsExecutable()->name().string();
-        }
-    }
-    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
-        callerName = callerFunctionInternal->name();
-    }
-
-    if (!callerName.isEmpty()) {
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                skipFrames += 1;
-
-                if (visitor->functionName() == callerName) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    } else if (caller && caller.isCell()) {
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                auto callee = visitor->callee();
-                skipFrames += 1;
-                if (callee.isCell() && callee.asCell() == caller) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    } else if (caller.isEmpty() || caller.isUndefined()) {
-        // Skip the first frame.
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            if (!belowCaller) {
-                skipFrames += 1;
-                belowCaller = true;
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    }
-
-    framesCount = std::min(frameLimit, framesCount);
-
-    // Create the actual stack frames
-    size_t i = 0;
-    stackFrames.reserveInitialCapacity(framesCount);
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // Skip native frames
-        if (isImplementationVisibilityPrivate(visitor)) {
-            return WTF::IterationStatus::Continue;
-        }
-
-        // Skip frames if needed
-        if (skipFrames > 0) {
-            skipFrames--;
-            return WTF::IterationStatus::Continue;
-        }
-
-        stackFrames.constructAndAppend(vm, visitor);
-        i++;
-
-        return (i == framesCount) ? WTF::IterationStatus::Done : WTF::IterationStatus::Continue;
-    });
-
-    return JSCStackTrace(stackFrames);
 }
 
 JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
@@ -752,6 +641,30 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         }
     }
 
+    {
+        if (functionName.isEmpty()) {
+            if (jstype == JSC::JSFunctionType) {
+                auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+                if (function) {
+                    functionName = function->nameWithoutGC(vm);
+                    if (functionName.isEmpty()) {
+                        auto* executable = function->jsExecutable();
+                        if (executable) {
+                            if (!executable->ecmaName().isEmpty()) {
+                                functionName = executable->ecmaName().string();
+                            }
+                        }
+                    }
+                }
+            } else if (jstype == JSC::InternalFunctionType) {
+                auto* function = jsDynamicCast<JSC::InternalFunction*>(object);
+                if (function) {
+                    functionName = function->name();
+                }
+            }
+        }
+    }
+
     return functionName;
 }
 
@@ -816,6 +729,14 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                         auto* function = jsDynamicCast<JSC::JSFunction*>(object);
                         if (function) {
                             functionName = function->nameWithoutGC(vm);
+                            if (functionName.isEmpty()) {
+                                auto* executable = function->jsExecutable();
+                                if (executable) {
+                                    if (!executable->ecmaName().isEmpty()) {
+                                        functionName = executable->ecmaName().string();
+                                    }
+                                }
+                            }
                             setTypeFlagsIfNecessary();
                             return functionName;
                         }

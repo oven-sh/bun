@@ -7352,7 +7352,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 const error_code_value = JSValue.jsNumber(error_code);
                 const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet);
-                _ = callback.call(this.globalThis, .undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch {};
+                _ = callback.call(this.globalThis, .undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
+                    _ = this.globalThis.reportActiveExceptionAsUnhandled(err);
+                };
             }
         }
     };

@@ -820,7 +820,7 @@ fn writeOrEnd(
 
     const strict_content_length: ?u64 = brk: {
         if (arguments.len > 3 and arguments[3].isNumber()) {
-            break :brk @intCast(@max(arguments[3].toInt64(), 0));
+            break :brk @max(arguments[3].toInt64(), 0);
         }
         break :brk null;
     };

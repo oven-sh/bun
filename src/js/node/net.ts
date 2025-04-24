@@ -749,107 +749,107 @@ class SocketHandle {
   }
   //TLS
   getPeerCertificate(abbreviated?) {
-    $debug("SocketHandle.getPeerCertificate", arguments);
+    $debug("SocketHandle.getPeerCertificate");
     $assert(this.#socket != null);
     return this.#socket.getPeerCertificate(...arguments);
   }
   getTLSFinishedMessage() {
-    $debug("SocketHandle.getTLSFinishedMessage", arguments);
+    $debug("SocketHandle.getTLSFinishedMessage");
     $assert(this.#socket != null);
     return this.#socket.getTLSFinishedMessage(...arguments);
   }
   getTLSPeerFinishedMessage() {
-    $debug("SocketHandle.getTLSPeerFinishedMessage", arguments);
+    $debug("SocketHandle.getTLSPeerFinishedMessage");
     $assert(this.#socket != null);
     return this.#socket.getTLSPeerFinishedMessage(...arguments);
   }
   getEphemeralKeyInfo() {
-    $debug("SocketHandle.getEphemeralKeyInfo", arguments);
+    $debug("SocketHandle.getEphemeralKeyInfo");
     $assert(this.#socket != null);
     return this.#socket.getEphemeralKeyInfo(...arguments);
   }
   getCipher() {
-    $debug("SocketHandle.getCipher", arguments);
+    $debug("SocketHandle.getCipher");
     $assert(this.#socket != null);
     return this.#socket.getCipher(...arguments);
   }
   renegotiate() {
-    $debug("SocketHandle.renegotiate", arguments);
+    $debug("SocketHandle.renegotiate");
     $assert(this.#socket != null);
     return this.#socket.renegotiate(...arguments);
   }
   disableRenegotiation() {
-    $debug("SocketHandle.disableRenegotiation", arguments);
+    $debug("SocketHandle.disableRenegotiation");
     if (this.#socket == null) return;
     return this.#socket.disableRenegotiation(...arguments);
   }
   setVerifyMode(requestCert, rejectUnauthorized) {
-    $debug("SocketHandle.setVerifyMode", arguments);
+    $debug("SocketHandle.setVerifyMode");
     $assert(this.#socket != null);
     return this.#socket.setVerifyMode(...arguments);
   }
   getSession() {
-    $debug("SocketHandle.getSession", arguments);
+    $debug("SocketHandle.getSession");
     $assert(this.#socket != null);
     return this.#socket.getSession(...arguments);
   }
   setSession(session) {
-    $debug("SocketHandle.setSession", arguments);
+    $debug("SocketHandle.setSession");
     $assert(this.#socket != null);
     return this.#socket.setSession(...arguments);
   }
   getTLSTicket() {
-    $debug("SocketHandle.getTLSTicket", arguments);
+    $debug("SocketHandle.getTLSTicket");
     $assert(this.#socket != null);
     return this.#socket.getTLSTicket(...arguments);
   }
   exportKeyingMaterial(length, label, context) {
-    $debug("SocketHandle.exportKeyingMaterial", arguments);
+    $debug("SocketHandle.exportKeyingMaterial");
     $assert(this.#socket != null);
     return this.#socket.exportKeyingMaterial(...arguments);
   }
   setMaxSendFragment(size: number) {
-    $debug("SocketHandle.setMaxSendFragment", arguments);
+    $debug("SocketHandle.setMaxSendFragment");
     $assert(this.#socket != null);
     return this.#socket.setMaxSendFragment(...arguments);
   }
   getSharedSigalgs() {
-    $debug("SocketHandle.getSharedSigalgs", arguments);
+    $debug("SocketHandle.getSharedSigalgs");
     $assert(this.#socket != null);
     return this.#socket.getSharedSigalgs(...arguments);
   }
   getTLSVersion() {
-    $debug("SocketHandle.getTLSVersion", arguments);
+    $debug("SocketHandle.getTLSVersion");
     $assert(this.#socket != null);
     return this.#socket.getTLSVersion(...arguments);
   }
   getX509Certificate() {
-    $debug("SocketHandle.getX509Certificate", arguments);
+    $debug("SocketHandle.getX509Certificate");
     $assert(this.#socket != null);
     return this.#socket.getX509Certificate(...arguments);
   }
   getPeerX509Certificate() {
-    $debug("SocketHandle.getPeerX509Certificate", arguments);
+    $debug("SocketHandle.getPeerX509Certificate");
     $assert(this.#socket != null);
     return this.#socket.getPeerX509Certificate(...arguments);
   }
   upgradeTLS(options) {
-    $debug("SocketHandle.upgradeTLS", arguments);
+    $debug("SocketHandle.upgradeTLS");
     $assert(this.#socket != null);
     return this.#socket.upgradeTLS(...arguments);
   }
   setServername(name) {
-    $debug("SocketHandle.setServername", arguments);
+    $debug("SocketHandle.setServername");
     $assert(this.#socket != null);
     return this.#socket.setServername(...arguments);
   }
   getServername() {
-    $debug("SocketHandle.getServername", arguments);
+    $debug("SocketHandle.getServername");
     $assert(this.#socket != null);
     return this.#socket.getServername(...arguments);
   }
   getCertificate() {
-    $debug("SocketHandle.getCertificate", arguments);
+    $debug("SocketHandle.getCertificate");
     $assert(this.#socket != null);
     return this.#socket.getCertificate(...arguments);
   }

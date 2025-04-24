@@ -33,6 +33,7 @@ struct HttpFlags {
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
+    bool useStrictMethodValidation: 1 = false;
 };
 
 template <bool SSL>

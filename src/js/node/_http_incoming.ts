@@ -295,7 +295,6 @@ const IncomingMessagePrototype = {
   },
   _destroy: function IncomingMessage_destroy(err, cb) {
     const shouldEmitAborted = !this.readableEnded || !this.complete;
-
     if (shouldEmitAborted) {
       this[abortedSymbol] = true;
       // IncomingMessage emits 'aborted'.
@@ -328,7 +327,7 @@ const IncomingMessagePrototype = {
         stream?.cancel?.().catch(nop);
       }
 
-      const socket = this[fakeSocketSymbol];
+      const socket = this.socket;
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }

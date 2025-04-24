@@ -21,6 +21,7 @@ const {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;

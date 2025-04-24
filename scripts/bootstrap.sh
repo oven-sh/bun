@@ -1373,7 +1373,7 @@ configure_core_dumps() {
 		execute_sudo sysctl -p "$sysctl_file"
 
 		# disable apport.service if it exists since it will override the core_pattern
-		if which -s systemctl; then
+		if which systemctl >/dev/null; then
 			if systemctl list-unit-files apport.service >/dev/null; then
 				execute_sudo "$systemctl" disable --now apport.service
 			fi

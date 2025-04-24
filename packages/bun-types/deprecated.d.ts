@@ -58,7 +58,36 @@ declare module "bun" {
     | "netbsd";
 
   /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type TimerHandler = (...args: any[]) => void;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type DOMHighResTimeStamp = number;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type MultipleResolveType = "resolve" | "reject";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type ReadableStreamDefaultReadResult<T> =
+    | ReadableStreamDefaultReadValueResult<T>
+    | ReadableStreamDefaultReadDoneResult;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type MessageEventSource = undefined;
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
+
+  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
+  type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
 
   /** @deprecated This type is unused in Bun's types and might be removed in the near future */
   type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;

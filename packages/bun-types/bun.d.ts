@@ -14,31 +14,25 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     | NodeJS.TypedArray<TArrayBuffer>
     | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
-  type ReadableStreamDefaultReadResult<T> =
-    | ReadableStreamDefaultReadValueResult<T>
-    | ReadableStreamDefaultReadDoneResult;
-  type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
+
   type Transferable = ArrayBuffer | MessagePort;
-  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
-  type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
-  type MultipleResolveType = "resolve" | "reject";
   type FormDataEntryValue = File | string;
   type BlobPart = string | Blob | BufferSource;
-  type TimerHandler = (...args: any[]) => void;
-  type DOMHighResTimeStamp = number;
-  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
   namespace __internal {
+    /**
+     * Like regular Omit, but distributes over unions
+     */
+    type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
+
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
     /**
@@ -79,7 +73,7 @@ declare module "bun" {
     data?: T;
     lastEventId?: string;
     origin?: string;
-    source?: Bun.MessageEventSource | null;
+    source?: undefined | null;
   }
 
   interface EventInit {
@@ -106,7 +100,7 @@ declare module "bun" {
     readonly origin: string;
     /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
     readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
-    readonly source: Bun.MessageEventSource | null;
+    readonly source: undefined | null;
   }
 
   type MessageEvent<T = any> = Bun.__internal.UseLibDomIfAvailable<"MessageEvent", BunMessageEvent<T>>;
@@ -282,11 +276,11 @@ declare module "bun" {
   }
 
   interface UnderlyingSourcePullCallback<R> {
-    (controller: ReadableStreamController<R>): void | PromiseLike<void>;
+    (controller: ReadableStreamDefaultController<R>): void | PromiseLike<void>;
   }
 
   interface UnderlyingSourceStartCallback<R> {
-    (controller: ReadableStreamController<R>): any;
+    (controller: ReadableStreamDefaultController<R>): any;
   }
 
   interface GenericTransformStream {
@@ -3977,11 +3971,11 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
    */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })

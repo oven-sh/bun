@@ -40,6 +40,13 @@ describe("bun:test", () => {
     expect(1).not.toBe(2);
     // @ts-expect-error
     expect({ a: 1 }).toEqual({ a: 1, b: undefined });
+
+    // @ts-expect-error
+    expect({ a: 1 }).toEqual<{ a: number; b: number }>({ a: 1, b: undefined });
+
+    // Support passing a type parameter to force exact type matching
+    expect({ a: 1 }).toEqual<{ a: number; b: number }>({ a: 1, b: 1 });
+
     expect({ a: 1 }).toStrictEqual({ a: 1 });
     expect(new Set()).toHaveProperty("size");
     expect(new Uint8Array()).toHaveProperty("byteLength", 0);

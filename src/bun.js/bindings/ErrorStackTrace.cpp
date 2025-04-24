@@ -648,12 +648,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 if (function) {
                     functionName = function->nameWithoutGC(vm);
                     if (functionName.isEmpty() && !function->isHostFunction()) {
-                        auto* executable = function->jsExecutable();
-                        if (executable) {
-                            if (!executable->ecmaName().isEmpty()) {
-                                functionName = executable->ecmaName().string();
-                            }
-                        }
+                        functionName = function->jsExecutable()->ecmaName().string();
                     }
                 }
             } else if (jstype == JSC::InternalFunctionType) {
@@ -730,12 +725,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                         if (function) {
                             functionName = function->nameWithoutGC(vm);
                             if (functionName.isEmpty() && !function->isHostFunction()) {
-                                auto* executable = function->jsExecutable();
-                                if (executable) {
-                                    if (!executable->ecmaName().isEmpty()) {
-                                        functionName = executable->ecmaName().string();
-                                    }
-                                }
+                                functionName = function->jsExecutable()->ecmaName().string();
                             }
                             setTypeFlagsIfNecessary();
                             return functionName;

@@ -494,7 +494,7 @@ async function runTests() {
         // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
         // current directory
         const zipAndEncrypt = await spawnSafe({
-          command: "sh",
+          command: "bash",
           args: [
             "-c",
             // tar -S: handle sparse files efficiently

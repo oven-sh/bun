@@ -3280,6 +3280,7 @@ class ClientHttp2Session extends Http2Session {
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
+      socket.destroy();
     }
     const parser = this.#parser;
     if (parser) {
@@ -3296,6 +3297,27 @@ class ClientHttp2Session extends Http2Session {
   }
 
   request(headers: any, options?: any) {
+    if (options !== undefined) {
+      if (!$isObject(options) || $isArray(options)) {
+        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      }
+      if (options.endStream !== undefined && typeof options.endStream !== "boolean") {
+        throw $ERR_INVALID_ARG_TYPE("options.endStream", "boolean", options.endStream);
+      }
+      if (options.weight !== undefined && typeof options.weight !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.weight", "number", options.weight);
+      }
+      if (options.parent !== undefined && typeof options.parent !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.parent", "number", options.parent);
+      }
+      if (options.exclusive !== undefined && typeof options.exclusive !== "boolean") {
+        throw $ERR_INVALID_ARG_TYPE("options.exclusive", "boolean", options.exclusive);
+      }
+      if (options.silent !== undefined && typeof options.silent !== "boolean") {
+        throw $ERR_INVALID_ARG_TYPE("options.silent", "boolean", options.silent);
+      }
+    }
+
     try {
       if (this.destroyed || this.closed) {
         throw $ERR_HTTP2_INVALID_STREAM();
@@ -3357,27 +3379,6 @@ class ClientHttp2Session extends Http2Session {
 
       if (headers[":path"] == undefined) {
         headers[":path"] = "/";
-      }
-
-      if (options !== undefined) {
-        if (!$isObject(options) || $isArray(options)) {
-          throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-        }
-        if (options.endStream !== undefined && typeof options.endStream !== "boolean") {
-          throw $ERR_INVALID_ARG_TYPE("options.endStream", "boolean", options.endStream);
-        }
-        if (options.weight !== undefined && typeof options.weight !== "number") {
-          throw $ERR_INVALID_ARG_TYPE("options.weight", "number", options.weight);
-        }
-        if (options.parent !== undefined && typeof options.parent !== "number") {
-          throw $ERR_INVALID_ARG_TYPE("options.parent", "number", options.parent);
-        }
-        if (options.exclusive !== undefined && typeof options.exclusive !== "boolean") {
-          throw $ERR_INVALID_ARG_TYPE("options.exclusive", "boolean", options.exclusive);
-        }
-        if (options.silent !== undefined && typeof options.silent !== "boolean") {
-          throw $ERR_INVALID_ARG_TYPE("options.silent", "boolean", options.silent);
-        }
       }
 
       if (NoPayloadMethods.has(method.toUpperCase())) {

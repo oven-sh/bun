@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
-const postgres = bun.JSC.Postgres;
+const postgres = bun.api.Postgres;
 const Data = postgres.Data;
 const protocol = @This();
 const PostgresInt32 = postgres.PostgresInt32;

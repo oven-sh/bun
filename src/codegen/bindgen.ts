@@ -1127,7 +1127,7 @@ const headers = new Set<string>();
 
 zig.line('const bun = @import("bun");');
 zig.line("const JSC = bun.JSC;");
-zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
+zig.line("const JSHostFunctionType = JSC.JSHostFn;\n");
 
 zigInternal.line("const binding_internals = struct {");
 zigInternal.indent();
@@ -1446,7 +1446,7 @@ for (const [filename, { functions, typedefs }] of files) {
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
     zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`);
     zig.line(
-      `    return JSC.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
+      `    return JSC.host_fn.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
     );
     zig.line(`}`);
   }

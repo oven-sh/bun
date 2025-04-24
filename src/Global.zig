@@ -123,7 +123,10 @@ pub fn exit(code: u32) noreturn {
             Bun__onExit();
             std.os.windows.kernel32.ExitProcess(code);
         },
-        else => bun.C.quick_exit(@bitCast(code)),
+        else => {
+            bun.c.quick_exit(@bitCast(code));
+            std.c.abort(); // quick_exit should be noreturn
+        },
     }
 }
 

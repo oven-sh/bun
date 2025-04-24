@@ -14,7 +14,7 @@ const CodePoint = bun.CodePoint;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
 const Indentation = bun.js_printer.Options.Indentation;

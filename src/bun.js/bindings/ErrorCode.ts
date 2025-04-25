@@ -79,8 +79,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_EISDIR", Error],
   ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
   ["ERR_HTTP_HEADERS_SENT", Error],
+  ["ERR_HTTP_CONTENT_LENGTH_MISMATCH", Error],
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_TRAILER_INVALID", Error],
   ["ERR_HTTP_SOCKET_ASSIGNED", Error],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
@@ -246,7 +248,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
-
+  ["ERR_OSSL_EVP_INVALID_DIGEST", Error],
+  ["ERR_KEY_GENERATION_JOB_FAILED", Error],
+  ["ERR_MISSING_OPTION", TypeError],
   ["ERR_REDIS_CONNECTION_CLOSED", Error, "RedisError"],
   ["ERR_REDIS_INVALID_RESPONSE", Error, "RedisError"],
   ["ERR_REDIS_INVALID_BULK_STRING", Error, "RedisError"],
@@ -265,5 +269,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_RESPONSE_TYPE", Error, "RedisError"],
   ["ERR_REDIS_CONNECTION_TIMEOUT", Error, "RedisError"],
   ["ERR_REDIS_IDLE_TIMEOUT", Error, "RedisError"],
+  ["HPE_UNEXPECTED_CONTENT_LENGTH", Error],
+  ["HPE_INVALID_TRANSFER_ENCODING", Error],
+  ["HPE_INVALID_EOF_STATE", Error],
+  ["HPE_INVALID_METHOD", Error],
+  ["HPE_INTERNAL", Error],
 ];
 export default errors;

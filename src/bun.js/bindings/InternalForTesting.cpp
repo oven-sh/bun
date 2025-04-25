@@ -16,4 +16,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObje
     return JSValue::encode(jsBoolean(view->hasArrayBuffer()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto object = callFrame->argument(0).getObject();
+    if (!object) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    if (object->hasNonReifiedStaticProperties()) {
+        return JSValue::encode(jsBoolean(true));
+    }
+
+    return JSValue::encode(jsBoolean(false));
+}
+
 }

@@ -166,7 +166,7 @@ pub const Action = union(enum) {
                     res.kind.label(),
                 });
             },
-            .dlopen => |path| try writer.print("while loading native module: {s}", .{path}),
+            .dlopen => |path| try writer.print("loading native module: {s}", .{path}),
         }
     }
 };
@@ -1488,7 +1488,7 @@ fn crash() noreturn {
         .windows => {
             // This exit code is what Node.js uses when it calls
             // abort. This is relied on by their Node-API tests.
-            bun.C.quick_exit(134);
+            bun.c.quick_exit(134);
         },
         else => {
             // Install default handler so that the tkill below will terminate.

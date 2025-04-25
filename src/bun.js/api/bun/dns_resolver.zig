@@ -18,7 +18,7 @@ const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
-const EventLoopTimer = JSC.BunTimer.EventLoopTimer;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 const timespec = bun.timespec;
 
 const LibInfo = struct {
@@ -41,7 +41,7 @@ const LibInfo = struct {
         if (loaded)
             return handle;
         loaded = true;
-        handle = bun.C.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
+        handle = bun.sys.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
         if (handle == null)
             Output.debug("libinfo.dylib not found", .{});
         return handle;
@@ -51,7 +51,7 @@ const LibInfo = struct {
         pub fn get() ?*const GetaddrinfoAsyncStart {
             bun.Environment.onlyMac();
 
-            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
+            return bun.sys.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
         }
     }.get;
 
@@ -59,7 +59,7 @@ const LibInfo = struct {
         pub fn get() ?*const GetaddrinfoAsyncHandleReply {
             bun.Environment.onlyMac();
 
-            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
+            return bun.sys.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
         }
     }.get;
 
@@ -112,7 +112,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.C.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -809,13 +809,13 @@ pub const GetAddrInfoRequest = struct {
             file_poll: ?*bun.Async.FilePoll = null,
             machport: ?*anyopaque = null,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *GetAddrInfoRequest) void {
                 if (comptime !Environment.isMac)
                     unreachable;
                 bun.JSC.markBinding(@src());
 
-                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, JSC.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
+                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, bun.api.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
                     log("onMachportChange: getaddrinfo_send_reply failed", .{});
                     getAddrInfoAsyncCallback(-1, null, this);
                 }
@@ -1229,7 +1229,7 @@ pub const InternalDNS = struct {
             file_poll: ?*bun.Async.FilePoll = null,
             machport: ?*anyopaque = null,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *Request) void {
                 if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
                     libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
@@ -3436,41 +3436,41 @@ pub const DNSResolver = struct {
     }
 
     comptime {
-        const js_resolve = JSC.toJSHostFunction(globalResolve);
+        const js_resolve = JSC.toJSHostFn(globalResolve);
         @export(&js_resolve, .{ .name = "Bun__DNS__resolve" });
-        const js_lookup = JSC.toJSHostFunction(globalLookup);
+        const js_lookup = JSC.toJSHostFn(globalLookup);
         @export(&js_lookup, .{ .name = "Bun__DNS__lookup" });
-        const js_resolveTxt = JSC.toJSHostFunction(globalResolveTxt);
+        const js_resolveTxt = JSC.toJSHostFn(globalResolveTxt);
         @export(&js_resolveTxt, .{ .name = "Bun__DNS__resolveTxt" });
-        const js_resolveSoa = JSC.toJSHostFunction(globalResolveSoa);
+        const js_resolveSoa = JSC.toJSHostFn(globalResolveSoa);
         @export(&js_resolveSoa, .{ .name = "Bun__DNS__resolveSoa" });
-        const js_resolveMx = JSC.toJSHostFunction(globalResolveMx);
+        const js_resolveMx = JSC.toJSHostFn(globalResolveMx);
         @export(&js_resolveMx, .{ .name = "Bun__DNS__resolveMx" });
-        const js_resolveNaptr = JSC.toJSHostFunction(globalResolveNaptr);
+        const js_resolveNaptr = JSC.toJSHostFn(globalResolveNaptr);
         @export(&js_resolveNaptr, .{ .name = "Bun__DNS__resolveNaptr" });
-        const js_resolveSrv = JSC.toJSHostFunction(globalResolveSrv);
+        const js_resolveSrv = JSC.toJSHostFn(globalResolveSrv);
         @export(&js_resolveSrv, .{ .name = "Bun__DNS__resolveSrv" });
-        const js_resolveCaa = JSC.toJSHostFunction(globalResolveCaa);
+        const js_resolveCaa = JSC.toJSHostFn(globalResolveCaa);
         @export(&js_resolveCaa, .{ .name = "Bun__DNS__resolveCaa" });
-        const js_resolveNs = JSC.toJSHostFunction(globalResolveNs);
+        const js_resolveNs = JSC.toJSHostFn(globalResolveNs);
         @export(&js_resolveNs, .{ .name = "Bun__DNS__resolveNs" });
-        const js_resolvePtr = JSC.toJSHostFunction(globalResolvePtr);
+        const js_resolvePtr = JSC.toJSHostFn(globalResolvePtr);
         @export(&js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
-        const js_resolveCname = JSC.toJSHostFunction(globalResolveCname);
+        const js_resolveCname = JSC.toJSHostFn(globalResolveCname);
         @export(&js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
-        const js_resolveAny = JSC.toJSHostFunction(globalResolveAny);
+        const js_resolveAny = JSC.toJSHostFn(globalResolveAny);
         @export(&js_resolveAny, .{ .name = "Bun__DNS__resolveAny" });
-        const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
+        const js_getGlobalServers = JSC.toJSHostFn(getGlobalServers);
         @export(&js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
-        const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);
+        const js_setGlobalServers = JSC.toJSHostFn(setGlobalServers);
         @export(&js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
-        const js_reverse = JSC.toJSHostFunction(globalReverse);
+        const js_reverse = JSC.toJSHostFn(globalReverse);
         @export(&js_reverse, .{ .name = "Bun__DNS__reverse" });
-        const js_lookupService = JSC.toJSHostFunction(globalLookupService);
+        const js_lookupService = JSC.toJSHostFn(globalLookupService);
         @export(&js_lookupService, .{ .name = "Bun__DNS__lookupService" });
-        const js_prefetchFromJS = JSC.toJSHostFunction(InternalDNS.prefetchFromJS);
+        const js_prefetchFromJS = JSC.toJSHostFn(InternalDNS.prefetchFromJS);
         @export(&js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
-        const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
+        const js_getDNSCacheStats = JSC.toJSHostFn(InternalDNS.getDNSCacheStats);
         @export(&js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
     }
 };

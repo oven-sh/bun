@@ -11,7 +11,7 @@ const Glob = bun.glob;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;

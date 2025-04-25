@@ -81,6 +81,6 @@ pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
     bun.copy(T, dest[0..source.len], source);
 }
 pub fn eqlBytes(src: []const u8, dest: []const u8) bool {
-    return bun.C.memcmp(src.ptr, dest.ptr, src.len) == 0;
+    return bun.c.memcmp(src.ptr, dest.ptr, src.len) == 0;
 }
 // -- End Zig Standard Library Additions --

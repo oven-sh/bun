@@ -6,21 +6,27 @@ declare module "bun" {
     | Array<ShellExpression>
     | string
     | { raw: string }
-    | Subprocess
+    | Subprocess<SpawnOptions.Writable, SpawnOptions.Readable, SpawnOptions.Readable>
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;
 
   /**
-   * The Bun shell
+   * The [Bun shell](https://bun.sh/docs/runtime/shell) is a powerful tool for running shell commands.
+   *
+   * @example
+   * ```ts
+   * const result = await $`echo "Hello, world!"`.text();
+   * console.log(result); // "Hello, world!"
+   * ```
    *
    * @category Process Management
    */
   function $(strings: TemplateStringsArray, ...expressions: ShellExpression[]): $.ShellPromise;
 
-  namespace $ {
-    const Shell: new () => typeof $;
+  type $ = typeof $;
 
+  namespace $ {
     /**
      * Perform bash-like brace expansion on the given pattern.
      * @param pattern - Brace pattern to expand
@@ -46,8 +52,7 @@ declare module "bun" {
      * @param newEnv Default environment variables to use for shells created by this instance.
      * @default process.env
      *
-     * ## Example
-     *
+     * @example
      * ```js
      * import {$} from 'bun';
      * $.env({ BUN: "bun" });
@@ -55,24 +60,35 @@ declare module "bun" {
      * // "bun"
      * ```
      */
-    function env(newEnv?: Record<string, string | undefined>): typeof $;
+    function env(newEnv?: Record<string, string | undefined>): $;
 
     /**
      *
      * @param newCwd Default working directory to use for shells created by this instance.
      */
-    function cwd(newCwd?: string): typeof $;
+    function cwd(newCwd?: string): $;
 
     /**
      * Configure the shell to not throw an exception on non-zero exit codes.
      */
-    function nothrow(): typeof $;
+    function nothrow(): $;
 
     /**
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
      */
-    function throws(shouldThrow: boolean): typeof $;
+    function throws(shouldThrow: boolean): $;
 
+    /**
+     * The `Bun.$.ShellPromise` class represents a shell command that gets executed
+     * once awaited, or called with `.text()`, `.json()`, etc.
+     *
+     * @example
+     * ```ts
+     * const myShellPromise = $`echo "Hello, world!"`;
+     * const result = await myShellPromise.text();
+     * console.log(result); // "Hello, world!"
+     * ```
+     */
     class ShellPromise extends Promise<ShellOutput> {
       get stdin(): WritableStream;
 
@@ -81,6 +97,7 @@ declare module "bun" {
        * @param newCwd - The new working directory
        */
       cwd(newCwd: string): this;
+
       /**
        * Set environment variables for the shell.
        * @param newEnv - The new environment variables
@@ -92,6 +109,7 @@ declare module "bun" {
        * ```
        */
       env(newEnv: Record<string, string> | undefined): this;
+
       /**
        * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
        *
@@ -107,27 +125,25 @@ declare module "bun" {
       lines(): AsyncIterable<string>;
 
       /**
-       * Read from stdout as a string
+       * Read from stdout as a string.
        *
        * Automatically calls {@link quiet} to disable echoing to stdout.
+       *
        * @param encoding - The encoding to use when decoding the output
        * @returns A promise that resolves with stdout as a string
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`.text();
        * console.log(output); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`.text("base64");
        * console.log(output); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): Promise<string>;
 
@@ -189,6 +205,20 @@ declare module "bun" {
       throws(shouldThrow: boolean): this;
     }
 
+    /**
+     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.sh/docs/runtime/shell).
+     *
+     * @example
+     * ```ts
+     * try {
+     *   const result = await $`exit 1`;
+     * } catch (error) {
+     *   if (error instanceof ShellError) {
+     *     console.log(error.exitCode); // 1
+     *   }
+     * }
+     * ```
+     */
     class ShellError extends Error implements ShellOutput {
       readonly stdout: Buffer;
       readonly stderr: Buffer;
@@ -199,22 +229,19 @@ declare module "bun" {
        *
        * @param encoding - The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`;
        * console.log(output.text()); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`;
        * console.log(output.text("base64")); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): string;
 
@@ -280,22 +307,19 @@ declare module "bun" {
        *
        * @param encoding - The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
+       *
        * @example
-       *
-       * ## Read as UTF-8 string
-       *
+       * **Read as UTF-8 string**
        * ```ts
        * const output = await $`echo hello`;
        * console.log(output.text()); // "hello\n"
        * ```
        *
-       * ## Read as base64 string
-       *
+       * **Read as base64 string**
        * ```ts
        * const output = await $`echo ${atob("hello")}`;
        * console.log(output.text("base64")); // "hello\n"
        * ```
-       *
        */
       text(encoding?: BufferEncoding): string;
 
@@ -351,5 +375,7 @@ declare module "bun" {
        */
       blob(): Blob;
     }
+
+    const Shell: new () => $;
   }
 }

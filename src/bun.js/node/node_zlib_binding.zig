@@ -7,6 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 const debug = bun.Output.scoped(.zlib, true);
+const Buffer = bun.api.node.Buffer;
 
 pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
@@ -20,7 +21,7 @@ pub fn crc32(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
         if (data.isString()) {
             break :blk data.asString().toSlice(globalThis, bun.default_allocator);
         }
-        const buffer: JSC.Buffer = JSC.Buffer.fromJS(globalThis, data) orelse {
+        const buffer: Buffer = Buffer.fromJS(globalThis, data) orelse {
             const ty_str = data.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
             defer ty_str.deinit();
             return globalThis.ERR(.INVALID_ARG_TYPE, "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
@@ -337,7 +338,7 @@ pub const SNativeZlib = struct {
     stream: ZlibContext = .{},
     write_result: ?[*]u32 = null,
     poll_ref: CountedKeepAlive = .{},
-    this_value: JSC.Strong = .empty,
+    this_value: JSC.Strong.Optional = .empty,
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,
@@ -719,7 +720,7 @@ pub const SNativeBrotli = struct {
     stream: BrotliContext = .{},
     write_result: ?[*]u32 = null,
     poll_ref: CountedKeepAlive = .{},
-    this_value: JSC.Strong = .empty,
+    this_value: JSC.Strong.Optional = .empty,
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,

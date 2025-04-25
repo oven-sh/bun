@@ -7,21 +7,20 @@ export function _initPaths() {
   // process.execPath is $PREFIX/bin/node except on Windows where it is
   // $PREFIX\node.exe where $PREFIX is the root of the Node.js installation.
   const path = require("node:path");
-  const prefixDir = process.platform === "win32" ?
-    path.resolve(process.execPath, '..') :
-    path.resolve(process.execPath, '..', '..');
+  const prefixDir =
+    process.platform === "win32" ? path.resolve(process.execPath, "..") : path.resolve(process.execPath, "..", "..");
 
-  const paths = [path.resolve(prefixDir, 'lib', 'node')];
+  const paths = [path.resolve(prefixDir, "lib", "node")];
 
   if (homeDir) {
-    paths.unshift(path.resolve(homeDir, '.node_libraries'));
-    paths.unshift(path.resolve(homeDir, '.node_modules'));
+    paths.unshift(path.resolve(homeDir, ".node_libraries"));
+    paths.unshift(path.resolve(homeDir, ".node_modules"));
   }
 
   if (nodePath) {
     paths.unshift(...nodePath.split(path.delimiter).filter(Boolean));
   }
 
-  const M = require('node:module');
+  const M = require("node:module");
   M.globalPaths = paths;
 }

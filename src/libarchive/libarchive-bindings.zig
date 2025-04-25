@@ -956,7 +956,7 @@ pub const Archive = opaque {
                     .retry => continue,
                     .eof => Return.initRes(null),
                     .ok => {
-                        const kind = bun.C.kindFromMode(entry.filetype());
+                        const kind = bun.sys.kindFromMode(entry.filetype());
 
                         if (this.filter.contains(kind)) continue;
 

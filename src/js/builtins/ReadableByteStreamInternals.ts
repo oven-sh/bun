@@ -366,12 +366,12 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 
   let firstDescriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
 
-  if (firstDescriptor.byteOffset + firstDescriptor.bytesFilled !== view.byteOffset)
+  if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
-  if (firstDescriptor.byteLength !== view.byteLength) throw new RangeError("Invalid value for view.byteLength");
+  if (firstDescriptor!.byteLength !== view.byteLength) throw new RangeError("Invalid value for view.byteLength");
 
-  firstDescriptor.buffer = view.buffer;
+  firstDescriptor!.buffer = view.buffer;
   $readableByteStreamControllerRespondInternal(controller, view.byteLength);
 }
 
@@ -672,10 +672,7 @@ interface PullIntoDescriptor {
    * An {@link ArrayBuffer}
    */
   buffer: ArrayBuffer;
-  /**
-   * A positive integer representing the initial byte length of {@link buffer}
-   */
-  bufferByteLength: number;
+
   /**
    * A nonnegative integer byte offset into the {@link buffer} where the
    * underlying byte source will start writing
@@ -691,12 +688,7 @@ interface PullIntoDescriptor {
    * {@link buffer} so far
    */
   bytesFilled: number;
-  /**
-   * A positive integer representing the minimum number of bytes that must be
-   * written into the {@link buffer} before the associated read() request may be
-   * fulfilled. By default, this equals the element size.
-   */
-  minimumFill: number;
+
   /**
    * A positive integer representing the number of bytes that can be written
    * into the {@link buffer} at a time, using views of the type described by the

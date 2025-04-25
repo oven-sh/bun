@@ -2255,6 +2255,12 @@ if (isDockerEnabled()) {
     expect(result).toBe("1.2");
   });
 
+  test("flush should work", async () => {
+    await using sql = postgres(options);
+    await sql`select 1`;
+    sql.flush();
+  });
+
   // t('Async stack trace', async() => {
   //   const sql = postgres({ ...options, debug: false })
   //   return [

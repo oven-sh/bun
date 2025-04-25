@@ -136,7 +136,7 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
-        cached_blob: ?*bun.JSC.WebCore.Blob = null,
+        cached_blob: ?*bun.webcore.Blob = null,
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
@@ -171,13 +171,13 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
+        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.webcore.Blob {
             if (this.cached_blob == null) {
-                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.webcore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
-                const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
+                const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
                 b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
@@ -659,7 +659,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
                 return cloned_executable_fd;
             },
@@ -727,7 +727,7 @@ pub const StandaloneModuleGraph = struct {
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
                 _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
 
                 return cloned_executable_fd;
@@ -803,14 +803,14 @@ pub const StandaloneModuleGraph = struct {
                 break :brk outfile_buf_u16[0..outfile_w.len :0];
             };
 
-            bun.C.moveOpenedFileAtLoose(fd, .fromStdDir(root_dir), outfile_slice, true).unwrap() catch |err| {
+            bun.windows.moveOpenedFileAtLoose(fd, .fromStdDir(root_dir), outfile_slice, true).unwrap() catch |err| {
                 if (err == error.EISDIR) {
                     Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.utf16(outfile_slice)});
                 } else {
                     Output.err(err, "failed to move executable to result path", .{});
                 }
 
-                _ = bun.C.deleteOpenedFile(fd);
+                _ = bun.windows.deleteOpenedFile(fd);
 
                 Global.exit(1);
             };
@@ -832,7 +832,7 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        bun.C.moveFileZWithHandle(
+        bun.sys.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
             bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),

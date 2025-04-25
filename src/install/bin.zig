@@ -7,7 +7,6 @@ const Global = bun.Global;
 const std = @import("std");
 const strings = bun.strings;
 const Environment = @import("../env.zig");
-const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
 const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
@@ -586,14 +585,14 @@ pub const Bin = extern struct {
 
         err: ?anyerror = null,
 
-        pub var umask: bun.C.Mode = 0;
+        pub var umask: bun.Mode = 0;
 
         var has_set_umask = false;
 
         pub fn ensureUmask() void {
             if (!has_set_umask) {
                 has_set_umask = true;
-                umask = bun.C.umask(0);
+                umask = bun.sys.umask(0);
             }
         }
 

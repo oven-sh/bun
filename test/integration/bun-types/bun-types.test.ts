@@ -73,7 +73,11 @@ beforeEach(async () => {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    await rm(TEMP_DIR, { recursive: true, force: true });
+    if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
+      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
+    } else {
+      await rm(TEMP_DIR, { recursive: true, force: true });
+    }
   }
 });
 
@@ -112,13 +116,13 @@ describe("@types/bun integration test", () => {
 
       "index.ts",
       "error TS2345: Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+      "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
 
       "streams.ts",
       "error TS2769: No overload matches this call.",
       "ReadableStream<Uint8Array<ArrayBufferLike>>', gave the following error.",
       "Overload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number", // This line truncates because we've seen TypeScript emit differing messages in different environments
       `Type '"direct"' is not assignable to type '"bytes"'`,
-      "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
 
       "websocket.ts",
@@ -148,13 +152,13 @@ describe("@types/bun integration test", () => {
 
     const fullOutput = p.stdout.toString() + p.stderr.toString();
 
-    const expectedErrorCount = importantLines.join("\n").match(/error/g)?.length ?? 0;
-    const actualErrorCount = fullOutput.match(/error/g)?.length ?? 0;
-    expect(actualErrorCount).toBe(expectedErrorCount);
-
     for (const line of importantLines) {
       expect(fullOutput).toContain(line);
     }
+
+    const expectedErrorCount = importantLines.join("\n").match(/error/g)?.length ?? 0;
+    const actualErrorCount = fullOutput.match(/error/g)?.length ?? 0;
+    expect(actualErrorCount).toBe(expectedErrorCount);
 
     expect(p.exitCode).toBe(2);
   });

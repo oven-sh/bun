@@ -107,7 +107,7 @@ pub const JSPromise = opaque {
     }
 
     pub const Strong = struct {
-        strong: JSC.Strong = .empty,
+        strong: JSC.Strong.Optional = .empty,
 
         pub const empty: Strong = .{ .strong = .empty };
 
@@ -140,7 +140,7 @@ pub const JSPromise = opaque {
 
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
-                .strong = JSC.Strong.create(
+                .strong = .create(
                     JSC.JSPromise.create(globalThis).asValue(globalThis),
                     globalThis,
                 ),

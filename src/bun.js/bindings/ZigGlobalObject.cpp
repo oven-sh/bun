@@ -208,7 +208,7 @@ BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;

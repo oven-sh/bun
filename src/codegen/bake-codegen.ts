@@ -142,6 +142,16 @@ async function run() {
         }
       }
 
+      if (side === "client" && code.match(/\beval\(|,\s*eval\s*\)/)) {
+        throw new AggregateError([
+          new Error(
+              "eval is not allowed in the HMR runtime. there are problems in all " 
+            + "browsers regarding stack traces from eval'd frames and source maps. "
+            + "you must find an alternative solution to your problem."
+          ),
+        ]);
+      }
+
       writeIfNotChanged(join(codegenRoot, `bake.${file}.js`), code);
     }),
   );

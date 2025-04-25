@@ -38,7 +38,6 @@ const gcSize = 1024 * 1024 * 2; // 2MB
  * https://github.com/stacktracejs/error-stack-parser/blob/9f33c224b5d7b607755eb277f9d51fcdb7287e24/error-stack-parser.js
  */
 export function parseStackTrace(error: Error | any): null | Frame[] {
-  console.log({stack:error.stack});
   const stack = error?.stack;
   if (typeof stack === "string") {
     if (stack.match(CHROME_IE_STACK_REGEXP)) {

@@ -4616,7 +4616,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+                .hmr_chunk => switch (side) {
+                    .server => comptime .init("({"),
+                    .client => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+                },
             };
 
             // A small amount of metadata is present at the end of the chunk

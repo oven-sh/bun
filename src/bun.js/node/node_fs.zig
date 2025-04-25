@@ -2619,7 +2619,7 @@ pub const Arguments = struct {
                 -1
             else if (position_value.isNumber())
                 try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, JSC.MAX_SAFE_INTEGER)
-            else if (JSC.JSBigInt.dynamicCast(position_value)) |position| pos: {
+            else if (JSC.JSBigInt.fromJS(position_value)) |position| pos: {
                 // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                 const max_position = std.math.maxInt(i64) - length_int;
                 if (position.order(i64, -1) == .lt or position.order(i64, max_position) == .gt) {

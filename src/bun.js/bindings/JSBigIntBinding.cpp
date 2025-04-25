@@ -6,7 +6,7 @@
 using namespace JSC;
 using namespace Bun;
 
-extern "C" JSBigInt* JSC__JSBigInt__dynamicCast(EncodedJSValue encodedValue)
+extern "C" JSBigInt* JSC__JSBigInt__fromJS(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
     ASSERT(!value.isEmpty());

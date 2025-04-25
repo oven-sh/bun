@@ -7,9 +7,9 @@ const JSError = bun.JSError;
 const String = bun.String;
 
 pub const JSBigInt = opaque {
-    extern fn JSC__JSBigInt__dynamicCast(JSValue) ?*JSBigInt;
-    pub fn dynamicCast(value: JSValue) ?*JSBigInt {
-        return JSC__JSBigInt__dynamicCast(value);
+    extern fn JSC__JSBigInt__fromJS(JSValue) ?*JSBigInt;
+    pub fn fromJS(value: JSValue) ?*JSBigInt {
+        return JSC__JSBigInt__fromJS(value);
     }
 
     extern fn JSC__JSBigInt__orderDouble(*JSBigInt, f64) i8;

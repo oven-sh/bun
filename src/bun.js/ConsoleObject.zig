@@ -3361,6 +3361,8 @@ pub const Formatter = struct {
                     if (arrayBuffer.typed_array_type == .Uint8Array and
                         arrayBuffer.value.isBuffer(this.globalThis))
                         "Buffer"
+                    else if (arrayBuffer.typed_array_type == .ArrayBuffer and arrayBuffer.shared)
+                        "SharedArrayBuffer"
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );

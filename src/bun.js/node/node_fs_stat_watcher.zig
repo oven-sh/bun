@@ -198,7 +198,7 @@ pub const StatWatcher = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     last_stat: bun.Stat,
-    last_jsvalue: JSC.Strong,
+    last_jsvalue: JSC.Strong.Optional,
 
     pub const js = JSC.Codegen.JSStatWatcher;
     pub const toJS = js.toJS;
@@ -379,7 +379,7 @@ pub const StatWatcher = struct {
         }
 
         const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
-        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+        this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -392,7 +392,7 @@ pub const StatWatcher = struct {
         }
 
         const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
-        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+        this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
 

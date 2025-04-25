@@ -287,7 +287,7 @@ pub const Value = union(Tag) {
         AbortReason: JSC.CommonAbortReason,
         SystemError: JSC.SystemError,
         Message: bun.String,
-        JSValue: JSC.Strong,
+        JSValue: JSC.Strong.Optional,
 
         pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) streams.Result.StreamError {
             return switch (this.*) {
@@ -308,7 +308,7 @@ pub const Value = union(Tag) {
                 // do a early return in this case we don't need to create a new Strong
                 .JSValue => |js_value| return js_value.get() orelse JSC.JSValue.jsUndefined(),
             };
-            this.* = .{ .JSValue = JSC.Strong.create(js_value, globalObject) };
+            this.* = .{ .JSValue = .create(js_value, globalObject) };
             return js_value;
         }
 
@@ -319,7 +319,7 @@ pub const Value = union(Tag) {
                 .Message => value.Message.ref(),
                 .JSValue => |js_ref| {
                     if (js_ref.get()) |js_value| {
-                        return .{ .JSValue = JSC.Strong.create(js_value, globalObject) };
+                        return .{ .JSValue = .create(js_value, globalObject) };
                     }
                     return .{ .JSValue = .empty };
                 },
@@ -1520,7 +1520,7 @@ pub const ValueBufferer = struct {
             sink.js_sink = null;
             wrapper.sink.destroy();
         }
-        var ref = JSC.Strong.create(err, sink.global);
+        var ref = JSC.Strong.Optional.create(err, sink.global);
         defer ref.deinit();
         sink.onFinishedBuffering(sink.ctx, "", .{ .JSValue = ref }, is_async);
     }

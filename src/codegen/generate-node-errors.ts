@@ -90,7 +90,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
 
   // it's useful to avoid the prefix, but module not found has a prefixed and unprefixed version
-  const codeWithoutPrefix = code === 'ERR_MODULE_NOT_FOUND' ? code : code.replace(/^ERR_/, '');
+  const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;
@@ -167,9 +167,9 @@ for (const [code, constructor, name, ...other_constructors] of NodeErrors) {
       ? `${constructor.name} & { name: "${name}", code: "${code}" }`
       : `${constructor.name} & { code: "${code}" }`;
   dts += `
-/** 
+/**
  * Construct an {@link ${constructor.name} ${constructor.name}} with the \`"${code}"\` error code.
- * 
+ *
  * To override this, update ErrorCode.cpp. To remove this generated type, mention \`"${code}"\` in builtins.d.ts.
  */
 declare function $${code}(message: string): ${namedError};\n`;

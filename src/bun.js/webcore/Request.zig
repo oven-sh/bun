@@ -73,13 +73,13 @@ comptime {
 }
 
 pub const InternalJSEventCallback = struct {
-    function: JSC.Strong = .empty,
+    function: JSC.Strong.Optional = .empty,
 
     pub const EventType = JSC.API.NodeHTTPResponse.AbortEvent;
 
     pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
         return InternalJSEventCallback{
-            .function = JSC.Strong.create(function, globalThis),
+            .function = .create(function, globalThis),
         };
     }
 

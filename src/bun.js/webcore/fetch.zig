@@ -107,10 +107,10 @@ pub const FetchTasklet = struct {
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     // must be stored because AbortSignal stores reason weakly
-    abort_reason: JSC.Strong = .empty,
+    abort_reason: JSC.Strong.Optional = .empty,
 
     // custom checkServerIdentity
-    check_server_identity: JSC.Strong = .empty,
+    check_server_identity: JSC.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
     // Custom Hostname
     hostname: ?[]u8 = null,
@@ -709,9 +709,9 @@ pub const FetchTasklet = struct {
         }
         const success = this.result.isSuccess();
         const result = switch (success) {
-            true => JSC.Strong.create(this.onResolve(), globalThis),
+            true => JSC.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
-                // in this case we wanna a JSC.Strong so we just convert it
+                // in this case we wanna a JSC.Strong.Optional so we just convert it
                 var value = this.onReject();
                 _ = value.toJS(globalThis);
                 break :brk value.JSValue;
@@ -720,8 +720,8 @@ pub const FetchTasklet = struct {
 
         promise_value.ensureStillAlive();
         const Holder = struct {
-            held: JSC.Strong,
-            promise: JSC.Strong,
+            held: JSC.Strong.Optional,
+            promise: JSC.Strong.Optional,
             globalObject: *JSC.JSGlobalObject,
             task: JSC.AnyTask,
 
@@ -1310,7 +1310,7 @@ pub const FetchTasklet = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
         memory_reporter: *bun.MemoryReportingAllocator,
-        check_server_identity: JSC.Strong = .empty,
+        check_server_identity: JSC.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
     };

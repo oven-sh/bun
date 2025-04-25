@@ -236,7 +236,7 @@ void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    BunBuiltinNames builtinNames(vm);
+    BunBuiltinNames& builtinNames = WebCore::builtinNames(vm);
     putDirectNativeFunction(vm, globalObject, builtinNames.inspectCustomPublicName(), 2, jsBroadcastChannelPrototype_inspectCustom, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 

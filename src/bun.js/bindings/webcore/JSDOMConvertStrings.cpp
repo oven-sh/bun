@@ -81,7 +81,7 @@ AtomString valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
+    AtomString string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
     RETURN_IF_EXCEPTION(scope, {});
 
     if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())))
@@ -114,7 +114,7 @@ AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue val
     auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return replaceUnpairedSurrogatesWithReplacementCharacter(WTFMove(string));
+    return replaceUnpairedSurrogatesWithReplacementCharacter(AtomString(string));
 }
 
 } // namespace WebCore

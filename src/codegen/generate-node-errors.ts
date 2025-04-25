@@ -12,11 +12,8 @@ const extra_count = NodeErrors.map(x => x.slice(3))
   .reduce((ac, cv) => ac + cv.length, 0);
 const count = NodeErrors.length + extra_count;
 
-if (count > 256) {
-  // increase size of enum's to have more tags
-  // src/bun.js/node/types.zig#Encoding
-  // src/bun.js/bindings/BufferEncodingType.h
-  throw new Error("NodeError count exceeds u8");
+if (count > 65536) {
+  throw new Error("NodeError count exceeds u16");
 }
 
 let enumHeader = ``;
@@ -33,7 +30,7 @@ enumHeader = `
 
 namespace Bun {
   static constexpr size_t NODE_ERROR_COUNT = ${count};
-  enum class ErrorCode : uint8_t {
+  enum class ErrorCode : uint16_t {
 `;
 
 listHeader = `
@@ -83,7 +80,7 @@ pub fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type
   };
 }
 
-pub const Error = enum(u8) {
+pub const Error = enum(u16) {
 
 `;
 
@@ -92,7 +89,7 @@ for (let [code, constructor, name, ...other_constructors] of NodeErrors) {
   if (name == null) name = constructor.name;
 
   // it's useful to avoid the prefix, but module not found has a prefixed and unprefixed version
-  const codeWithoutPrefix = code === 'ERR_MODULE_NOT_FOUND' ? code : code.replace(/^ERR_/, '');
+  const codeWithoutPrefix = code === "ERR_MODULE_NOT_FOUND" ? code : code.replace(/^ERR_/, "");
 
   enumHeader += `    ${code} = ${i},\n`;
   listHeader += `    { JSC::ErrorType::${constructor.name}, "${name}"_s, "${code}"_s },\n`;

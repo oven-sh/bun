@@ -762,6 +762,17 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     return mock;
 }
 
+template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
+{
+#define VISIT_JSMOCKMODULE_GC_MEMBER(T, name) \
+    name.visit(visitor);
+    FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
+#undef VISIT_JSMOCKMODULE_GC_MEMBER
+}
+
+template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
+template void JSMockModule::visit(JSC::SlotVisitor&);
+
 extern Structure* createMockResultStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(

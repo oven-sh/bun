@@ -91,7 +91,7 @@ pub const Type = struct {
     /// `FrameworkRouter` itself does not use this value.
     server_file: OpaqueFileId,
     /// `FrameworkRouter` itself does not use this value.
-    server_file_string: JSC.Strong,
+    server_file_string: JSC.Strong.Optional,
 
     pub fn rootRouteIndex(type_index: Index) Route.Index {
         return Route.Index.init(type_index.get());
@@ -412,7 +412,7 @@ pub const Style = union(enum) {
     nextjs_pages,
     nextjs_app_ui,
     nextjs_app_routes,
-    javascript_defined: JSC.Strong,
+    javascript_defined: JSC.Strong.Optional,
 
     pub const map = bun.ComptimeStringMap(Style, .{
         .{ "nextjs-pages", .nextjs_pages },
@@ -431,7 +431,7 @@ pub const Style = union(enum) {
                 return style;
             }
         } else if (value.isCallable()) {
-            return .{ .javascript_defined = JSC.Strong.create(value, global) };
+            return .{ .javascript_defined = .create(value, global) };
         }
 
         return global.throwInvalidArguments(error_message, .{});

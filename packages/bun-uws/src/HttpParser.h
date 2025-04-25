@@ -48,6 +48,28 @@ namespace uWS
     static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
     static void *FULLPTR = (void *)~(uintptr_t)0;
 
+    enum HttpParserError: uint8_t {
+        HTTP_PARSER_ERROR_NONE = 0,
+        HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
+        HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH = 2,
+        HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 3,
+        HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 4,
+        HTTP_PARSER_ERROR_INVALID_REQUEST = 5,
+        HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 6,
+        HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
+        HTTP_PARSER_ERROR_INVALID_EOF = 8,
+        HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+    };
+
+
+    enum HTTPHeaderParserError: uint8_t {
+        HTTP_HEADER_PARSER_ERROR_NONE = 0,
+        HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION = 1,
+        HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST = 2,
+        HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
+    };
+    
+
     struct HttpRequest
     {
 
@@ -59,8 +81,8 @@ namespace uWS
             std::string_view key, value;
         } headers[UWS_HTTP_MAX_HEADERS_COUNT];
         bool ancientHttp;
-        unsigned int querySeparator;
         bool didYield;
+        unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
@@ -133,6 +155,7 @@ namespace uWS
             }
             return std::string_view(nullptr, 0);
         }
+
 
         std::string_view getUrl()
         {
@@ -312,6 +335,20 @@ namespace uWS
             return (void *)p;
         }
 
+        static bool isValidMethod(std::string_view str) {
+            if (str.empty()) return false;
+
+            for (char c : str) {
+                if (!isValidMethodChar(c))
+                    return false;
+            }
+            return true;
+        }
+
+        static inline bool isValidMethodChar(char c) {
+            return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
+        }
+
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
@@ -353,11 +390,18 @@ namespace uWS
         }
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
+        /* PS: this function on error can return char* to HTTPHeaderParserError enum, with is not the best design, this need to be refactor */
         static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
-            while (data[0] > 32) data++;
+            while (data[0] > 32) {
+                if (!isValidMethodChar(data[0]) ) {
+                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
+                }
+                data++;
+
+            }
             if (&data[1] == end) [[unlikely]] {
                 return nullptr;
             }
@@ -365,6 +409,9 @@ namespace uWS
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
+                  if(!isValidMethod(header.key)) {
+                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
+                }
                 /* Scan for less than 33 (catches post padded CR and fails) */
                 start = data;
                 for (; true; data += 8) {
@@ -383,7 +430,7 @@ namespace uWS
                                 isAncientHTTP = true;
                                 return data + 11;
                             }
-                            return (char *) 0x1;
+                            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
                             return data + 11;
@@ -396,7 +443,7 @@ namespace uWS
                             return nullptr;
                         }
                         /* This is an error */
-                        return (char *) 0x1;
+                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
                     }
                 }
             }
@@ -413,11 +460,11 @@ namespace uWS
                         return nullptr;
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
-                        return (char *) 0x2;
+                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST;
                 }
             }
 
-            return (char *) 0x1;
+            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
         }
 
         /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed; htab (9) is also allowed)
@@ -436,7 +483,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, unsigned int &err, bool &isAncientHTTP) {
+        static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, unsigned int &err, HttpParserError &parserError, bool &isAncientHTTP) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             #ifdef UWS_WITH_PROXY
@@ -466,15 +513,21 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            if ((char *) 3 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
+            if ((char *) 4 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
-                    case 0x1:
-                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;;
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION:
+                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;
+                        parserError = HTTP_PARSER_ERROR_INVALID_HTTP_VERSION;
                         break;
-                    case 0x2:
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST:
                         err = HTTP_ERROR_400_BAD_REQUEST;
+                        parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
+                        break;
+                    case HTTP_HEADER_PARSER_ERROR_INVALID_METHOD:
+                        err = HTTP_ERROR_400_BAD_REQUEST;
+                        parserError = HTTP_PARSER_ERROR_INVALID_METHOD;
                         break;
                     default: {
                         err = 0;
@@ -488,6 +541,7 @@ namespace uWS
             if(buffer_size < 2) {
                 /* Fragmented request */
                 err = HTTP_ERROR_400_BAD_REQUEST;
+                parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
                 return 0;
             }
             if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
@@ -510,6 +564,7 @@ namespace uWS
                     }
                     /* Error: invalid chars in field name */
                     err = HTTP_ERROR_400_BAD_REQUEST;
+                    parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
                     return 0;
                 }
                 postPaddedBuffer++;
@@ -527,6 +582,7 @@ namespace uWS
                         }
                         /* Error - invalid chars in field value */
                         err = HTTP_ERROR_400_BAD_REQUEST;
+                        parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
                         return 0;
                     }
                     break;
@@ -560,6 +616,7 @@ namespace uWS
                             /* \r\n\r plus non-\n letter is malformed request, or simply out of search space */
                             if (postPaddedBuffer + 1 < end) {
                                 err = HTTP_ERROR_400_BAD_REQUEST;
+                                parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
                             }
                             return 0;
                         }
@@ -579,25 +636,26 @@ namespace uWS
      * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
      * or [whatever, fullptr] for "break and close me, I am a parser error!" */
     template <bool ConsumeMinimally>
-    std::pair<unsigned int, void *> fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    std::tuple<unsigned int, HttpParserError, void *> fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
         unsigned int err = 0;
+        HttpParserError parserError = HTTP_PARSER_ERROR_NONE;
 
         /* Fence two bytes past end of our buffer (buffer has post padded margins).
          * This is to always catch scan for \r but not for \r\n. */
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         bool isAncientHTTP = false;
-        for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, isAncientHTTP)); ) {
+        for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, parserError, isAncientHTTP)); ) {
             data += consumed;
             length -= consumed;
             consumedTotal += consumed;
 
             /* Even if we could parse it, check for length here as well */
             if (consumed > MAX_FALLBACK_SIZE) {
-                return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
+                return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
             }
 
             /* Store HTTP version (ancient 1.0 or 1.1) */
@@ -611,7 +669,7 @@ namespace uWS
             }
             /* Break if no host header (but we can have empty string which is different from nullptr) */
             if (!isAncientHTTP && requireHostHeader && !req->getHeader("host").data()) {
-                return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER, FULLPTR};
             }
 
             /* RFC 9112 6.3
@@ -628,7 +686,7 @@ namespace uWS
                 /* Returning fullptr is the same as calling the errorHandler */
                 /* We could be smart and set an error in the context along with this, to indicate what
                  * http error response we might want to return */
-                return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING, FULLPTR};
             }
 
             /* Parse query */
@@ -640,25 +698,17 @@ namespace uWS
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
                 if (remainingStreamingBytes == UINT64_MAX) {
                     /* Parser error */
-                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                    return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH, FULLPTR};
                 }
             }
 
-            // lets check if content len is valid before calling requestHandler
-            if(contentLengthStringLen) {
-                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) {
-                    /* Parser error */
-                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
-                }
-            }
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */
-                return {consumedTotal, returnedUser};
+                return {consumedTotal, HTTP_PARSER_ERROR_NONE, returnedUser};
             }
 
             /* The rules at play here according to RFC 9112 for requests are essentially:
@@ -694,7 +744,7 @@ namespace uWS
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                         // TODO: what happen if we already responded?
-                        return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                        return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING, FULLPTR};
                     }
                     unsigned int consumed = (length - (unsigned int) dataToConsume.length());
                     data = (char *) dataToConsume.data();
@@ -723,13 +773,13 @@ namespace uWS
         }
         /* Whenever we return FULLPTR, the interpretation of "consumed" should be the HttpError enum. */
         if (err) {
-            return {err, FULLPTR};
+            return {err, parserError, FULLPTR};
         }
-        return {consumedTotal, user};
+        return {consumedTotal, HTTP_PARSER_ERROR_NONE, user};
     }
 
 public:
-    std::pair<unsigned int, void *> consumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    std::tuple<unsigned int, HttpParserError, void *> consumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
 
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
@@ -743,7 +793,7 @@ public:
                     dataHandler(user, chunk, chunk.length() == 0);
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
-                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                    return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING, FULLPTR};
                 }
                 data = (char *) dataToConsume.data();
                 length = (unsigned int) dataToConsume.length();
@@ -753,7 +803,7 @@ public:
                 if (remainingStreamingBytes >= length) {
                     void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == length);
                     remainingStreamingBytes -= length;
-                    return {0, returnedUser};
+                    return {0, HTTP_PARSER_ERROR_NONE, returnedUser};
                 } else {
                     void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
@@ -763,7 +813,7 @@ public:
                     remainingStreamingBytes = 0;
 
                     if (returnedUser != user) {
-                        return {0, returnedUser};
+                        return {0, HTTP_PARSER_ERROR_NONE, returnedUser};
                     }
                 }
             }
@@ -778,19 +828,19 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
-            if (consumed.second != user) {
+            std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            if (std::get<2>(consumed) != user) {
                 return consumed;
             }
 
-            if (consumed.first) {
+            if (std::get<0>(consumed)) {
 
                 /* This logic assumes that we consumed everything in fallback buffer.
                 * This is critically important, as we will get an integer overflow in case
                 * of "had" being larger than what we consumed, and that we would drop data */
                 fallback.clear();
-                data += consumed.first - had;
-                length -= consumed.first - had;
+                data += std::get<0>(consumed) - had;
+                length -= std::get<0>(consumed) - had;
 
                 if (remainingStreamingBytes) {
                     /* It's either chunked or with a content-length */
@@ -800,7 +850,7 @@ public:
                             dataHandler(user, chunk, chunk.length() == 0);
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
-                            return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
+                            return {HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING, FULLPTR};
                         }
                         data = (char *) dataToConsume.data();
                         length = (unsigned int) dataToConsume.length();
@@ -809,7 +859,7 @@ public:
                         if (remainingStreamingBytes >= (unsigned int) length) {
                             void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int) length);
                             remainingStreamingBytes -= length;
-                            return {0, returnedUser};
+                            return {0, HTTP_PARSER_ERROR_NONE, returnedUser};
                         } else {
                             void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
@@ -819,7 +869,7 @@ public:
                             remainingStreamingBytes = 0;
 
                             if (returnedUser != user) {
-                                return {0, returnedUser};
+                                return {0, HTTP_PARSER_ERROR_NONE, returnedUser};
                             }
                         }
                     }
@@ -827,30 +877,30 @@ public:
 
             } else {
                 if (fallback.length() == MAX_FALLBACK_SIZE) {
-                    return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
+                    return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
                 }
-                return {0, user};
+                return {0, HTTP_PARSER_ERROR_NONE, user};
             }
         }
 
-        std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
-        if (consumed.second != user) {
+        std::tuple<unsigned int, HttpParserError, void *> consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
+        if (std::get<2>(consumed) != user) {
             return consumed;
         }
 
-        data += consumed.first;
-        length -= consumed.first;
+        data += std::get<0>(consumed);
+        length -= std::get<0>(consumed);
 
         if (length) {
             if (length < MAX_FALLBACK_SIZE) {
                 fallback.append(data, length);
             } else {
-                return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
+                return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
             }
         }
 
         // added for now
-        return {0, user};
+        return {0, HTTP_PARSER_ERROR_NONE, user};
     }
 };
 

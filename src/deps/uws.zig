@@ -104,15 +104,15 @@ pub const UpgradedDuplex = struct {
     const WrapperType = SSLWrapper(*UpgradedDuplex);
 
     wrapper: ?WrapperType,
-    origin: JSC.Strong = .empty, // any duplex
+    origin: JSC.Strong.Optional = .empty, // any duplex
     global: ?*JSC.JSGlobalObject = null,
     ssl_error: CertError = .{},
     vm: *JSC.VirtualMachine,
     handlers: Handlers,
-    onDataCallback: JSC.Strong = .empty,
-    onEndCallback: JSC.Strong = .empty,
-    onWritableCallback: JSC.Strong = .empty,
-    onCloseCallback: JSC.Strong = .empty,
+    onDataCallback: JSC.Strong.Optional = .empty,
+    onEndCallback: JSC.Strong.Optional = .empty,
+    onWritableCallback: JSC.Strong.Optional = .empty,
+    onCloseCallback: JSC.Strong.Optional = .empty,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
@@ -349,7 +349,7 @@ pub const UpgradedDuplex = struct {
 
                 JSC.host_fn.setFunctionData(dataCallback, this);
 
-                this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+                this.onDataCallback = .create(dataCallback, globalThis);
                 break :brk dataCallback;
             };
             array.putIndex(globalThis, 0, callback);
@@ -369,7 +369,7 @@ pub const UpgradedDuplex = struct {
 
                 JSC.host_fn.setFunctionData(endCallback, this);
 
-                this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+                this.onEndCallback = .create(endCallback, globalThis);
                 break :brk endCallback;
             };
             array.putIndex(globalThis, 1, callback);
@@ -388,7 +388,7 @@ pub const UpgradedDuplex = struct {
                 writableCallback.ensureStillAlive();
 
                 JSC.host_fn.setFunctionData(writableCallback, this);
-                this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
+                this.onWritableCallback = .create(writableCallback, globalThis);
                 break :brk writableCallback;
             };
             array.putIndex(globalThis, 2, callback);
@@ -407,7 +407,7 @@ pub const UpgradedDuplex = struct {
                 closeCallback.ensureStillAlive();
 
                 JSC.host_fn.setFunctionData(closeCallback, this);
-                this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
+                this.onCloseCallback = .create(closeCallback, globalThis);
                 break :brk closeCallback;
             };
             array.putIndex(globalThis, 3, callback);
@@ -3032,6 +3032,7 @@ pub const ListenSocket = opaque {
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
 extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
+extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *Socket, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
 
 pub const SocketAddress = struct {
     ip: []const u8,
@@ -3474,6 +3475,25 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             };
             return uws_app_listen(ssl_flag, @as(*uws_app_t, @ptrCast(app)), port, Wrapper.handle, user_data);
+        }
+
+        pub fn onClientError(
+            app: *ThisApp,
+            comptime UserData: type,
+            user_data: UserData,
+            comptime handler: fn (data: UserData, socket: *Socket, error_code: u8, rawPacket: []const u8) void,
+        ) void {
+            const Wrapper = struct {
+                pub fn handle(data: *anyopaque, _: c_int, socket: *Socket, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
+                    @call(bun.callmod_inline, handler, .{
+                        @as(UserData, @ptrCast(@alignCast(data))),
+                        socket,
+                        error_code,
+                        if (raw_packet) |bytes| bytes[0..(@max(raw_packet_length, 0))] else "",
+                    });
+                }
+            };
+            return uws_app_set_on_clienterror(ssl_flag, @ptrCast(app), Wrapper.handle, @ptrCast(user_data));
         }
 
         pub fn listenWithConfig(

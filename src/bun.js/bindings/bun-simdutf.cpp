@@ -367,4 +367,10 @@ SIMDUTFResult simdutf__base64_decode_from_binary16(const char16_t* input, size_t
 
     return { .error = res.error, .count = res.count };
 }
+
+size_t simdutf__utf16_length_from_latin1(const char* input, size_t length)
+{
+    UNUSED_PARAM(input);
+    return simdutf::utf16_length_from_latin1(length);
+}
 }

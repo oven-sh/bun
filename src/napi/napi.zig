@@ -81,8 +81,8 @@ pub const napi_ref = *Ref;
 pub const NapiHandleScope = opaque {
     pub extern fn NapiHandleScope__open(env: *NapiEnv, escapable: bool) ?*NapiHandleScope;
     pub extern fn NapiHandleScope__close(env: *NapiEnv, current: ?*NapiHandleScope) void;
-    extern fn NapiHandleScope__append(env: *NapiEnv, value: JSC.JSValueReprInt) void;
-    extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
+    extern fn NapiHandleScope__append(env: *NapiEnv, value: JSC.JSValue.backing_int) void;
+    extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValue.backing_int) bool;
 
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
@@ -1425,9 +1425,9 @@ pub const Finalizer = struct {
 // TODO: generate comptime version of this instead of runtime checking
 pub const ThreadSafeFunction = struct {
     pub const Callback = union(enum) {
-        js: JSC.Strong,
+        js: JSC.Strong.Optional,
         c: struct {
-            js: JSC.Strong,
+            js: JSC.Strong.Optional,
             napi_threadsafe_function_call_js: napi_threadsafe_function_call_js,
         },
 
@@ -1457,7 +1457,7 @@ pub const ThreadSafeFunction = struct {
     lock: std.Thread.Mutex = .{},
 
     event_loop: *JSC.EventLoop,
-    tracker: JSC.AsyncTaskTracker,
+    tracker: JSC.Debugger.AsyncTaskTracker,
 
     env: *NapiEnv,
 
@@ -1771,16 +1771,16 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) .empty else JSC.Strong.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
+                .js = if (func == .zero) .empty else JSC.Strong.Optional.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
             },
         } else .{
-            .js = if (func == .zero) .empty else JSC.Strong.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
+            .js = if (func == .zero) .empty else JSC.Strong.Optional.create(func.withAsyncContextIfNeeded(env.toJS()), vm.global),
         },
         .ctx = context,
         .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
         .thread_count = .{ .raw = @intCast(initial_thread_count) },
         .poll_ref = Async.KeepAlive.init(),
-        .tracker = JSC.AsyncTaskTracker.init(vm),
+        .tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
     });
 
     function.finalizer = .{ .env = env, .data = thread_finalize_data, .fun = thread_finalize_cb };

@@ -11,8 +11,6 @@ const kernel32 = bun.windows;
 const linux = posix.linux;
 const uv = bun.windows.libuv;
 
-const C = bun.C;
-const E = C.E;
 const Environment = bun.Environment;
 const FileDescriptor = bun.FileDescriptor;
 const JSC = bun.JSC;
@@ -181,7 +179,7 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink, .path = file_path } };
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .readlink, .path = file_path } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);

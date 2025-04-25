@@ -3,7 +3,7 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.Encoder;
+const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
 const uws = @import("../../deps/uws.zig");
 
@@ -13,7 +13,7 @@ const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -173,7 +173,10 @@ pub const StatWatcherScheduler = struct {
     }
 };
 
+// TODO: make this a top-level struct
 pub const StatWatcher = struct {
+    pub const Scheduler = StatWatcherScheduler;
+
     next: ?*StatWatcher = null,
 
     ctx: *VirtualMachine,
@@ -195,7 +198,7 @@ pub const StatWatcher = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     last_stat: bun.Stat,
-    last_jsvalue: JSC.Strong,
+    last_jsvalue: JSC.Strong.Optional,
 
     pub const js = JSC.Codegen.JSStatWatcher;
     pub const toJS = js.toJS;
@@ -376,7 +379,7 @@ pub const StatWatcher = struct {
         }
 
         const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
-        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+        this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -389,7 +392,7 @@ pub const StatWatcher = struct {
         }
 
         const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint);
-        this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
+        this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
 

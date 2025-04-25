@@ -31,23 +31,12 @@ describe("StaticRoute - If-None-Match", () => {
   let server;
   let handler = mock(() => new Response("fallback"));
 
-  beforeAll(async () => {
-    // Check that the ETag is actually in the Response object
-    const etagValue = responseWithEtag.headers.get("ETag");
-    console.log("Original response ETag:", etagValue);
-    
-    // Create a copy of the response to use in routes
-    const resp2 = responseWithEtag.clone();
-    console.log("Cloned response ETag:", resp2.headers.get("ETag"));
-    
+  beforeAll(() => {
     server = serve({
       static: routes,
       port: 0,
       fetch: handler,
     });
-    
-    // Output debug info
-    console.log("Server started at:", server.url);
   });
 
   afterAll(() => {

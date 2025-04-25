@@ -31,65 +31,13 @@ describe("StaticRoute - Range", () => {
   let server;
   let handler = mock(() => new Response("fallback"));
 
-  beforeAll(async () => {
-    // Log response details for debugging
-    console.log("Test content length:", testContent.length);
-    
-    // Create a route that logs headers
-    const headerLogger = (req) => {
-      console.log("Headers in request:", Object.fromEntries(req.headers.entries()));
-      return new Response("Headers logged");
-    };
-    
-    // Test if our Range implementation is working by directly fetching
-    // We use a server with a simple fetch handler that logs our Range header
+  beforeAll(() => {
+    // Create a server with static routes to test the actual StaticRoute implementation
     server = serve({
       port: 0,
-      fetch: (req) => {
-        if (req.url.endsWith('/log-headers')) {
-          return headerLogger(req);
-        } else if (req.url.endsWith('/test-range')) {
-          console.log("Test Range request received");
-          console.log("Headers:", Object.fromEntries(req.headers.entries()));
-          
-          const rangeHeader = req.headers.get("range");
-          if (rangeHeader) {
-            console.log("Range header found:", rangeHeader);
-            
-            // Check if it's a valid range
-            if (rangeHeader === "bytes=0-4") {
-              console.log("Valid range, returning 206");
-              return new Response(testContent.slice(0, 5), {
-                status: 206,
-                headers: {
-                  "Content-Range": "bytes 0-4/10",
-                  "Content-Length": "5",
-                  "Accept-Ranges": "bytes",
-                  "Content-Type": "text/plain",
-                },
-              });
-            }
-          }
-          
-          return new Response(testContent);
-        } else {
-          return new Response("Not found", { status: 404 });
-        }
-      },
+      static: createResponses(),
+      fetch: handler,
     });
-    
-    console.log("Server started at:", server.url);
-    
-    // Send a test request to verify that range handling works at all
-    const testReq = await fetch(`${server.url}test-range`, {
-      headers: {
-        "Range": "bytes=0-4",
-      },
-    });
-    
-    console.log("Test request status:", testReq.status);
-    console.log("Test request headers:", Object.fromEntries(testReq.headers.entries()));
-    console.log("Test request body:", await testReq.text());
   });
 
   afterAll(() => {
@@ -97,19 +45,8 @@ describe("StaticRoute - Range", () => {
   });
 
   describe("GET with Range header", () => {
-    it("verifies headers are passed", async () => {
-      const res = await fetch(`${server.url}log-headers`, {
-        headers: {
-          "Range": "bytes=0-4",
-          "X-Test-Header": "test-value",
-        },
-      });
-      expect(res.status).toBe(200);
-    });
-    
     it("returns partial content for valid range", async () => {
-      // Test against our custom server instead of the static route
-      const res = await fetch(`${server.url}test-range`, {
+      const res = await fetch(`${server.url}test`, {
         headers: {
           "Range": "bytes=0-4",
         },
@@ -126,6 +63,36 @@ describe("StaticRoute - Range", () => {
       
       // RFC 9110 requires these headers if they would have been in a 200 OK response
       expect(res.headers.has("Content-Type")).toBe(true);
+    });
+    
+    it("supports multiple ranges with multipart/byteranges response", async () => {
+      const res = await fetch(`${server.url}test`, {
+        headers: {
+          "Range": "bytes=0-2, 5-7",
+        },
+      });
+      
+      // Test assertions
+      expect(res.status).toBe(206);
+      
+      // For multipart responses, the Content-Type should be multipart/byteranges
+      const contentType = res.headers.get("Content-Type");
+      expect(contentType?.startsWith("multipart/byteranges; boundary=")).toBe(true);
+      
+      // Get the boundary from the Content-Type header
+      const boundaryMatch = contentType?.match(/boundary=([^;]+)/);
+      expect(boundaryMatch).not.toBeNull();
+      
+      // Parse and verify the multipart response
+      const body = await res.text();
+      
+      // Verify multipart structure contains both ranges
+      expect(body).toContain("Content-Range: bytes 0-2/10");
+      expect(body).toContain("Content-Range: bytes 5-7/10");
+      
+      // Verify actual content is present
+      expect(body).toContain("012");
+      expect(body).toContain("567");
     });
 
     it("returns partial content for suffix range", async () => {
@@ -279,6 +246,32 @@ describe("StaticRoute - Range", () => {
       // Invalid If-None-Match should be ignored, so Range is processed
       expect(res.status).toBe(206);
       expect(await res.text()).toBe("01234");
+    });
+    
+    it("processes Range when If-Range ETag matches resource ETag", async () => {
+      const res = await fetch(`${server.url}withEtag`, {
+        headers: {
+          "Range": "bytes=0-4",
+          "If-Range": '"abc123"',
+        },
+      });
+      
+      // If-Range matches, so Range request is processed
+      expect(res.status).toBe(206);
+      expect(await res.text()).toBe("01234");
+    });
+    
+    it("ignores Range when If-Range ETag doesn't match resource ETag", async () => {
+      const res = await fetch(`${server.url}withEtag`, {
+        headers: {
+          "Range": "bytes=0-4",
+          "If-Range": '"mismatch"',
+        },
+      });
+      
+      // If-Range doesn't match, so full response is sent
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(testContent);
     });
   });
 

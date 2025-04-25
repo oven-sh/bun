@@ -3355,6 +3355,7 @@ class ClientHttp2Session extends Http2Session {
         }
         headers[":scheme"] = scheme;
       }
+
       if (headers[":path"] == undefined) {
         headers[":path"] = "/";
       }

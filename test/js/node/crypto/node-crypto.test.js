@@ -712,3 +712,18 @@ it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #
     });
   }).not.toThrow();
 });
+
+it("generatePrime(Sync) should return an ArrayBuffer", async () => {
+  const prime = crypto.generatePrimeSync(512);
+  expect(prime).toBeInstanceOf(ArrayBuffer);
+
+  const { promise, resolve } = Promise.withResolvers();
+
+  crypto.generatePrime(512, (err, prime) => {
+    expect(err).toBeUndefined();
+    expect(prime).toBeInstanceOf(ArrayBuffer);
+    resolve();
+  });
+
+  await promise;
+});

@@ -37,6 +37,7 @@ pub const VM = opaque {
 
     /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
     extern fn JSC__VM__holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
+    /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
     pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         JSC__VM__holdAPILock(this, ctx, callback);
     }

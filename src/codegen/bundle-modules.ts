@@ -106,9 +106,12 @@ for (let i = 0; i < nativeStartIndex; i++) {
           isBuiltin = false;
         }
         if (isBuiltin) {
-          throw new Error(
-            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md`,
+          const err = new Error(
+            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
           );
+          err.name = "BunError";
+          err.fileName = moduleList[i];
+          throw err;
         }
       }
     }

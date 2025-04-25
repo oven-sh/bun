@@ -2585,7 +2585,7 @@ pub const bindings = struct {
                 },
                 else => {
                     const pathname = archive_entry.pathname();
-                    const kind = bun.C.kindFromMode(archive_entry.filetype());
+                    const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{

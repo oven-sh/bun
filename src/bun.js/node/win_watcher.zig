@@ -12,7 +12,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 
-const FSWatcher = bun.JSC.Node.FSWatcher;
+const FSWatcher = bun.JSC.Node.fs.Watcher;
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
 const Event = FSWatcher.Event;
 
@@ -81,8 +81,8 @@ pub const PathWatcherManager = struct {
     }
 };
 
-const onPathUpdateFn = JSC.Node.FSWatcher.onPathUpdate;
-const onUpdateEndFn = JSC.Node.FSWatcher.onUpdateEnd;
+const onPathUpdateFn = JSC.Node.fs.Watcher.onPathUpdate;
+const onUpdateEndFn = JSC.Node.fs.Watcher.onUpdateEnd;
 
 pub const PathWatcher = struct {
     handle: uv.uv_fs_event_t,
@@ -185,7 +185,7 @@ pub const PathWatcher = struct {
         var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
-                if (err.errno == @intFromEnum(bun.C.E.NOENT)) {
+                if (err.errno == @intFromEnum(bun.sys.E.NOENT)) {
                     return .{ .err = .{
                         .errno = err.errno,
                         .syscall = .open,

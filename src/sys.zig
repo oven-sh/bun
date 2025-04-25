@@ -1,9 +1,45 @@
-// This file is entirely based on Zig's std.posix
-// The differences are in error handling
+//! Cross-platform "system call" abstractions. On linux, many of these functions
+//! emit direct system calls directly (std.os.linux). Others call `libc` APIs.
+//! Windows uses a mix of `libuv`, `kernel32` and `ntdll`. macOS uses `libc`.
+//!
+//! Sometimes this namespace is referred to as "Syscall", prefer "bun.sys"/"sys"
+//
+// TODO: Split and organize this file. It is likely worth moving many functions
+// into methods on `bun.FD`, and keeping this namespace to just overall stuff
+// like `Error`, `Maybe`, `Tag`, and so on.
+const sys = @This(); // to avoid ambiguous references.
+const platform_defs = switch (Environment.os) {
+    .windows => @import("errno/windows_errno.zig"),
+    .linux => @import("errno/linux_errno.zig"),
+    .mac => @import("errno/darwin_errno.zig"),
+    .wasm => {},
+};
+pub const workaround_symbols = @import("workaround_missing_symbols.zig").current;
+/// Enum of `errno` values
+pub const E = platform_defs.E;
+/// Namespace of (potentially polyfilled) libuv `errno` values.
+/// Polyfilled on posix, mirrors the real libuv definitions on Windows.
+pub const UV_E = platform_defs.UV_E;
+pub const S = platform_defs.S;
+/// TODO: The way we do errors in Bun needs to get cleaned up. This enum is way
+/// too complicated; It's duplicated three times, and inside of it it has tons
+/// of re-listings of all errno codes. Why is SystemErrno different than `E`? ...etc!
+///
+/// The problem is because we use libc in some cases and we use zig's std lib in
+/// other places and other times we go direct. So we end up with a lot of
+/// redundant code.
+pub const SystemErrno = platform_defs.SystemErrno;
+pub const getErrno = platform_defs.getErrno;
+
+comptime {
+    _ = &workaround_symbols; // execute comptime logic to export any needed symbols
+}
+
 const std = @import("std");
 const builtin = @import("builtin");
 
 const bun = @import("bun");
+const c = bun.c; // translated c headers
 const posix = std.posix;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
@@ -17,17 +53,15 @@ const libc = std.posix.system;
 
 const windows = bun.windows;
 
-const C = bun.C;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathString = bun.PathString;
-const Syscall = @This();
 const SystemError = JSC.SystemError;
 
 const linux = syscall;
 
-pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
+pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;
 
 pub const F_OK = 0;
 pub const X_OK = 1;
@@ -39,37 +73,18 @@ pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
-    // We don't directly use the Darwin syscall interface.
+    // macOS requires using libc
     .mac => std.c,
     else => @compileError("not implemented"),
 };
 
-/// Non-cancellable versions of various libc functions are undocumented
-const darwin_nocancel = struct {
-    const c = std.c;
-    pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
-    pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;
-    pub extern "c" fn @"fcntl$NOCANCEL"(fd: c.fd_t, cmd: c_int, ...) c_int;
-    // pub extern "c" fn @"sendmsg$NOCANCEL"(sockfd: c.fd_t, msg: *const std.x.os.Socket.Message, flags: c_int) isize;
-    // pub extern "c" fn @"recvmsg$NOCANCEL"(sockfd: c.fd_t, msg: *std.x.os.Socket.Message, flags: c_int) isize;
-    pub extern "c" fn @"connect$NOCANCEL"(sockfd: c.fd_t, sock_addr: *const c.sockaddr, addrlen: c.socklen_t) c_int;
-    pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
-    pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
-    pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
-    // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-    pub extern "c" fn @"openat$NOCANCEL"(fd: c.fd_t, path: [*:0]const u8, oflag: c_uint, ...) c_int;
-    pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
-    pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
-    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32, offset: c.off_t) isize;
-    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.posix.iovec, count: i32) isize;
-    pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
-    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32) isize;
-    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]const std.posix.iovec_const, count: i32, offset: c.off_t) isize;
-};
+const darwin_nocancel = bun.darwin.nocancel;
 
 fn toPackedO(number: anytype) std.posix.O {
     return @bitCast(number);
 }
+
+pub const Mode = std.posix.mode_t;
 
 pub const O = switch (Environment.os) {
     .mac => struct {
@@ -157,7 +172,7 @@ pub const O = switch (Environment.os) {
             pub const TMPFILE = 0o20040000;
             pub const NDELAY = NONBLOCK;
 
-            pub const SYMLINK = bun.c.O_SYMLINK;
+            pub const SYMLINK = c.O_SYMLINK;
 
             pub const toPacked = toPackedO;
         },
@@ -191,8 +206,6 @@ pub const O = switch (Environment.os) {
         pub const toPacked = toPackedO;
     },
 };
-
-pub const S = if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
 
 pub const Tag = enum(u8) {
     TODO,
@@ -309,8 +322,6 @@ pub const Tag = enum(u8) {
 };
 
 pub const Error = struct {
-    const E = bun.C.E;
-
     const retry_errno = if (Environment.isLinux)
         @as(Int, @intCast(@intFromEnum(E.AGAIN)))
     else if (Environment.isMac)
@@ -329,7 +340,7 @@ pub const Error = struct {
     fd: bun.FileDescriptor = bun.invalid_fd,
     from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
     path: []const u8 = "",
-    syscall: Syscall.Tag = Syscall.Tag.TODO,
+    syscall: sys.Tag = sys.Tag.TODO,
     dest: []const u8 = "",
 
     pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
@@ -339,14 +350,14 @@ pub const Error = struct {
         return copy;
     }
 
-    pub fn fromCode(errno: E, syscall_tag: Syscall.Tag) Error {
+    pub fn fromCode(errno: E, syscall_tag: sys.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(@intFromEnum(errno))),
             .syscall = syscall_tag,
         };
     }
 
-    pub fn fromCodeInt(errno: anytype, syscall_tag: Syscall.Tag) Error {
+    pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
             .syscall = syscall_tag,
@@ -402,7 +413,7 @@ pub const Error = struct {
         };
     }
 
-    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: Syscall.Tag) Error {
+    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: sys.Tag) Error {
         if (std.meta.Child(@TypeOf(path)) == u16) {
             @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
         }
@@ -449,17 +460,17 @@ pub const Error = struct {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
                 if (this.from_libuv) {
-                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                    break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
                 }
 
-                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
+                break :brk @as(SystemErrno, @enumFromInt(this.errno));
             };
-            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(SystemErrno, system_errno)) |errname| {
                 return errname;
             }
-        } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
-            const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+        } else if (this.errno > 0 and this.errno < SystemErrno.max) {
+            const system_errno = @as(SystemErrno, @enumFromInt(this.errno));
+            if (bun.tagName(SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         }
@@ -473,14 +484,14 @@ pub const Error = struct {
 
     /// 1. Convert libuv errno values into libc ones.
     /// 2. Get the tag name as a string for printing.
-    pub fn getErrorCodeTagName(err: *const Error) ?struct { [:0]const u8, C.SystemErrno } {
+    pub fn getErrorCodeTagName(err: *const Error) ?struct { [:0]const u8, SystemErrno } {
         if (!Environment.isWindows) {
-            if (err.errno > 0 and err.errno < C.SystemErrno.max) {
-                const system_errno = @as(C.SystemErrno, @enumFromInt(err.errno));
+            if (err.errno > 0 and err.errno < SystemErrno.max) {
+                const system_errno = @as(SystemErrno, @enumFromInt(err.errno));
                 return .{ @tagName(system_errno), system_errno };
             }
         } else {
-            const system_errno: C.SystemErrno = brk: {
+            const system_errno: SystemErrno = brk: {
                 // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
                 @setRuntimeSafety(false);
                 if (err.from_libuv) {
@@ -489,7 +500,7 @@ pub const Error = struct {
 
                 break :brk @enumFromInt(err.errno);
             };
-            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(SystemErrno, system_errno)) |errname| {
                 return .{ errname, system_errno };
             }
         }
@@ -540,11 +551,11 @@ pub const Error = struct {
         };
 
         // errno label
-        var code: ?[:0]const u8 = null;
+        var maybe_code: ?[:0]const u8 = null;
         var label: ?[]const u8 = null;
         if (this.getErrorCodeTagName()) |resolved_errno| {
-            code, const system_errno = resolved_errno;
-            err.code = bun.String.static(code.?);
+            maybe_code, const system_errno = resolved_errno;
+            err.code = bun.String.static(maybe_code.?);
             label = libuv_error_map.get(system_errno);
         }
 
@@ -555,8 +566,8 @@ pub const Error = struct {
             var stream = std.io.fixedBufferStream(&message_buf);
             const writer = stream.writer();
             brk: {
-                if (code) |c| {
-                    writer.writeAll(c) catch break :brk;
+                if (maybe_code) |code| {
+                    writer.writeAll(code) catch break :brk;
                     writer.writeAll(": ") catch break :brk;
                 }
                 writer.writeAll(label orelse "Unknown Error") catch break :brk;
@@ -598,7 +609,7 @@ pub const Error = struct {
 
     pub inline fn todo() Error {
         if (Environment.isDebug) {
-            @panic("bun.sys.Error.todo() was called");
+            @panic("Error.todo() was called");
         }
         return Error{ .errno = todo_errno, .syscall = .TODO };
     }
@@ -613,7 +624,7 @@ pub const Error = struct {
 };
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
-    return JSC.Node.Maybe(ReturnTypeT, Error);
+    return bun.api.node.Maybe(ReturnTypeT, Error);
 }
 
 pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
@@ -643,7 +654,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
         Result.errnoSysP(@as(c_int, 0), .getcwd, buf).?;
 }
 
-const syscall_or_C = if (Environment.isLinux) syscall else bun.C;
+const syscall_or_c = if (Environment.isLinux) syscall else bun.c;
 
 pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) Maybe(void) {
     if (comptime Environment.isWindows) {
@@ -651,7 +662,7 @@ pub fn fchown(fd: bun.FileDescriptor, uid: JSC.Node.uid_t, gid: JSC.Node.gid_t) 
     }
 
     while (true) {
-        const rc = syscall_or_C.fchown(fd.cast(), uid, gid);
+        const rc = syscall_or_c.fchown(fd.cast(), uid, gid);
         if (Maybe(void).errnoSysFd(rc, .fchown, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -669,7 +680,7 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     }
 
     while (true) {
-        const rc = syscall_or_C.fchmod(fd.cast(), mode);
+        const rc = syscall_or_c.fchmod(fd.cast(), mode);
         if (Maybe(void).errnoSysFd(rc, .fchmod, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -685,7 +696,7 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
     while (true) {
-        const rc = syscall_or_C.fchmodat(fd.cast(), path.ptr, mode, flags);
+        const rc = syscall_or_c.fchmodat(fd.cast(), path.ptr, mode, flags);
         if (Maybe(void).errnoSysFd(rc, .fchmodat, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -703,7 +714,7 @@ pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
     }
 
     while (true) {
-        const rc = syscall_or_C.chmod(path.ptr, mode);
+        const rc = syscall_or_c.chmod(path.ptr, mode);
         if (Maybe(void).errnoSysP(rc, .chmod, path)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
@@ -724,7 +735,7 @@ pub fn chdirOSPath(path: bun.stringZ, destination: if (Environment.isPosix) bun.
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        if (bun.c.SetCurrentDirectoryW(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
+        if (c.SetCurrentDirectoryW(bun.strings.toWDirPath(wbuf, destination)) == windows.FALSE) {
             log("SetCurrentDirectory({s}) = {d}", .{ destination, kernel32.GetLastError() });
             return Maybe(void).errnoSysPD(0, .chdir, path, destination) orelse Maybe(void).success;
         }
@@ -744,11 +755,11 @@ pub fn chdir(path: anytype, destination: anytype) Maybe(void) {
         if (comptime Type == []u8 or Type == []const u8) {
             return chdirOSPath(
                 &(std.posix.toPosixPath(path) catch return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .errno = @intFromEnum(SystemErrno.EINVAL),
                     .syscall = .chdir,
                 } }),
                 &(std.posix.toPosixPath(destination) catch return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.EINVAL),
+                    .errno = @intFromEnum(SystemErrno.EINVAL),
                     .syscall = .chdir,
                 } }),
             );
@@ -803,7 +814,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
             // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
             linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
         else
-            syscall_or_C.stat(path, &stat_);
+            workaround_symbols.stat(path, &stat_);
 
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
@@ -819,9 +830,9 @@ pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
     } else {
         var statfs_ = mem.zeroes(bun.StatFS);
         const rc = if (Environment.isLinux)
-            bun.c.statfs(path, &statfs_)
+            c.statfs(path, &statfs_)
         else if (Environment.isMac)
-            bun.c.statfs(path, &statfs_)
+            c.statfs(path, &statfs_)
         else
             @compileError("Unsupported platform");
 
@@ -838,7 +849,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_buf = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSysP(C.lstat(path, &stat_buf), .lstat, path)) |err| return err;
+        if (Maybe(bun.Stat).errnoSysP(workaround_symbols.lstat(path, &stat_buf), .lstat, path)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_buf };
     }
 }
@@ -853,7 +864,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = syscall_or_C.fstat(fd.cast(), &stat_);
+    const rc = workaround_symbols.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });
@@ -949,7 +960,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
     if (comptime Environment.isMac) {
         return Maybe(void).errnoSysP(syscall.mkdir(&(std.posix.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
-                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
         }), flags), .mkdir, file_path) orelse Maybe(void).success;
@@ -958,7 +969,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysP(linux.mkdir(&(std.posix.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
-                .errno = @intFromEnum(bun.C.E.NOMEM),
+                .errno = @intFromEnum(E.NOMEM),
                 .syscall = .open,
             },
         }), flags), .mkdir, file_path) orelse Maybe(void).success;
@@ -981,7 +992,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            const rc = bun.c.CreateDirectoryW(file_path, null);
+            const rc = c.CreateDirectoryW(file_path, null);
             if (Maybe(void).errnoSys(
                 rc,
                 .mkdir,
@@ -1000,7 +1011,7 @@ const fnctl_int = if (Environment.isLinux) usize else c_int;
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     while (true) {
         const result = switch (@TypeOf(arg)) {
-            i32, comptime_int, c_int => fcntl_symbol(fd.cast(), cmd, @as(c_int, arg)),
+            i32, comptime_int, c_int => fcntl_symbol(fd.native(), cmd, @as(c_int, arg)),
             i64 => fcntl_symbol(fd.cast(), cmd, @as(c_long, @bitCast(arg))),
             *const anyopaque, *anyopaque, usize => fcntl_symbol(fd.cast(), cmd, arg),
             else => @compileError("Unsupported argument type for fcntl"),
@@ -1013,22 +1024,6 @@ pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: anytype) Maybe(fnctl_int) {
     }
 
     unreachable;
-}
-
-pub fn getErrno(rc: anytype) bun.C.E {
-    if (comptime Environment.isWindows) {
-        if (comptime @TypeOf(rc) == bun.windows.NTSTATUS) {
-            return bun.windows.translateNTStatusToErrno(rc);
-        }
-
-        if (bun.windows.Win32Error.get().toSystemErrno()) |e| {
-            return e.toE();
-        }
-
-        return bun.C.E.UNKNOWN;
-    }
-
-    return bun.C.getErrno(rc);
 }
 
 const w = std.os.windows;
@@ -1087,7 +1082,7 @@ pub fn normalizePathWindows(
         if (buf.len < path.len) {
             return .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .errno = @intFromEnum(E.NOMEM),
                     .syscall = .open,
                 },
             };
@@ -1108,7 +1103,7 @@ pub fn normalizePathWindows(
 
     const base_path = bun.windows.GetFinalPathNameByHandle(base_fd, w.GetFinalPathNameByHandleFormat{}, buf) catch {
         return .{ .err = .{
-            .errno = @intFromEnum(bun.C.E.BADFD),
+            .errno = @intFromEnum(E.BADFD),
             .syscall = .open,
         } };
     };
@@ -1223,7 +1218,7 @@ fn openDirAtWindowsNtPath(
 
             return .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                    .errno = @intFromEnum(E.UNKNOWN),
                     .syscall = .open,
                 },
             };
@@ -1251,7 +1246,7 @@ fn openWindowsDevicePath(
             .errno = if (windows.Win32Error.get().toSystemErrno()) |e|
                 @intFromEnum(e)
             else
-                @intFromEnum(bun.C.E.UNKNOWN),
+                @intFromEnum(E.UNKNOWN),
             .syscall = .open,
         } };
     }
@@ -1342,7 +1337,7 @@ pub fn openFileAtWindowsNtPath(
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
-            .errno = @intFromEnum(bun.C.E.NOMEM),
+            .errno = @intFromEnum(E.NOMEM),
             .syscall = .open,
         },
     };
@@ -1436,7 +1431,7 @@ pub fn openFileAtWindowsNtPath(
                     if (kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
                         return .{
                             .err = .{
-                                .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                                .errno = @intFromEnum(E.UNKNOWN),
                                 .syscall = .SetFilePointerEx,
                             },
                         };
@@ -1456,7 +1451,7 @@ pub fn openFileAtWindowsNtPath(
 
                 return .{
                     .err = .{
-                        .errno = @intFromEnum(bun.C.E.UNKNOWN),
+                        .errno = @intFromEnum(E.UNKNOWN),
                         .syscall = .open,
                     },
                 };
@@ -1730,7 +1725,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         if (comptime Environment.allow_assert)
             log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
-        return switch (Syscall.getErrno(rc)) {
+        return switch (sys.getErrno(rc)) {
             .SUCCESS => .{ .result = .fromNative(@intCast(rc)) },
             .INTR => continue,
             else => |err| {
@@ -1761,7 +1756,7 @@ pub fn access(path: bun.OSPathSliceZ, mode: i32) Maybe(void) {
             return .{ .result = {} };
         } else {
             return .{ .err = .{
-                .errno = @intFromEnum(bun.C.E.PERM),
+                .errno = @intFromEnum(E.PERM),
                 .syscall = .access,
             } };
         }
@@ -1781,7 +1776,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: i32, pe
 pub fn openatFileWithLibuvFlags(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.JSC.Node.FileSystemFlags, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         const f = flags.toWindows() catch return .{ .err = .{
-            .errno = @intFromEnum(bun.C.E.INVAL),
+            .errno = @intFromEnum(E.INVAL),
             .syscall = .open,
             .path = file_path,
         } };
@@ -1799,7 +1794,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: i32, per
 
     const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
         .err = .{
-            .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
+            .errno = @intFromEnum(E.NAMETOOLONG),
             .syscall = .open,
         },
     };
@@ -1889,14 +1884,14 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 if (er == .ACCESS_DENIED) {
                     // file is not writable
                     return .{ .err = .{
-                        .errno = @intFromEnum(bun.C.SystemErrno.EBADF),
+                        .errno = @intFromEnum(SystemErrno.EBADF),
                         .syscall = .write,
                         .fd = fd,
                     } };
                 }
-                const errno = (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse bun.C.SystemErrno.EUNKNOWN).toE();
+                const errno = (SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
                 return .{
-                    .err = Syscall.Error{
+                    .err = sys.Error{
                         .errno = @intFromEnum(errno),
                         .syscall = .write,
                         .fd = fd,
@@ -2165,7 +2160,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
                 const ret: Maybe(usize) = .{
-                    .err = Syscall.Error{
+                    .err = sys.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
                         .syscall = .read,
                         .fd = fd,
@@ -2202,7 +2197,7 @@ pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-const socket_flags_nonblock = bun.c.MSG_DONTWAIT | bun.c.MSG_NOSIGNAL;
+const socket_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return recv(fd, buf, socket_flags_nonblock);
@@ -2378,12 +2373,12 @@ pub const RenameAt2Flags = packed struct {
         var flags: u32 = 0;
 
         if (comptime Environment.isMac) {
-            if (self.exchange) flags |= bun.C.RENAME_SWAP;
-            if (self.exclude) flags |= bun.C.RENAME_EXCL;
-            if (self.nofollow) flags |= bun.C.RENAME_NOFOLLOW_ANY;
+            if (self.exchange) flags |= c.RENAME_SWAP;
+            if (self.exclude) flags |= c.RENAME_EXCL;
+            if (self.nofollow) flags |= c.RENAME_NOFOLLOW_ANY;
         } else {
-            if (self.exchange) flags |= bun.C.RENAME_EXCHANGE;
-            if (self.exclude) flags |= bun.C.RENAME_NOREPLACE;
+            if (self.exchange) flags |= c.RENAME_EXCHANGE;
+            if (self.exclude) flags |= c.RENAME_NOREPLACE;
         }
 
         return flags;
@@ -2400,9 +2395,9 @@ pub fn renameatConcurrently(
     switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
         .result => return Maybe(void).success,
         .err => |e| {
-            if (opts.move_fallback and e.getErrno() == bun.C.E.XDEV) {
+            if (opts.move_fallback and e.getErrno() == E.XDEV) {
                 bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
-                return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
+                return moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
             }
             return .{ .err = e };
         },
@@ -2421,7 +2416,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
-            var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+            var err = switch (renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
                 // if ENOENT don't retry
@@ -2438,7 +2433,7 @@ pub fn renameatConcurrentlyWithoutFallback(
                     else => false,
                 }) {
                     did_atomically_replace = true;
-                    switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                    switch (renameat2(from_dir_fd, from, to_dir_fd, to, .{
                         .exchange = true,
                     })) {
                         .err => {},
@@ -2456,7 +2451,7 @@ pub fn renameatConcurrentlyWithoutFallback(
         } else {
             std.fs.deleteTreeAbsolute(to) catch {};
         }
-        switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
+        switch (renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };
             },
@@ -2475,7 +2470,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
     while (true) {
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
-            .mac => bun.C.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             else => @compileError("renameat2() is not implemented on this platform"),
         };
 
@@ -2500,7 +2495,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
             bun.WPathBufferPool.put(w_buf_to);
         }
 
-        const rc = bun.C.renameAtW(
+        const rc = bun.windows.renameAtW(
             from_dir,
             bun.strings.toNTPath(w_buf_from, from),
             to_dir,
@@ -2525,7 +2520,7 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
 
 pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSysP(C.chown(path, uid, gid), .chown, path)) |err| {
+        if (Maybe(void).errnoSysP(c.chown(path, uid, gid), .chown, path)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2648,7 +2643,7 @@ pub fn clonefile(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
-        if (Maybe(void).errnoSys(C.darwin.clonefile(from, to, 0), .clonefile)) |err| {
+        if (Maybe(void).errnoSys(c.clonefile(from, to, 0), .clonefile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2660,7 +2655,7 @@ pub fn copyfile(from: [:0]const u8, to: [:0]const u8, flags: posix.system.COPYFI
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
-        if (Maybe(void).errnoSys(C.darwin.copyfile(from, to, null, flags), .copyfile)) |err| {
+        if (Maybe(void).errnoSys(c.copyfile(from, to, null, flags), .copyfile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -2760,7 +2755,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
             const wide_slice = bun.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
-                return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
+                return Maybe([]u8){ .err = .{ .errno = @intFromEnum(SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
             };
 
             // Trust that Windows gives us valid UTF-16LE.
@@ -2806,7 +2801,7 @@ pub fn mmap(
     const fail = std.c.MAP_FAILED;
     if (rc == fail) {
         return .initErr(.{
-            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
+            .errno = @as(sys.Error.Int, @truncate(@intFromEnum(getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))),
             .syscall = .mmap,
         });
     }
@@ -2920,7 +2915,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
             break;
         }
 
-        const err: ?Syscall.Error = err: {
+        const err: ?sys.Error = err: {
 
             // Set O_CLOEXEC first.
             inline for (0..2) |i| {
@@ -3025,7 +3020,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
             fn once() c_int {
                 const strings = bun.strings;
                 const default_out_size = 512 * 1024;
-                const pipe_max_size_fd = switch (bun.sys.open("/proc/sys/fs/pipe-max-size", bun.O.RDONLY, 0)) {
+                const pipe_max_size_fd = switch (open("/proc/sys/fs/pipe-max-size", bun.O.RDONLY, 0)) {
                     .result => |fd2| fd2,
                     .err => |err| {
                         log("Failed to open /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});
@@ -3034,7 +3029,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
                 };
                 defer pipe_max_size_fd.close();
                 var max_pipe_size_buf: [128]u8 = undefined;
-                const max_pipe_size = switch (bun.sys.read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
+                const max_pipe_size = switch (read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
                     .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
                         log("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
                         return default_out_size;
@@ -3203,7 +3198,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(bun.C.getErrno(rc)) });
+        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
             return JSC.Maybe(bool){ .result = true };
         }
@@ -3213,7 +3208,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) JSC.Maybe(bool) {
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
-    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(bun.C.getErrno(rc)) });
+    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
         return JSC.Maybe(bool){ .result = true };
     }
@@ -3247,7 +3242,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: JSC.Node.TimeLike, mtime: JSC.Nod
             return Maybe(void).success;
         }
 
-        switch (bun.C.getErrno(rc)) {
+        switch (getErrno(rc)) {
             .INTR => continue,
             else => return Maybe(void).errnoSysFd(rc, .futimens, fd).?,
         }
@@ -3278,7 +3273,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
             return Maybe(void).success;
         }
 
-        switch (bun.C.getErrno(rc)) {
+        switch (getErrno(rc)) {
             .INTR => continue,
             else => return Maybe(void).errnoSysP(rc, .utimensat, path).?,
         }
@@ -3288,7 +3283,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: JSC.Node.TimeLike, mtime: JSC
 }
 
 pub fn getFcntlFlags(fd: bun.FileDescriptor) Maybe(fnctl_int) {
-    return switch (bun.sys.fcntl(
+    return switch (fcntl(
         fd,
         std.posix.F.GETFL,
         0,
@@ -3315,7 +3310,7 @@ pub fn updateNonblocking(fd: bun.FileDescriptor, nonblocking: bool) Maybe(void) 
     const new_flags: i32 = if (nonblocking) current_flags | @as(i32, bun.O.NONBLOCK) else current_flags & ~@as(i32, bun.O.NONBLOCK);
 
     if (new_flags != current_flags) {
-        switch (bun.sys.fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
+        switch (fcntl(fd, std.posix.F.SETFL, @as(fnctl_int, @intCast(new_flags)))) {
             .err => |err| return .{ .err = err },
             .result => {},
         }
@@ -3363,15 +3358,15 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             return .{ .err = err.err };
         }
 
-        const is_regular_file = basic_info.FileAttributes != bun.c.INVALID_FILE_ATTRIBUTES and
+        const is_regular_file = basic_info.FileAttributes != c.INVALID_FILE_ATTRIBUTES and
             // from libuv: directories cannot be read-only
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
-            (basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_DIRECTORY == 0 or
-                basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_READONLY == 0);
+            (basic_info.FileAttributes & c.FILE_ATTRIBUTE_DIRECTORY == 0 or
+                basic_info.FileAttributes & c.FILE_ATTRIBUTE_READONLY == 0);
 
-        const is_dir = basic_info.FileAttributes != bun.c.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_DIRECTORY != 0 and
-            basic_info.FileAttributes & bun.c.FILE_ATTRIBUTE_READONLY == 0;
+        const is_dir = basic_info.FileAttributes != c.INVALID_FILE_ATTRIBUTES and
+            basic_info.FileAttributes & c.FILE_ATTRIBUTE_DIRECTORY != 0 and
+            basic_info.FileAttributes & c.FILE_ATTRIBUTE_READONLY == 0;
 
         return if (is_dir) {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
@@ -3381,7 +3376,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             return .{ .result = .file };
         } else {
             syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
-            return .{ .err = bun.sys.Error.fromCode(.UNKNOWN, .access) };
+            return .{ .err = Error.fromCode(.UNKNOWN, .access) };
         };
     }
 
@@ -3574,7 +3569,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     }
 
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
-    const out = switch (fcntl(fd, @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0))) {
+    const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
@@ -3592,14 +3587,14 @@ pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun
             @intCast(dir_fd),
             &(std.posix.toPosixPath(basename) catch return .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .errno = @intFromEnum(E.NOMEM),
                     .syscall = .open,
                 },
             }),
             @intCast(dest_dir_fd),
             &(std.posix.toPosixPath(dest_name) catch return .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .errno = @intFromEnum(E.NOMEM),
                     .syscall = .open,
                 },
             }),
@@ -3671,12 +3666,21 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
     }
 }
 
+/// c-bindings.cpp
+extern "c" fn sys_preadv2(
+    fd: c_int,
+    iov: [*]const std.posix.iovec,
+    iovcnt: c_int,
+    offset: std.posix.off_t,
+    flags: c_uint,
+) isize;
+
 /// On Linux, this `preadv2(2)` to attempt to read a blocking file descriptor without blocking.
 ///
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     if (Environment.isLinux) {
-        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+        while (bun.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = [1]std.posix.iovec{.{
                 .base = buf.ptr,
                 .len = buf.len,
@@ -3684,7 +3688,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             var debug_timer = bun.Output.DebugTimer.start();
 
             // Note that there is a bug on Linux Kernel 5
-            const rc = C.sys_preadv2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
+            const rc = sys_preadv2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
                 log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
@@ -3697,7 +3701,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
-                        bun.C.linux.RWFFlagSupport.disable();
+                        bun.linux.RWFFlagSupport.disable();
                         switch (bun.isReadable(fd)) {
                             .hup, .ready => return read(fd, buf),
                             else => return .{ .err = Error.retry },
@@ -3715,12 +3719,21 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return read(fd, buf);
 }
 
+/// c-bindings.cpp
+pub extern "c" fn sys_pwritev2(
+    fd: c_int,
+    iov: [*]const std.posix.iovec_const,
+    iovcnt: c_int,
+    offset: std.posix.off_t,
+    flags: c_uint,
+) isize;
+
 /// On Linux, this `pwritev(2)` to attempt to read a blocking file descriptor without blocking.
 ///
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     if (Environment.isLinux) {
-        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+        while (bun.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = [1]std.posix.iovec_const{.{
                 .base = buf.ptr,
                 .len = buf.len,
@@ -3728,7 +3741,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
             var debug_timer = bun.Output.DebugTimer.start();
 
-            const rc = C.sys_pwritev2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
+            const rc = sys_pwritev2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
                 log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
@@ -3741,7 +3754,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
-                        bun.C.linux.RWFFlagSupport.disable();
+                        bun.linux.RWFFlagSupport.disable();
                         switch (bun.isWritable(fd)) {
                             .hup, .ready => return write(fd, buf),
                             else => return .{ .err = Error.retry },
@@ -3920,7 +3933,7 @@ pub const File = struct {
         // On Windows, close the file before moving it.
         if (Environment.isWindows) this.close();
         const cwd = bun.FD.cwd();
-        try bun.C.moveFileZWithHandle(this.handle, cwd, src, cwd, dest);
+        try bun.sys.moveFileZWithHandle(this.handle, cwd, src, cwd, dest);
     }
 
     fn stdIoRead(this: File, buf: []u8) ReadError!usize {
@@ -3986,7 +3999,7 @@ pub const File = struct {
                 switch (windows.GetLastError()) {
                     .SUCCESS => {},
                     else => |err| {
-                        return .{ .err = Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN).toE(), .fstat) };
+                        return .{ .err = Error.fromCode((SystemErrno.init(err) orelse SystemErrno.EUNKNOWN).toE(), .fstat) };
                     },
                 }
             }
@@ -4038,9 +4051,9 @@ pub const File = struct {
         var read_amount: usize = 0;
         while (read_amount < buf.len) {
             switch (if (comptime Environment.isPosix)
-                bun.sys.pread(this.handle, buf[read_amount..], @intCast(read_amount))
+                pread(this.handle, buf[read_amount..], @intCast(read_amount))
             else
-                bun.sys.read(this.handle, buf[read_amount..])) {
+                sys.read(this.handle, buf[read_amount..])) {
                 .err => |err| {
                     return .{ .err = err };
                 },
@@ -4078,9 +4091,9 @@ pub const File = struct {
             }
 
             switch (if (comptime Environment.isPosix)
-                bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)
+                pread(this.handle, list.unusedCapacitySlice(), total)
             else
-                bun.sys.read(this.handle, list.unusedCapacitySlice())) {
+                sys.read(this.handle, list.unusedCapacitySlice())) {
                 .err => |err| {
                     return .{ .err = err };
                 },
@@ -4149,10 +4162,10 @@ pub const File = struct {
             }
 
             if (comptime ElementType == u8 and std.meta.sentinel(@TypeOf(path)) == null) {
-                break :brk Syscall.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
+                break :brk sys.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
             }
 
-            break :brk Syscall.openat(from(dir_fd).handle, path, O.RDONLY, 0);
+            break :brk sys.openat(from(dir_fd).handle, path, O.RDONLY, 0);
         };
 
         const this = switch (rc) {
@@ -4296,7 +4309,6 @@ pub const libuv_error_map = brk: {
         .{ "ENODATA", "no data available" },
         .{ "EUNATCH", "protocol driver not attached" },
     };
-    const SystemErrno = bun.C.SystemErrno;
     var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
     for (entries) |entry| {
         const key, const text = entry;
@@ -4562,7 +4574,6 @@ pub const coreutils_error_map = brk: {
         },
     };
 
-    const SystemErrno = bun.C.SystemErrno;
     var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
     for (entries) |entry| {
         const key, const text = entry;
@@ -4585,3 +4596,416 @@ pub fn selfProcessMemoryUsage() ?usize {
     }
     return rss;
 }
+
+export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
+    return @tagName(SystemErrno.init(err) orelse return null);
+}
+
+// TODO: this is wrong on Windows
+const libc_stat = bun.Stat;
+const Stat = std.fs.File.Stat;
+
+pub fn lstat_absolute(path: [:0]const u8) !Stat {
+    if (builtin.os.tag == .windows) {
+        @compileError("Not implemented yet, consider using lstat()");
+    }
+
+    var st = std.mem.zeroes(libc_stat);
+    switch (std.posix.errno(workaround_symbols.lstat(path.ptr, &st))) {
+        .SUCCESS => {},
+        .NOENT => return error.FileNotFound,
+        // .EINVAL => unreachable,
+        .BADF => unreachable, // Always a race condition.
+        .NOMEM => return error.SystemResources,
+        .ACCES => return error.AccessDenied,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+
+    const atime = st.atime();
+    const mtime = st.mtime();
+    const ctime = st.ctime();
+    const Kind = std.fs.File.Kind;
+    return Stat{
+        .inode = st.ino,
+        .size = @as(u64, @bitCast(st.size)),
+        .mode = st.mode,
+        .kind = switch (builtin.os.tag) {
+            .wasi => switch (st.filetype) {
+                posix.FILETYPE_BLOCK_DEVICE => Kind.block_device,
+                posix.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
+                posix.FILETYPE_DIRECTORY => Kind.directory,
+                posix.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
+                posix.FILETYPE_REGULAR_FILE => Kind.file,
+                posix.FILETYPE_SOCKET_STREAM, posix.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
+                else => Kind.unknown,
+            },
+            else => switch (st.mode & posix.S.IFMT) {
+                posix.S.IFBLK => Kind.block_device,
+                posix.S.IFCHR => Kind.character_device,
+                posix.S.IFDIR => Kind.directory,
+                posix.S.IFIFO => Kind.named_pipe,
+                posix.S.IFLNK => Kind.sym_link,
+                posix.S.IFREG => Kind.file,
+                posix.S.IFSOCK => Kind.unix_domain_socket,
+                else => Kind.unknown,
+            },
+        },
+        .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
+        .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
+        .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
+    };
+}
+
+// renameatZ fails when renaming across mount points
+// we assume that this is relatively uncommon
+pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = rmdirat(to_dir, destination.ptr);
+                try renameat(from_dir, filename, to_dir, destination).unwrap();
+                return;
+            }
+
+            if (err.getErrno() == .XDEV) {
+                try moveFileZSlow(from_dir, filename, to_dir, destination);
+            } else {
+                return bun.errnoToZigErr(err.errno);
+            }
+        },
+        .result => {},
+    }
+}
+
+pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    switch (renameat(from_dir, filename, to_dir, destination)) {
+        .err => |err| {
+            // allow over-writing an empty directory
+            if (err.getErrno() == .ISDIR) {
+                _ = rmdirat(to_dir, destination.ptr);
+
+                try (renameat(from_dir, filename, to_dir, destination).unwrap());
+                return;
+            }
+
+            if (err.getErrno() == .XDEV) {
+                try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
+                _ = unlinkat(from_dir, filename);
+            }
+
+            return bun.errnoToZigErr(err.errno);
+        },
+        .result => {},
+    }
+}
+
+// On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
+// macOS & BSDs will be slow because
+pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+    return try moveFileZSlowMaybe(from_dir, filename, to_dir, destination).unwrap();
+}
+
+pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
+    const in_handle = switch (openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644)) {
+        .result => |f| f,
+        .err => |e| return .{ .err = e },
+    };
+    defer in_handle.close();
+    _ = from_dir.unlinkat(filename);
+    return copyFileZSlowWithHandle(in_handle, to_dir, destination);
+}
+
+pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        var buf0: bun.WPathBuffer = undefined;
+        var buf1: bun.WPathBuffer = undefined;
+
+        const dest = switch (normalizePathWindows(u8, to_dir, destination, &buf0, .{})) {
+            .result => |x| x,
+            .err => |e| return .{ .err = e },
+        };
+        const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
+        if (src_len == 0) {
+            return Maybe(void).errno(bun.sys.E.BUSY, .GetFinalPathNameByHandle);
+        } else if (src_len >= buf1.len) {
+            return Maybe(void).errno(bun.sys.E.NAMETOOLONG, .GetFinalPathNameByHandle);
+        }
+        const src = buf1[0..src_len :0];
+        return bun.copyFile(src, dest);
+    } else {
+        const stat_ = switch (fstat(in_handle)) {
+            .result => |s| s,
+            .err => |e| return .{ .err = e },
+        };
+
+        // Attempt to delete incase it already existed.
+        // This fixes ETXTBUSY on Linux
+        _ = unlinkat(to_dir, destination);
+
+        const out_handle = switch (openat(
+            to_dir,
+            destination,
+            bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
+            if (comptime Environment.isPosix) 0o644 else 0,
+        )) {
+            .result => |fd| fd,
+            .err => |e| return .{ .err = e },
+        };
+        defer out_handle.close();
+
+        if (comptime Environment.isLinux) {
+            _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
+        }
+
+        switch (bun.copyFile(in_handle, out_handle)) {
+            .err => |e| return .{ .err = e },
+            .result => {},
+        }
+
+        if (comptime Environment.isPosix) {
+            _ = bun.c.fchmod(out_handle.cast(), stat_.mode);
+            _ = bun.c.fchown(out_handle.cast(), stat_.uid, stat_.gid);
+        }
+
+        return Maybe(void).success;
+    }
+}
+
+pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
+    return switch (mode & bun.S.IFMT) {
+        bun.S.IFBLK => std.fs.File.Kind.block_device,
+        bun.S.IFCHR => std.fs.File.Kind.character_device,
+        bun.S.IFDIR => std.fs.File.Kind.directory,
+        bun.S.IFIFO => std.fs.File.Kind.named_pipe,
+        bun.S.IFLNK => std.fs.File.Kind.sym_link,
+        bun.S.IFREG => std.fs.File.Kind.file,
+        bun.S.IFSOCK => std.fs.File.Kind.unix_domain_socket,
+        else => .unknown,
+    };
+}
+
+pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}![][:0]u8 {
+    const List = std.ArrayList([:0]u8);
+    switch (builtin.os.tag) {
+        .linux,
+        .freebsd,
+        .netbsd,
+        .dragonfly,
+        .openbsd,
+        .solaris,
+        => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice() catch &.{};
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+            try posix.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
+                fn callback(info: *posix.dl_phdr_info, size: usize, list: *List) !void {
+                    _ = size;
+                    const name = info.dlpi_name orelse return;
+                    if (name[0] == '/') {
+                        const item = try list.allocator.dupeZ(u8, mem.sliceTo(name, 0));
+                        errdefer list.allocator.free(item);
+                        try list.append(item);
+                    }
+                }
+            }.callback);
+            return try paths.toOwnedSlice();
+        },
+        .macos, .ios, .watchos, .tvos => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice() catch &.{};
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+            const img_count = std.c._dyld_image_count();
+            for (0..img_count) |i| {
+                const name = std.c._dyld_get_image_name(i);
+                const item = try allocator.dupeZ(u8, mem.sliceTo(name, 0));
+                errdefer allocator.free(item);
+                try paths.append(item);
+            }
+            return try paths.toOwnedSlice();
+        },
+        // revisit if Haiku implements dl_iterat_phdr (https://dev.haiku-os.org/ticket/15743)
+        .haiku => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice() catch &.{};
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+
+            const b = "/boot/system/runtime_loader";
+            const item = try allocator.dupeZ(u8, mem.sliceTo(b, 0));
+            errdefer allocator.free(item);
+            try paths.append(item);
+
+            return try paths.toOwnedSlice();
+        },
+        else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
+    }
+}
+
+pub const preallocate_length = switch (bun.Environment.os) {
+    .linux => 2048 * 1024,
+    else => {},
+};
+pub const preallocate_supported = @TypeOf(preallocate_length) != void;
+
+// https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
+//  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
+//
+// hyperfine "./micro 1024 temp" "./micro 1024 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 1024 temp
+//   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.2 ms …   2.3 ms    67 runs
+// Benchmark 2: ./micro 1024 temp --preallocate
+//   Time (mean ± σ):       1.8 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.4 ms …   2.2 ms    121 runs
+// Summary
+//   './micro 1024 temp --preallocate' ran
+//     1.01 ± 0.13 times faster than './micro 1024 temp'
+//
+// hyperfine "./micro 65432 temp" "./micro 65432 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 65432 temp
+//   Time (mean ± σ):       1.8 ms ±   0.2 ms    [User: 0.7 ms, System: 0.1 ms]
+//   Range (min … max):     1.2 ms …   2.3 ms    94 runs
+// Benchmark 2: ./micro 65432 temp --preallocate
+//   Time (mean ± σ):       2.0 ms ±   0.1 ms    [User: 0.6 ms, System: 0.1 ms]
+//   Range (min … max):     1.7 ms …   2.3 ms    108 runs
+// Summary
+//   './micro 65432 temp' ran
+//     1.08 ± 0.12 times faster than './micro 65432 temp --preallocate'
+//
+// hyperfine "./micro 654320 temp" "./micro 654320 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 654320 temp
+//   Time (mean ± σ):       2.3 ms ±   0.2 ms    [User: 0.9 ms, System: 0.3 ms]
+//   Range (min … max):     1.9 ms …   2.9 ms    96 runs
+//
+// Benchmark 2: ./micro 654320 temp --preallocate
+//   Time (mean ± σ):       2.2 ms ±   0.1 ms    [User: 0.9 ms, System: 0.2 ms]
+//   Range (min … max):     1.9 ms …   2.7 ms    115 runs
+//
+//   Warning: Command took less than 5 ms to complete. Results might be inaccurate.
+//
+// Summary
+//   './micro 654320 temp --preallocate' ran
+//     1.04 ± 0.10 times faster than './micro 654320 temp'
+//
+// hyperfine "./micro 6543200 temp" "./micro 6543200 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 6543200 temp
+//   Time (mean ± σ):       6.3 ms ±   0.4 ms    [User: 0.4 ms, System: 4.9 ms]
+//   Range (min … max):     5.8 ms …   8.6 ms    84 runs
+//
+// Benchmark 2: ./micro 6543200 temp --preallocate
+//   Time (mean ± σ):       5.5 ms ±   0.3 ms    [User: 0.5 ms, System: 3.9 ms]
+//   Range (min … max):     5.1 ms …   7.1 ms    93 runs
+//
+// Summary
+//   './micro 6543200 temp --preallocate' ran
+//     1.14 ± 0.09 times faster than './micro 6543200 temp'
+//
+// hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp && free && sync && echo 3 > /proc/sys/vm/drop_caches && free"
+// Benchmark 1: ./micro 65432000 temp
+//   Time (mean ± σ):      52.9 ms ±   0.4 ms    [User: 3.1 ms, System: 48.7 ms]
+//   Range (min … max):    52.4 ms …  54.4 ms    36 runs
+//
+// Benchmark 2: ./micro 65432000 temp --preallocate
+//   Time (mean ± σ):      44.6 ms ±   0.8 ms    [User: 2.3 ms, System: 41.2 ms]
+//   Range (min … max):    44.0 ms …  47.3 ms    37 runs
+//
+// Summary
+//   './micro 65432000 temp --preallocate' ran
+//     1.19 ± 0.02 times faster than './micro 65432000 temp'
+//
+// hyperfine "./micro 65432000 temp" "./micro 65432000 temp --preallocate" --prepare="rm -rf temp"
+// Benchmark 1: ./micro 65432000 temp
+//   Time (mean ± σ):      51.7 ms ±   0.9 ms    [User: 2.1 ms, System: 49.6 ms]
+//   Range (min … max):    50.7 ms …  54.1 ms    49 runs
+//
+// Benchmark 2: ./micro 65432000 temp --preallocate
+//   Time (mean ± σ):      43.8 ms ±   2.3 ms    [User: 2.2 ms, System: 41.4 ms]
+//   Range (min … max):    42.7 ms …  54.7 ms    56 runs
+//
+// Summary
+//   './micro 65432000 temp --preallocate' ran
+//     1.18 ± 0.06 times faster than './micro 65432000 temp'
+//
+pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.posix.off_t) anyerror!void {
+    switch (Environment.os) {
+        .linux => {
+            _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
+        },
+        .mac => {
+            // benchmarking this did nothing on macOS
+            // i verified it wasn't returning -1
+
+            // Based on https://api.kde.org/frameworks/kcoreaddons/html/posix__fallocate__mac_8h_source.html
+            // var fstore = zeroes(fstore_t);
+            // fstore.fst_flags = F_ALLOCATECONTIG;
+            // fstore.fst_posmode = F_PEOFPOSMODE;
+            // fstore.fst_offset = 0;
+            // fstore.fst_length = len + offset;
+            // var rc = os.system.fcntl(fd, os.F.PREALLOCATE, &fstore);
+        },
+        else => {}, // not tested,
+    }
+}
+
+pub fn dlopen(filename: [:0]const u8, flags: std.c.RTLD) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.LoadLibraryA(filename);
+    }
+
+    return std.c.dlopen(filename, flags);
+}
+
+pub fn dlsymImpl(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
+    if (comptime Environment.isWindows) {
+        return bun.windows.GetProcAddressA(handle, name);
+    } else if (comptime Environment.isMac or Environment.isLinux) {
+        return std.c.dlsym(handle, name.ptr);
+    }
+
+    @compileError("dlsym unimplemented for this target");
+}
+
+pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
+    if (comptime @typeInfo(Type) != .pointer) {
+        @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
+    }
+
+    const Wrapper = struct {
+        pub var function: Type = undefined;
+        var failed = false;
+        pub var once = std.once(loadOnce);
+        fn loadOnce() void {
+            function = bun.cast(Type, dlsymImpl(@call(bun.callmod_inline, handle_getter, .{}), name) orelse {
+                failed = true;
+                return;
+            });
+        }
+    };
+    Wrapper.once.call();
+    if (Wrapper.failed) {
+        return null;
+    }
+    return Wrapper.function;
+}
+
+pub const umask = switch (Environment.os) {
+    else => bun.c.umask,
+    // Using the same typedef and define for `mode_t` and `umask` as node on windows.
+    // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
+    .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
+};

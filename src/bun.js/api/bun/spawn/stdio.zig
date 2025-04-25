@@ -23,7 +23,7 @@ pub const Stdio = union(enum) {
         to: bun.JSC.Subprocess.StdioKind,
     },
     path: JSC.Node.PathLike,
-    blob: JSC.WebCore.AnyBlob,
+    blob: JSC.WebCore.Blob.Any,
     array_buffer: JSC.ArrayBuffer.Strong,
     memfd: bun.FileDescriptor,
     pipe,
@@ -47,7 +47,7 @@ pub const Stdio = union(enum) {
         stdin_used_as_out,
         out_used_as_stdin,
         blob_used_as_out,
-        uv_pipe: bun.C.E,
+        uv_pipe: bun.sys.E,
 
         pub fn toStr(this: *const @This()) []const u8 {
             return switch (this.*) {
@@ -392,7 +392,7 @@ pub const Stdio = union(enum) {
             out_stdio.* = .{
                 .array_buffer = JSC.ArrayBuffer.Strong{
                     .array_buffer = array_buffer,
-                    .held = JSC.Strong.create(array_buffer.value, globalThis),
+                    .held = .create(array_buffer.value, globalThis),
                 },
             };
             return;
@@ -401,7 +401,7 @@ pub const Stdio = union(enum) {
         return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
     }
 
-    pub fn extractBlob(stdio: *Stdio, globalThis: *JSC.JSGlobalObject, blob: JSC.WebCore.AnyBlob, i: i32) bun.JSError!void {
+    pub fn extractBlob(stdio: *Stdio, globalThis: *JSC.JSGlobalObject, blob: JSC.WebCore.Blob.Any, i: i32) bun.JSError!void {
         const fd = bun.FD.Stdio.fromInt(i).?.fd();
 
         if (blob.needsToReadFile()) {

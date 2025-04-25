@@ -500,7 +500,7 @@ pub const Process = struct {
                 .waiter_thread, .fd => {
                     const err = std.c.kill(this.pid, signal);
                     if (err != 0) {
-                        const errno_ = bun.C.getErrno(err);
+                        const errno_ = bun.sys.getErrno(err);
 
                         // if the process was already killed don't throw
                         if (errno_ != .SRCH)
@@ -514,7 +514,7 @@ pub const Process = struct {
                 .uv => |*handle| {
                     if (handle.kill(signal).toError(.kill)) |err| {
                         // if the process was already killed don't throw
-                        if (err.errno != @intFromEnum(bun.C.E.SRCH)) {
+                        if (err.errno != @intFromEnum(bun.sys.E.SRCH)) {
                             return .{ .err = err };
                         }
                     }
@@ -1136,62 +1136,64 @@ pub const PosixSpawnResult = struct {
 
         const pidfd_flags = pidfdFlagsForLinux();
 
-        switch (brk: {
-            const rc = bun.sys.pidfd_open(
-                @intCast(this.pid),
-                pidfd_flags,
-            );
-            if (rc == .err and rc.getErrno() == .INVAL) {
-                // Retry once, incase they don't support PIDFD_NONBLOCK.
-                break :brk bun.sys.pidfd_open(
+        while (true) {
+            switch (brk: {
+                const rc = bun.sys.pidfd_open(
                     @intCast(this.pid),
-                    0,
+                    pidfd_flags,
                 );
-            }
-            break :brk rc;
-        }) {
-            .err => |err| {
-                switch (err.getErrno()) {
-                    // seccomp filters can be used to block this system call or pidfd's altogether
-                    // https://github.com/moby/moby/issues/42680
-                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
-                    .NOSYS, .OPNOTSUPP, .PERM, .ACCES, .INVAL => {
-                        WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = err };
-                    },
-
-                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                    // Until we switch to CLONE_PIDFD, this needs to be handled separately.
-                    .SRCH => {},
-
-                    // For all other cases, ensure we don't leak the child process on error
-                    // That would cause Zombie processes to accumulate.
-                    else => {
-                        while (true) {
-                            var status: u32 = 0;
-                            const rc = std.os.linux.wait4(this.pid, &status, 0, null);
-
-                            switch (bun.sys.getErrno(rc)) {
-                                .SUCCESS => {},
-                                .INTR => {
-                                    continue;
-                                },
-                                else => {},
-                            }
-
-                            break;
-                        }
-                    },
+                if (rc == .err and rc.getErrno() == .INVAL) {
+                    // Retry once, incase they don't support PIDFD_NONBLOCK.
+                    break :brk bun.sys.pidfd_open(
+                        @intCast(this.pid),
+                        0,
+                    );
                 }
+                break :brk rc;
+            }) {
+                .err => |err| {
+                    switch (err.getErrno()) {
+                        // seccomp filters can be used to block this system call or pidfd's altogether
+                        // https://github.com/moby/moby/issues/42680
+                        // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                        .NOSYS, .OPNOTSUPP, .PERM, .ACCES, .INVAL => {
+                            WaiterThread.setShouldUseWaiterThread();
+                            return .{ .err = err };
+                        },
 
-                return .{ .err = err };
-            },
-            .result => |rc| {
-                return .{ .result = rc };
-            },
+                        // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                        // Until we switch to CLONE_PIDFD, this needs to be handled separately.
+                        .SRCH => {},
+
+                        // For all other cases, ensure we don't leak the child process on error
+                        // That would cause Zombie processes to accumulate.
+                        else => {
+                            while (true) {
+                                var status: u32 = 0;
+                                const rc = std.os.linux.wait4(this.pid, &status, 0, null);
+
+                                switch (bun.sys.getErrno(rc)) {
+                                    .SUCCESS => {},
+                                    .INTR => {
+                                        continue;
+                                    },
+                                    else => {},
+                                }
+
+                                break;
+                            }
+                        },
+                    }
+
+                    return .{ .err = err };
+                },
+                .result => |rc| {
+                    return .{ .result = rc };
+                },
+            }
+
+            unreachable;
         }
-
-        unreachable;
     }
 };
 
@@ -1838,9 +1840,9 @@ pub const sync = struct {
         chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
 
-        err: bun.C.E = .SUCCESS,
+        err: bun.sys.E = .SUCCESS,
         context: *SyncWindowsProcess,
-        onDoneCallback: *const fn (*SyncWindowsProcess, tag: SyncWindowsProcess.OutFd, chunks: []const []u8, err: bun.C.E) void = &SyncWindowsProcess.onReaderDone,
+        onDoneCallback: *const fn (*SyncWindowsProcess, tag: SyncWindowsProcess.OutFd, chunks: []const []u8, err: bun.sys.E) void = &SyncWindowsProcess.onReaderDone,
         tag: SyncWindowsProcess.OutFd,
 
         pub const new = bun.TrivialNew(@This());
@@ -1853,7 +1855,7 @@ pub const sync = struct {
             this.chunks.append(@constCast(data)) catch bun.outOfMemory();
         }
 
-        fn onError(this: *SyncWindowsPipeReader, err: bun.C.E) void {
+        fn onError(this: *SyncWindowsPipeReader, err: bun.sys.E) void {
             this.err = err;
             this.pipe.close(onClose);
         }
@@ -1885,7 +1887,7 @@ pub const sync = struct {
 
         stderr: []const []u8 = &.{},
         stdout: []const []u8 = &.{},
-        err: bun.C.E = .SUCCESS,
+        err: bun.sys.E = .SUCCESS,
         waiting_count: u8 = 1,
         process: *Process,
         status: ?Status = null,
@@ -1897,7 +1899,7 @@ pub const sync = struct {
             this.process.deref();
         }
 
-        pub fn onReaderDone(this: *SyncWindowsProcess, tag: OutFd, chunks: []const []u8, err: bun.C.E) void {
+        pub fn onReaderDone(this: *SyncWindowsProcess, tag: OutFd, chunks: []const []u8, err: bun.sys.E) void {
             switch (tag) {
                 .stderr => {
                     this.stderr = chunks;
@@ -2188,7 +2190,7 @@ pub const sync = struct {
             }
 
             const rc = std.c.poll(poll_fds.ptr, @intCast(poll_fds.len), -1);
-            switch (bun.C.getErrno(rc)) {
+            switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => {},
                 .AGAIN, .INTR => continue,
                 else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },

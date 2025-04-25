@@ -41,6 +41,7 @@ unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+counters: Counters = .{},
 
 hot_reload: bun.CLI.Command.HotReload = .none,
 jsc: *VM = undefined,
@@ -3567,3 +3568,4 @@ const Global = bun.Global;
 const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
+const Counters = @import("./Counters.zig");

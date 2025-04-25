@@ -1485,27 +1485,20 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() == 0) {
-        JSC::throwTypeError(globalObject, scope, "queueMicrotask requires 1 argument (a function)"_s);
-        return {};
-    }
 
-    JSC::JSValue job = callFrame->argument(0);
+    JSValue callback = callFrame->argument(0);
+    V::validateFunction(scope, lexicalGlobalObject, callback, "callback"_s);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        JSC::throwTypeError(globalObject, scope, "queueMicrotask expects a function"_s);
-        return {};
-    }
-
-    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
-    JSC::JSValue asyncContext = global->m_asyncContextData.get()->getInternalField(0);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, asyncContext,
+    lexicalGlobalObject->queueMicrotask(globalObject->performMicrotaskFunction(), callback, asyncContext,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());

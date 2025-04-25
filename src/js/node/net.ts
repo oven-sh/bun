@@ -31,7 +31,7 @@ const {
   getBufferedAmount,
 } = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler } from "bun";
+import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
@@ -1327,101 +1327,99 @@ Server.prototype.getConnections = function getConnections(callback) {
   return this;
 };
 
-Server.prototype.listen = function listen(port, hostname, onListen) {
-  let backlog;
-  let path;
-  let exclusive = false;
-  let allowHalfOpen = false;
-  let reusePort = false;
-  let ipv6Only = false;
-  //port is actually path
-  if (typeof port === "string") {
-    if (Number.isSafeInteger(hostname)) {
-      if (hostname > 0) {
-        //hostname is backlog
-        backlog = hostname;
-      }
-    } else if (typeof hostname === "function") {
-      //hostname is callback
-      onListen = hostname;
-    }
+/*
+(options[...][, cb])
+(path[...][, cb])
+([port][, host][...][, cb])
+*/
 
-    path = port;
-    hostname = undefined;
-    port = undefined;
+namespace normalizeListenArgs {
+  export type Options = {
+    port?: number;
+    host?: string;
+    path?: string;
+    backlog?: string;
+    onListen?: Function;
+    exclusive?: boolean;
+    allowHalfOpen?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
+    writableAll?: boolean;
+    readableAll?: boolean;
+  };
+}
+function normalizeListenArgs(...args): normalizeListenArgs.Options {
+  if (args.length === 0) {
+    return {};
+  }
+
+  let options: normalizeListenArgs.Options;
+  const arg0 = args[0];
+
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (typeof arg0 === "string") {
+    options = { path: arg0 };
+
+    if (Number.isSafeInteger(arg0)) {
+      options.backlog = arg0;
+    }
   } else {
-    if (typeof hostname === "function") {
-      onListen = hostname;
-      hostname = undefined;
+    options = { port: arg0 };
+
+    if (typeof args[1] === "string") {
+      options.host = args[1];
     }
+  }
 
-    if (typeof port === "function") {
-      onListen = port;
-      port = 0;
-    } else if (typeof port === "object") {
-      const options = port;
-      addServerAbortSignalOption(this, options);
+  if (typeof args[args.length - 1] === "function") {
+    options.onListen = args[args.length - 1];
+  }
 
-      hostname = options.host;
-      exclusive = options.exclusive;
-      path = options.path;
-      port = options.port;
-      ipv6Only = options.ipv6Only;
-      allowHalfOpen = options.allowHalfOpen;
-      reusePort = options.reusePort;
+  return options;
+}
 
-      const isLinux = process.platform === "linux";
+Server.prototype.listen = function listen(...args) {
+  const normalized = normalizeListenArgs(...args);
 
-      if (!Number.isSafeInteger(port) || port < 0) {
-        if (path) {
-          const isAbstractPath = path.startsWith("\0");
-          if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-            const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
+  addServerAbortSignalOption(this, normalized);
 
-            const error = new TypeError(message);
-            error.code = "ERR_INVALID_ARG_VALUE";
-            throw error;
-          }
+  let backlog = normalized.backlog;
+  let path = normalized.path;
+  let exclusive = normalized.exclusive ?? false;
+  let allowHalfOpen = normalized.allowHalfOpen ?? false;
+  let reusePort = normalized.reusePort ?? false;
+  let ipv6Only = normalized.ipv6Only ?? false;
+  let hostname = normalized.host ?? "::";
+  let port = normalized.port;
+  let onListen = normalized.onListen;
 
-          hostname = path;
-          port = undefined;
-        } else {
-          let message = 'The argument \'options\' must have the property "port" or "path"';
-          try {
-            message = `${message}. Received ${JSON.stringify(options)}`;
-          } catch {}
+  console.log("NORMALIZED", normalized);
 
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
-        }
-      } else if (port === undefined) {
-        port = 0;
+  if (!Number.isSafeInteger(port) || (typeof port !== "undefined" && port < 0)) {
+    if (path) {
+      const isAbstractPath = path.startsWith("\0");
+
+      if (process.platform === "linux" && isAbstractPath && (normalized.writableAll || normalized.readableAll)) {
+        throw $ERR_INVALID_ARG_VALUE(
+          "options",
+          normalized,
+          "can not set readableAll or writableAll to true when path is abstract unix socket",
+        );
       }
 
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
-
-      if (typeof options.callback === "function") onListen = options?.callback;
-    } else if (!Number.isSafeInteger(port) || port < 0) {
-      port = 0;
+      hostname = path;
+    } else {
+      throw $ERR_INVALID_ARG_VALUE("options", normalized, 'must have the property "port" or "path"');
     }
-    hostname = hostname || "::";
   }
 
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  if (onListen != null) {
-    this.once("listening", onListen);
+  if (normalized.onListen != null) {
+    this.once("listening", normalized.onListen);
   }
 
   try {

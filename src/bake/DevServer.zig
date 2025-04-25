@@ -7250,6 +7250,8 @@ const ErrorReportRequest = struct {
 
         const runtime_name = "Bun HMR Runtime";
 
+        const browser_url_origin = bun.jsc.URL.originFromSlice(browser_url) orelse browser_url;
+
         // All files that DevServer could provide a source map fit the pattern:
         // `/_bun/client/<label>-{u64}.js`
         // Where the u64 is a unique identifier pointing into sourcemaps.
@@ -7268,7 +7270,7 @@ const ErrorReportRequest = struct {
             const source_url = frame.source_url.value.ZigString.slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            const id = parseId(source_url, browser_url) orelse continue;
+            const id = parseId(source_url, browser_url_origin) orelse continue;
 
             // Get and cache the parsed source map
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);

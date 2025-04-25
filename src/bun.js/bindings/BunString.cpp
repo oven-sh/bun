@@ -467,6 +467,17 @@ extern "C" BunString URL__getFileURLString(BunString* filePath)
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
 }
 
+extern "C" size_t URL__originLength(BunString* str)
+{
+    WTF::String string = str->toWTFString();
+    if (!string)
+        return 0;
+    WTF::URL url(string);
+    if (!url.isValid())
+        return 0;
+    return url.pathStart();
+}
+
 extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
 {
     auto& globalObject = *jsCast<Zig::GlobalObject*>(lexicalGlobalObject);

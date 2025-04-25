@@ -108,6 +108,16 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         return URL__pathname(url);
     }
+
+    extern fn URL__originLength(*String) u32;
+    pub fn originFromSlice(slice: []const u8) ?[]const u8 {
+        JSC.markBinding(@src());
+        var str = bun.String.init(slice);
+        defer str.deref();
+        const len = URL__originLength(&str);
+        if (len == 0) return null;
+        return slice[0..len];
+    }
 };
 
 const std = @import("std");

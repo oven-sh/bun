@@ -109,6 +109,10 @@ else()
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
 endif()
 
+if (ENABLE_ASAN_RELEASE)
+  set(ENABLE_LTO OFF)
+endif()
+
 optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 
 if(USE_VALGRIND AND NOT USE_BASELINE)

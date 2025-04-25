@@ -467,9 +467,9 @@ extern "C" BunString URL__getFileURLString(BunString* filePath)
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
 }
 
-extern "C" size_t URL__originLength(BunString* str)
+extern "C" size_t URL__originLength(const char* latin1_slice, size_t len)
 {
-    WTF::String string = str->toWTFString();
+    WTF::String string = WTF::StringView(latin1_slice, len, true).toString();
     if (!string)
         return 0;
     WTF::URL url(string);

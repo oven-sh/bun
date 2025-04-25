@@ -399,7 +399,6 @@ function getBuildEnv(target, options) {
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: isMusl ? "musl" : undefined,
-    CMAKE_TLS_VERIFY: "0",
   };
 }
 

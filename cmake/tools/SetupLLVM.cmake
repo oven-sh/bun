@@ -1,23 +1,13 @@
-
-set(DEFAULT_ENABLE_LLVM ON)
-
-# if target is bun-zig, set ENABLE_LLVM to OFF
-if(TARGET bun-zig)
-  set(DEFAULT_ENABLE_LLVM OFF)
-endif()
-
-optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ${DEFAULT_ENABLE_LLVM})
+optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ON)
 
 if(NOT ENABLE_LLVM)
   return()
 endif()
 
-set(DEFAULT_LLVM_VERSION "19.1.7")
+optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT "19.1.7")
 
-optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
-
-string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" USE_LLVM_VERSION ${LLVM_VERSION})
-if(USE_LLVM_VERSION)
+string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" LLVM_VERSION_MATCH ${LLVM_VERSION})
+if(LLVM_VERSION_MATCH)
   set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
   set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
   set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
@@ -41,7 +31,7 @@ if(APPLE)
     endif()
   endif()
 
-  if(USE_LLVM_VERSION)
+  if(LLVM_VERSION_MATCH)
     list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm@${LLVM_VERSION_MAJOR}/bin)
   endif()
 
@@ -51,7 +41,7 @@ endif()
 if(UNIX)
   list(APPEND LLVM_PATHS /usr/lib/llvm/bin)
 
-  if(USE_LLVM_VERSION)
+  if(LLVM_VERSION_MATCH)
     list(APPEND LLVM_PATHS
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}/bin
       /usr/lib/llvm-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}/bin
@@ -64,7 +54,7 @@ endif()
 macro(find_llvm_command variable command)
   set(commands ${command})
 
-  if(USE_LLVM_VERSION)
+  if(LLVM_VERSION_MATCH)
     list(APPEND commands
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
@@ -72,12 +62,20 @@ macro(find_llvm_command variable command)
     )
   endif()
 
+  # In CI, we want to make sure we're using an exact version of LLVM.
+  # Otherwise, it's okay if the patch version is different.
+  if(CI)
+    set(LLVM_VERSION_REQUIREMENT "=${LLVM_VERSION}")
+  else()
+    set(LLVM_VERSION_REQUIREMENT "~${LLVM_VERSION}")
+  endif()
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION >=${LLVM_VERSION_MAJOR}.1.0
+    VERSION ${LLVM_VERSION_REQUIREMENT}
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
@@ -85,7 +83,7 @@ endmacro()
 macro(find_llvm_command_no_version variable command)
   set(commands ${command})
 
-  if(USE_LLVM_VERSION)
+  if(LLVM_VERSION_MATCH)
     list(APPEND commands
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}

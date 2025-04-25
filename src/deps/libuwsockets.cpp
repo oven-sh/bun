@@ -365,6 +365,33 @@ extern "C"
     }
   }
 
+
+  void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
+    }
+  }
+
   void uws_app_listen(int ssl, uws_app_t *app, int port,
                       uws_listen_handler handler, void *user_data)
   {

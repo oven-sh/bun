@@ -6,7 +6,7 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 import { bunEnv, randomPort, bunExe } from "harness";
-import { createTest } from "node-harness";
+import { createTest, toRun } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -2700,4 +2700,9 @@ test("clientError should fire when receiving invalid method", async () => {
   await once(socket, "connect");
   socket.write("*");
   await once(socket, "close");
+});
+
+test("throw inside clientError should be propagated to uncaughtException", async () => {
+  const testFile = path.join(import.meta.dir, "node-http-clientError-catch.js");
+  expect([testFile]).toRun("", 0);
 });

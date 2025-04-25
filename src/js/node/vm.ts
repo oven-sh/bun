@@ -8,7 +8,7 @@ const ObjectFreeze = Object.freeze;
 const { createContext, isContext, Script, runInNewContext, runInThisContext, compileFunction } = vm;
 
 function runInContext(code, context, options) {
-  return new Script(code, options).runInContext(context);
+  return new Script(code, options).runInContext(context, options);
 }
 
 function createScript(code, options) {

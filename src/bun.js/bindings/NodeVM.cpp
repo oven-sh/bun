@@ -43,6 +43,8 @@
 
 #include "JavaScriptCore/JSCInlines.h"
 
+#include "../vm/SigintWatcher.h"
+
 namespace Bun {
 using namespace WebCore;
 
@@ -166,6 +168,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM&, NodeVMContextOptions options)
     Base::finishCreation(vm());
     setEvalEnabled(options.allowStrings, "Code generation from strings disallowed for this context"_s);
     setWebAssemblyEnabled(options.allowWasm, "Wasm code generation disallowed by embedder"_s);
+    vm().ensureTerminationException();
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)
@@ -175,6 +178,7 @@ void NodeVMGlobalObject::destroy(JSCell* cell)
 
 NodeVMGlobalObject::~NodeVMGlobalObject()
 {
+    SigintWatcher::get().unregisterGlobalObject(this);
 }
 
 void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject)
@@ -185,6 +189,11 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
 void NodeVMGlobalObject::clearContextifiedObject()
 {
     m_sandbox.clear();
+}
+
+void NodeVMGlobalObject::sigintReceived()
+{
+    vm().notifyNeedTermination();
 }
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -780,6 +789,34 @@ static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Excep
     return false;
 }
 
+extern "C" void Bun__ensureSignalHandler();
+
+static void ensureSigintHandler()
+{
+#if !OS(WINDOWS)
+    Bun__ensureSignalHandler();
+
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+
+    // Set the handler in the action struct
+    action.sa_handler = [](int signalNumber) {
+        SigintWatcher::get().signalReceived();
+    };
+
+    // Clear the sa_mask
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGINT);
+    action.sa_flags = SA_RESTART;
+
+    sigaction(SIGINT, &action, nullptr);
+
+    SigintWatcher::get().install();
+#else
+    static_assert(false, "TODO(@heimskr): implement sigint handler on Windows");
+#endif
+}
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
 
@@ -797,6 +834,11 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     // Set the contextified object before evaluating
     globalObject->setContextifiedObject(contextifiedObject);
+
+    if (options.breakOnSigint) {
+        ensureSigintHandler();
+        SigintWatcher::get().registerGlobalObject(globalObject);
+    }
 
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
@@ -893,6 +935,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     if (!options.fromJS(globalObject, vm, throwScope, contextArg)) {
         RETURN_IF_EXCEPTION(throwScope, {});
         options = {};
+    }
+
+    if (options.breakOnSigint) {
+        ensureSigintHandler();
     }
 
     NakedPtr<Exception> exception;

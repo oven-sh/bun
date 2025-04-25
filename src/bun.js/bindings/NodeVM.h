@@ -38,6 +38,7 @@ public:
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     void clearContextifiedObject();
+    void sigintReceived();
 
     // Override property access to delegate to contextified object
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);

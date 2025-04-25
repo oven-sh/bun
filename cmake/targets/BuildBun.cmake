@@ -637,6 +637,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${CWD}/src/bake/*.cpp
   ${CWD}/src/deps/*.cpp
+  ${CWD}/src/vm/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
 )
 
@@ -797,7 +798,7 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
-if(NOT WIN32) 
+if(NOT WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
 endif()
 

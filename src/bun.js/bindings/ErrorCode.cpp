@@ -1390,6 +1390,15 @@ EncodedJSValue CLOSED_MESSAGE_PORT(ThrowScope& scope, JSGlobalObject* globalObje
     return {};
 }
 
+JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType)
+{
+    WTF::StringBuilder builder;
+    builder.append("Value of \"this\" must be of type "_s);
+    builder.append(expectedType);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_THIS, builder.toString()));
+    return {};
+}
+
 } // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

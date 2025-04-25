@@ -15,6 +15,7 @@ import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
+import { addMapping, SourceMapURL } from './client/stack-trace';
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -50,6 +51,30 @@ async function performRouteReload() {
   // Fallback for when reloading fails or is not implemented by the framework is
   // to hard-reload.
   fullReload();
+}
+
+// HMR payloads are script tags that call this internal function.
+// A previous version of this runtime used `eval`, but browser support around
+// mapping stack traces of eval'd frames is poor (the case the error overlay).
+const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
+globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
+  const entry = scriptTags.get(id);
+  if (!entry) throw new Error("Unknown HMR script not found");
+  const [script, size] = entry;
+  scriptTags.delete(id);
+  const url = script.src;
+  const map: SourceMapURL = {
+    id,
+    url,
+    refs: Object.keys(modules).length,
+    size,
+  };
+  addMapping(url, map);
+  script.remove();
+  replaceModules(modules, map).catch(e => {
+    console.error(e);
+    fullReload();
+  });
 }
 
 let isFirstRun = true;
@@ -137,26 +162,17 @@ const handlers = {
     }
     // JavaScript modules
     if (reader.hasMoreData()) {
-      const code = td.decode(reader.rest());
-      try {
-        // TODO: This functions in all browsers, but WebKit browsers do not
-        // provide stack traces to errors thrown in eval, meaning client-side
-        // errors from hot-reloaded modules cannot be mapped back to their
-        // source.
-        const modules = (0, eval)(code);
-        replaceModules(modules).catch(e => {
-          console.error(e);
-          fullReload();
-        });
-      } catch (e) {
-        if (IS_BUN_DEVELOPMENT) {
-          console.error(e, "Failed to parse HMR payload", { code });
-          onRuntimeError(e, true, false);
-          return;
-        }
-        emitEvent("bun:error", e);
-        throw e;
-      }
+      const rest = reader.rest();
+      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
+      DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
+      const blob = new Blob([rest], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      const script = document.createElement('script');
+      scriptTags.set(sourceMapId, [script, rest.byteLength]);
+      script.className = 'bun-hmr-script';
+      script.src = url;
+      script.onerror = onHmrLoadError;
+      document.head.appendChild(script);
     } else {
       // Needed for testing.
       emitEvent("bun:afterUpdate", null);
@@ -173,6 +189,16 @@ const ws = initWebSocket(handlers, {
     emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
   },
 });
+
+function onHmrLoadError(event: Event | string, source?: string, lineno?: number, colno?: number, error?: Error) {
+  if (typeof event === "string") {
+    console.error(event);
+  }
+  if (error) {
+    console.error(error);
+  }
+  fullReload();
+}
 
 // Before loading user code, instrument some globals.
 {

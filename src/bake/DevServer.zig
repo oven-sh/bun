@@ -1904,8 +1904,8 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     };
 
     // Insert the source map
-    const source_map_id = @as(u64, route_bundle.client_script_generation) << 32;
-    if (try dev.source_maps.putOrIncrementRefCount(source_map_id, 1)) |entry| {
+    const script_id = @as(u64, route_bundle.client_script_generation) << 32;
+    if (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) |entry| {
         var arena = std.heap.ArenaAllocator.init(sfa);
         defer arena.deinit();
         try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
@@ -1918,7 +1918,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         else
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
-        .source_map_id = source_map_id,
+        .script_id = script_id,
     });
 
     return client_bundle;
@@ -2543,7 +2543,7 @@ pub fn finalizeBundle(
                 // Build and send the source chunk
                 try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
                     .kind = .hmr_chunk,
-                    .source_map_id = hash,
+                    .script_id = hash,
                 });
             }
         } else {
@@ -4584,7 +4584,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
-                source_map_id: ?u64 = null,
+                script_id: u64,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
             },
@@ -4616,7 +4616,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
             };
 
             // A small amount of metadata is present at the end of the chunk
@@ -4658,16 +4658,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             );
                             g.owner().releaseRelativePathBuf();
                         }
-                        try w.writeAll("\n");
+                        try w.writeAll("\n})");
                     },
-                    .hmr_chunk => {},
+                    .hmr_chunk => switch (side) {
+                        .client => {
+                            try w.writeAll("}, \"");
+                            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
+                            try w.writeAll("\")");
+                        },
+                        .server => try w.writeAll("})"),
+                    },
                 }
-                try w.writeAll("})");
-                if (side == .client) if (options.source_map_id) |source_map_id| {
+                if (side == .client) {
                     try w.writeAll("\n//# sourceMappingURL=" ++ client_prefix ++ "/");
-                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));
+                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
                     try w.writeAll(".js.map\n");
-                };
+                }
                 break :end end_list.items;
             };
 
@@ -4723,7 +4729,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
             };
 
             j.pushStatic(
@@ -7088,8 +7094,8 @@ pub const SourceMapStore = struct {
     }
 
     /// If an *Entry is returned, caller must initialize it with the source map.
-    pub fn putOrIncrementRefCount(store: *SourceMapStore, source_map_id: u64, ref_count: u32) !?*Entry {
-        const gop = try store.entries.getOrPut(store.owner().allocator, source_map_id);
+    pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: u64, ref_count: u32) !?*Entry {
+        const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{
                 .ref_count = ref_count,
@@ -7118,8 +7124,8 @@ pub const SourceMapStore = struct {
         }
     };
 
-    pub fn getParsedSourceMap(store: *SourceMapStore, source_map_id: u64) ?GetResult {
-        const index = store.entries.getIndex(source_map_id) orelse
+    pub fn getParsedSourceMap(store: *SourceMapStore, script_id: u64) ?GetResult {
+        const index = store.entries.getIndex(script_id) orelse
             return null; // source map was collected.
         const entry = &store.entries.values()[index];
 

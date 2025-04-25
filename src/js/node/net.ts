@@ -1337,115 +1337,109 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-namespace normalizeListenArgs {
-  export type Options = {
-    port?: number;
-    host?: string;
-    path?: string;
-    backlog?: number;
-    onListen?: Function;
-    exclusive?: boolean;
-    allowHalfOpen?: boolean;
-    reusePort?: boolean;
-    ipv6Only?: boolean;
-    writableAll?: boolean;
-    readableAll?: boolean;
-  };
-}
-function normalizeListenArgs(...args): normalizeListenArgs.Options {
-  if (args.length === 0) {
-    return {};
-  }
+// function normalizeListenArgs(...args): normalizeListenArgs.Options {
+//   if (args.length === 0) {
+//     return {};
+//   }
 
-  let options: normalizeListenArgs.Options;
-  const optionsOrPortOrPath = args[0];
+//   let options: normalizeListenArgs.Options;
+//   const optionsOrPortOrPath = args[0];
 
-  if (typeof optionsOrPortOrPath === "function") {
-    return { onListen: optionsOrPortOrPath };
-  }
+//   if (typeof optionsOrPortOrPath === "function") {
+//     return { onListen: optionsOrPortOrPath };
+//   }
 
-  if (optionsOrPortOrPath === undefined || optionsOrPortOrPath === null) {
-    options = {};
-  } else if (typeof optionsOrPortOrPath === "object") {
-    options = optionsOrPortOrPath;
-  } else if (typeof optionsOrPortOrPath === "string" && toNumber(optionsOrPortOrPath) === false) {
-    options = { path: optionsOrPortOrPath };
-  } else {
-    options = { port: optionsOrPortOrPath };
-  }
+//   if (optionsOrPortOrPath === undefined || optionsOrPortOrPath === null) {
+//     options = {};
+//   } else if (typeof optionsOrPortOrPath === "object") {
+//     options = optionsOrPortOrPath;
+//   } else if (typeof optionsOrPortOrPath === "string" && toNumber(optionsOrPortOrPath) === false) {
+//     options = { path: optionsOrPortOrPath };
+//   } else {
+//     options = { port: optionsOrPortOrPath };
+//   }
 
-  if (args.length === 2) {
-    const hostOrBacklog = args[1];
-    if (typeof hostOrBacklog === "string") {
-      options.host = hostOrBacklog;
-    }
+//   if (args.length === 2) {
+//     const hostOrBacklog = args[1];
+//     if (typeof hostOrBacklog === "string") {
+//       options.host = hostOrBacklog;
+//     }
 
-    const backlog = toNumber(hostOrBacklog);
-    if (backlog !== false && Number.isSafeInteger(backlog)) {
-      options.backlog = backlog;
-    }
-  }
+//     const backlog = toNumber(hostOrBacklog);
+//     if (backlog !== false && Number.isSafeInteger(backlog)) {
+//       options.backlog = backlog;
+//     }
+//   }
 
-  if (typeof args[args.length - 1] === "function") {
-    options.onListen = args[args.length - 1];
-  }
+//   if (typeof args[args.length - 1] === "function") {
+//     options.onListen = args[args.length - 1];
+//   }
 
-  return options;
-}
+//   return options;
+// }
 
 Server.prototype.listen = function listen(...args) {
-  const normalized = normalizeListenArgs(...args);
+  const normalized = normalizeArgs(args) as [
+    {
+      port?: number;
+      host?: string;
+      path?: string;
+      backlog?: number;
+      exclusive?: boolean;
+      allowHalfOpen?: boolean;
+      reusePort?: boolean;
+      ipv6Only?: boolean;
+      writableAll?: boolean;
+      readableAll?: boolean;
+    },
+    Function,
+  ];
+
+  let options = normalized[0];
+  const cb = normalized[1];
 
   addServerAbortSignalOption(this, normalized);
-
-  let backlog = normalized.backlog;
-  let path = normalized.path;
-  let exclusive = normalized.exclusive ?? false;
-  let allowHalfOpen = normalized.allowHalfOpen ?? false;
-  let reusePort = normalized.reusePort ?? false;
-  let ipv6Only = normalized.ipv6Only ?? false;
-  let hostname = normalized.host ?? "::";
-  let port = Number(normalized.port ?? 0);
-  let onListen = normalized.onListen;
-
-  if (path) {
-    const isAbstractPath = path.startsWith("\0");
-
-    if (process.platform === "linux" && isAbstractPath && (normalized.writableAll || normalized.readableAll)) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options",
-        normalized,
-        "can not set readableAll or writableAll to true when path is abstract unix socket",
-      );
-    }
-
-    hostname = path;
-  }
-
-  if (args.length > 1 && normalized.port === undefined && path === undefined) {
-    throw $ERR_INVALID_ARG_VALUE("options", normalized, "is invalid");
-  }
-
-  if (port < 0 || Number.isNaN(port) || !Number.isSafeInteger(port) || port > 65535) {
-    throw $ERR_SOCKET_BAD_PORT("port must be a non-negative integer between 0 and 65535");
-  }
 
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  if (normalized.onListen != null) {
-    this.once("listening", normalized.onListen);
+  if (
+    args.length === 0 ||
+    typeof args[0] === "function" ||
+    (options.port === undefined && "port" in options) ||
+    options.port === null
+  ) {
+    options.port = 0;
+  }
+
+  const backlogFromArgs = toNumber(args.length > 1 && args[1]) || toNumber(args.length > 2 && args[2]);
+
+  let backlog;
+
+  if (typeof options.port === "number" || typeof options.port === "string") {
+    validatePort(options.port, "options.port");
+    backlog = options.backlog || backlogFromArgs;
+
+    if (options.reusePort === true) {
+      options.exclusive = true;
+    }
+
+    return this;
+  }
+
+  if (cb) {
+    this.once("listening", cb);
   }
 
   try {
-    var tls = undefined;
-    var TLSSocketClass = undefined;
+    let tls = undefined;
+    let TLSSocketClass = undefined;
     const bunTLS = this[bunTlsSymbol];
     const options = this[bunSocketServerOptions];
     let contexts: Map<string, any> | null = null;
     if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
+      [tls, TLSSocketClass] = bunTLS.$call(this, options.port, options.host, false);
       options.servername = tls.serverName;
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
@@ -1456,24 +1450,26 @@ Server.prototype.listen = function listen(...args) {
       options[kSocketClass] = Socket;
     }
 
+    backlog = options.backlog || backlogFromArgs;
+
     listenInCluster(
       this,
       null,
-      port,
+      options.port,
       4,
       backlog,
       undefined,
-      exclusive,
-      ipv6Only,
-      allowHalfOpen,
-      reusePort,
+      options.exclusive,
+      options.ipv6Only,
+      options.allowHalfOpen,
+      options.reusePort,
       undefined,
       undefined,
-      path,
-      hostname,
+      options.path,
+      options.host,
       tls,
       contexts,
-      onListen,
+      cb,
     );
   } catch (err) {
     setTimeout(emitErrorNextTick, 1, this, err);

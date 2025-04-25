@@ -1448,7 +1448,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
-  downloadLoop: for (let i = 0; i < 100; i++) {
+  downloadLoop: for (let i = 0; i < 10; i++) {
     const args = ["artifact", "download", "**", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
@@ -1457,6 +1457,7 @@ async function getExecPathFromBuildKite(target, buildId) {
     await spawnSafe({
       command: "buildkite-agent",
       args,
+      timeout: 5000 * 10,
     });
 
     for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {

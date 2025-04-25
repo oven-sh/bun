@@ -34,7 +34,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal, validatePort } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1333,12 +1333,16 @@ Server.prototype.getConnections = function getConnections(callback) {
 ([port][, host][...][, cb])
 */
 
+function toNumber(x) {
+  return (x = Number(x)) >= 0 ? x : false;
+}
+
 namespace normalizeListenArgs {
   export type Options = {
     port?: number;
     host?: string;
     path?: string;
-    backlog?: string;
+    backlog?: number;
     onListen?: Function;
     exclusive?: boolean;
     allowHalfOpen?: boolean;
@@ -1354,21 +1358,31 @@ function normalizeListenArgs(...args): normalizeListenArgs.Options {
   }
 
   let options: normalizeListenArgs.Options;
-  const arg0 = args[0];
+  const optionsOrPortOrPath = args[0];
 
-  if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0;
-  } else if (typeof arg0 === "string") {
-    options = { path: arg0 };
+  if (typeof optionsOrPortOrPath === "function") {
+    return { onListen: optionsOrPortOrPath };
+  }
 
-    if (Number.isSafeInteger(arg0)) {
-      options.backlog = arg0;
-    }
+  if (optionsOrPortOrPath === undefined || optionsOrPortOrPath === null) {
+    options = {};
+  } else if (typeof optionsOrPortOrPath === "object") {
+    options = optionsOrPortOrPath;
+  } else if (typeof optionsOrPortOrPath === "string" && toNumber(optionsOrPortOrPath) === false) {
+    options = { path: optionsOrPortOrPath };
   } else {
-    options = { port: arg0 };
+    options = { port: optionsOrPortOrPath };
+  }
 
-    if (typeof args[1] === "string") {
-      options.host = args[1];
+  if (args.length === 2) {
+    const hostOrBacklog = args[1];
+    if (typeof hostOrBacklog === "string") {
+      options.host = hostOrBacklog;
+    }
+
+    const backlog = toNumber(hostOrBacklog);
+    if (backlog !== false && Number.isSafeInteger(backlog)) {
+      options.backlog = backlog;
     }
   }
 
@@ -1391,27 +1405,25 @@ Server.prototype.listen = function listen(...args) {
   let reusePort = normalized.reusePort ?? false;
   let ipv6Only = normalized.ipv6Only ?? false;
   let hostname = normalized.host ?? "::";
-  let port = normalized.port;
+  let port = Number(normalized.port ?? 0);
   let onListen = normalized.onListen;
 
-  console.log("NORMALIZED", normalized);
+  if (path) {
+    const isAbstractPath = path.startsWith("\0");
 
-  if (!Number.isSafeInteger(port) || (typeof port !== "undefined" && port < 0)) {
-    if (path) {
-      const isAbstractPath = path.startsWith("\0");
-
-      if (process.platform === "linux" && isAbstractPath && (normalized.writableAll || normalized.readableAll)) {
-        throw $ERR_INVALID_ARG_VALUE(
-          "options",
-          normalized,
-          "can not set readableAll or writableAll to true when path is abstract unix socket",
-        );
-      }
-
-      hostname = path;
-    } else {
-      throw $ERR_INVALID_ARG_VALUE("options", normalized, 'must have the property "port" or "path"');
+    if (process.platform === "linux" && isAbstractPath && (normalized.writableAll || normalized.readableAll)) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options",
+        normalized,
+        "can not set readableAll or writableAll to true when path is abstract unix socket",
+      );
     }
+
+    hostname = path;
+  }
+
+  if (port < 0 || Number.isNaN(port) || !Number.isSafeInteger(port) || port > 65535) {
+    throw $ERR_SOCKET_BAD_PORT("port must be a non-negative integer between 0 and 65535");
   }
 
   if (this._handle) {

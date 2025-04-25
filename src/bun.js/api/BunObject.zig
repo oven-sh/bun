@@ -128,6 +128,7 @@ pub const BunObject = struct {
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
+        @export(&BunObject.CSV, .{ .name = getterName("CSV") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
@@ -1265,6 +1266,10 @@ pub fn getHashObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return HashObject.create(globalThis);
 }
 
+pub fn getCSVObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return CSVObject.create(globalThis);
+}
+
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
 }
@@ -2059,6 +2064,7 @@ const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const TOMLObject = bun.api.TOMLObject;
+pub const CSV = toJSGetter(Bun.getCSVObject);
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;
 const node = bun.api.node;

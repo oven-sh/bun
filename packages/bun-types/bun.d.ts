@@ -693,6 +693,57 @@ declare module "bun" {
   }
 
   /**
+   * CSV related APIs
+   */
+  namespace CSV {
+    /**
+     * Options for parsing CSV strings.
+     */
+    export interface CSVParserOptions {
+      /**
+       * Whether the CSV has a header row.
+       * If true, returns an array of objects. If false, returns an array of arrays.
+       * @default true
+       */
+      header?: boolean;
+      /**
+       * The delimiter character to use.
+       * @default ','
+       */
+      delimiter?: string;
+      /**
+       * Whether to allow comments in the CSV.
+       * @default true
+       */
+      comments?: boolean;
+      /**
+       * Whether to trim whitespace from fields.
+       * @default false
+       */
+      trim_whitespace?: boolean;
+      /**
+       * Whether to enable dynamic typing for fields.
+       * @default false
+       */
+      dynamic_typing?: boolean;
+    }
+
+    /**
+     * Parse a CSV string into a JavaScript array.
+     *
+     * @category Utilities
+     *
+     * @param input The CSV string to parse
+     * @param options Parsing options
+     * @returns If has_header is true (default), returns Record<string, string>[]; otherwise, string[][]
+     */
+    export function parse(
+      input: string,
+      options?: CSVParserOptions,
+    ): CSVParserOptions extends { has_header: false } ? string[][] : Record<string, string>[];
+  }
+
+  /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`

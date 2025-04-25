@@ -3819,18 +3819,18 @@ pub const H2FrameParser = struct {
                 }
             }
 
-            if (try options.get(globalObject, "silent")) |silent_js| {
-                if (silent_js.isBoolean()) {
-                    silent = silent_js.asBoolean();
-                } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.silent must be a boolean", .{}).throw();
-                }
-            }
-
             if (try options.get(globalObject, "waitForTrailers")) |trailes_js| {
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
                     stream.waitForTrailers = waitForTrailers;
+                }
+            }
+
+            if (try options.get(globalObject, "silent")) |silent_js| {
+                if (silent_js.isBoolean()) {
+                    silent = silent_js.asBoolean();
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.silent", "boolean", silent_js);
                 }
             }
 
@@ -3844,7 +3844,7 @@ pub const H2FrameParser = struct {
                         }
                     }
                 } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.endStream must be a boolean", .{}).throw();
+                    return globalObject.throwInvalidArgumentTypeValue("options.endStream", "boolean", end_stream_js);
                 }
             }
 
@@ -3856,7 +3856,7 @@ pub const H2FrameParser = struct {
                         has_priority = true;
                     }
                 } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.exclusive must be a boolean", .{}).throw();
+                    return globalObject.throwInvalidArgumentTypeValue("options.exclusive", "boolean", exclusive_js);
                 }
             }
 
@@ -3872,7 +3872,7 @@ pub const H2FrameParser = struct {
                     }
                     stream.streamDependency = @intCast(parent);
                 } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.parent must be a number", .{}).throw();
+                    return globalObject.throwInvalidArgumentTypeValue("options.parent", "number", parent_js);
                 }
             }
 
@@ -3888,7 +3888,7 @@ pub const H2FrameParser = struct {
                     }
                     stream.weight = @intCast(weight);
                 } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.weight must be a number", .{}).throw();
+                    return globalObject.throwInvalidArgumentTypeValue("options.weight", "number", weight_js);
                 }
 
                 if (weight < 1 or weight > std.math.maxInt(u8)) {
@@ -3910,7 +3910,7 @@ pub const H2FrameParser = struct {
                     }
                     stream.attachSignal(this, signal_);
                 } else {
-                    return globalObject.ERR(.INVALID_ARG_TYPE, "options.signal must be an AbortSignal", .{}).throw();
+                    return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
                 }
             }
         }

@@ -504,6 +504,10 @@ check_ulimit() {
 		fi
 
 		if [ -f "$systemd_conf" ]; then
+			# in systemd's configuration you need to say "infinity" when you mean "unlimited"
+			if [ "$limit_value" = "unlimited" ]; then
+				limit_value="infinity"
+			fi
 			append_file "$systemd_conf" "DefaultLimit$limit_upper=$limit_value"
 		fi
 	done

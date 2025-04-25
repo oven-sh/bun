@@ -97,7 +97,7 @@ else()
   set(DEFAULT_LTO OFF)
 endif()
 
-option(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
+option(ENABLE_LTO "If LTO (link-time optimization) should be used" ${DEFAULT_LTO})
 
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)

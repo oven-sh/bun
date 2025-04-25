@@ -151,17 +151,17 @@ for (let [gcTick, label] of [
       });
 
       it("success based on exit code", async () => {
-        const success1 = await spawn({
+        const success0 = await spawn({
           cmd: [bunExe(), "-e", "process.exit(0)"],
         }).success;
         gcTick();
-        const success2 =  spawn({
+        const success1 = spawn({
           cmd: [bunExe(), "-e", "process.exit(1)"],
         }).success;
         gcTick();
-        expect(success1).toBe(undefined);
+        expect(success0).toBe(undefined);
         gcTick();
-        expect(success2).toThrow(1);
+        expect(() => success1).toThrow();
         gcTick();
       });
 

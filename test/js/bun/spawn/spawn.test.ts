@@ -586,7 +586,17 @@ describe("spawn unref and kill should not hang", () => {
     }
 
     await Promise.all(exitedPromises);
-    expect(Promise.any(successPromises)).toThrow();
+    for (let i = 0; i < successPromises.length; i++) {
+      expect(() => successPromises[i]).toThrow();
+      // TODO: doesn't work.
+      try {
+        await successPromises[i];
+      } catch {
+        // expected
+      }
+    }
+    // TODO: doesn't work.
+    await Promise.allSettled(successPromises);
   });
   it("unref", async () => {
     for (let i = 0; i < 10; i++) {

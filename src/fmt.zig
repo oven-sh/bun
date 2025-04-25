@@ -1839,12 +1839,15 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
 const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
 const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
 const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+const BunStringOutOfRangeFormatter = NewOutOfRangeFormatter(bun.String);
 
 fn OutOfRangeFormatter(comptime T: type) type {
     if (T == f64 or T == f32) {
         return DoubleOutOfRangeFormatter;
     } else if (T == []const u8) {
         return StringOutOfRangeFormatter;
+    } else if (T == bun.String) {
+        return BunStringOutOfRangeFormatter;
     }
 
     return IntOutOfRangeFormatter;

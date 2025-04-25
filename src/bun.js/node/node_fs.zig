@@ -2526,8 +2526,8 @@ pub const Arguments = struct {
     pub const Read = struct {
         fd: FileDescriptor,
         buffer: Buffer,
-        offset: u64 = 0,
-        length: u64 = std.math.maxInt(u64),
+        offset: u64,
+        length: u64,
         position: ?ReadPosition = null,
 
         pub fn deinit(_: Read) void {}
@@ -2557,21 +2557,19 @@ pub const Arguments = struct {
             const buffer: JSC.MarkedArrayBuffer = Buffer.fromJS(ctx, buffer_value) orelse
                 return ctx.throwInvalidArgumentTypeValue("buffer", "TypedArray", buffer_value);
 
-            var args: Read = .{ .fd = fd, .buffer = buffer };
-
             const offset_value: JSC.JSValue = arguments.nextEat() orelse .null;
             // if (offset == null) {
             //   offset = 0;
             // } else {
             //   validateInteger(offset, 'offset', 0);
             // }
-            args.offset = if (offset_value.isUndefinedOrNull())
+            const offset: u64 = if (offset_value.isUndefinedOrNull())
                 0
             else
                 @intCast(try JSC.Node.validators.validateInteger(ctx, offset_value, "offset", 0, JSC.MAX_SAFE_INTEGER));
 
             // length |= 0;
-            const length: f64 = if (arguments.nextEat()) |arg|
+            const length_float: f64 = if (arguments.nextEat()) |arg|
                 try arg.toNumber(ctx)
             else
                 0;
@@ -2581,8 +2579,8 @@ pub const Arguments = struct {
             //       callback(null, 0, buffer);
             //     });
             //   }
-            if (length == 0) {
-                return .{ .fd = fd, .buffer = buffer, .length = 0 };
+            if (length_float == 0) {
+                return .{ .fd = fd, .buffer = buffer, .length = 0, .offset = 0 };
             }
 
             const buf_len = buffer.slice().len;
@@ -2590,26 +2588,26 @@ pub const Arguments = struct {
                 return ctx.ERR(.INVALID_ARG_VALUE, "The argument 'buffer' is empty and cannot be written.", .{}).throw();
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
-            if (@mod(length, 1) != 0) {
-                return ctx.throwRangeError(length, .{ .field_name = "length", .msg = "an integer" });
+            if (@mod(length_float, 1) != 0) {
+                return ctx.throwRangeError(length_float, .{ .field_name = "length", .msg = "an integer" });
             }
-            const int_length: i64 = @intFromFloat(length);
-            if (int_length > buf_len) {
+            const length_int: i64 = @intFromFloat(length_float);
+            if (length_int > buf_len) {
                 return ctx.throwRangeError(
-                    length,
+                    length_float,
                     .{ .field_name = "length", .max = @intCast(@min(buf_len, std.math.maxInt(i64))) },
                 );
             }
-            if (@as(i64, @intCast(args.offset)) +| int_length > buf_len) {
+            if (@as(i64, @intCast(offset)) +| length_int > buf_len) {
                 return ctx.throwRangeError(
-                    length,
-                    .{ .field_name = "length", .max = @intCast(buf_len -| args.offset) },
+                    length_float,
+                    .{ .field_name = "length", .max = @intCast(buf_len -| offset) },
                 );
             }
-            if (int_length < 0) {
-                return ctx.throwRangeError(length, .{ .field_name = "length", .min = 0 });
+            if (length_int < 0) {
+                return ctx.throwRangeError(length_float, .{ .field_name = "length", .min = 0 });
             }
-            args.length = @intCast(int_length);
+            const length: u64 = @intCast(length_int);
 
             // if (position == null) {
             //   position = -1;
@@ -2621,26 +2619,35 @@ pub const Arguments = struct {
                 -1
             else if (position_value.isNumber())
                 try JSC.Node.validators.validateInteger(ctx, position_value, "position", -1, JSC.MAX_SAFE_INTEGER)
-            else if (position_value.isBigInt()) pos: {
-                const max_position = std.math.maxInt(i64) - args.length;
-                const position = position_value.to(i64);
-                if (position < -1 or position > max_position) {
-                    return ctx.throwRangeError(position, .{
+            else if (JSC.JSBigInt.dynamicCast(position_value)) |position| pos: {
+                // const maxPosition = 2n ** 63n - 1n - BigInt(length)
+                const max_position = std.math.maxInt(i64) - length_int;
+                if (position.order(i64, -1) == .lt or position.order(i64, max_position) == .gt) {
+                    const position_str = try position.toString(ctx);
+                    defer position_str.deref();
+
+                    return ctx.throwRangeError(position_str, .{
                         .field_name = "position",
                         .min = -1,
                         .max = @intCast(max_position),
                     });
                 }
-                break :pos position;
+                break :pos position.toInt64();
             } else return ctx.throwInvalidArgumentTypeValue("position", "number or bigint", position_value);
 
             // Bun needs `null` to tell the native function if to use pread or read
-            args.position = if (position_int >= 0)
+            const position: ?ReadPosition = if (position_int >= 0)
                 position_int
             else
                 null;
 
-            return args;
+            return .{
+                .fd = fd,
+                .buffer = buffer,
+                .offset = offset,
+                .length = length,
+                .position = position,
+            };
         }
     };
 

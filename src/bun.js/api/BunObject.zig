@@ -60,6 +60,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
+    pub const CSV = toJSGetter(Bun.getCSVObject);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
     pub const cwd = toJSGetter(Bun.getCWD);
@@ -120,6 +121,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
 
         @export(&BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(&BunObject.CSV, .{ .name = getterName("CSV") });
         @export(&BunObject.Glob, .{ .name = getterName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(&BunObject.argv, .{ .name = getterName("argv") });
@@ -1271,6 +1273,10 @@ pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
     return HashObject.create(globalThis);
 }
 
+pub fn getCSVObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return CSVObject.create(globalThis);
+}
+
 pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return TOMLObject.create(globalThis);
 }
@@ -2067,3 +2073,4 @@ const HashObject = bun.api.HashObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const TOMLObject = bun.api.TOMLObject;
 const FFIObject = bun.api.FFIObject;
+const CSVObject = @import("./CSVObject.zig");

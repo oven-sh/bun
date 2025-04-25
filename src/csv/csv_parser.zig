@@ -9,7 +9,7 @@ const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
+const strings = @import("../string_immutable.zig");
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -45,8 +45,11 @@ pub const Error = error{
 };
 
 pub const CSVParserOptions = struct {
-    has_header: bool = true,
+    header: bool = true,
     delimiter: u8 = ',',
+    comments: bool = true,
+    trim_whitespace: bool = false,
+    dynamic_typing: bool = false,
 };
 
 pub const CSV = struct {
@@ -57,6 +60,7 @@ pub const CSV = struct {
     index: usize,
     line_number: usize,
     options: CSVParserOptions,
+    iterator: strings.CodepointIterator,
 
     pub fn init(allocator: std.mem.Allocator, source: logger.Source, log: *logger.Log, opts: CSVParserOptions) CSV {
         return CSV{
@@ -67,6 +71,7 @@ pub const CSV = struct {
             .index = 0,
             .line_number = 1,
             .options = opts,
+            .iterator = strings.CodepointIterator.init(source.contents),
         };
     }
 
@@ -89,76 +94,113 @@ pub const CSV = struct {
         return try parser.runParser();
     }
 
-    fn peekChar(p: *CSV) ?u8 {
+    fn peekCodepoint(p: *CSV) ?u21 {
         if (p.index >= p.contents.len) {
             return null;
         }
-        return p.contents[p.index];
+        const slice = p.nextCodepointSlice();
+        const code_point = switch (slice.len) {
+            0 => null,
+            1 => @as(u21, slice[0]),
+            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), u21, strings.unicode_replacement),
+        };
+        return code_point;
     }
 
-    fn nextChar(p: *CSV) ?u8 {
-        const c = p.peekChar();
-        if (c != null) {
-            p.index += 1;
+    fn nextCodepointSlice(p: *CSV) []const u8 {
+        if (p.index >= p.contents.len) {
+            return "";
         }
-        return c;
+        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[p.index]);
+        return if (!(cp_len + p.index > p.contents.len)) p.contents[p.index .. cp_len + p.index] else "";
     }
 
-    fn consumeChar(p: *CSV, expected: u8) bool {
-        if (p.peekChar()) |c| {
+    fn nextCodepoint(p: *CSV) ?u21 {
+        if (p.index >= p.contents.len) {
+            return null;
+        }
+        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(p.contents.ptr[p.index]);
+        const slice = if (!(cp_len + p.index > p.contents.len)) p.contents[p.index .. cp_len + p.index] else "";
+
+        const code_point = switch (slice.len) {
+            0 => null,
+            1 => @as(u21, slice[0]),
+            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), u21, strings.unicode_replacement),
+        };
+
+        p.index += if (code_point != strings.unicode_replacement and code_point != null)
+            cp_len
+        else if (slice.len > 0)
+            1
+        else
+            0;
+
+        return code_point;
+    }
+
+    fn consumeCodepoint(p: *CSV, expected: u21) bool {
+        if (p.peekCodepoint()) |c| {
             if (c == expected) {
-                p.index += 1;
+                _ = p.nextCodepoint();
                 return true;
             }
         }
         return false;
     }
 
-    fn isEndOfLine(p: *CSV) bool {
+    fn isLineBreakChar(c: u21) bool {
+        return c == '\n' or // LF (Line Feed, U+000A)
+            c == '\r' or // CR (Carriage Return, U+000D)
+            c == 0x0085 or // NEL (Next Line)
+            c == 0x2028 or // LS (Line Separator)
+            c == 0x2029; // PS (Paragraph Separator)
+    }
+
+    fn checkLineBreak(p: *CSV, consume: bool) bool {
         if (p.index >= p.contents.len) return true;
 
-        const remaining = p.contents.len - p.index;
+        if (p.peekCodepoint()) |c| {
+            // Check for CRLF (Windows line endings)
+            if (c == '\r') {
+                if (consume) {
+                    _ = p.nextCodepoint(); // consume '\r'
 
-        // Check for CRLF
-        if (remaining >= 2 and p.contents[p.index] == '\r' and p.contents[p.index + 1] == '\n') {
-            return true;
-        }
+                    // Check if it's followed by '\n'
+                    if (p.peekCodepoint()) |next_c| {
+                        if (next_c == '\n') {
+                            _ = p.nextCodepoint(); // consume '\n'
+                            p.line_number += 1;
+                        } else {
+                            // Just a CR - still a valid line break
+                            p.line_number += 1;
+                        }
+                    } else {
+                        // Just a CR at the end of the file
+                        p.line_number += 1;
+                    }
+                }
+                return true;
+            }
 
-        // Check for just CR or LF (non-standard but sometimes encountered)
-        if (p.contents[p.index] == '\r' or p.contents[p.index] == '\n') {
-            return true;
+            // Check for other line breaks
+            if (isLineBreakChar(c)) {
+                if (consume) {
+                    _ = p.nextCodepoint(); // consume the line break
+                    p.line_number += 1;
+                }
+                return true;
+            }
         }
 
         return false;
     }
 
+    fn isEndOfLine(p: *CSV) bool {
+        return checkLineBreak(p, false);
+    }
+
     fn consumeEndOfLine(p: *CSV) bool {
-        if (p.index >= p.contents.len) return true;
-
-        const remaining = p.contents.len - p.index;
-
-        // Check for CRLF (standard)
-        if (remaining >= 2 and p.contents[p.index] == '\r' and p.contents[p.index + 1] == '\n') {
-            p.index += 2;
-            p.line_number += 1;
-            return true;
-        }
-
-        // Check for just LF (non-standard but common)
-        if (p.contents[p.index] == '\n') {
-            p.index += 1;
-            p.line_number += 1;
-            return true;
-        }
-
-        // Check for just CR (very old Mac format)
-        if (p.contents[p.index] == '\r') {
-            p.index += 1;
-            p.line_number += 1;
-            return true;
-        }
-
-        return false;
+        return checkLineBreak(p, true);
     }
 
     pub fn parseField(p: *CSV) ![]const u8 {
@@ -167,12 +209,12 @@ pub const CSV = struct {
         errdefer field.deinit();
 
         // Check if field is quoted
-        const is_quoted = p.consumeChar('"');
+        const is_quoted = p.consumeCodepoint('"');
 
         if (is_quoted) {
             // Parse quoted field
             while (true) {
-                const c = p.nextChar() orelse {
+                const c = p.nextCodepoint() orelse {
                     // Unexpected end of file inside quoted field
                     try p.log.addErrorFmt(&p.source, logger.Loc{ .start = @intCast(start_index) }, p.allocator, "Unexpected end of file inside quoted field", .{});
                     return error.UnexpectedEndOfFile;
@@ -180,29 +222,36 @@ pub const CSV = struct {
 
                 if (c == '"') {
                     // Check if it's an escaped quote (two double quotes in a row)
-                    if (p.consumeChar('"')) {
+                    if (p.consumeCodepoint('"')) {
+                        // For quote character, just append the ASCII value
                         try field.append('"');
                     } else {
                         // End of quoted field
                         break;
                     }
                 } else {
-                    // Directly append all characters in quoted fields
-                    try field.append(c);
+                    // Encode the Unicode codepoint to UTF-8 and append it
+                    var buf: [4]u8 = undefined;
+                    const len = strings.encodeWTF8RuneT(&buf, u21, c);
+                    try field.appendSlice(buf[0..len]);
                 }
             }
         } else {
             // Parse non-quoted field
             while (true) {
-                const c = p.peekChar() orelse break;
+                const c = p.peekCodepoint() orelse break;
 
                 if (c == p.options.delimiter or c == '\r' or c == '\n') {
                     break;
                 }
 
                 // Accept any character in non-quoted fields except separators and line endings
-                _ = p.nextChar();
-                try field.append(c);
+                _ = p.nextCodepoint();
+
+                // Encode the Unicode codepoint to UTF-8 and append it
+                var buf: [4]u8 = undefined;
+                const len = strings.encodeWTF8RuneT(&buf, u21, c);
+                try field.appendSlice(buf[0..len]);
             }
         }
 
@@ -228,7 +277,7 @@ pub const CSV = struct {
         try fields.append(first_field);
 
         // Parse remaining fields
-        while (p.consumeChar(p.options.delimiter)) {
+        while (p.consumeCodepoint(p.options.delimiter)) {
             const field = try p.parseField();
             try fields.append(field);
         }
@@ -254,7 +303,7 @@ pub const CSV = struct {
         // Create array for the results
         var result_array = p.e(E.Array{}, loc);
 
-        if (p.options.has_header) {
+        if (p.options.header) {
             // Parse header
             const header_loc = logger.Loc{ .start = @intCast(p.index) };
             var header = try p.parseRecord();

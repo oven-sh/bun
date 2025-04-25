@@ -31,8 +31,8 @@ void SigintWatcher::install()
             if (m_waiting.test_and_set()) {
                 m_waiting.clear();
                 if (!signalAll()) {
+                    Bun__onPosixSignal(SIGINT);
                 }
-                Bun__onPosixSignal(SIGINT);
             } else {
                 m_waiting.clear();
             }

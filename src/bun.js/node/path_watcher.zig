@@ -329,7 +329,7 @@ pub const PathWatcherManager = struct {
             const watchers = this.watchers.slice();
             const timestamp = std.time.milliTimestamp();
 
-            // stop all watchers
+            // stop all JS watchers by emitting the error
             for (watchers) |w| {
                 if (w) |watcher| {
                     log("[watch] error: {}", .{err});
@@ -468,7 +468,7 @@ pub const PathWatcherManager = struct {
 
                 const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
-                    .err => |e| return .{ .err = e },
+                    .err => |e| return .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
                 };
 
                 {
@@ -496,14 +496,14 @@ pub const PathWatcherManager = struct {
                         null,
                         false,
                     )) {
-                        .err => |err| return .{ .err = err },
+                        .err => |err| return .{ .err = err.clone(bun.default_allocator) catch bun.outOfMemory() },
                         .result => {},
                     }
                 } else {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err },
+                            .err => |err| return .{ .err = err.clone(bun.default_allocator) catch bun.outOfMemory() },
                             .result => {},
                         }
                     }
@@ -517,13 +517,15 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: bun.PathBuffer = undefined;
-
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
-                switch (this.processWatcher(watcher, &buf)) {
+                const buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf);
+                switch (this.processWatcher(watcher, buf)) {
                     .err => |err| {
                         log("[watch] error registering directory: {s}", .{err});
+                        var err2 = err;
+                        defer err2.deinit();
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                         watcher.flush();
                     },
@@ -766,8 +768,9 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: bun.PathBuffer = undefined;
-                const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
+                const buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const resolved_path_temp = bun.sys.getFdPath(path.fd, buffer).unwrap() catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
                 };
@@ -969,7 +972,7 @@ pub fn watch(
         .err => |_err| {
             var err = _err;
             err.syscall = .watch;
-            return .{ .err = err };
+            return .{ .err = err.clone(bun.default_allocator) catch bun.outOfMemory() };
         },
     };
 

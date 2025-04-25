@@ -55,6 +55,7 @@ fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
             }
 
             pub inline fn release(node: *Node) void {
+                node.data = undefined;
                 Parent.release(node);
             }
         };

@@ -1448,7 +1448,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
-  downloadLoop: for (let i = 0; i < 10; i++) {
+  downloadLoop: for (let i = 0; i < 100; i++) {
     const args = ["artifact", "download", "**", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);

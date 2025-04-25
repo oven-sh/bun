@@ -1262,7 +1262,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
         bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
 
         this.ref.unref(this.globalObject.bunVM());

@@ -352,12 +352,12 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
 
     var exec = &this.state.executing;
 
-    if (task.err) |err| {
+    if (task.err) |*err| {
         exec.error_signal.store(true, .seq_cst);
         if (exec.err == null) {
-            exec.err = err;
+            exec.err = err.*;
         } else {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
     }
 

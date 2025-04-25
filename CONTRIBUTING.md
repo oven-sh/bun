@@ -222,6 +222,9 @@ $ git -C vendor/WebKit checkout <commit_hash>
 # Optionally, you can use `make jsc` for a release build
 $ make jsc-debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
+# After an initial run of `make jsc-debug`, you can rebuild JSC with:
+$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
+
 # Build bun with the local JSC build
 $ bun run build:local
 ```

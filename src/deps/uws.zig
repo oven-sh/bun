@@ -104,15 +104,15 @@ pub const UpgradedDuplex = struct {
     const WrapperType = SSLWrapper(*UpgradedDuplex);
 
     wrapper: ?WrapperType,
-    origin: JSC.Strong = .empty, // any duplex
+    origin: JSC.Strong.Optional = .empty, // any duplex
     global: ?*JSC.JSGlobalObject = null,
     ssl_error: CertError = .{},
     vm: *JSC.VirtualMachine,
     handlers: Handlers,
-    onDataCallback: JSC.Strong = .empty,
-    onEndCallback: JSC.Strong = .empty,
-    onWritableCallback: JSC.Strong = .empty,
-    onCloseCallback: JSC.Strong = .empty,
+    onDataCallback: JSC.Strong.Optional = .empty,
+    onEndCallback: JSC.Strong.Optional = .empty,
+    onWritableCallback: JSC.Strong.Optional = .empty,
+    onCloseCallback: JSC.Strong.Optional = .empty,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
@@ -170,7 +170,7 @@ pub const UpgradedDuplex = struct {
             const globalThis = this.global.?;
             const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
             if (data) |data_| {
-                const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
+                const buffer = JSC.ArrayBuffer.BinaryType.toJS(.Buffer, data_, globalThis);
                 buffer.ensureStillAlive();
 
                 _ = writeOrEnd.call(globalThis, duplex, &.{buffer}) catch |err| {
@@ -217,7 +217,7 @@ pub const UpgradedDuplex = struct {
         const function = callframe.callee();
         const args = callframe.arguments_old(1);
 
-        if (JSC.getFunctionData(function)) |self| {
+        if (JSC.host_fn.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
             if (args.len >= 1) {
                 const data_arg = args.ptr[0];
@@ -249,7 +249,7 @@ pub const UpgradedDuplex = struct {
         _ = globalObject;
         const function = callframe.callee();
 
-        if (JSC.getFunctionData(function)) |self| {
+        if (JSC.host_fn.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
 
             if (this.wrapper != null) {
@@ -267,7 +267,7 @@ pub const UpgradedDuplex = struct {
         _ = globalObject;
         const function = callframe.callee();
 
-        if (JSC.getFunctionData(function)) |self| {
+        if (JSC.host_fn.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
             // flush pending data
             if (this.wrapper) |*wrapper| {
@@ -289,7 +289,7 @@ pub const UpgradedDuplex = struct {
         _ = globalObject;
         const function = callframe.callee();
 
-        if (JSC.getFunctionData(function)) |self| {
+        if (JSC.host_fn.getFunctionData(function)) |self| {
             const this = @as(*UpgradedDuplex, @ptrCast(@alignCast(self)));
             // flush pending data
             if (this.wrapper) |*wrapper| {
@@ -337,7 +337,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onDataCallback.get() orelse brk: {
-                const dataCallback = JSC.NewFunctionWithData(
+                const dataCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -347,9 +347,9 @@ pub const UpgradedDuplex = struct {
                 );
                 dataCallback.ensureStillAlive();
 
-                JSC.setFunctionData(dataCallback, this);
+                JSC.host_fn.setFunctionData(dataCallback, this);
 
-                this.onDataCallback = JSC.Strong.create(dataCallback, globalThis);
+                this.onDataCallback = .create(dataCallback, globalThis);
                 break :brk dataCallback;
             };
             array.putIndex(globalThis, 0, callback);
@@ -357,7 +357,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onEndCallback.get() orelse brk: {
-                const endCallback = JSC.NewFunctionWithData(
+                const endCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -367,9 +367,9 @@ pub const UpgradedDuplex = struct {
                 );
                 endCallback.ensureStillAlive();
 
-                JSC.setFunctionData(endCallback, this);
+                JSC.host_fn.setFunctionData(endCallback, this);
 
-                this.onEndCallback = JSC.Strong.create(endCallback, globalThis);
+                this.onEndCallback = .create(endCallback, globalThis);
                 break :brk endCallback;
             };
             array.putIndex(globalThis, 1, callback);
@@ -377,7 +377,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onWritableCallback.get() orelse brk: {
-                const writableCallback = JSC.NewFunctionWithData(
+                const writableCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -387,8 +387,8 @@ pub const UpgradedDuplex = struct {
                 );
                 writableCallback.ensureStillAlive();
 
-                JSC.setFunctionData(writableCallback, this);
-                this.onWritableCallback = JSC.Strong.create(writableCallback, globalThis);
+                JSC.host_fn.setFunctionData(writableCallback, this);
+                this.onWritableCallback = .create(writableCallback, globalThis);
                 break :brk writableCallback;
             };
             array.putIndex(globalThis, 2, callback);
@@ -396,7 +396,7 @@ pub const UpgradedDuplex = struct {
 
         {
             const callback = this.onCloseCallback.get() orelse brk: {
-                const closeCallback = JSC.NewFunctionWithData(
+                const closeCallback = JSC.host_fn.NewFunctionWithData(
                     globalThis,
                     null,
                     0,
@@ -406,8 +406,8 @@ pub const UpgradedDuplex = struct {
                 );
                 closeCallback.ensureStillAlive();
 
-                JSC.setFunctionData(closeCallback, this);
-                this.onCloseCallback = JSC.Strong.create(closeCallback, globalThis);
+                JSC.host_fn.setFunctionData(closeCallback, this);
+                this.onCloseCallback = .create(closeCallback, globalThis);
                 break :brk closeCallback;
             };
             array.putIndex(globalThis, 3, callback);
@@ -528,19 +528,19 @@ pub const UpgradedDuplex = struct {
 
         this.origin.deinit();
         if (this.onDataCallback.get()) |callback| {
-            JSC.setFunctionData(callback, null);
+            JSC.host_fn.setFunctionData(callback, null);
             this.onDataCallback.deinit();
         }
         if (this.onEndCallback.get()) |callback| {
-            JSC.setFunctionData(callback, null);
+            JSC.host_fn.setFunctionData(callback, null);
             this.onEndCallback.deinit();
         }
         if (this.onWritableCallback.get()) |callback| {
-            JSC.setFunctionData(callback, null);
+            JSC.host_fn.setFunctionData(callback, null);
             this.onWritableCallback.deinit();
         }
         if (this.onCloseCallback.get()) |callback| {
-            JSC.setFunctionData(callback, null);
+            JSC.host_fn.setFunctionData(callback, null);
             this.onCloseCallback.deinit();
         }
         var ssl_error = this.ssl_error;
@@ -660,7 +660,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         }
     }
 
-    fn onReadError(this: *WindowsNamedPipe, err: bun.C.E) void {
+    fn onReadError(this: *WindowsNamedPipe, err: bun.sys.E) void {
         log("onReadError", .{});
         if (err == .EOF) {
             // we received FIN but we dont allow half-closed connections right now
@@ -851,7 +851,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
             }) catch {
                 return .{
                     .err = .{
-                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .errno = @intFromEnum(bun.sys.E.PIPE),
                         .syscall = .connect,
                     },
                 };
@@ -899,7 +899,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
             }) catch {
                 return .{
                     .err = .{
-                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .errno = @intFromEnum(bun.sys.E.PIPE),
                         .syscall = .connect,
                     },
                 };
@@ -937,7 +937,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
             }) catch {
                 return .{
                     .err = .{
-                        .errno = @intFromEnum(bun.C.E.PIPE),
+                        .errno = @intFromEnum(bun.sys.E.PIPE),
                         .syscall = .connect,
                     },
                 };
@@ -980,7 +980,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
             return false;
         }
         const stream = this.writer.getStream() orelse {
-            this.onError(bun.sys.Error.fromCode(bun.C.E.PIPE, .read));
+            this.onError(bun.sys.Error.fromCode(bun.sys.E.PIPE, .read));
             return false;
         };
 
@@ -3032,6 +3032,7 @@ pub const ListenSocket = opaque {
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
 extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
+extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *Socket, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
 
 pub const SocketAddress = struct {
     ip: []const u8,
@@ -3474,6 +3475,25 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             };
             return uws_app_listen(ssl_flag, @as(*uws_app_t, @ptrCast(app)), port, Wrapper.handle, user_data);
+        }
+
+        pub fn onClientError(
+            app: *ThisApp,
+            comptime UserData: type,
+            user_data: UserData,
+            comptime handler: fn (data: UserData, socket: *Socket, error_code: u8, rawPacket: []const u8) void,
+        ) void {
+            const Wrapper = struct {
+                pub fn handle(data: *anyopaque, _: c_int, socket: *Socket, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
+                    @call(bun.callmod_inline, handler, .{
+                        @as(UserData, @ptrCast(@alignCast(data))),
+                        socket,
+                        error_code,
+                        if (raw_packet) |bytes| bytes[0..(@max(raw_packet_length, 0))] else "",
+                    });
+                }
+            };
+            return uws_app_set_on_clienterror(ssl_flag, @ptrCast(app), Wrapper.handle, @ptrCast(user_data));
         }
 
         pub fn listenWithConfig(

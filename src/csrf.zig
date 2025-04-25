@@ -299,7 +299,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE + 32, token_bytes);
 }
 
-pub const csrf__generate: JSC.JSHostFunctionType = JSC.toJSHostFunction(csrf__generate_impl);
+pub const csrf__generate = JSC.toJSHostFn(csrf__generate_impl);
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
@@ -385,4 +385,4 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     return JSC.JSValue.jsBoolean(is_valid);
 }
 
-pub const csrf__verify: JSC.JSHostFunctionType = JSC.toJSHostFunction(csrf__verify_impl);
+pub const csrf__verify = JSC.toJSHostFn(csrf__verify_impl);

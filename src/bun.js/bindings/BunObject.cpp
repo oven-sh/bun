@@ -914,7 +914,10 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* object = globalObject->bunObject();
 
     // :'(
-    object->reifyAllStaticProperties(lexicalGlobalObject);
+    if (LIKELY(object->hasNonReifiedStaticProperties())) {
+        object->reifyAllStaticProperties(lexicalGlobalObject);
+    }
+
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -151,7 +151,7 @@ pub const PluginRunner = struct {
             bun.String.init(namespace_slice)
         else
             bun.String.empty;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             namespace,
             bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
             bun.String.init(importer),
@@ -241,7 +241,7 @@ pub const PluginRunner = struct {
 
     pub fn onResolveJSC(this: *const PluginRunner, namespace: bun.String, specifier: bun.String, importer: bun.String, target: JSC.JSGlobalObject.BunPluginTarget) bun.JSError!?JSC.ErrorableString {
         var global = this.global_object;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
@@ -1207,7 +1207,7 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }

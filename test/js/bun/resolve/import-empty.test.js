@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, expect, it } from "bun:test";
+import path from "path";
 
-const empty_file_path = `${import.meta.dir}/empty-file`;
+const empty_file_path = path.join(import.meta.dir, "empty-file");
 
 // bun caches imports for performance, but we want to use different loaders for each test, so we need to clear it
 beforeEach(() => {

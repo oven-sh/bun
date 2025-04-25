@@ -4215,32 +4215,15 @@ pub const ParseTask = struct {
         opts: js_parser.Parser.Options,
         allocator: std.mem.Allocator,
         source: Logger.Source,
-        loader: Loader,
     ) !JSAst {
-        const root = switch (loader) {
-            .text => Expr.init(E.String, E.String{ .data = "" }, Logger.Loc.Empty),
-            else => Expr.init(E.Object, E.Object{}, Logger.Loc.Empty),
-        };
-
+        const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
         ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
         return ast;
     }
 
-    fn getEmptyAST(
-        log: *Logger.Log,
-        transpiler: *Transpiler,
-        opts: js_parser.Parser.Options,
-        allocator: std.mem.Allocator,
-        source: Logger.Source,
-        loader: Loader,
-        comptime RootType: type,
-    ) !JSAst {
-        const root = switch (loader) {
-            .text => Expr.init(E.String, E.String{ .data = "" }, Logger.Loc.Empty),
-            else => Expr.init(RootType, RootType{}, Logger.Loc.Empty),
-        };
-
+    fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
+        const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
         return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
     }
 
@@ -4280,7 +4263,6 @@ pub const ParseTask = struct {
                         opts,
                         allocator,
                         source,
-                        loader,
                         if (as_undefined) E.Undefined else E.Object,
                     ),
                 };
@@ -4522,7 +4504,7 @@ pub const ParseTask = struct {
             },
             // TODO:
             .dataurl, .base64, .bunsh => {
-                return try getEmptyAST(log, transpiler, opts, allocator, source, loader, E.String);
+                return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
             },
             .file, .wasm => {
                 bun.assert(loader.shouldCopyForBundling());
@@ -5181,7 +5163,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
@@ -5190,14 +5172,12 @@ pub const ParseTask = struct {
                 opts,
                 allocator,
                 source,
-                loader,
             ) else try getEmptyAST(
                 log,
                 transpiler,
                 opts,
                 allocator,
                 source,
-                loader,
                 if (as_undefined) E.Undefined else E.Object,
             ),
         };

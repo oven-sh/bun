@@ -62,9 +62,14 @@ void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
 
 void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
 {
-    if (auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject); iter != m_globalObjects.end()) {
-        m_globalObjects.erase(iter);
+    auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
+
+    if (iter == m_globalObjects.end()) {
+        return;
     }
+
+    std::swap(*iter, m_globalObjects.back());
+    m_globalObjects.pop_back();
 }
 
 SigintWatcher& SigintWatcher::get()

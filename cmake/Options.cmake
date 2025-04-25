@@ -91,7 +91,7 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX AND CI)
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASAN_RELEASE)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)
@@ -174,3 +174,7 @@ optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAUL
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
 
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
+
+if (ENABLE_ASAN_RELEASE AND ENABLE_LTO)
+  message(FATAL_ERROR "ASAN release builds with LTO are not supported")
+endif()

@@ -1,50 +1,51 @@
 import { readdir } from "fs/promises";
 import path from "path";
 
-// prettier-ignore
-const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
-  " != undefined": { reason: "This is by definition Undefined Behavior." },
-  " == undefined": { reason: "This is by definition Undefined Behavior." },
-  "undefined != ": { reason: "This is by definition Undefined Behavior." },
-  "undefined == ": { reason: "This is by definition Undefined Behavior." },
+const words2: BannedWord[] = [];
 
-  '@import("bun").': { reason: "Only import 'bun' once" },
-  "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
-  "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
-  "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 2 },
-  "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
-  "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
-  "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
-  "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
-  "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
-  "std.unicode": { reason: "Use bun.strings instead", limit: 33 },
+banWord(" != undefined", "This is by definition Undefined Behavior.");
+banWord(" == undefined", "This is by definition Undefined Behavior.");
+banWord("undefined != ", "This is by definition Undefined Behavior.");
+banWord("undefined == ", "This is by definition Undefined Behavior.");
 
-  "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },
-  "== allocator.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "!= allocator.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "alloc.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+banWord('@import("bun").', "Only import 'bun' once");
+banWord("std.debug.assert", "Use bun.assert instead", 26);
+banWord("std.debug.dumpStackTrace", "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead");
+banWord("std.debug.print", "Don't let this be committed", 0);
+banWord("std.mem.indexOfAny(u8", "Use bun.strings.indexOfAny", 2);
+banWord("std.StringArrayHashMapUnmanaged(", "bun.StringArrayHashMapUnmanaged has a faster `eql`", 12);
+banWord("std.StringArrayHashMap(", "bun.StringArrayHashMap has a faster `eql`", 1);
+banWord("std.StringHashMapUnmanaged(", "bun.StringHashMapUnmanaged has a faster `eql`");
+banWord("std.StringHashMap(", "bun.StringHashMap has a faster `eql`");
+banWord("std.enums.tagName(", "Use bun.tagName instead", 2);
+banWord("std.unicode", "Use bun.strings instead", 33);
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 241, regex: true },
-  "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
+const allocator_ptr_ban_msg =
+  "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior";
+banWord("allocator.ptr ==", allocator_ptr_ban_msg);
+banWord("allocator.ptr !=", allocator_ptr_ban_msg, 1);
+banWord("== allocator.ptr", allocator_ptr_ban_msg);
+banWord("!= allocator.ptr", allocator_ptr_ban_msg);
+banWord("alloc.ptr ==", allocator_ptr_ban_msg);
+banWord("alloc.ptr !=", allocator_ptr_ban_msg);
+banWord("== alloc.ptr", allocator_ptr_ban_msg);
+banWord("!= alloc.ptr", allocator_ptr_ban_msg);
 
-  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
-  "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
-  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 64 },
-  ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
-  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
+banWord(/: [a-zA-Z0-9_.*?[\]()]+ = undefined,/g, "Do not default a struct field to undefined", 241);
+banWord("usingnamespace", "Zig 0.15 will remove `usingnamespace`");
 
-  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 289 },
+const prefer_bun_reason =
+  "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv";
+banWord("std.fs.Dir", prefer_bun_reason, 180);
+banWord("std.fs.cwd", "Prefer bun.FD.cwd()", 103);
+banWord("std.fs.File", prefer_bun_reason, 64);
+banWord(".stdFile()", prefer_bun_reason, 18);
+banWord(".stdDir()", prefer_bun_reason, 48);
 
-  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
-};
-const words_keys = [...Object.keys(words)];
+banWord(".arguments_old(", "Please migrate to .argumentsAsArray() or another argument API", 289);
+banWord("// autofix", "Evaluate if this variable should be deleted entirely or explicitly discarded.", 176);
+banWord("catch unreachable", "Prefer handling error, or using catch bun.outOfMemory() for OutOfMemory errors.", 1857);
 
-let counts: Record<string, [number, string][]> = {};
 const files = await readdir("src", { recursive: true, withFileTypes: true });
 for (const file of files) {
   if (file.isDirectory()) continue;
@@ -52,40 +53,56 @@ for (const file of files) {
   if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
   if (file.parentPath.startsWith("src" + path.sep + "codegen")) continue;
   const content = await Bun.file(file.parentPath + path.sep + file.name).text();
-  for (const word of words_keys) {
-    let regex = words[word].regex ? new RegExp(word, "g") : undefined;
-    const did_match = regex ? regex.test(content) : content.includes(word);
+  for (const banned of words2) {
+    let regex = banned.value instanceof RegExp ? banned.value : undefined;
+    const did_match = regex ? regex.test(content) : content.includes(banned.value as string);
     if (regex) regex.lastIndex = 0;
     if (did_match) {
-      counts[word] ??= [];
       const lines = content.split("\n");
       for (let line_i = 0; line_i < lines.length; line_i++) {
         const trim = lines[line_i].trim();
         if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-        const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
+        const count = regex
+          ? [...lines[line_i].matchAll(regex)].length
+          : lines[line_i].split(banned.value as string).length - 1;
         for (let count_i = 0; count_i < count; count_i++) {
-          counts[word].push([line_i + 1, file.parentPath + path.sep + file.name]);
+          banned.counts.push([line_i + 1, file.parentPath + path.sep + file.name]);
         }
       }
     }
   }
 }
 
+function banWord(value: string | RegExp, msg: string, limit: number = 0) {
+  const stack_line = new Error("--").stack
+    ?.split("\n")
+    .find(l => l.includes("ban-words.test.ts") && !l.includes("banWord"));
+  words2.push({ value, reason: msg, limit, error_pos: stack_line, counts: [] });
+}
+
+type BannedWord = {
+  value: string | RegExp;
+  reason: string;
+  limit: number;
+  error_pos: string | undefined;
+  counts: [number, string][];
+};
+
 describe("banned words", () => {
-  for (const [i, [word, { reason, limit = 0 }]] of Object.entries(words).entries()) {
-    test(word + (limit !== 0 ? " (max " + limit + ")" : ""), () => {
-      const count = counts[word] ?? [];
-      if (count.length > limit) {
+  for (const banned of words2) {
+    test(banned.value.toString() + (banned.limit !== 0 ? " (max " + banned.limit + ")" : ""), () => {
+      const count = banned.counts;
+      if (count.length > banned.limit) {
         throw new Error(
-          `${JSON.stringify(word)} is banned.\nThis PR increases the number of instances of this word from ${limit} to ${count.length}\nBan reason: ${reason}\n` +
-            (limit === 0
+          `${JSON.stringify(banned.value)} is banned.\nThis PR increases the number of instances of this word from ${banned.limit} to ${count.length}\nBan reason: ${banned.reason}\n` +
+            (banned.limit === 0
               ? `Remove banned word from:\n${count.map(([line, path]) => `- ${path}:${line}\n`).join("")}`
               : "") +
             "\n",
         );
-      } else if (count.length < limit) {
+      } else if (count.length < banned.limit) {
         throw new Error(
-          `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit in scripts/ban-words.ts:${i + 5}\n`,
+          `Instances of banned word ${JSON.stringify(banned.value)} reduced from ${banned.limit} to ${count.length}\nUpdate limit\n${banned.error_pos}\n`,
         );
       }
     });

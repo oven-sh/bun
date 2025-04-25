@@ -1473,7 +1473,7 @@ Object.defineProperty(Socket.prototype, "readyState", {
 
 Socket.prototype.ref = function ref() {
   const socket = this._handle;
-  if (!socket || !socket?.[ksocket]) {
+  if (!socket) {
     this.once("connect", this.ref);
     return this;
   }
@@ -1588,7 +1588,7 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 
 Socket.prototype.unref = function unref() {
   const socket = this._handle;
-  if (!socket || !socket?.[ksocket]) {
+  if (!socket) {
     this.once("connect", this.unref);
     return this;
   }

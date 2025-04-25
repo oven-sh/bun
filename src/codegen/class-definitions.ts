@@ -202,7 +202,8 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number };
+  customInspect?: boolean;
 
   callbacks?: Record<string, string>;
 
@@ -245,7 +246,7 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone = false,
+    structuredClone,
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): Partial<ClassDefinition> {

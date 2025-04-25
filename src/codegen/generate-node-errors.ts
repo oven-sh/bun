@@ -12,8 +12,9 @@ const extra_count = NodeErrors.map(x => x.slice(3))
   .reduce((ac, cv) => ac + cv.length, 0);
 const count = NodeErrors.length + extra_count;
 
-if (count > 65536) {
-  throw new Error("NodeError count exceeds u16");
+if (count > 1 << 16) {
+  // increase size of the enums below to have more tags
+  throw new Error(`NodeError can't fit ${count} codes in a u16`);
 }
 
 let enumHeader = ``;
@@ -166,9 +167,9 @@ for (const [code, constructor, name, ...other_constructors] of NodeErrors) {
       ? `${constructor.name} & { name: "${name}", code: "${code}" }`
       : `${constructor.name} & { code: "${code}" }`;
   dts += `
-/** 
+/**
  * Construct an {@link ${constructor.name} ${constructor.name}} with the \`"${code}"\` error code.
- * 
+ *
  * To override this, update ErrorCode.cpp. To remove this generated type, mention \`"${code}"\` in builtins.d.ts.
  */
 declare function $${code}(message: string): ${namedError};\n`;

@@ -57,11 +57,15 @@ void SigintWatcher::signalReceived()
 
 void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
 {
+    std::unique_lock lock(m_globalObjectsMutex);
+
     m_globalObjects.push_back(globalObject);
 }
 
 void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
 {
+    std::unique_lock lock(m_globalObjectsMutex);
+
     auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
 
     if (iter == m_globalObjects.end()) {
@@ -79,6 +83,8 @@ SigintWatcher& SigintWatcher::get()
 
 bool SigintWatcher::signalAll()
 {
+    std::unique_lock lock(m_globalObjectsMutex);
+
     if (m_globalObjects.empty()) {
         return false;
     }

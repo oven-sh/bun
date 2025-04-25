@@ -4,6 +4,7 @@
 #include "Semaphore.h"
 
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -29,6 +30,7 @@ private:
     std::atomic_bool m_installed = false;
     std::atomic_flag m_waiting = false;
     Semaphore m_semaphore;
+    std::mutex m_globalObjectsMutex;
     std::vector<NodeVMGlobalObject*> m_globalObjects;
 
     bool signalAll();

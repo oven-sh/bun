@@ -2703,6 +2703,6 @@ test("clientError should fire when receiving invalid method", async () => {
 });
 
 test("throw inside clientError should be propagated to uncaughtException", async () => {
-  const testFile = path.join(import.meta.dir, "node-http-clientError-catch.js");
+  const testFile = path.join(import.meta.dir, "node-http-clientError-uncaughtException-fixture.js");
   expect([testFile]).toRun("", 0);
 });

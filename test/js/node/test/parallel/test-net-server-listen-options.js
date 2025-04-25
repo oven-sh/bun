@@ -67,6 +67,8 @@ const listenOnPort = [
                       message: /^The argument 'options' must have the property "port" or "path"\. Received .+$/,
                     });
     } else {
+      console.log(options);
+
       assert.throws(fn,
                     {
                       code: 'ERR_INVALID_ARG_VALUE',

@@ -1336,48 +1336,6 @@ Server.prototype.getConnections = function getConnections(callback) {
 function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
-
-// function normalizeListenArgs(...args): normalizeListenArgs.Options {
-//   if (args.length === 0) {
-//     return {};
-//   }
-
-//   let options: normalizeListenArgs.Options;
-//   const optionsOrPortOrPath = args[0];
-
-//   if (typeof optionsOrPortOrPath === "function") {
-//     return { onListen: optionsOrPortOrPath };
-//   }
-
-//   if (optionsOrPortOrPath === undefined || optionsOrPortOrPath === null) {
-//     options = {};
-//   } else if (typeof optionsOrPortOrPath === "object") {
-//     options = optionsOrPortOrPath;
-//   } else if (typeof optionsOrPortOrPath === "string" && toNumber(optionsOrPortOrPath) === false) {
-//     options = { path: optionsOrPortOrPath };
-//   } else {
-//     options = { port: optionsOrPortOrPath };
-//   }
-
-//   if (args.length === 2) {
-//     const hostOrBacklog = args[1];
-//     if (typeof hostOrBacklog === "string") {
-//       options.host = hostOrBacklog;
-//     }
-
-//     const backlog = toNumber(hostOrBacklog);
-//     if (backlog !== false && Number.isSafeInteger(backlog)) {
-//       options.backlog = backlog;
-//     }
-//   }
-
-//   if (typeof args[args.length - 1] === "function") {
-//     options.onListen = args[args.length - 1];
-//   }
-
-//   return options;
-// }
-
 Server.prototype.listen = function listen(...args) {
   const normalized = normalizeArgs(args) as [
     {
@@ -1396,7 +1354,10 @@ Server.prototype.listen = function listen(...args) {
   ];
 
   let options = normalized[0];
+
   const cb = normalized[1];
+
+  const port = options.port ?? 0;
 
   addServerAbortSignalOption(this, normalized);
 
@@ -1404,21 +1365,22 @@ Server.prototype.listen = function listen(...args) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  if (
-    args.length === 0 ||
-    typeof args[0] === "function" ||
-    (options.port === undefined && "port" in options) ||
-    options.port === null
-  ) {
-    options.port = 0;
-  }
-
   const backlogFromArgs = toNumber(args.length > 1 && args[1]) || toNumber(args.length > 2 && args[2]);
 
   let backlog;
 
-  if (typeof options.port === "number" || typeof options.port === "string") {
-    validatePort(options.port, "options.port");
+  if (
+    typeof args[0] !== "object" &&
+    typeof args[0] !== "function" &&
+    typeof args[0] !== "undefined" &&
+    typeof args[0] !== "string" &&
+    typeof args[0] !== "number"
+  ) {
+    throw $ERR_INVALID_ARG_VALUE("options", args[0], "is invalid");
+  }
+
+  if (typeof port === "number" || typeof port === "string") {
+    validatePort(port, "options.port");
     backlog = options.backlog || backlogFromArgs;
 
     if (options.reusePort === true) {
@@ -1439,7 +1401,7 @@ Server.prototype.listen = function listen(...args) {
     const options = this[bunSocketServerOptions];
     let contexts: Map<string, any> | null = null;
     if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, options.port, options.host, false);
+      [tls, TLSSocketClass] = bunTLS.$call(this, port, options.host, false);
       options.servername = tls.serverName;
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
@@ -1455,7 +1417,7 @@ Server.prototype.listen = function listen(...args) {
     listenInCluster(
       this,
       null,
-      options.port,
+      port,
       4,
       backlog,
       undefined,
@@ -1629,34 +1591,37 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
-  while (args.length && args[args.length - 1] == null) args.pop();
-  let arr;
+function normalizeArgs(args: unknown[]) {
+  let arr: [Record<PropertyKey, any>, Function | null];
 
   if (args.length === 0) {
     arr = [{}, null];
-    arr[normalizedArgsSymbol as symbol] = true;
+    arr[normalizedArgsSymbol] = true;
     return arr;
   }
 
-  const arg0 = args[0];
-  let options: any = {};
-  if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0;
-  } else if (isPipeName(arg0)) {
-    options.path = arg0;
+  const optionsOrPathOrPort = args[0];
+  let options: Record<PropertyKey, any> = {};
+
+  if (typeof optionsOrPathOrPort === "object" && optionsOrPathOrPort !== null) {
+    options = optionsOrPathOrPort;
+  } else if (isPipeName(optionsOrPathOrPort)) {
+    options.path = optionsOrPathOrPort;
   } else {
-    options.port = arg0;
+    options.port = optionsOrPathOrPort;
     if (args.length > 1 && typeof args[1] === "string") {
       options.host = args[1];
     }
   }
 
   const cb = args[args.length - 1];
-  if (typeof cb !== "function") arr = [options, null];
-  else arr = [options, cb];
-  arr[normalizedArgsSymbol as symbol] = true;
+  if (typeof cb !== "function") {
+    arr = [options, null];
+  } else {
+    arr = [options, cb];
+  }
 
+  arr[normalizedArgsSymbol] = true;
   return arr;
 }
 

@@ -3981,7 +3981,7 @@ pub const H2FrameParser = struct {
         }
 
         if (silent) {
-            // ?
+            // TODO: should we make use of this in the future? We validate it.
         }
 
         return JSC.JSValue.jsNumber(stream_id);

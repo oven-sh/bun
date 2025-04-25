@@ -131,6 +131,7 @@ JSC::EncodedJSValue OSSL_EVP_INVALID_DIGEST(JSC::ThrowScope&, JSC::JSGlobalObjec
 JSC::EncodedJSValue KEY_GENERATION_JOB_FAILED(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INCOMPATIBLE_OPTION_PAIR(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral opt1, ASCIILiteral opt2);
 JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
+JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
 JSC::EncodedJSValue CLOSED_MESSAGE_PORT(JSC::ThrowScope&, JSC::JSGlobalObject*);
 
 // URL

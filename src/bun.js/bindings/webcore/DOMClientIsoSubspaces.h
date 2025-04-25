@@ -57,6 +57,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMIMEType;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
@@ -939,5 +940,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMIMEParams;
 };
 } // namespace WebCore

@@ -527,6 +527,8 @@ public:
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
+    V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
@@ -567,6 +569,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSCryptoKey)                                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                               \

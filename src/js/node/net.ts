@@ -1422,6 +1422,10 @@ Server.prototype.listen = function listen(...args) {
     hostname = path;
   }
 
+  if (args.length > 1 && normalized.port === undefined && path === undefined) {
+    throw $ERR_INVALID_ARG_VALUE("options", normalized, "is invalid");
+  }
+
   if (port < 0 || Number.isNaN(port) || !Number.isSafeInteger(port) || port > 65535) {
     throw $ERR_SOCKET_BAD_PORT("port must be a non-negative integer between 0 and 65535");
   }

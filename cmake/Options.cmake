@@ -91,13 +91,13 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASAN_RELEASE)
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN_RELEASE)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)
 endif()
 
-optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
+option(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)

@@ -91,14 +91,6 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN_RELEASE)
-  set(DEFAULT_LTO ON)
-else()
-  set(DEFAULT_LTO OFF)
-endif()
-
-option(ENABLE_LTO "If LTO (link-time optimization) should be used" ${DEFAULT_LTO})
-
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
@@ -108,6 +100,14 @@ else()
   optionx(ENABLE_ASAN_RELEASE BOOL "If ASAN support should be enabled in release builds" DEFAULT OFF)
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
 endif()
+
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN_RELEASE)
+  set(DEFAULT_LTO ON)
+else()
+  set(DEFAULT_LTO OFF)
+endif()
+
+optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
 if (ENABLE_ASAN_RELEASE)
   set(ENABLE_LTO OFF)

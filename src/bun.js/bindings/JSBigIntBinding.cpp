@@ -65,7 +65,7 @@ extern "C" int8_t JSC__JSBigInt__orderInt64(JSBigInt* bigInt, int64_t num)
     }
 }
 
-extern "C" int64_t JSC__JSBigInt__toInt64(JSBigInt* bigInt, JSGlobalObject* globalObject)
+extern "C" int64_t JSC__JSBigInt__toInt64(JSBigInt* bigInt)
 {
     return JSBigInt::toBigInt64(bigInt);
 }

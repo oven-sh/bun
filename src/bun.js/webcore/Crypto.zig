@@ -65,9 +65,6 @@ pub fn getRandomValues(
         else => {},
     }
 
-    if (array_buffer.byte_len > 65536) {
-        return globalThis.throwDOMException(.QuotaExceededError, "The requested length exceeds 65,536 bytes", .{});
-    }
     const slice = array_buffer.byteSlice();
 
     randomData(globalThis, slice.ptr, slice.len);
@@ -81,9 +78,6 @@ pub fn getRandomValuesWithoutTypeChecks(
     array: *JSC.JSUint8Array,
 ) JSC.JSValue {
     const slice = array.slice();
-    if (slice.len > 65536) {
-        return globalThis.throwDOMException(.QuotaExceededError, "The requested length exceeds 65,536 bytes", .{});
-    }
     randomData(globalThis, slice.ptr, slice.len);
     return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
 }

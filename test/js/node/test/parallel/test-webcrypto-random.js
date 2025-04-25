@@ -62,12 +62,14 @@ for (const ctor of intTypedConstructors) {
     // Ignore if error here.
   }
 
-  if (kData !== undefined) {
-    assert.throws(
-      () => crypto.getRandomValues(kData),
-      { name: 'QuotaExceededError', code: 22 },
-    );
-  }
+  // we allow more than 65536 bytes
+
+  // if (kData !== undefined) {
+  //   assert.throws(
+  //     () => crypto.getRandomValues(kData),
+  //     { name: 'QuotaExceededError', code: 22 },
+  //   );
+  // }
 }
 
 {

@@ -259,7 +259,7 @@ register_compiler_flags(
 )
 
 # --- LTO ---
-if(ENABLE_LTO)
+if(ENABLE_LTO AND NOT ENABLE_ASAN_RELEASE)
   register_compiler_flags(
     DESCRIPTION "Enable link-time optimization (LTO)"
     -flto=full ${UNIX}

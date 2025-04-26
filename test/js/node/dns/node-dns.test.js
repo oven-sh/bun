@@ -291,6 +291,23 @@ test("dns.lookup (example.com)", () => {
   return promise;
 });
 
+test("dns.lookup bad (qedjp3f4q4jgjh4d6vaf3fd2hbfhg6upt2bscrfe.com)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  dns.lookup("qedjp3f4q4jgjh4d6vaf3fd2hbfhg6upt2bscrfe.com", (err, address, family) => {
+    try {
+      expect(err).not.toBeNull();
+      expect(err.syscall).toEqual("getaddrinfo");
+      expect(err.code).toEqual("ENOTFOUND");
+      expect(address).toBeUndefined();
+      expect(family).toBeUndefined();
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
+  });
+  return promise;
+});
+
 test("dns.lookup (example.com) with { all: true } #2675", () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   dns.lookup("example.com", { all: true }, (err, address, family) => {

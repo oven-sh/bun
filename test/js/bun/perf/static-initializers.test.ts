@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, isMacOS } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isMacOS } from "harness";
 
 /**
  * This test prevents startup performance regressions by ensuring that Bun has

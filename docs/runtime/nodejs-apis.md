@@ -140,7 +140,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController` `MIMEType` `MIMEParams`
+🟡 Missing `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 

@@ -555,9 +555,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -566,9 +566,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncEntries, (JSGlobalObject * globalO
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -577,9 +577,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncKeys, (JSGlobalObject * globalObje
 
 JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncValues, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto* thisObject = jsDynamicCast<JSMIMEParams*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEParams"));
         RETURN_IF_EXCEPTION(scope, {});
     }

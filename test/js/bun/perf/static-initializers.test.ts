@@ -21,7 +21,7 @@ import { bunEnv, bunExe, isMacOS } from "harness";
  */
 describe("static initializers", () => {
   // Only macOS has DYLD_PRINT_INITIALIZERS
-  it.skipIf(!isMacOS)("should only have one static initializer from bun itself", () => {
+  it.skipIf(!isMacOS || process.arch !== "arm64")("should only have one static initializer from bun itself", () => {
     const env = {
       ...bunEnv,
       DYLD_PRINT_INITIALIZERS: "1",

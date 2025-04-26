@@ -1085,6 +1085,10 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        if (UNLIKELY(left->isShared() != right->isShared())) {
+            return false;
+        }
+
         if (byteLength == 0)
             return true;
 
@@ -1291,6 +1295,45 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
 
         if (UNLIKELY(vector == rightVector))
             return true;
+
+        // For Float32Array and Float64Array, when not in strict mode, we need to
+        // handle +0 and -0 as equal, and NaN as not equal to itself.
+        if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
+            if (c1Type == Float16ArrayType) {
+                auto* leftFloat = static_cast<const WTF::Float16*>(vector);
+                auto* rightFloat = static_cast<const WTF::Float16*>(rightVector);
+                size_t numElements = byteLength / sizeof(WTF::Float16);
+
+                for (size_t i = 0; i < numElements; i++) {
+                    if (leftFloat[i] != rightFloat[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            } else if (c1Type == Float32ArrayType) {
+                auto* leftFloat = static_cast<const float*>(vector);
+                auto* rightFloat = static_cast<const float*>(rightVector);
+                size_t numElements = byteLength / sizeof(float);
+
+                for (size_t i = 0; i < numElements; i++) {
+                    if (leftFloat[i] != rightFloat[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            } else { // Float64Array
+                auto* leftDouble = static_cast<const double*>(vector);
+                auto* rightDouble = static_cast<const double*>(rightVector);
+                size_t numElements = byteLength / sizeof(double);
+
+                for (size_t i = 0; i < numElements; i++) {
+                    if (leftDouble[i] != rightDouble[i]) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }

@@ -102,9 +102,10 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
@@ -527,6 +528,8 @@ public:
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
+    V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
@@ -567,6 +570,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSCryptoKey)                                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                               \
@@ -696,11 +701,11 @@ private:
 
 class EvalGlobalObject : public GlobalObject {
 public:
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
 
     EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
-        : GlobalObject(vm, structure, &s_globalObjectMethodTable)
+        : GlobalObject(vm, structure, &globalObjectMethodTable())
     {
     }
 };

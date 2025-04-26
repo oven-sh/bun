@@ -17,7 +17,7 @@ pub const JSErrorCode = enum(u8) {
     _,
 };
 
-// keep in sync with ExceptionCode.h `ExceptionCode`
+// keep in sync with ExceptionCode in src/bun.js/bindings/ExceptionCode.h
 pub const DOMExceptionCode = enum(u8) {
     // DOMException error names (https://webidl.spec.whatwg.org/#idl-DOMException-error-names).
     // Those need to be kept in sync with the array in DOMException.cpp.

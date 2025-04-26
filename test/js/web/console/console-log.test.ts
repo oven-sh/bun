@@ -152,3 +152,29 @@ NamedError: console.error a named error
   Error log"
 `);
 });
+
+it("console.log with SharedArrayBuffer", () => {
+  const proc = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      console.log(new ArrayBuffer(0));
+      console.log(new SharedArrayBuffer(0));
+      console.log(new ArrayBuffer(3));
+      console.log(new SharedArrayBuffer(3));
+    `,
+    ],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(proc.stderr.toString("utf8")).toBeEmpty();
+  expect(proc.exitCode).toBe(0);
+  expect(proc.stdout.toString("utf8")).toMatchInlineSnapshot(`
+    "ArrayBuffer(0) []
+    SharedArrayBuffer(0) []
+    ArrayBuffer(3) [ 0, 0, 0 ]
+    SharedArrayBuffer(3) [ 0, 0, 0 ]
+    "
+  `);
+});

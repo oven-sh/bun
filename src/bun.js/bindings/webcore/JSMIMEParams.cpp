@@ -36,19 +36,13 @@ static inline bool isHTTPTokenChar(char c)
     return WTF::isASCIIAlphanumeric(c) || c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
 }
 
-// Checks if a character is NOT an HTTP token code point.
-static inline bool isNotHTTPTokenChar(char c)
-{
-    return !isHTTPTokenChar(c);
-}
-
 // Finds the first character that is NOT an HTTP token code point. Returns -1 if all are valid.
 static int findFirstInvalidHTTPTokenChar(const StringView& view)
 {
     if (view.is8Bit()) {
         const auto span = view.span8();
         for (size_t i = 0; i < span.size(); ++i) {
-            if (isNotHTTPTokenChar(span[i])) {
+            if (!isHTTPTokenChar(span[i])) {
                 return i;
             }
         }
@@ -56,7 +50,7 @@ static int findFirstInvalidHTTPTokenChar(const StringView& view)
         const auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
             // Assume non-ASCII is invalid for tokens
-            if (span[i] > 0x7F || isNotHTTPTokenChar(static_cast<char>(span[i]))) {
+            if (span[i] > 0x7F || !isHTTPTokenChar(static_cast<char>(span[i]))) {
                 return i;
             }
         }
@@ -71,26 +65,20 @@ static inline bool isHTTPQuotedStringChar(UChar c)
     return c == 0x09 || (c >= 0x20 && c <= 0x7E) || (c >= 0x80 && c <= 0xFF);
 }
 
-// Checks if a character is NOT a valid HTTP quoted string code point.
-static inline bool isNotHTTPQuotedStringChar(UChar c)
-{
-    return !isHTTPQuotedStringChar(c);
-}
-
 // Finds the first invalid character in a potential parameter value. Returns -1 if all are valid.
 static int findFirstInvalidHTTPQuotedStringChar(const StringView& view)
 {
     if (view.is8Bit()) {
         const auto span = view.span8();
         for (size_t i = 0; i < span.size(); ++i) {
-            if (isNotHTTPQuotedStringChar(span[i])) {
+            if (!isHTTPQuotedStringChar(span[i])) {
                 return i;
             }
         }
     } else {
         const auto span = view.span16();
         for (size_t i = 0; i < span.size(); ++i) {
-            if (isNotHTTPQuotedStringChar(span[i])) {
+            if (!isHTTPQuotedStringChar(span[i])) {
                 return i;
             }
         }

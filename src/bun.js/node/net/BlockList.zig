@@ -25,7 +25,7 @@ pub const toJS = js.toJS;
 ref_count: RefCount = .init(),
 globalThis: *JSC.JSGlobalObject,
 da_rules: std.ArrayList(Rule),
-mutex: std.Thread.Mutex = .{},
+mutex: bun.Mutex = .{},
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*@This() {
     _ = callFrame;

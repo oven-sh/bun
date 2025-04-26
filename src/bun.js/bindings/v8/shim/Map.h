@@ -34,21 +34,21 @@ struct Map {
     InstanceType m_instanceType;
 
     // Since maps are V8 objects, they each also have a map pointer at the start, which is this one
-    static const Map map_map;
+    static const Map& map_map();
     // All V8 values not covered by a more specific map use this one
-    static const Map object_map;
+    static const Map& object_map();
     // The map used by null, undefined, true, and false. Required since V8 checks these values'
     // instance type in the inline QuickIs* functions
-    static const Map oddball_map;
+    static const Map& oddball_map();
     // All strings use this map. Required since V8's inline QuickIsString() checks the instance
     // type.
-    static const Map string_map;
+    static const Map& string_map();
     // Handles containing a double instead of a JSCell pointer use this map so that we can tell they
     // are numbers.
-    static const Map heap_number_map;
+    static const Map& heap_number_map();
 
     Map(InstanceType instance_type)
-        : m_metaMap(const_cast<Map*>(&map_map))
+        : m_metaMap(const_cast<Map*>(&map_map()))
         , m_unused(0xaaaaaaaa)
         , m_instanceType(instance_type)
     {

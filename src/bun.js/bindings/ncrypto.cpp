@@ -1341,18 +1341,25 @@ std::optional<WTF::String> X509View::getFingerprint(
 {
     unsigned int md_size;
     unsigned char md[EVP_MAX_MD_SIZE];
-    static constexpr char hex[] = "0123456789ABCDEF";
+    static const char hex[] = "0123456789ABCDEF";
 
     if (X509_digest(get(), method, md, &md_size)) {
         if (md_size == 0) return std::nullopt;
         std::span<LChar> fingerprint;
         WTF::String fingerprintStr = WTF::String::createUninitialized((md_size * 3) - 1, fingerprint);
-        for (unsigned int i = 0; i < md_size; i++) {
-            auto idx = 3 * i;
-            fingerprint[idx] = hex[(md[i] & 0xf0) >> 4];
-            fingerprint[idx + 1] = hex[(md[i] & 0x0f)];
-            if (i == md_size - 1) break;
-            fingerprint[idx + 2] = ':';
+
+        {
+            // This function is 650 KB.
+            // It should not be 650 KB.
+            unsigned int i = 0;
+            unsigned int idx = 0;
+            do {
+                const unsigned int md_i = md[i++];
+                fingerprint[idx++] = hex[(md_i & 0xf0) >> 4];
+                fingerprint[idx++] = hex[(md_i & 0x0f)];
+                if (i == md_size) break;
+                fingerprint[idx++] = ':';
+            } while (i < md_size);
         }
 
         return fingerprintStr;

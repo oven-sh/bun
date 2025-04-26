@@ -1100,13 +1100,17 @@ it("process.memoryUsage.arrayBuffers", () => {
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
 
-it("should handle user assigned `default` properties", () => {
+it("should handle user assigned `default` properties", async () => {
   process.default = 1;
   process.hello = 2;
+  const { promise, resolve } = Promise.withResolvers();
   import("node:process").then(processModule => {
     expect(processModule.default).toBe(process);
     expect(processModule.default.default).toBe(1);
     expect(processModule.hello).toBe(2);
     expect(processModule.default.hello).toBe(2);
+    resolve();
   });
+
+  await promise;
 });

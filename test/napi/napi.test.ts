@@ -346,6 +346,10 @@ describe("napi", () => {
     it("has the right code and message", () => {
       checkSameOutput("test_throw_functions_exhaustive", []);
     });
+
+    it("does not throw with nullptr", () => {
+      checkSameOutput("test_napi_throw_with_nullptr", []);
+    });
   });
   describe("napi_create_error functions", () => {
     it("has the right code and message", () => {

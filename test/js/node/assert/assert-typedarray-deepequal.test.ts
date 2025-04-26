@@ -37,6 +37,8 @@ describe("TypedArray deepEqual", () => {
 
   describe("looseEqualArrayPairs", () => {
     const looseEqualArrayPairs = [
+      // @ts-ignore
+      [new Float16Array([+0.0]), new Float16Array([-0.0])],
       [new Float32Array([+0.0]), new Float32Array([-0.0])],
       [new Float64Array([+0.0]), new Float64Array([-0.0])],
     ];
@@ -45,6 +47,22 @@ describe("TypedArray deepEqual", () => {
       test(`${arrayPair[0].constructor.name} should be loosely equal but not strictly equal`, () => {
         assert.deepEqual(arrayPair[0], arrayPair[1]);
         expect(() => assert.deepStrictEqual(arrayPair[0], arrayPair[1])).toThrow(assert.AssertionError);
+      });
+    }
+  });
+
+  describe("looseNotEqualArrayPairs", () => {
+    const looseNotEqualArrayPairs = [
+      // @ts-ignore
+      [new Float16Array([NaN]), new Float16Array([NaN])],
+      [new Float32Array([NaN]), new Float32Array([NaN])],
+      [new Float64Array([NaN]), new Float64Array([NaN])],
+    ];
+
+    for (const arrayPair of looseNotEqualArrayPairs) {
+      test(`${arrayPair[0].constructor.name} should be strictly equal but not loosely equal`, () => {
+        expect(() => assert.deepEqual(arrayPair[0], arrayPair[1])).toThrow(assert.AssertionError);
+        assert.deepStrictEqual(arrayPair[0], arrayPair[1]);
       });
     }
   });

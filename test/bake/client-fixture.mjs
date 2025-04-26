@@ -2,9 +2,9 @@
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
+import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
-import assert from 'node:assert/strict';
 
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
@@ -120,8 +120,7 @@ function createWindow(windowUrl) {
   const originalElementAppendChild = window.document.head.appendChild;
   class ScriptTag {
     src;
-    constructor() {
-    }
+    constructor() {}
     remove() {}
   }
   window.document.createElement = function (tagName) {
@@ -145,7 +144,7 @@ function createWindow(windowUrl) {
         return;
       }
       return originalElementAppendChild.call(document.head, element);
-    }
+    },
   });
 
   // Intercept console messages

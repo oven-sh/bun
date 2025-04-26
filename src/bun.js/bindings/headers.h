@@ -742,10 +742,10 @@ ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
 #ifdef __cplusplus
 
 ZIG_DECL /*[[noreturn]]*/ void Bun__Process__exit(JSC__JSGlobalObject* arg0, uint8_t arg1); // TODO(@190n) figure out why with a real [[noreturn]] annotation this trips ASan before calling the function
-ZIG_DECL JSC__JSValue Bun__Process__getArgv(JSC__JSGlobalObject* arg0);
-ZIG_DECL JSC__JSValue Bun__Process__getArgv0(JSC__JSGlobalObject* arg0);
+ZIG_DECL JSC__JSValue Bun__Process__createArgv(JSC__JSGlobalObject* arg0);
+ZIG_DECL JSC__JSValue Bun__Process__createArgv0(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getCwd(JSC__JSGlobalObject* arg0);
-ZIG_DECL JSC__JSValue Bun__Process__getExecArgv(JSC__JSGlobalObject* arg0);
+ZIG_DECL JSC__JSValue Bun__Process__createExecArgv(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getExecPath(JSC__JSGlobalObject* arg0);
 ZIG_DECL void Bun__Process__getTitle(JSC__JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC__JSValue Bun__Process__setCwd(JSC__JSGlobalObject* arg0, ZigString* arg1);

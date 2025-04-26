@@ -1392,11 +1392,10 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
     builder.append(" in "_s);
     builder.append(input);
 
+    builder.append(" is invalid"_s);
     if (position != -1) {
-        builder.append(" is invalid at "_s);
+        builder.append(" at "_s);
         builder.append(String::number(position));
-    } else {
-        builder.append(" is invalid"_s);
     }
 
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_MIME_SYNTAX, builder.toString()));

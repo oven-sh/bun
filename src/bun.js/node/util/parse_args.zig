@@ -677,8 +677,8 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
 
     // Phase 0.A: Get and validate type of input args
     var args: ArgsSlice = undefined;
-    const config_args_or_null: ?JSValue = if (config) |c| c.getOwn(globalThis, "args") else null;
-    if (config_args_or_null) |config_args| {
+    const config_args: JSValue = if (config) |c| c.getOwn(globalThis, "args") orelse .undefined else .undefined;
+    if (!config_args.isUndefinedOrNull()) {
         try validators.validateArray(globalThis, config_args, "args", .{}, null);
         args = .{
             .array = config_args,
@@ -692,17 +692,18 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
     // Phase 0.B: Parse and validate config
 
     const config_strict: JSValue = (if (config) |c| c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
-    const config_allow_positionals: ?JSValue = if (config) |c| c.getOwn(globalThis, "allowPositionals") else null;
+    var config_allow_positionals: JSValue = if (config) |c| c.getOwn(globalThis, "allowPositionals") orelse JSC.jsBoolean(!config_strict.toBoolean()) else JSC.jsBoolean(!config_strict.toBoolean());
     const config_return_tokens: JSValue = (if (config) |c| c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
     const config_allow_negative: JSValue = if (config) |c| c.getOwn(globalThis, "allowNegative") orelse .false else .false;
-    const config_options_obj: ?JSValue = if (config) |c| c.getOwn(globalThis, "options") else null;
+    const config_options: JSValue = if (config) |c| c.getOwn(globalThis, "options") orelse .undefined else .undefined;
 
     const strict = try validators.validateBoolean(globalThis, config_strict, "strict", .{});
 
-    var allow_positionals = !strict;
-    if (config_allow_positionals) |config_allow_positionals_value| {
-        allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals_value, "allowPositionals", .{});
+    if (config_allow_positionals.isUndefinedOrNull()) {
+        config_allow_positionals = JSC.jsBoolean(!strict);
     }
+
+    const allow_positionals = try validators.validateBoolean(globalThis, config_allow_positionals, "allowPositionals", .{});
 
     const return_tokens = try validators.validateBoolean(globalThis, config_return_tokens, "tokens", .{});
     const allow_negative = try validators.validateBoolean(globalThis, config_allow_negative, "allowNegative", .{});
@@ -713,8 +714,8 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSErr
     var option_defs = std.ArrayList(OptionDefinition).init(options_defs_allocator.get());
     defer option_defs.deinit();
 
-    if (config_options_obj) |options_obj| {
-        try parseOptionDefinitions(globalThis, options_obj, &option_defs);
+    if (!config_options.isUndefinedOrNull()) {
+        try parseOptionDefinitions(globalThis, config_options, &option_defs);
     }
 
     //

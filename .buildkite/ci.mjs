@@ -419,7 +419,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun --target dependencies",
+    command: ["bun run build:ci --target dependencies", "bun run build:ci --target bun"],
   };
 }
 

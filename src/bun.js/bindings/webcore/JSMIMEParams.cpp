@@ -165,13 +165,13 @@ static String removeBackslashes(const StringView& view)
     return builder.toString();
 }
 
-static String escapeQuoteOrBackslash(const StringView& view)
+static void escapeQuoteOrBackslash(const StringView& view, StringBuilder& builder)
 {
     if (view.find([](UChar c) { return c == '"' || c == '\\'; }) == notFound) {
-        return view.toString();
+        builder.append(view);
+        return;
     }
 
-    StringBuilder builder;
     if (view.is8Bit()) {
         auto span = view.span8();
         for (LChar c : span) {
@@ -189,21 +189,24 @@ static String escapeQuoteOrBackslash(const StringView& view)
             builder.append(c);
         }
     }
-    return builder.toString();
 }
 
 // Encodes a parameter value for serialization.
-static String encodeParamValue(const StringView& value)
+static void encodeParamValue(const StringView& value, StringBuilder& builder)
 {
     if (value.isEmpty()) {
-        return "\"\""_s;
+        builder.append("\"\""_s);
+        return;
     }
     if (findFirstInvalidHTTPTokenChar(value) == -1) {
         // It's a simple token, no quoting needed.
-        return value.toString();
+        builder.append(value);
+        return;
     }
     // Needs quoting and escaping.
-    return makeString('"', escapeQuoteOrBackslash(value), '"');
+    builder.append('"');
+    escapeQuoteOrBackslash(value, builder);
+    builder.append('"');
 }
 
 // Parses the parameter string and populates the map.
@@ -516,14 +519,13 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     JSMapIterator* iterator = jsDynamicCast<JSMapIterator*>(iteratorValue);
     if (!iterator) { // Should not happen for JSMap.entries()
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "Internal error: Expected MapIterator"_s, "toString"_s, -1);
-        RETURN_IF_EXCEPTION(scope, {});
+        scope.release();
+        return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "Internal error: Expected MapIterator"_s, "toString"_s, -1);
     }
 
     while (true) {
         JSValue nextValue;
         if (!iterator->next(globalObject, nextValue)) break;
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
         JSArray* entry = jsDynamicCast<JSArray*>(nextValue);
         if (!entry || entry->length() < 2) // Should not happen
@@ -531,7 +533,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
         JSValue keyJS = entry->getIndex(globalObject, 0);
         JSValue valueJS = entry->getIndex(globalObject, 1);
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
         // Key should already be lowercase string from set/constructor
         String key = keyJS.toWTFString(globalObject);
@@ -546,7 +547,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
         builder.append(key);
         builder.append('=');
-        builder.append(encodeParamValue(value)); // Encode value properly
+        encodeParamValue(value, builder);
     }
 
     return JSValue::encode(jsString(vm, builder.toString()));

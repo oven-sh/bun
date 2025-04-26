@@ -1623,12 +1623,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             };
             return;
         },
-        .linux => brk: {
-            const debug_info = debug.getSelfDebugInfo() catch break :brk;
-            writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr()), limits) catch break :brk;
-            return;
+        .linux => {
+            // Linux doesnt seem to be able to decode it's own debug info.
+            // TODO(@paperclover): see if zig 0.14 fixes this
         },
         else => {
+            // Assume debug symbol tooling is reliable.
             const debug_info = debug.getSelfDebugInfo() catch |err| {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 return;

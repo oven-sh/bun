@@ -25,7 +25,7 @@ namespace shim {
 // TODO give these more appropriate instance types
 const Map& Map::map_map()
 {
-    static const Map map = Map(InstanceType::Object);
+    static const Map map = Map(MapMapTag::MapMap);
     return map;
 }
 const Map& Map::object_map()

@@ -53,6 +53,19 @@ struct Map {
         , m_instanceType(instance_type)
     {
     }
+
+    // Tag it as the map_map() Map
+    enum class MapMapTag {
+        MapMap
+    };
+
+public:
+    Map(MapMapTag)
+        : m_metaMap(const_cast<Map*>(this))
+        , m_unused(0xaaaaaaaa)
+        , m_instanceType(InstanceType::Object)
+    {
+    }
 };
 
 static_assert(sizeof(Map) == 16, "Map has wrong layout");

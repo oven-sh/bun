@@ -32,7 +32,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟢 Fully implemented. `EventEmitterAsyncResource` uses `AsyncResource` underneath. 100% of Node.js's test suite for EventEmitter passes.
+🟢 Fully implemented. 100% of Node.js's test suite passes. `EventEmitterAsyncResource` uses `AsyncResource` underneath.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 

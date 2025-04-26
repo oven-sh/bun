@@ -124,10 +124,10 @@ function createWindow(windowUrl) {
     remove() {}
   }
   window.document.createElement = function (tagName) {
-    if (tagName !== "script") {
-      return originalDocumentCreateElement.call(window.document, tagName);
+    if (tagName === "script") {
+      return new ScriptTag();
     }
-    return new ScriptTag();
+    return originalDocumentCreateElement.call(window.document, tagName);
   };
   Object.defineProperty(window.document.head.__proto__, "appendChild", {
     configurable: true,

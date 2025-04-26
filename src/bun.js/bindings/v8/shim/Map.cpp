@@ -23,6 +23,8 @@ namespace v8 {
 namespace shim {
 
 // TODO give these more appropriate instance types
+
+// Prevent static initialization on startup
 const Map& Map::map_map()
 {
     static const Map map = Map(MapMapTag::MapMap);

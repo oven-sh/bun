@@ -651,43 +651,30 @@ const ParseArgsState = struct {
     }
 };
 
-pub fn parseArgs(
-    globalThis: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSValue {
-    JSC.markBinding(@src());
-    const arguments = callframe.argumentsAsArray(1);
-    return parseArgsImpl(globalThis, arguments[0]);
-}
-
 comptime {
     const parseArgsFn = JSC.toJSHostFn(parseArgs);
     @export(&parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
-pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) bun.JSError!JSValue {
+pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    JSC.markBinding(@src());
+    const config_value = callframe.argumentsAsArray(1)[0];
     //
     // Phase 0: parse the config object
     //
 
-    const config = if (config_obj.isUndefinedOrNull()) null else config_obj;
-    if (config) |c| {
-        try validators.validateObject(globalThis, c, "config", .{}, .{});
-    }
+    const config = if (config_value.isUndefined()) null else config_value;
 
     // Phase 0.A: Get and validate type of input args
-    var args: ArgsSlice = undefined;
     const config_args: JSValue = if (config) |c| c.getOwn(globalThis, "args") orelse .undefined else .undefined;
-    if (!config_args.isUndefinedOrNull()) {
+    const args: ArgsSlice = if (!config_args.isUndefinedOrNull()) args: {
         try validators.validateArray(globalThis, config_args, "args", .{}, null);
-        args = .{
+        break :args .{
             .array = config_args,
             .start = 0,
             .end = @intCast(config_args.getLength(globalThis)),
         };
-    } else {
-        args = try getDefaultArgs(globalThis);
-    }
+    } else try getDefaultArgs(globalThis);
 
     // Phase 0.B: Parse and validate config
 

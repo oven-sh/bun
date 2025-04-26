@@ -3629,7 +3629,7 @@ extern "C" void JSC__JSValue__putMayBeIndex(JSC__JSValue target, JSC__JSGlobalOb
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::String(""_s) : key->toWTFString();
+    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
@@ -3968,7 +3968,7 @@ extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGloba
 
     VM& vm = globalObject->vm();
     JSValue value = JSC::JSValue::decode(JSValue0);
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
+    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);

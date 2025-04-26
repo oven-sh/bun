@@ -408,6 +408,23 @@ function getBuildEnv(target, options) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
+function getBuildVendorStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-vendor`,
+    label: `${getTargetLabel(platform)} - build-vendor`,
+    agents: getCppAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform, options),
+    command: "bun run build:ci --target dependencies",
+  };
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
 function getBuildCppStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
@@ -419,7 +436,10 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: ["bun run build:ci --target dependencies", "bun run build:ci --target bun"],
+    // We used to build the C++ dependencies and bun in seperate steps.
+    // However, as long as the zig build takes longer than both sequentially,
+    // it's cheaper to run them in the same step. Can be revisited in the future.
+    command: ["bun run build:ci --target bun", "bun run build:ci --target dependencies"],
   };
 }
 

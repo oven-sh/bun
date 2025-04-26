@@ -3129,9 +3129,9 @@ const Cipher Cipher::FromName(WTF::StringView name)
 
     if (name.startsWithIgnoringASCIICase("aes"_s)) {
         auto remain = name.substring(3);
-        if (remain == "128"_s) return Cipher::AES_128_CBC;
-        if (remain == "192"_s) return Cipher::AES_192_CBC;
-        if (remain == "256"_s) return Cipher::AES_256_CBC;
+        if (remain == "128"_s) return Cipher::AES_128_CBC();
+        if (remain == "192"_s) return Cipher::AES_192_CBC();
+        if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
 
     auto nameUtf8 = name.utf8();
@@ -3148,19 +3148,71 @@ const Cipher Cipher::FromCtx(const CipherCtxPointer& ctx)
     return Cipher(EVP_CIPHER_CTX_cipher(ctx.get()));
 }
 
-const Cipher Cipher::EMPTY = Cipher();
-const Cipher Cipher::AES_128_CBC = Cipher::FromNid(NID_aes_128_cbc);
-const Cipher Cipher::AES_192_CBC = Cipher::FromNid(NID_aes_192_cbc);
-const Cipher Cipher::AES_256_CBC = Cipher::FromNid(NID_aes_256_cbc);
-const Cipher Cipher::AES_128_CTR = Cipher::FromNid(NID_aes_128_ctr);
-const Cipher Cipher::AES_192_CTR = Cipher::FromNid(NID_aes_192_ctr);
-const Cipher Cipher::AES_256_CTR = Cipher::FromNid(NID_aes_256_ctr);
-const Cipher Cipher::AES_128_GCM = Cipher::FromNid(NID_aes_128_gcm);
-const Cipher Cipher::AES_192_GCM = Cipher::FromNid(NID_aes_192_gcm);
-const Cipher Cipher::AES_256_GCM = Cipher::FromNid(NID_aes_256_gcm);
-const Cipher Cipher::AES_128_KW = Cipher::FromNid(NID_id_aes128_wrap);
-const Cipher Cipher::AES_192_KW = Cipher::FromNid(NID_id_aes192_wrap);
-const Cipher Cipher::AES_256_KW = Cipher::FromNid(NID_id_aes256_wrap);
+const Cipher& Cipher::EMPTY()
+{
+    static const Cipher cipher = Cipher();
+    return cipher;
+}
+const Cipher& Cipher::AES_128_CBC()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_128_cbc);
+    return cipher;
+}
+const Cipher& Cipher::AES_192_CBC()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_192_cbc);
+    return cipher;
+}
+const Cipher& Cipher::AES_256_CBC()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_256_cbc);
+    return cipher;
+}
+const Cipher& Cipher::AES_128_CTR()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_128_ctr);
+    return cipher;
+}
+const Cipher& Cipher::AES_192_CTR()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_192_ctr);
+    return cipher;
+}
+const Cipher& Cipher::AES_256_CTR()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_256_ctr);
+    return cipher;
+}
+const Cipher& Cipher::AES_128_GCM()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_128_gcm);
+    return cipher;
+}
+const Cipher& Cipher::AES_192_GCM()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_192_gcm);
+    return cipher;
+}
+const Cipher& Cipher::AES_256_GCM()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_aes_256_gcm);
+    return cipher;
+}
+const Cipher& Cipher::AES_128_KW()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_id_aes128_wrap);
+    return cipher;
+}
+const Cipher& Cipher::AES_192_KW()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_id_aes192_wrap);
+    return cipher;
+}
+const Cipher& Cipher::AES_256_KW()
+{
+    static const Cipher cipher = Cipher::FromNid(NID_id_aes256_wrap);
+    return cipher;
+}
 
 bool Cipher::isGcmMode() const
 {
@@ -4860,12 +4912,31 @@ size_t Digest::size() const
     return EVP_MD_size(md_);
 }
 
-const Digest Digest::MD5 = Digest(EVP_md5());
-const Digest Digest::SHA1 = Digest(EVP_sha1());
-const Digest Digest::SHA256 = Digest(EVP_sha256());
-const Digest Digest::SHA384 = Digest(EVP_sha384());
-const Digest Digest::SHA512 = Digest(EVP_sha512());
-
+const Digest& Digest::MD5()
+{
+    static const Digest digest = Digest(EVP_md5());
+    return digest;
+}
+const Digest& Digest::SHA1()
+{
+    static const Digest digest = Digest(EVP_sha1());
+    return digest;
+}
+const Digest& Digest::SHA256()
+{
+    static const Digest digest = Digest(EVP_sha256());
+    return digest;
+}
+const Digest& Digest::SHA384()
+{
+    static const Digest digest = Digest(EVP_sha384());
+    return digest;
+}
+const Digest& Digest::SHA512()
+{
+    static const Digest digest = Digest(EVP_sha512());
+    return digest;
+}
 const Digest Digest::FromName(WTF::StringView name)
 {
     return ncrypto::getDigestByName(name);

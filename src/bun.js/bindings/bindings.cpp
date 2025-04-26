@@ -1300,9 +1300,9 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
         // handle +0 and -0 as equal, and NaN as not equal to itself.
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
-                auto* leftFloat = static_cast<const float16_t*>(vector);
-                auto* rightFloat = static_cast<const float16_t*>(rightVector);
-                size_t numElements = byteLength / sizeof(float16_t);
+                auto* leftFloat = static_cast<const WTF::Float16*>(vector);
+                auto* rightFloat = static_cast<const WTF::Float16*>(rightVector);
+                size_t numElements = byteLength / sizeof(WTF::Float16);
 
                 for (size_t i = 0; i < numElements; i++) {
                     if (leftFloat[i] != rightFloat[i]) {

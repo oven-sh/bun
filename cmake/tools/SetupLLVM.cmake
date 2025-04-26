@@ -65,7 +65,9 @@ macro(find_llvm_command variable command)
   # In CI, we want to make sure we're using an exact version of LLVM.
   # Otherwise, it's okay if the patch version is different.
   if(CI)
-    set(LLVM_VERSION_REQUIREMENT "=${LLVM_VERSION}")
+    # FIXME: re-enable once we've updated build image
+    # set(LLVM_VERSION_REQUIREMENT "=${LLVM_VERSION}")
+    set(LLVM_VERSION_REQUIREMENT "~${LLVM_VERSION}")
   else()
     set(LLVM_VERSION_REQUIREMENT "~${LLVM_VERSION}")
   endif()

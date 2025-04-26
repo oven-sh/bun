@@ -3346,7 +3346,7 @@ int Cipher::bytesToKey(const Digest& digest,
     unsigned char* iv) const
 {
     return EVP_BytesToKey(
-        *this, Digest::MD5, nullptr, input.data, input.len, 1, key, iv);
+        *this, Digest::MD5(), nullptr, input.data, input.len, 1, key, iv);
 }
 
 // ============================================================================

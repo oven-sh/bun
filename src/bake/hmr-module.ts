@@ -309,11 +309,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
-        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
+        ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
+        ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -410,11 +410,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[0]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[1]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[2]));
-        DEBUG.ASSERT(typeof loadOrEsmModule[3] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[4] === "boolean");
+        ASSERT(Array.isArray(loadOrEsmModule[0]));
+        ASSERT(Array.isArray(loadOrEsmModule[1]));
+        ASSERT(Array.isArray(loadOrEsmModule[2]));
+        ASSERT(typeof loadOrEsmModule[3] === "function");
+        ASSERT(typeof loadOrEsmModule[4] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -435,7 +435,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
 
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-    DEBUG.ASSERT(
+    ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule)
@@ -501,9 +501,9 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
-    DEBUG.ASSERT(typeof dep === "string");
+    ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
-    DEBUG.ASSERT(typeof deps[i + 1] === "number");
+    ASSERT(typeof deps[i + 1] === "number");
     const promiseOrModule = enqueueModuleLoad(dep, false, parent);
     list.push(promiseOrModule);
 
@@ -516,7 +516,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
-        DEBUG.ASSERT(typeof key === "string");
+        ASSERT(typeof key === "string");
         // TODO: there is a bug in the way exports are verified. Additionally a
         // possible performance issue. For the meantime, this is disabled since
         // it was not shipped in the initial 1.2.3 HMR, and real issues will 
@@ -531,11 +531,11 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
       isAsync ||= promiseOrModule instanceof Promise;
     } else {
-      DEBUG.ASSERT(!registry.get(dep)?.esm);
+      ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
 
       if (IS_BUN_DEVELOPMENT) {
-        DEBUG.ASSERT(list[list.length - 1] as any instanceof HMRModule);
+        ASSERT(list[list.length - 1] as any instanceof HMRModule);
       }
     }
   }
@@ -551,7 +551,7 @@ function hasExportStar(starImports: Id[], key: string) {
     if (visited.has(starImport)) continue;
     visited.add(starImport);
     const mod = unloadedModuleRegistry[starImport];
-    DEBUG.ASSERT(mod, `Module "${starImport}" not found`);
+    ASSERT(mod, `Module "${starImport}" not found`);
     if (typeof mod === "function") {
       return true;
     }
@@ -611,7 +611,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   outer: for (const key of Object.keys(modules)) {
     // Unref old source maps, and track new ones
     if (side === "client") {
-      DEBUG.ASSERT(sourceMapId);
+      ASSERT(sourceMapId);
       const existingSourceMapId = registrySourceMapIds.get(key);
       if (existingSourceMapId) derefMapping(existingSourceMapId);
       registrySourceMapIds.set(key, sourceMapId);
@@ -680,9 +680,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-        DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-        DEBUG.ASSERT(current);
-        DEBUG.ASSERT(current.selfAccept === null);
+        ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
+        ASSERT(current);
+        ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
@@ -695,11 +695,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           current = importer;
           continue outer;
         }
-        DEBUG.ASSERT(false);
+        ASSERT(false);
         break;
       }
       path.push(current.id);
-      DEBUG.ASSERT(path.length > 0);
+      ASSERT(path.length > 0);
       message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
       for (let i = 2, len = path.length; i < len; i++) {
         const isLast = i === len - 1;
@@ -753,7 +753,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         selfAccept(getEsmExports(mod));
       }
     } else {
-      DEBUG.ASSERT(modOrPromise instanceof Promise);
+      ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
           if (selfAccept) {
@@ -801,7 +801,7 @@ function createAcceptArray(modules: string[], key: Id) {
   const arr = new Array(modules.length);
   arr.fill(undefined);
   const i = modules.indexOf(key);
-  DEBUG.ASSERT(i !== -1);
+  ASSERT(i !== -1);
   arr[i] = getEsmExports(registry.get(key)!);
   return arr;
 }

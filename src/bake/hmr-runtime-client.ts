@@ -164,7 +164,7 @@ const handlers = {
     if (reader.hasMoreData()) {
       const rest = reader.rest();
       const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
-      DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
+      ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
       const blob = new Blob([rest], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       const script = document.createElement('script');
@@ -193,9 +193,10 @@ const ws = initWebSocket(handlers, {
 function onHmrLoadError(event: Event | string, source?: string, lineno?: number, colno?: number, error?: Error) {
   if (typeof event === "string") {
     console.error(event);
-  }
-  if (error) {
+  } else if (error) {
     console.error(error);
+  } else {
+    console.error('Failed to load HMR script', event);
   }
   fullReload();
 }

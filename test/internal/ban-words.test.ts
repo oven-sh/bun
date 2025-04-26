@@ -44,7 +44,11 @@ banWord(".stdDir()", prefer_bun_reason, 48);
 
 banWord(".arguments_old(", "Please migrate to .argumentsAsArray() or another argument API", 289);
 banWord("// autofix", "Evaluate if this variable should be deleted entirely or explicitly discarded.", 176);
-banWord("catch unreachable", "Prefer handling error, or using catch bun.outOfMemory() for OutOfMemory errors.", 1857);
+banWord(
+  /catch unreachable(?!;\s*\/\/)/g,
+  "Justify usage in a comment. Prefer handling error, or using catch bun.outOfMemory() for OutOfMemory errors.",
+  1849,
+);
 
 const files = await readdir("src", { recursive: true, withFileTypes: true });
 for (const file of files) {

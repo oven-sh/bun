@@ -408,23 +408,6 @@ function getBuildEnv(target, options) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildVendorStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-vendor`,
-    label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: "bun run build:ci --target dependencies",
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
 function getBuildCppStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
@@ -436,7 +419,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun",
+    command: "bun run build:ci --target bun --target dependencies",
   };
 }
 
@@ -484,11 +467,7 @@ function getLinkBunStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    depends_on: [
-      `${getTargetKey(platform)}-build-vendor`,
-      `${getTargetKey(platform)}-build-cpp`,
-      `${getTargetKey(platform)}-build-zig`,
-    ],
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -1089,12 +1068,7 @@ async function getPipeline(options = {}) {
               group: getTargetLabel(target),
               steps: unifiedBuilds
                 ? [getBuildBunStep(target, options)]
-                : [
-                    getBuildVendorStep(target, options),
-                    getBuildCppStep(target, options),
-                    getBuildZigStep(target, options),
-                    getLinkBunStep(target, options),
-                  ],
+                : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
             },
             imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
           );

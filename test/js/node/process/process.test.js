@@ -1099,3 +1099,14 @@ it("process.memoryUsage.arrayBuffers", () => {
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
 });
+
+it("should handle user assigned `default` properties", () => {
+  process.default = 1;
+  process.hello = 2;
+  import("node:process").then(processModule => {
+    expect(processModule.default).toBe(process);
+    expect(processModule.default.default).toBe(1);
+    expect(processModule.hello).toBe(2);
+    expect(processModule.default.hello).toBe(2);
+  });
+});

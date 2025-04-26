@@ -1297,7 +1297,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             return true;
 
         // For Float32Array and Float64Array, when not in strict mode, we need to
-        // handle +0 and -0 as equal
+        // handle +0 and -0 as equal, and NaN as not equal to itself.
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
                 auto* leftFloat = static_cast<const float16_t*>(vector);

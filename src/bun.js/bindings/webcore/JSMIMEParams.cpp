@@ -459,15 +459,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
     // Validate name (must be a valid HTTP token)
     int invalidNameIndex = findFirstInvalidHTTPTokenChar(nameStr);
     if (nameStr.isEmpty() || invalidNameIndex != -1) {
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "parameter name"_s, nameStr, invalidNameIndex);
-        RETURN_IF_EXCEPTION(scope, {});
+        scope.release();
+        return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "parameter name"_s, nameStr, invalidNameIndex);
     }
 
     // Validate value (must contain only valid quoted-string characters)
     int invalidValueIndex = findFirstInvalidHTTPQuotedStringChar(valueStr);
     if (invalidValueIndex != -1) {
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "parameter value"_s, valueStr, invalidValueIndex);
-        RETURN_IF_EXCEPTION(scope, {});
+        scope.release();
+        return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "parameter value"_s, valueStr, invalidValueIndex);
     }
 
     // 2. Perform Set Operation

@@ -685,6 +685,7 @@ enum class CountdownOverflowBehavior : uint8_t {
 };
 } // namespace Bun
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue countdown, JSC::EncodedJSValue arguments, Bun::CountdownOverflowBehavior behavior);
+ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);
 
 #endif
 

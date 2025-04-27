@@ -364,5 +364,5 @@ it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive
 });
 
 it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
+  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
 });

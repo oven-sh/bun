@@ -48,13 +48,8 @@ pub fn parse(
         // Check if delimiter_value is non-null before accessing methods
         if (delimiter_value) |dv| {
             if (dv.isString()) {
-                // Use 'try' to handle the error union returned by getZigString
-                const dv_ = try dv.getZigString(globalThis);
-                const delimiter_slice = dv_.slice();
-
-                if (delimiter_slice.len > 0) {
-                    parser_options.delimiter = delimiter_slice[0];
-                }
+                const dv_ = try dv.toSlice(globalThis, default_allocator);
+                parser_options.delimiter = dv_.slice();
             }
         }
 

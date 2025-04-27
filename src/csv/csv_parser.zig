@@ -46,10 +46,13 @@ pub const Error = error{
 
 pub const CSVParserOptions = struct {
     header: bool = true,
-    delimiter: u8 = ',',
+    delimiter: []const u8 = ",",
     comments: bool = true,
+    commentChar: []const u8 = "#",
     trim_whitespace: bool = false,
     dynamic_typing: bool = false,
+    quote: []const u8 = "\"",
+    preview: ?usize = null,
 };
 
 pub const CSV = struct {
@@ -61,6 +64,9 @@ pub const CSV = struct {
     line_number: usize,
     options: CSVParserOptions,
     iterator: strings.CodepointIterator,
+    // Track errors for metadata
+    errors: usize = 0,
+    comments_array: Expr,
 
     pub fn init(allocator: std.mem.Allocator, source: logger.Source, log: *logger.Log, opts: CSVParserOptions) CSV {
         return CSV{
@@ -72,6 +78,7 @@ pub const CSV = struct {
             .line_number = 1,
             .options = opts,
             .iterator = strings.CodepointIterator.init(source.contents),
+            .comments_array = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
         };
     }
 
@@ -85,11 +92,6 @@ pub const CSV = struct {
     }
 
     pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, _: bool, opts: CSVParserOptions) !Expr {
-        // Return empty array for empty files
-        if (source_.contents.len == 0) {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = Expr.init(E.Array, E.Array{}, logger.Loc.Empty).data };
-        }
-
         var parser = CSV.init(allocator, source_.*, log, opts);
         return try parser.runParser();
     }
@@ -145,6 +147,23 @@ pub const CSV = struct {
                 return true;
             }
         }
+        return false;
+    }
+
+    fn consumeDelimiter(p: *CSV) bool {
+        const delimiter = p.options.delimiter;
+
+        // If we don't have enough characters left to match the delimiter, it can't match
+        if (p.index + delimiter.len > p.contents.len) {
+            return false;
+        }
+
+        // Check if the next characters match the delimiter
+        if (std.mem.eql(u8, p.contents[p.index .. p.index + delimiter.len], delimiter)) {
+            p.index += delimiter.len;
+            return true;
+        }
+
         return false;
     }
 
@@ -241,8 +260,15 @@ pub const CSV = struct {
             while (true) {
                 const c = p.peekCodepoint() orelse break;
 
-                if (c == p.options.delimiter or c == '\r' or c == '\n') {
+                if (p.isEndOfLine()) {
                     break;
+                }
+
+                // Check for delimiter
+                if (p.index + p.options.delimiter.len <= p.contents.len) {
+                    if (std.mem.eql(u8, p.contents[p.index .. p.index + p.options.delimiter.len], p.options.delimiter)) {
+                        break;
+                    }
                 }
 
                 // Accept any character in non-quoted fields except separators and line endings
@@ -277,7 +303,7 @@ pub const CSV = struct {
         try fields.append(first_field);
 
         // Parse remaining fields
-        while (p.consumeCodepoint(p.options.delimiter)) {
+        while (p.consumeDelimiter()) {
             const field = try p.parseField();
             try fields.append(field);
         }
@@ -295,13 +321,25 @@ pub const CSV = struct {
     fn runParser(p: *CSV) anyerror!Expr {
         const loc = logger.Loc{ .start = 0 };
 
-        // Return empty array for empty files
-        if (p.contents.len == 0) {
-            return p.e(E.Array{}, loc);
-        }
+        // Create root object for results following CSVParserMetadata interface
+        var result_object = p.e(E.Object{}, loc);
 
-        // Create array for the results
-        var result_array = p.e(E.Array{}, loc);
+        // Create data array for the results
+        var data_array = p.e(E.Array{}, loc);
+
+        // Track columns count for metadata
+        var columns_count: usize = 0;
+
+        // Process any initial comments
+        while (p.isCommentLine()) {
+            const comment_text = try p.parseCommentLine();
+            defer p.allocator.free(comment_text);
+
+            try p.addCommentToArray(comment_text);
+
+            // Skip CRLF after comment
+            _ = p.consumeEndOfLine();
+        }
 
         if (p.options.header) {
             // Parse header
@@ -314,6 +352,9 @@ pub const CSV = struct {
                 try p.log.addErrorFmt(&p.source, header_loc, p.allocator, "Empty header line", .{});
                 return error.MalformedLine;
             }
+
+            // Set columns count based on header
+            columns_count = header.items.len;
 
             // Skip CRLF after header
             _ = p.consumeEndOfLine();
@@ -330,7 +371,20 @@ pub const CSV = struct {
                     continue;
                 }
 
+                // Check if this is a comment line
+                if (p.isCommentLine()) {
+                    const comment_text = try p.parseCommentLine();
+                    defer p.allocator.free(comment_text);
+
+                    try p.addCommentToArray(comment_text);
+
+                    // Skip CRLF after comment
+                    _ = p.consumeEndOfLine();
+                    continue;
+                }
+
                 // Check for record size consistency
+                // TODO: if record size smaller than header size, fill with empty fields
                 if (record.items.len != header.items.len) {
                     try p.log.addErrorFmt(&p.source, record_loc, p.allocator, "Record on line {d} has {d} fields, but header has {d} fields", .{ p.line_number, record.items.len, header.items.len });
                     return error.MalformedLine;
@@ -350,8 +404,8 @@ pub const CSV = struct {
                     });
                 }
 
-                // Add the row object to the results array
-                try result_array.data.e_array.push(p.allocator, row_object);
+                // Add the row object to the data array
+                try data_array.data.e_array.push(p.allocator, row_object);
 
                 // Skip CRLF between records
                 if (!p.consumeEndOfLine()) {
@@ -371,6 +425,23 @@ pub const CSV = struct {
                     continue;
                 }
 
+                // Check if this is a comment line
+                if (p.isCommentLine()) {
+                    const comment_text = try p.parseCommentLine();
+                    defer p.allocator.free(comment_text);
+
+                    try p.addCommentToArray(comment_text);
+
+                    // Skip CRLF after comment
+                    _ = p.consumeEndOfLine();
+                    continue;
+                }
+
+                // Update columns count if this record has more columns
+                if (record.items.len > columns_count) {
+                    columns_count = record.items.len;
+                }
+
                 // Create an array for this row
                 var row_array = p.e(E.Array{}, record_loc);
 
@@ -379,7 +450,7 @@ pub const CSV = struct {
                     try row_array.data.e_array.push(p.allocator, value_expr);
                 }
 
-                try result_array.data.e_array.push(p.allocator, row_array);
+                try data_array.data.e_array.push(p.allocator, row_array);
 
                 // Skip CRLF between records
                 if (!p.consumeEndOfLine()) {
@@ -388,6 +459,97 @@ pub const CSV = struct {
             }
         }
 
-        return result_array;
+        // Set data property in the result object
+        try result_object.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "data" }, loc),
+            .value = data_array,
+        });
+
+        // Set metadata fields according to CSVParserMetadata interface
+        try result_object.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "rows" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
+        });
+
+        try result_object.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "columns" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(columns_count)) }, loc),
+        });
+
+        try result_object.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "errors" }, loc),
+            .value = p.e(E.Number{ .value = 0 }, loc),
+        });
+
+        // Add comments array
+        try result_object.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "comments" }, loc),
+            .value = p.comments_array,
+        });
+
+        return result_object;
+    }
+
+    fn isCommentLine(p: *CSV) bool {
+        // If comments are disabled, never consider any line a comment
+        if (!p.options.comments) {
+            return false;
+        }
+
+        const commentChar = p.options.commentChar;
+
+        // If we don't have enough characters left to match the comment char, it can't match
+        if (p.index + commentChar.len > p.contents.len) {
+            return false;
+        }
+
+        // Check if the next characters match the comment char
+        return std.mem.eql(u8, p.contents[p.index .. p.index + commentChar.len], commentChar);
+    }
+
+    fn parseCommentLine(p: *CSV) ![]const u8 {
+        const commentChar = p.options.commentChar;
+        var comment = std.ArrayList(u8).init(p.allocator);
+        errdefer comment.deinit();
+
+        // Skip the comment character
+        p.index += commentChar.len;
+
+        // Read until end of line
+        while (true) {
+            const c = p.peekCodepoint() orelse break;
+
+            if (p.isEndOfLine()) {
+                break;
+            }
+
+            // Accept any character in comment except line endings
+            _ = p.nextCodepoint();
+
+            // Encode the Unicode codepoint to UTF-8 and append it
+            var buf: [4]u8 = undefined;
+            const len = strings.encodeWTF8RuneT(&buf, u21, c);
+            try comment.appendSlice(buf[0..len]);
+        }
+
+        return comment.toOwnedSlice();
+    }
+
+    fn addCommentToArray(p: *CSV, comment_text: []const u8) !void {
+        const loc = logger.Loc{ .start = @intCast(p.line_number) };
+
+        var comment_obj = p.e(E.Object{}, loc);
+
+        try comment_obj.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "line" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
+        });
+
+        try comment_obj.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "text" }, loc),
+            .value = p.e(E.String{ .data = comment_text }, loc),
+        });
+
+        try p.comments_array.data.e_array.push(p.allocator, comment_obj);
     }
 };

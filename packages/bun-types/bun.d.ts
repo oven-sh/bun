@@ -717,6 +717,11 @@ declare module "bun" {
        */
       comments?: boolean;
       /**
+       * The character used to denote comments.
+       * @default '#'
+       */
+      commentChar?: string;
+      /**
        * Whether to trim whitespace from fields.
        * @default false
        */
@@ -726,6 +731,40 @@ declare module "bun" {
        * @default false
        */
       dynamic_typing?: boolean;
+      /**
+       * The character used to quote fields.
+       * @default '"'
+       */
+      quote?: string;
+      /**
+       * Number of rows to parse, if not specified all rows will be parsed.
+       * @default undefined
+       */
+      preview?: number;
+    }
+
+    export interface CSVParserMetadata<T> {
+      data: T[];
+      /**
+       * The number of rows parsed.
+       */
+      rows: number;
+      /**
+       * The number of columns parsed.
+       */
+      columns: number;
+      /**
+       * The number of errors encountered during parsing.
+       */
+      errors: number;
+      /**
+       * The comments encountered during parsing.
+       * This is only available if `comments` is set to true.
+       */
+      comments: {
+        line: number;
+        text: string;
+      }[];
     }
 
     /**
@@ -740,7 +779,9 @@ declare module "bun" {
     export function parse(
       input: string,
       options?: CSVParserOptions,
-    ): CSVParserOptions extends { has_header: false } ? string[][] : Record<string, string>[];
+    ): CSVParserOptions extends { has_header: false }
+      ? CSVParserMetadata<string[]>
+      : CSVParserMetadata<Record<string, string>>;
   }
 
   /**

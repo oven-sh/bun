@@ -6047,20 +6047,14 @@ const HmrSocket = struct {
     active_route: RouteBundle.Index.Optional,
     inspector_connection_id: i32 = -1,
 
-    var next_connection_id: std.atomic.Value(i32) = std.atomic.Value(i32).init(0);
-
-    pub inline fn inspector(s: *const HmrSocket) ?*const JSC.Debugger.BunFrontendDevServerAgent {
-        return s.dev.inspector();
-    }
-
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         const send_status = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
         s.underlying = ws;
 
         if (send_status != .dropped) {
             // Notify inspector about client connection
-            if (s.inspector()) |agent| {
-                s.inspector_connection_id = next_connection_id.fetchAdd(1, .monotonic);
+            if (s.dev.inspector()) |agent| {
+                s.inspector_connection_id = agent.nextConnectionID();
                 agent.notifyClientConnected(s.inspector_connection_id);
             }
         }
@@ -6179,7 +6173,7 @@ const HmrSocket = struct {
 
         if (s.inspector_connection_id > -1) {
             // Notify inspector about client disconnection
-            if (s.inspector()) |agent| {
+            if (s.dev.inspector()) |agent| {
                 agent.notifyClientDisconnected(s.inspector_connection_id);
             }
         }
@@ -6198,10 +6192,14 @@ const HmrSocket = struct {
 
     fn notifyInspectorClientNavigation(s: *const HmrSocket, pattern: []const u8, rbi: RouteBundle.Index.Optional) void {
         if (s.inspector_connection_id > -1) {
-            if (s.inspector()) |agent| {
+            if (s.dev.inspector()) |agent| {
                 var pattern_str = bun.String.init(pattern);
                 defer pattern_str.deref();
-                agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, rbi.unwrap() orelse -1);
+                agent.notifyClientNavigated(
+                    s.inspector_connection_id,
+                    &pattern_str,
+                    if (rbi.unwrap()) |id| id.get() else -1,
+                );
             }
         }
     }
@@ -6287,7 +6285,7 @@ fn markAllRouteChildrenFailed(dev: *DevServer, route_index: Route.Index) void {
     }
 }
 
-pub fn inspector(dev: *const DevServer) ?*const BunFrontendDevServerAgent {
+pub fn inspector(dev: *const DevServer) ?*BunFrontendDevServerAgent {
     if (dev.vm.debugger) |*debugger| {
         @branchHint(.unlikely);
 

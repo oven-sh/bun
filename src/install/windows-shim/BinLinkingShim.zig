@@ -12,7 +12,7 @@
 //! See 'bun_shim_impl.zig' for more details on how this file is consumed.
 const std = @import("std");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const simdutf = bun.simdutf;
 
 const lastIndexOfScalar = std.mem.lastIndexOfScalar;

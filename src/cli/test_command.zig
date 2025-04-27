@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const OOM = bun.OOM;
 
@@ -451,7 +451,7 @@ pub const JunitReporter = struct {
         @memcpy(junit_path_buf[0..path.len], path);
         junit_path_buf[path.len] = 0;
 
-        switch (bun.sys.File.openat(std.fs.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        switch (bun.sys.File.openat(.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .err => |err| {
                 Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
             },
@@ -823,7 +823,7 @@ pub const CommandLineReporter = struct {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
-            var fs = bun.JSC.Node.NodeFS{};
+            var fs = bun.JSC.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.JSC.Node.PathLike{
@@ -840,7 +840,7 @@ pub const CommandLineReporter = struct {
             const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
-                std.fs.cwd(),
+                .cwd(),
                 path,
                 bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
                 0o644,
@@ -943,10 +943,11 @@ pub const CommandLineReporter = struct {
         if (comptime reporters.lcov) {
             try lcov_buffered_writer.flush();
             lcov_file.close();
-            bun.C.moveFileZ(
-                bun.toFD(std.fs.cwd()),
+            const cwd = bun.FD.cwd();
+            bun.sys.moveFileZ(
+                cwd,
                 lcov_name,
-                bun.toFD(std.fs.cwd()),
+                cwd,
                 bun.path.joinAbsStringZ(
                     relative_dir,
                     &.{ opts.reports_directory, "lcov.info" },
@@ -1044,7 +1045,7 @@ pub const TestCommand = struct {
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
-        JSC.isBunTest = true;
+        JSC.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -1227,8 +1228,8 @@ pub const TestCommand = struct {
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => JSC.HotReloader.enableHotModuleReloading(vm),
-                .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+                .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+                .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
             }
 

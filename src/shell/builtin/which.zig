@@ -150,7 +150,7 @@ const log = bun.Output.scoped(.which, true);
 const Which = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
 const IOReader = shell.IOReader;

@@ -1414,16 +1414,13 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_ARG(env, error);
     auto globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = toJS(error);
-    if (value) {
-        JSC::throwException(globalObject, throwScope, value);
-    } else {
-        JSC::throwException(globalObject, throwScope, JSC::createError(globalObject, "Error (via napi)"_s));
-    }
+    JSC::throwException(globalObject, throwScope, value);
 
     return napi_set_last_error(env, napi_ok);
 }

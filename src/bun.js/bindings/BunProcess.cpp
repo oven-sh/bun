@@ -639,8 +639,8 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     if (fired) {
         if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = jsDynamicCast<JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
-            if (nextTickQueue) nextTickQueue->drain(vm, globalObject);
+            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+            nextTickQueue->drain(vm, globalObject);
         }
     }
 }
@@ -3073,6 +3073,60 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_ref, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue maybeRefable = callFrame->argument(0);
+
+    JSValue ref = maybeRefable.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.ref"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto refBoolean = ref.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!refBoolean) {
+        ref = maybeRefable.get(globalObject, Identifier::fromString(vm, "ref"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (ref.isCallable()) {
+        CallData callData = getCallData(ref);
+        JSC::profiledCall(globalObject, ProfilingReason::API, ref, callData, maybeRefable, {});
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue maybeUnrefable = callFrame->argument(0);
+
+    JSValue unref = maybeUnrefable.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.unref"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto unrefBoolean = unref.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!unrefBoolean) {
+        unref = maybeUnrefable.get(globalObject, Identifier::fromString(vm, "unref"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (unref.isCallable()) {
+        CallData callData = getCallData(unref);
+        JSC::profiledCall(globalObject, ProfilingReason::API, unref, callData, maybeUnrefable, {});
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsUndefined());
@@ -3183,13 +3237,12 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSValue nextTickQueueObject;
+    JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        auto nextTickQueue = Bun::JSNextTickQueue::create(globalObject);
-        nextTickQueueObject = nextTickQueue;
+        nextTickQueueObject = JSNextTickQueue::create(globalObject);
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
-        nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+        nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
@@ -3551,6 +3604,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   platform                         constructPlatform                                   PropertyCallback
   ppid                             constructPpid                                       PropertyCallback
   reallyExit                       Process_functionReallyExit                          Function 1
+  ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
   revision                         constructRevision                                   PropertyCallback
@@ -3563,6 +3617,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
+  unref                            Process_unref                                        Function 1
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback

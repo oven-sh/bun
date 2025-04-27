@@ -6,7 +6,7 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 import { bunEnv, randomPort, bunExe } from "harness";
-import { createTest } from "node-harness";
+import { createTest, toRun } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -23,8 +23,10 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import { connect, createConnection } from "node:net";
 import type { AddressInfo } from "node:net";
 import https, { createServer as createHttpsServer } from "node:https";
+import { tls as COMMON_TLS_CERT } from "harness";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as stream from "node:stream";
@@ -2370,4 +2372,337 @@ it("Empty requests should not be Transfer-Encoding: chunked", async () => {
   } finally {
     server.close();
   }
+});
+
+it("should reject non-standard body writes when rejectNonStandardBodyWrites is true", async () => {
+  {
+    let body_not_allowed_on_write;
+    let body_not_allowed_on_end;
+
+    for (const rejectNonStandardBodyWrites of [true, false, undefined]) {
+      await using server = http.createServer({
+        rejectNonStandardBodyWrites,
+      });
+
+      server.on("request", (req, res) => {
+        body_not_allowed_on_write = false;
+        body_not_allowed_on_end = false;
+        res.writeHead(204);
+
+        try {
+          res.write("bun");
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+          body_not_allowed_on_write = true;
+        }
+        try {
+          res.end("bun");
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+          body_not_allowed_on_end = true;
+          // if we throw here, we need to call end() to actually end the request
+          res.end();
+        }
+      });
+
+      await once(server.listen(0), "listening");
+      const url = `http://localhost:${server.address().port}`;
+
+      {
+        await fetch(url, {
+          method: "GET",
+        }).then(res => res.text());
+
+        expect(body_not_allowed_on_write).toBe(rejectNonStandardBodyWrites || false);
+        expect(body_not_allowed_on_end).toBe(rejectNonStandardBodyWrites || false);
+      }
+    }
+  }
+});
+
+test("should emit clientError when Content-Length is invalid", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  await using server = http.createServer(reject);
+
+  server.on("clientError", (err, socket) => {
+    resolve(err);
+    socket.destroy();
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+
+  const client = connect(server.address().port, () => {
+    // HTTP request with invalid Content-Length
+    // The Content-Length says 10 but the actual body is 20 bytes
+    // Send the request
+    client.write(
+      `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
+    );
+  });
+
+  const err = (await promise) as Error;
+  expect(err.code).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+});
+
+test("should emit clientError when mixing Content-Length and Transfer-Encoding", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  await using server = http.createServer(reject);
+
+  server.on("clientError", (err, socket) => {
+    resolve(err);
+    socket.destroy();
+  });
+
+  await once(server.listen(0), "listening");
+
+  const client = connect(server.address().port, () => {
+    // HTTP request with invalid Content-Length
+    // The Content-Length says 10 but the actual body is 20 bytes
+    // Send the request
+    client.write(
+      `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nHello`,
+    );
+  });
+
+  const err = (await promise) as Error;
+  expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+});
+
+test("should be able to flush headers socket._httpMessage must be set", async () => {
+  let server: Server | undefined;
+  try {
+    server = http.createServer((req, res) => {
+      res.flushHeaders();
+    });
+
+    await once(server.listen(0), "listening");
+    const { promise, resolve } = Promise.withResolvers();
+    const address = server.address() as AddressInfo;
+    const req = http.get(
+      {
+        hostname: address.address,
+        port: address.port,
+      },
+      resolve,
+    );
+
+    const { socket } = req;
+    await promise;
+    expect(socket._httpMessage).toBe(req);
+    socket.destroy();
+  } finally {
+    server?.closeAllConnections();
+  }
+});
+
+test("req.connection.bytesWritten must be supported on the server", async () => {
+  let httpServer: Server;
+  try {
+    const { promise, resolve } = Promise.withResolvers();
+    httpServer = http.createServer(function (req, res) {
+      res.on("finish", () => resolve(req.connection.bytesWritten));
+      res.writeHead(200, { "Content-Type": "text/plain" });
+
+      const chunk = "7".repeat(1024);
+      const bchunk = Buffer.from(chunk);
+      res.write(chunk);
+      res.write(bchunk);
+
+      expect(res.connection.bytesWritten).toBe(1024 * 2);
+      res.end("bunbunbun");
+    });
+
+    await once(httpServer.listen(0), "listening");
+    const address = httpServer.address() as AddressInfo;
+    const req = http.get({ port: address.port });
+    await once(req, "response");
+    const bytesWritten = await promise;
+    expect(typeof bytesWritten).toBe("number");
+    expect(bytesWritten).toBe(1024 * 2 + 9);
+    req.destroy();
+  } finally {
+    httpServer?.closeAllConnections();
+  }
+});
+
+test("req.connection.bytesWritten must be supported on the https server", async () => {
+  let httpServer: Server;
+  try {
+    const { promise, resolve } = Promise.withResolvers();
+    httpServer = createHttpsServer(COMMON_TLS_CERT, function (req, res) {
+      res.on("finish", () => resolve(req.connection.bytesWritten));
+      res.writeHead(200, { "Content-Type": "text/plain" });
+
+      // Write 1.5mb to cause some requests to buffer
+      // Also, mix up the encodings a bit.
+      const chunk = "7".repeat(1024);
+      const bchunk = Buffer.from(chunk);
+      res.write(chunk);
+      res.write(bchunk);
+      // Get .bytesWritten while buffer is not empty
+      expect(res.connection.bytesWritten).toBe(1024 * 2);
+
+      res.end("bunbunbun");
+    });
+
+    await once(httpServer.listen(0), "listening");
+    const address = httpServer.address() as AddressInfo;
+    const req = https.get({ port: address.port, rejectUnauthorized: false });
+    await once(req, "response");
+    const bytesWritten = await promise;
+    expect(typeof bytesWritten).toBe("number");
+    expect(bytesWritten).toBe(1024 * 2 + 9);
+    req.destroy();
+  } finally {
+    httpServer?.closeAllConnections();
+  }
+});
+
+test("host array should throw in http.request", () => {
+  expect(() =>
+    http.request({
+      host: [1, 2, 3],
+    }),
+  ).toThrow('The "options.host" property must be of type string, undefined, or null. Received an instance of Array');
+});
+
+test("strictContentLength should work on server", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  await using server = http.createServer((req, res) => {
+    try {
+      res.strictContentLength = true;
+      res.writeHead(200, { "Content-Length": 10 });
+
+      res.write("123456789");
+
+      // Too much data
+      try {
+        res.write("123456789");
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e.code).toBe("ERR_HTTP_CONTENT_LENGTH_MISMATCH");
+      }
+
+      // Too little data
+      try {
+        res.end();
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e.code).toBe("ERR_HTTP_CONTENT_LENGTH_MISMATCH");
+      }
+
+      // Just right
+      res.end("0");
+      resolve();
+    } catch (e: any) {
+      reject(e);
+    } finally {
+    }
+  });
+
+  await once(server.listen(0), "listening");
+  const url = `http://localhost:${server.address().port}`;
+  await fetch(url, {
+    method: "GET",
+  }).catch(() => {});
+  await promise;
+});
+
+test("client side flushHeaders should work", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = http.createServer((req, res) => {
+    resolve(req.headers);
+    res.end();
+  });
+
+  await once(server.listen(0), "listening");
+  const address = server.address() as AddressInfo;
+  const req = http.request({
+    method: "GET",
+    host: "127.0.0.1",
+    port: address.port,
+  });
+  req.setHeader("foo", "bar");
+  req.flushHeaders();
+  const headers = await promise;
+  expect(headers).toBeDefined();
+  expect(headers.foo).toEqual("bar");
+});
+
+test("server.listening should work", async () => {
+  const server = http.createServer();
+  await once(server.listen(0), "listening");
+  expect(server.listening).toBe(true);
+  server.closeAllConnections();
+  expect(server.listening).toBe(false);
+});
+
+test("asyncDispose should work in http.Server", async () => {
+  const server = http.createServer();
+  await once(server.listen(0), "listening");
+  expect(server.listening).toBe(true);
+  await server[Symbol.asyncDispose]();
+  expect(server.listening).toBe(false);
+});
+
+test("timeout destruction should be visible using kConnectionsCheckingInterval", async () => {
+  const { kConnectionsCheckingInterval } = require("_http_server");
+  const server = http.createServer();
+  await once(server.listen(0), "listening");
+  server.closeAllConnections();
+  expect(server[kConnectionsCheckingInterval]._destroyed).toBe(true);
+});
+
+test("client should be able to send a array of [key, value] as headers", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = http.createServer((req, res) => {
+    resolve([req, res]);
+  });
+  await once(server.listen(0), "listening");
+  const address = server.address() as AddressInfo;
+  http.get({
+    host: "127.0.0.1",
+    port: address.port,
+    headers: [
+      ["foo", "bar"],
+      ["foo", "baz"],
+      ["host", "127.0.0.1"],
+      ["host", "127.0.0.2"],
+      ["host", "127.0.0.3"],
+    ],
+  });
+
+  const [req, res] = await promise;
+  expect(req.headers.foo).toBe("bar, baz");
+  expect(req.headers.host).toBe("127.0.0.1");
+
+  res.end();
+});
+
+test("clientError should fire when receiving invalid method", async () => {
+  await using server = http.createServer((req, res) => {
+    res.end();
+  });
+  let socket;
+  server.on("clientError", err => {
+    expect(err.code).toBe("HPE_INVALID_METHOD");
+    expect(err.rawPacket.toString()).toBe("*");
+
+    socket.end();
+  });
+  await once(server.listen(0), "listening");
+  const address = server.address() as AddressInfo;
+  socket = createConnection({ port: address.port });
+
+  await once(socket, "connect");
+  socket.write("*");
+  await once(socket, "close");
+});
+
+test("throw inside clientError should be propagated to uncaughtException", async () => {
+  const testFile = path.join(import.meta.dir, "node-http-clientError-uncaughtException-fixture.js");
+  expect([testFile]).toRun("", 0);
 });

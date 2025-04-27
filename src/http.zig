@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const picohttp = bun.picohttp;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -9,7 +9,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
-const C = bun.C;
+
 const Loc = bun.logger.Loc;
 const Log = bun.logger.Log;
 const DotEnv = @import("./env_loader.zig");
@@ -34,7 +34,8 @@ const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-
+const Blob = bun.webcore.Blob;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
@@ -177,7 +178,7 @@ pub const Sendfile = struct {
                 std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
-            const errcode = bun.C.getErrno(val);
+            const errcode = bun.sys.getErrno(val);
 
             this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
@@ -191,7 +192,7 @@ pub const Sendfile = struct {
         } else if (Environment.isPosix) {
             var sbytes: std.posix.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
-            const errcode = bun.C.getErrno(std.c.sendfile(
+            const errcode = bun.sys.getErrno(std.c.sendfile(
                 this.fd.cast(),
                 socket.fd().cast(),
                 signed_offset,
@@ -1779,8 +1780,6 @@ pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
 
-pub const Headers = JSC.WebCore.Headers;
-
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | posix.MSG.NOSIGNAL
 else
@@ -2897,6 +2896,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_header = false;
     var override_host_header = false;
     var override_user_agent = false;
+    var original_content_length: ?string = null;
 
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
@@ -2907,7 +2907,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
-            => continue,
+            => {
+                original_content_length = this.headerStr(header_values[i]);
+                continue;
+            },
             hashHeaderConst("Connection") => {
                 if (!this.flags.disable_keepalive) {
                     continue;
@@ -2992,6 +2995,12 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
         }
+        header_count += 1;
+    } else if (original_content_length) |content_length| {
+        request_headers_buf[header_count] = .{
+            .name = content_length_header_name,
+            .value = content_length,
+        };
         header_count += 1;
     }
 
@@ -4673,4 +4682,168 @@ const ThreadlocalAsyncHTTP = struct {
     pub const deinit = bun.TrivialDeinit(@This());
 
     async_http: AsyncHTTP,
+};
+
+pub const Headers = struct {
+    pub const Entry = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+
+        pub const List = bun.MultiArrayList(Entry);
+    };
+
+    entries: Entry.List = .{},
+    buf: std.ArrayListUnmanaged(u8) = .{},
+    allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
+
+    pub fn deinit(this: *Headers) void {
+        this.entries.deinit(this.allocator);
+        this.buf.clearAndFree(this.allocator);
+    }
+    pub fn getContentType(this: *const Headers) ?[]const u8 {
+        if (this.entries.len == 0 or this.buf.items.len == 0) {
+            return null;
+        }
+        const header_entries = this.entries.slice();
+        const header_names = header_entries.items(.name);
+        const header_values = header_entries.items(.value);
+
+        for (header_names, 0..header_names.len) |name, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+                return this.asStr(header_values[i]);
+            }
+        }
+        return null;
+    }
+    pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
+        return if (ptr.offset + ptr.length <= this.buf.items.len)
+            this.buf.items[ptr.offset..][0..ptr.length]
+        else
+            "";
+    }
+
+    pub const Options = struct {
+        body: ?*const Blob.Any = null,
+    };
+
+    pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.Allocator) !Headers {
+        const header_count = headers.len;
+        var result = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+
+        var buf_len: usize = 0;
+        for (headers) |header| {
+            buf_len += header.name.len + header.value.len;
+        }
+        result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        result.entries.len = headers.len;
+        result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        result.buf.items.len = buf_len;
+        var offset: u32 = 0;
+        for (headers, 0..headers.len) |header, i| {
+            const name_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.name.len], header.name);
+            offset += @truncate(header.name.len);
+            const value_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.value.len], header.value);
+            offset += @truncate(header.value.len);
+
+            result.entries.set(i, .{
+                .name = .{
+                    .offset = name_offset,
+                    .length = @truncate(header.name.len),
+                },
+                .value = .{
+                    .offset = value_offset,
+                    .length = @truncate(header.value.len),
+                },
+            });
+        }
+        return result;
+    }
+
+    pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, options: Options) !Headers {
+        var header_count: u32 = 0;
+        var buf_len: u32 = 0;
+        if (fetch_headers_ref) |headers_ref|
+            headers_ref.count(&header_count, &buf_len);
+        var headers = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+        const buf_len_before_content_type = buf_len;
+        const needs_content_type = brk: {
+            if (options.body) |body| {
+                if (body.hasContentTypeFromUser() and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
+                    header_count += 1;
+                    buf_len += @as(u32, @truncate(body.contentType().len + "Content-Type".len));
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+        headers.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        headers.entries.len = header_count;
+        headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        headers.buf.items.len = buf_len;
+        var sliced = headers.entries.slice();
+        var names = sliced.items(.name);
+        var values = sliced.items(.value);
+        if (fetch_headers_ref) |headers_ref|
+            headers_ref.copyTo(names.ptr, values.ptr, headers.buf.items.ptr);
+
+        // TODO: maybe we should send Content-Type header first instead of last?
+        if (needs_content_type) {
+            bun.copy(u8, headers.buf.items[buf_len_before_content_type..], "Content-Type");
+            names[header_count - 1] = .{
+                .offset = buf_len_before_content_type,
+                .length = "Content-Type".len,
+            };
+
+            bun.copy(u8, headers.buf.items[buf_len_before_content_type + "Content-Type".len ..], options.body.?.contentType());
+            values[header_count - 1] = .{
+                .offset = buf_len_before_content_type + @as(u32, "Content-Type".len),
+                .length = @as(u32, @truncate(options.body.?.contentType().len)),
+            };
+        }
+
+        return headers;
+    }
 };

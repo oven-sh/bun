@@ -5,11 +5,8 @@
 #include "helpers.h"
 #include "ncrypto.h"
 
-using namespace Bun;
-using namespace JSC;
-
-namespace WebCore {
+namespace Bun {
 
 JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
 
-} // namespace WebCore
+} // namespace Bun

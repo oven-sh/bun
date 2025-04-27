@@ -35,9 +35,7 @@ pub fn parse(
     };
 
     // for now...
-    const buffer_writer = js_printer.BufferWriter.init(allocator) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
-    };
+    const buffer_writer = js_printer.BufferWriter.init(allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     _ = js_printer.printJSON(
         *js_printer.BufferPrinter,
@@ -66,7 +64,7 @@ const JSObject = JSC.JSObject;
 const std = @import("std");
 const ZigString = JSC.ZigString;
 const logger = bun.logger;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const js_printer = bun.js_printer;
 const default_allocator = bun.default_allocator;
 const TOMLParser = @import("../../toml/toml_parser.zig").TOML;

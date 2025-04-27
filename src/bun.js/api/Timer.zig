@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSValue = JSC.JSValue;
@@ -8,6 +8,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const uv = bun.windows.libuv;
+const api = bun.api;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
@@ -565,7 +566,10 @@ pub const TimeoutObject = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSTimeout;
+    pub const js = JSC.Codegen.JSTimeout;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
@@ -584,10 +588,10 @@ pub const TimeoutObject = struct {
     ) JSValue {
         // internals are initialized by init()
         const timeout = bun.new(TimeoutObject, .{ .ref_count = .init(), .internals = undefined });
-        const js = timeout.toJS(globalThis);
-        defer js.ensureStillAlive();
+        const js_value = timeout.toJS(globalThis);
+        defer js_value.ensureStillAlive();
         timeout.internals.init(
-            js,
+            js_value,
             globalThis,
             id,
             kind,
@@ -595,7 +599,7 @@ pub const TimeoutObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return js;
+        return js_value;
     }
 
     fn deinit(this: *TimeoutObject) void {
@@ -654,7 +658,10 @@ pub const ImmediateObject = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    pub usingnamespace JSC.Codegen.JSImmediate;
+    pub const js = JSC.Codegen.JSImmediate;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     ref_count: RefCount,
     event_loop_timer: EventLoopTimer = .{
@@ -671,10 +678,10 @@ pub const ImmediateObject = struct {
     ) JSValue {
         // internals are initialized by init()
         const immediate = bun.new(ImmediateObject, .{ .ref_count = .init(), .internals = undefined });
-        const js = immediate.toJS(globalThis);
-        defer js.ensureStillAlive();
+        const js_value = immediate.toJS(globalThis);
+        defer js_value.ensureStillAlive();
         immediate.internals.init(
-            js,
+            js_value,
             globalThis,
             id,
             .setImmediate,
@@ -682,7 +689,7 @@ pub const ImmediateObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return js;
+        return js_value;
     }
 
     fn deinit(this: *ImmediateObject) void {
@@ -736,7 +743,7 @@ const TimerObjectInternals = struct {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
     id: i32 = -1,
     interval: u31 = 0,
-    strong_this: JSC.Strong = .empty,
+    strong_this: JSC.Strong.Optional = .empty,
     flags: Flags = .{},
 
     const Flags = packed struct(u32) {
@@ -951,8 +958,8 @@ const TimerObjectInternals = struct {
 
         if (kind == .setImmediate) {
             if (arguments != .zero)
-                ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
-            ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
+                ImmediateObject.js.argumentsSetCached(timer_js, globalThis, arguments);
+            ImmediateObject.js.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
             vm.enqueueImmediateTask(parent);
             this.setEnableKeepingEventLoopAlive(vm, true);
@@ -960,8 +967,8 @@ const TimerObjectInternals = struct {
             parent.ref();
         } else {
             if (arguments != .zero)
-                TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
-            TimeoutObject.callbackSetCached(timer_js, globalThis, callback);
+                TimeoutObject.js.argumentsSetCached(timer_js, globalThis, arguments);
+            TimeoutObject.js.callbackSetCached(timer_js, globalThis, callback);
             // this increments the refcount
             this.reschedule(vm);
         }
@@ -1323,10 +1330,10 @@ pub const EventLoopTimer = struct {
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
-            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
-            .ValkeyConnectionTimeout => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
-            .ValkeyConnectionReconnect => return @as(*JSC.API.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
+            .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
+            .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
             inline else => |t| {
                 if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

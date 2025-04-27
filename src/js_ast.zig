@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
@@ -1566,7 +1566,7 @@ pub const E = struct {
 
     pub const Boolean = struct {
         value: bool,
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef) JSC.C.JSValueRef {
+        pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
             return JSC.C.JSValueMakeBoolean(ctx, this.value);
         }
     };
@@ -7904,13 +7904,11 @@ pub fn printmem(comptime format: string, args: anytype) void {
 
 pub const Macro = struct {
     const JavaScript = bun.JSC;
-    const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
     const ResolveResult = @import("./resolver/resolver.zig").Result;
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
-    const Zig = @import("./bun.js/bindings/exports.zig");
     const Transpiler = bun.Transpiler;
     const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
@@ -7969,7 +7967,7 @@ pub const Macro = struct {
             bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
-                if (JSC.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                     break :brk replacement.path;
                 }
 
@@ -8133,7 +8131,7 @@ pub const Macro = struct {
         const VisitMap = std.AutoHashMapUnmanaged(JSC.JSValue, Expr);
 
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
-        threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
+        threadlocal var exception_holder: JSC.ZigException.Holder = undefined;
         pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
         pub const Run = struct {
@@ -8252,7 +8250,7 @@ pub const Macro = struct {
                             } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
-                            } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
+                            } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
                                 _ = this.macro.vm.uncaughtException(this.global, value, false);
                                 return error.MacroFailed;
                             }
@@ -8462,7 +8460,7 @@ pub const Macro = struct {
         ) MacroError!Expr {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
-            exception_holder = Zig.ZigException.Holder.init();
+            exception_holder = JSC.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
             var js_processed_args_len: usize = 0;
             defer {

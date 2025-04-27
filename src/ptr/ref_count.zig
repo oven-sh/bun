@@ -63,8 +63,9 @@ pub const RefCountOptions = struct {
 ///
 ///     const ref_ptr = RefPtr(T).initRef(existing_raw_pointer);
 ///
-pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, options: RefCountOptions) type {
+pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, options: RefCountOptions) type {
     return struct {
+        const destructor: fn (*T) void = destructor_untyped;
         active_counts: u32,
         thread: if (enable_single_threaded_checks) ?bun.DebugThreadLock else void,
         debug: if (enable_debug) DebugData(false) else void,
@@ -129,10 +130,9 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: fn (*T) void, optio
 
         // utility functions
 
-        pub fn hasOneRef(self: *T) bool {
-            const counter = getCounter(self);
-            counter.assertNonThreadSafeCountIsSingleThreaded();
-            return counter.active_counts == 1;
+        pub fn hasOneRef(count: *const @This()) bool {
+            count.assertNonThreadSafeCountIsSingleThreaded();
+            return count.active_counts == 1;
         }
 
         pub fn dumpActiveRefs(count: *@This()) void {
@@ -234,9 +234,8 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         // utility functions
 
-        pub fn hasOneRef(self: *T) bool {
-            if (enable_debug) getCounter(self).debug.assertValid();
-            const counter = getCounter(self);
+        pub fn hasOneRef(counter: *const @This()) bool {
+            if (enable_debug) counter.debug.assertValid();
             return counter.active_counts.load(.seq_cst) == 1;
         }
 
@@ -316,9 +315,9 @@ pub fn RefPtr(T: type) type {
         pub fn adoptRef(raw_ptr: *T) @This() {
             if (enable_debug) {
                 bun.assert(raw_ptr.ref_count.hasOneRef());
-                bun.assert(!raw_ptr.ref_count.debug.isEmpty());
+                raw_ptr.ref_count.debug.assertValid();
             }
-            return uncheckedAndUnsafeInit(raw_ptr);
+            return uncheckedAndUnsafeInit(raw_ptr, @returnAddress());
         }
 
         /// This will assert that ALL references are cleaned up by the time the allocation scope ends.
@@ -392,7 +391,7 @@ pub fn DebugData(thread_safe: bool) type {
             .count_pointer = null,
         };
 
-        fn assertValid(debug: *@This()) void {
+        fn assertValid(debug: *const @This()) void {
             bun.assert(debug.magic == .valid);
         }
 
@@ -501,6 +500,6 @@ pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const AllocationScope = bun.AllocationScope;

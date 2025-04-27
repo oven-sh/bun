@@ -10,6 +10,7 @@
 #include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
+#include "KeyObject.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -121,9 +122,10 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         }
     }
 
-    WTF::Vector<uint8_t> keyData;
-    prepareSecretKey(globalObject, scope, keyData, keyValue, encodingValue);
+    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    auto keyData = keyObject.symmetricKey().span();
 
     JSArrayBufferView* ivView = nullptr;
     if (!ivValue.isNull()) {

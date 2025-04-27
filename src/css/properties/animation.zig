@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -45,8 +45,6 @@ pub const Animation = struct {
     fill_mode: AnimationFillMode,
     /// The animation timeline.
     timeline: AnimationTimeline,
-
-    pub usingnamespace css.DefineListShorthand(@This());
 
     pub const PropertyFieldMap = .{
         .name = css.PropertyIdTag.@"animation-name",
@@ -288,8 +286,8 @@ pub const AnimationIterationCount = union(enum) {
     /// The animation will repeat forever.
     infinite,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn default() AnimationIterationCount {
         return .{ .number = 1.0 };
@@ -311,7 +309,12 @@ pub const AnimationDirection = enum {
     /// The animation iterations alternate between forward and reverse, with reverse occurring first.
     @"alternate-reverse",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() AnimationDirection {
         return .normal;
@@ -325,7 +328,12 @@ pub const AnimationPlayState = enum {
     /// The animation is paused.
     paused,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() AnimationPlayState {
         return .running;
@@ -343,7 +351,12 @@ pub const AnimationFillMode = enum {
     /// Both forwards and backwards apply.
     both,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() AnimationFillMode {
         return .none;
@@ -359,7 +372,12 @@ pub const AnimationComposition = enum {
     /// The effect value is accumulated onto the underlying value.
     accumulate,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [animation-timeline](https://drafts.csswg.org/css-animations-2/#animation-timeline) property.
@@ -375,8 +393,8 @@ pub const AnimationTimeline = union(enum) {
     /// The view() function.
     view: ViewTimeline,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -412,7 +430,12 @@ pub const Scroller = enum {
     /// Specifies to use the element's own principal box as the scroll container.
     self,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() Scroller {
         return .nearest;
@@ -430,7 +453,12 @@ pub const ScrollAxis = enum {
     /// Specifies to use the measure of progress along the vertical axis of the scroll container.
     y,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() ScrollAxis {
         return .block;

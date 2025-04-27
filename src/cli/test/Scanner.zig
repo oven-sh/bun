@@ -1,7 +1,7 @@
 const Scanner = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const BundleOptions = @import("../../options.zig").BundleOptions;
 
 const Allocator = std.mem.Allocator;
@@ -102,9 +102,9 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
     }
 
     while (this.dirs_to_scan.readItem()) |entry| {
+        bun.assert(entry.relative_dir.isValid());
         if (!bun.Environment.isWindows) {
-            const dir = entry.relative_dir.asDir();
-            bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+            const dir = entry.relative_dir.stdDir();
 
             const parts2 = &[_][]const u8{ entry.dir_path, entry.name.slice() };
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -115,9 +115,6 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
             FileSystem.setMaxFd(child_dir.fd);
             _ = this.readDirWithName(path2, child_dir) catch return error.OutOfMemory;
         } else {
-            const dir = entry.relative_dir.asDir();
-            bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
-
             const parts2 = &[_][]const u8{ entry.dir_path, entry.name.slice() };
             const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
             const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;

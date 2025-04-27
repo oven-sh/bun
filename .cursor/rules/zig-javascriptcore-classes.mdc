@@ -65,21 +65,27 @@ The Zig files implement the native functionality:
 ```zig
 // Example: TextDecoder.zig
 pub const TextDecoder = struct {
+    // Expose generated bindings as `js` namespace with trait conversion methods
+    pub const js = JSC.Codegen.JSTextDecoder;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     // Internal state
     encoding: []const u8,
     fatal: bool,
     ignoreBOM: bool,
-    
-    // Use generated bindings
-    pub usingnamespace JSC.Codegen.JSTextDecoder;
-    pub usingnamespace bun.New(@This());
-    
+
     // Constructor implementation - note use of globalObject
     pub fn constructor(
         globalObject: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
     ) bun.JSError!*TextDecoder {
         // Implementation
+
+        return bun.new(TextDecoder, .{
+            // Fields
+        });
     }
     
     // Prototype methods - note return type includes JSError
@@ -101,22 +107,22 @@ pub const TextDecoder = struct {
     }
     
     // Cleanup - note standard pattern of using deinit/deref
-    pub fn deinit(this: *TextDecoder) void {
+    fn deinit(this: *TextDecoder) void {
         // Release any retained resources
+        // Free the pointer at the end.
+        bun.destroy(this);
     }
     
+    // Finalize - called by JS garbage collector. This should call deinit, or deref if reference counted.
     pub fn finalize(this: *TextDecoder) void {
         this.deinit();
-        // Or sometimes this is used to free memory instead
-        bun.default_allocator.destroy(this);
     }
 };
 ```
 
 Key components in the Zig file:
 - The struct containing native state
-- `usingnamespace JSC.Codegen.JS<ClassName>` to include generated code
-- `usingnamespace bun.New(@This())` for object creation helpers
+- `pub const js = JSC.Codegen.JS<ClassName>` to include generated code
 - Constructor and methods using `bun.JSError!JSValue` return type for proper error handling
 - Consistent use of `globalObject` parameter name instead of `ctx`
 - Methods matching the JavaScript interface
@@ -395,12 +401,16 @@ To create a new class binding in Bun:
 2. **Implement the native functionality** in a `.zig` file:
    ```zig
    pub const MyClass = struct {
+       // Generated bindings
+       pub const js = JSC.Codegen.JSMyClass;
+       pub const toJS = js.toJS;
+       pub const fromJS = js.fromJS;
+       pub const fromJSDirect = js.fromJSDirect;
+
        // State
        value: []const u8,
        
-       // Generated bindings
-       pub usingnamespace JSC.Codegen.JSMyClass;
-       pub usingnamespace bun.New(@This());
+       pub const new = bun.TrivialNew(@This());
        
        // Constructor
        pub fn constructor(
@@ -432,7 +442,7 @@ To create a new class binding in Bun:
        
        pub fn finalize(this: *MyClass) void {
            this.deinit();
-           bun.default_allocator.destroy(this);
+           bun.destroy(this);
        }
    };
    ```

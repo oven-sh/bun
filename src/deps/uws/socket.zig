@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uws = @import("../uws.zig");
 
 const SocketContext = uws.SocketContext;
@@ -72,7 +72,7 @@ pub const Socket = opaque {
 
         us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
-            const errno = bun.C.getErrno(length);
+            const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
             return bun.errnoToZigErr(errno);
         }
@@ -87,7 +87,7 @@ pub const Socket = opaque {
 
         us_socket_remote_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
-            const errno = bun.C.getErrno(length);
+            const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
             return bun.errnoToZigErr(errno);
         }

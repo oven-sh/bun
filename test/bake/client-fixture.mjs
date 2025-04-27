@@ -16,6 +16,7 @@ url = new URL(url, "http://localhost:3000");
 const storeHotChunks = args.includes("--store-hot-chunks");
 const expectErrors = args.includes("--expect-errors");
 const verboseWebSockets = args.includes("--verbose-web-sockets");
+const allowUnlimitedReloads = args.includes("--allow-unlimited-reloads");
 
 // Create a new window instance
 let window;
@@ -205,6 +206,10 @@ function createWindow(windowUrl) {
 
   window.location.reload = async () => {
     reset();
+    if (allowUnlimitedReloads) {
+      handleReload();
+      return;
+    }
     if (expectingReload) {
       // Permission already granted, proceed with reload
       handleReload();

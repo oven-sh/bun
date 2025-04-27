@@ -7,7 +7,7 @@
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
 //! For questions about DevServer, please consult the delusional @paperclover
-pub const DevServer = @This();
+const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
@@ -72,8 +72,6 @@ html_router: HTMLRouter,
 assets: Assets,
 /// Similar to `assets`, specialized for the additional needs of source mappings.
 source_maps: SourceMapStore,
-// /// Allocations that require a reference count.
-// ref_strings: RefString.Store,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -93,8 +91,8 @@ has_tailwind_plugin_hack: ?bun.StringArrayHashMapUnmanaged(void) = null,
 
 // These values are handles to the functions in `hmr-runtime-server.ts`.
 // For type definitions, see `./bake.private.d.ts`
-server_fetch_function_callback: JSC.Strong,
-server_register_update_callback: JSC.Strong,
+server_fetch_function_callback: JSC.Strong.Optional,
+server_register_update_callback: JSC.Strong.Optional,
 
 // Watching
 bun_watcher: *bun.Watcher,
@@ -236,13 +234,13 @@ pub const RouteBundle = struct {
 
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
-        cached_module_list: JSC.Strong,
+        cached_module_list: JSC.Strong.Optional,
         /// Cached to avoid re-creating the string every request.
         /// TODO: Invalidated when any client file associated with the route is updated.
-        cached_client_bundle_url: JSC.Strong,
+        cached_client_bundle_url: JSC.Strong.Optional,
         /// Cached to avoid re-creating the array every request.
         /// Invalidated when the list of CSS files changes.
-        cached_css_file_array: JSC.Strong,
+        cached_css_file_array: JSC.Strong.Optional,
 
         /// When state == .evaluation_failure, this is populated with the route
         /// evaluation error mirrored in the dev server hash map
@@ -339,7 +337,7 @@ pub const RouteBundle = struct {
         if (self.client_bundle) |bundle| cost += bundle.memoryCost();
         switch (self.data) {
             .framework => {
-                // the JSC.Strong children do not support memoryCost. likely not needed
+                // the JSC.Strong.Optional children do not support memoryCost. likely not needed
                 // .evaluate_failure is not owned
             },
             .html => |*html| {
@@ -946,10 +944,10 @@ fn initServerRuntime(dev: *DevServer) void {
     const fetch_function = interface.get(dev.vm.global, "handleRequest") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable());
-    dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
+    dev.server_fetch_function_callback = .create(fetch_function, dev.vm.global);
     const register_update = interface.get(dev.vm.global, "registerUpdate") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-    dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
+    dev.server_register_update_callback = .create(register_update, dev.vm.global);
 
     fetch_function.ensureStillAlive();
     register_update.ensureStillAlive();
@@ -1390,7 +1388,7 @@ fn onFrameworkRequestWithBundle(
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
                 const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
-                router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
+                router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
             },
             // routeModules
@@ -1418,7 +1416,7 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = JSC.Strong.create(arr, global);
+                bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
@@ -1431,13 +1429,13 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
         },
@@ -3237,11 +3235,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (file.flags.kind) {
                 .js, .asset => {
                     g.owner().allocator.free(file.jsCode());
-                    const map = &g.source_maps.items[index.get()];
-                    g.owner().allocator.free(map.vlq());
-                    if (map.quoted_contents_flags.is_owned) {
-                        map.quotedContentsCowString().deinit(g.owner().allocator);
-                    }
+                    g.source_maps.items[index.get()].clearRetainingCapacity(g.owner().allocator);
                 },
                 .css => if (css == .unref_css) {
                     g.owner().assets.unrefByPath(key);
@@ -3308,6 +3302,37 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             pub fn quotedContents(self: @This()) []const u8 {
                 return self.quoted_contents_ptr[0..self.quoted_contents_flags.len];
+            }
+
+            pub fn clearRetainingCapacity(map: *@This(), alloc: Allocator) void {
+                alloc.free(map.vlq());
+                if (map.quoted_contents_flags.is_owned) {
+                    map.quotedContentsCowString().deinit(alloc);
+                }
+                map.* = .{
+                    // preserve `html_bundle_route_index` when the file is being
+                    // cleared so a route file can locate it's RouteBundle. It
+                    // is a bit jank that this data is stored in the PackedMap,
+                    // but it is a very convenient piece of unused memory
+                    // (remember, HTML has no source maps).
+                    .extra = if (map.vlq_len == 0)
+                        .{ .empty = .{
+                            .line_count = .none,
+                            .html_bundle_route_index = map.extra.empty.html_bundle_route_index,
+                        } }
+                    else
+                        .{ .end_state = .{
+                            .original_line = 0,
+                            .original_column = 0,
+                        } },
+                    .vlq_ptr = comptime &[0]u8{},
+                    .vlq_len = 0,
+                    .quoted_contents_ptr = comptime &[0]u8{},
+                    .quoted_contents_flags = .{
+                        .len = 0,
+                        .is_owned = false,
+                    },
+                };
             }
 
             pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.ptr.CowString) !PackedMap {
@@ -5262,10 +5287,10 @@ const DirectoryWatchStore = struct {
         errdefer store.watches.swapRemoveAt(gop.index);
 
         // Try to use an existing open directory handle
-        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
-            const fd = cache.getFileDescriptor();
-            break :fd if (fd == .zero) null else fd;
-        } else null;
+        const cache_fd = if (dev.server_transpiler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache|
+            cache.getFileDescriptor().unwrapValid()
+        else
+            null;
 
         const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
             .{ fd, false }
@@ -5296,7 +5321,7 @@ const DirectoryWatchStore = struct {
                 },
             },
         } else .{ bun.invalid_fd, false };
-        errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
+        errdefer if (Watcher.requires_file_descriptors) if (owned_fd) fd.close();
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
                 fd,
@@ -5351,7 +5376,7 @@ const DirectoryWatchStore = struct {
 
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
-        defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+        defer if (entry.dir_fd_owned) entry.dir.close();
 
         alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
@@ -5612,10 +5637,10 @@ pub const SerializedFailure = struct {
     //         //
     //     }
     //     if (value.jsType() == .DOMWrapper) {
-    //         if (value.as(JSC.BuildMessage)) |build_error| {
+    //         if (value.as(bun.api.BuildMessage)) |build_error| {
     //             _ = build_error; // autofix
     //             //
-    //         } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
+    //         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
     //             _ = resolve_error; // autofix
     //             @panic("TODO");
     //         }
@@ -6417,9 +6442,7 @@ const WatcherAtomics = struct {
         var ev: *HotReloadEvent = &state.events[state.current];
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
-                // New event, initialize the timer if it is empty.
-                if (ev.isEmpty())
-                    ev.timer = std.time.Timer.start() catch unreachable;
+                // New event is unreferenced by the DevServer thread.
             },
             1 => {
                 @branchHint(.unlikely);
@@ -6433,6 +6456,10 @@ const WatcherAtomics = struct {
             },
             else => unreachable,
         }
+
+        // Initialize the timer if it is empty.
+        if (ev.isEmpty())
+            ev.timer = std.time.Timer.start() catch unreachable;
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
@@ -7125,55 +7152,6 @@ pub const SourceMapStore = struct {
     }
 };
 
-// NOTE: not used but keeping around in case a use case is found soon
-// /// Instead of a pointer to `struct { data: []const u8, ref_count: u32 }`, all
-// /// reference counts are in a shared map. This is used by strings shared between
-// /// source maps and the incremental graph. Not thread-safe.
-// ///
-// /// Transfer from default allocator to RefString with `dev.ref_strings.register(slice)`
-// ///
-// /// Prefer `CowString` (maybe allocated or borrowed) or `[]const u8` (known lifetime) over this structure.
-// const RefString = struct {
-//     /// Allocated by `dev.allocator`, free with `.unref()`
-//     data: []const u8,
-
-//     pub fn deref(str: RefString, store: *Store) void {
-//         const index = store.strings.getIndex(str.ptr) orelse unreachable;
-//         const slice = store.strings.entries.slice();
-//         const ref_count = &slice.items(.value)[index];
-//         if (ref_count.* == 1) {
-//             store.strings.swapRemoveAt(index);
-//             dev.allocator.free(str.data);
-//         } else {
-//             ref_count.* -= 1;
-//         }
-//     }
-
-//     pub fn dupeRef(str: RefString, store: *Store) RefString {
-//         const ref_count = store.strings.getPtr(str.ptr) orelse unreachable;
-//         ref_count.* += 1;
-//         return str;
-//     }
-
-//     pub const Store = struct {
-//         /// Key -> Data. Value -> Reference count
-//         strings: AutoArrayHashMapUnmanaged([*]u8, u32),
-
-//         pub const empty: Store = .{ .strings = .empty };
-
-//         /// `data` must be owned by `dev.allocator`
-//         pub fn register(store: *Store, data: []u8) !RefString {
-//             const gop = try store.strings.getOrPut(dev.allocator, data.ptr);
-//             if (gop.found_existing) {
-//                 gop.value_ptr.* += 1;
-//             } else {
-//                 gop.value_ptr = 1;
-//             }
-//             return .{ .data = data };
-//         }
-//     };
-// };
-
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;
     dev.plugin_state = .loaded;
@@ -7603,7 +7581,7 @@ const Mutex = bun.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
@@ -7644,7 +7622,7 @@ const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Watcher = bun.Watcher;
 const StaticRoute = bun.server.StaticRoute;
 
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 
 const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;

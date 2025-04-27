@@ -371,7 +371,7 @@ pub const ShellCpTask = struct {
         return out;
     }
 
-    pub fn ensureDest(nodefs: *JSC.Node.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
+    pub fn ensureDest(nodefs: *JSC.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
         return switch (nodefs.mkdirRecursiveOSPath(dest, JSC.Node.Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| Maybe(void){ .err = err },
             .result => Maybe(void).success,
@@ -392,7 +392,7 @@ pub const ShellCpTask = struct {
         if (bun.Environment.isWindows) {
             const attributes = bun.sys.getFileAttributes(path[0..path.len]) orelse {
                 const err: Syscall.Error = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.ENOENT),
                     .syscall = .copyfile,
                     .path = path,
                 };
@@ -487,7 +487,7 @@ pub const ShellCpTask = struct {
         const tgt_is_dir: bool, const tgt_exists: bool = switch (this.isDir(tgt)) {
             .result => |is_dir| .{ is_dir, true },
             .err => |e| brk: {
-                if (e.getErrno() == bun.C.E.NOENT) {
+                if (e.getErrno() == .NOENT) {
                     // If it has a trailing directory separator, its a directory
                     const is_dir = hasTrailingSep(tgt);
                     break :brk .{ is_dir, false };
@@ -539,7 +539,7 @@ pub const ShellCpTask = struct {
         this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
         this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
 
-        const args = JSC.Node.Arguments.Cp{
+        const args = JSC.Node.fs.Arguments.Cp{
             .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
             .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
             .flags = .{
@@ -555,7 +555,7 @@ pub const ShellCpTask = struct {
         if (this.event_loop == .js) {
             const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
             debug("Yoops", .{});
-            _ = JSC.Node.ShellAsyncCpTask.createWithShellTask(
+            _ = bun.api.node.fs.ShellAsyncCpTask.createWithShellTask(
                 vm.global,
                 args,
                 vm,
@@ -564,7 +564,7 @@ pub const ShellCpTask = struct {
                 false,
             );
         } else {
-            _ = JSC.Node.ShellAsyncCpTask.createMini(
+            _ = bun.api.node.fs.ShellAsyncCpTask.createMini(
                 args,
                 this.event_loop.mini,
                 bun.ArenaAllocator.init(bun.default_allocator),
@@ -741,7 +741,7 @@ const Opts = packed struct(u16) {
 const log = bun.Output.scoped(.cp, true);
 const ArrayList = std.ArrayList;
 const Syscall = bun.sys;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

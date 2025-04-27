@@ -1013,6 +1013,10 @@ if(LINUX)
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    # enable string tail merging
+    -Wl,-O2
+    # make debug info faster to load
+    -Wl,--gdb-index
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
@@ -1089,6 +1093,7 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
+  Highway
   LibDeflate
   LolHtml
   Lshpack

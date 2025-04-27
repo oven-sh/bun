@@ -2,23 +2,18 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
-const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
-const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const To = Base.To;
 const Request = WebCore.Request;
 const Environment = bun.Environment;
 const URLPath = @import("../../http/url_path.zig");
@@ -44,7 +39,10 @@ pub const FileSystemRouter = struct {
     allocator: std.mem.Allocator = undefined,
     asset_prefix: ?*JSC.RefString = null,
 
-    pub usingnamespace JSC.Codegen.JSFileSystemRouter;
+    pub const js = JSC.Codegen.JSFileSystemRouter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*FileSystemRouter {
         const argument_ = callframe.arguments_old(1);
@@ -278,7 +276,7 @@ pub const FileSystemRouter = struct {
         globalThis.allocator().destroy(this.arena);
 
         this.arena = arena;
-        @This().routesSetCached(this_value, globalThis, JSC.JSValue.zero);
+        js.routesSetCached(this_value, globalThis, JSC.JSValue.zero);
         this.allocator = allocator;
         this.router = router;
         return this_value;
@@ -418,7 +416,10 @@ pub const MatchedRoute = struct {
     needs_deinit: bool = true,
     base_dir: ?*JSC.RefString = null,
 
-    pub usingnamespace JSC.Codegen.JSMatchedRoute;
+    pub const js = JSC.Codegen.JSMatchedRoute;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn getName(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) JSValue {
         return ZigString.init(this.route.name).withEncoding().toJS(globalThis);
@@ -537,7 +538,7 @@ pub const MatchedRoute = struct {
 
     threadlocal var query_string_values_buf: [256]string = undefined;
     threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
-    pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap) JSValue {
+    pub fn createQueryObject(ctx: *JSC.JSGlobalObject, map: *QueryStringMap) JSValue {
         const QueryObjectCreator = struct {
             query: *QueryStringMap,
             pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {

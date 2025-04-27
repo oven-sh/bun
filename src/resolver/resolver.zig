@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,8 +9,8 @@ const FeatureFlags = bun.FeatureFlags;
 const PathString = bun.PathString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const C = bun.C;
+const FD = bun.FD;
+
 const ast = @import("../import_record.zig");
 const logger = bun.logger;
 const options = @import("../options.zig");
@@ -211,8 +211,8 @@ pub const Result = struct {
 
     debug_meta: ?DebugMeta = null,
 
-    dirname_fd: StoredFileDescriptorType = .zero,
-    file_fd: StoredFileDescriptorType = .zero,
+    dirname_fd: FD = .invalid,
+    file_fd: FD = .invalid,
     import_kind: ast.ImportKind = undefined,
 
     pub const Union = union(enum) {
@@ -317,7 +317,7 @@ pub const DirEntryResolveQueueItem = struct {
     result: allocators.Result,
     unsafe_path: string,
     safe_path: string = "",
-    fd: StoredFileDescriptorType = .zero,
+    fd: FD = .invalid,
 };
 
 pub const DebugLogs = struct {
@@ -373,8 +373,8 @@ pub const DebugLogs = struct {
 
 pub const MatchResult = struct {
     path_pair: PathPair,
-    dirname_fd: StoredFileDescriptorType = .zero,
-    file_fd: StoredFileDescriptorType = .zero,
+    dirname_fd: FD = .invalid,
+    file_fd: FD = .invalid,
     is_node_module: bool = false,
     package_json: ?*PackageJSON = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
@@ -442,8 +442,8 @@ pub const PendingResolution = struct {
 pub const LoadResult = struct {
     path: string,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
-    dirname_fd: StoredFileDescriptorType = .zero,
-    file_fd: StoredFileDescriptorType = .zero,
+    dirname_fd: FD = .invalid,
+    file_fd: FD = .invalid,
     dir_info: ?*DirInfo = null,
 };
 
@@ -460,9 +460,9 @@ const Timer = @import("../system_timer.zig").Timer;
 
 pub const AnyResolveWatcher = struct {
     context: *anyopaque,
-    callback: *const (fn (*anyopaque, dir_path: string, dir_fd: StoredFileDescriptorType) void) = undefined,
+    callback: *const (fn (*anyopaque, dir_path: string, dir_fd: FD) void) = undefined,
 
-    pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
+    pub fn watch(this: @This(), dir_path: string, fd: FD) void {
         return this.callback(this.context, dir_path, fd);
     }
 };
@@ -475,7 +475,7 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
                 .callback = watch,
             };
         }
-        pub fn watch(this: *anyopaque, dir_path: string, fd: StoredFileDescriptorType) void {
+        pub fn watch(this: *anyopaque, dir_path: string, fd: FD) void {
             onWatch(bun.cast(Context, this), dir_path, fd);
         }
     };
@@ -720,7 +720,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.JSC.HardcodedModule.Alias.has(import_path, r.opts.target))
+                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target))
             {
                 return .{
                     .success = Result{
@@ -1024,7 +1024,7 @@ pub const Resolver = struct {
                     const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
-                        if (result.file_fd == .zero) result.file_fd = query.entry.cache.fd;
+                        if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
 
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
@@ -1037,31 +1037,31 @@ pub const Resolver = struct {
 
                         const store_fd = r.store_fd;
 
-                        if (query.entry.cache.fd == .zero) {
+                        if (!query.entry.cache.fd.isValid()) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file = try if (store_fd)
-                                std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only })
+                            var file: bun.FD = if (store_fd)
+                                .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }))
                             else
-                                bun.openFileForPath(span);
+                                .fromStdFile(try bun.openFileForPath(span));
 
                             if (!store_fd) {
-                                assert(bun.FDTag.get(file.handle) == .none);
-                                out = try bun.getFdPath(file.handle, &buf);
+                                assert(file.stdioTag() == null);
+                                out = try file.getFdPath(&buf);
                                 file.close();
-                                query.entry.cache.fd = .zero;
+                                query.entry.cache.fd = .invalid;
                             } else {
-                                query.entry.cache.fd = bun.toFD(file.handle);
-                                Fs.FileSystem.setMaxFd(file.handle);
+                                query.entry.cache.fd = file;
+                                Fs.FileSystem.setMaxFd(file.native());
                             }
                         }
 
                         defer {
                             if (r.fs.fs.needToCloseFiles()) {
-                                if (query.entry.cache.fd != .zero) {
-                                    var file = query.entry.cache.fd.asFile();
+                                if (query.entry.cache.fd.isValid()) {
+                                    var file = query.entry.cache.fd.stdFile();
                                     file.close();
-                                    query.entry.cache.fd = .zero;
+                                    query.entry.cache.fd = .invalid;
                                 }
                             }
                         }
@@ -1075,7 +1075,7 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
                         }
                         query.entry.cache.symlink = PathString.init(symlink);
-                        if (result.file_fd == .zero and store_fd) result.file_fd = query.entry.cache.fd;
+                        if (!result.file_fd.isValid() and store_fd) result.file_fd = query.entry.cache.fd;
 
                         path.setRealpath(symlink);
                     }
@@ -1248,7 +1248,7 @@ pub const Resolver = struct {
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.JSC.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.JSC.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
                         return .{ .not_found = {} };
                     }
 
@@ -1888,7 +1888,7 @@ pub const Resolver = struct {
                                         .success = .{
                                             .path_pair = .{ .primary = package_json.source.path },
                                             .dirname_fd = pkg_dir_info.getFileDescriptor(),
-                                            .file_fd = .zero,
+                                            .file_fd = .invalid,
                                             .is_node_module = package_json.source.path.isNodeModule(),
                                             .package_json = package_json,
                                             .dir_info = dir_info,
@@ -2169,7 +2169,7 @@ pub const Resolver = struct {
                                         .success = .{
                                             .path_pair = .{ .primary = package_json.source.path },
                                             .dirname_fd = pkg_dir_info.getFileDescriptor(),
-                                            .file_fd = .zero,
+                                            .file_fd = .invalid,
                                             .is_node_module = package_json.source.path.isNodeModule(),
                                             .package_json = package_json,
                                             .dir_info = dir_info,
@@ -2270,10 +2270,10 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                dir_entries_ptr.fd = bun.toFD(open_dir.fd);
+                dir_entries_ptr.fd = .fromStdDir(open_dir);
             }
 
-            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2294,7 +2294,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            bun.toFD(open_dir.fd),
+            .fromStdDir(open_dir),
             package_id,
         );
         return dir_info_ptr;
@@ -2561,7 +2561,7 @@ pub const Resolver = struct {
     pub fn parseTSConfig(
         r: *ThisResolver,
         file: string,
-        dirname_fd: StoredFileDescriptorType,
+        dirname_fd: FD,
     ) !?*TSConfigJSON {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -2611,7 +2611,7 @@ pub const Resolver = struct {
     pub fn parsePackageJSON(
         r: *ThisResolver,
         file: string,
-        dirname_fd: StoredFileDescriptorType,
+        dirname_fd: FD,
         package_id: ?Install.PackageID,
         comptime allow_dependencies: bool,
     ) !?*PackageJSON {
@@ -2737,7 +2737,7 @@ pub const Resolver = struct {
             bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
-                .fd = .zero,
+                .fd = .invalid,
             };
 
             if (rfs.entries.get(top)) |top_entry| {
@@ -2763,7 +2763,7 @@ pub const Resolver = struct {
                 bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                     .unsafe_path = root_path,
                     .result = result,
-                    .fd = .zero,
+                    .fd = .invalid,
                 };
                 if (rfs.entries.get(top)) |top_entry| {
                     switch (top_entry.*) {
@@ -2790,8 +2790,8 @@ pub const Resolver = struct {
         defer {
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
                 const open_dirs: []std.fs.Dir = bufs(.open_dirs)[0..open_dir_count];
-                for (open_dirs) |*open_dir| {
-                    _ = bun.sys.close(bun.toFD(open_dir.fd));
+                for (open_dirs) |open_dir| {
+                    bun.FD.fromStdDir(open_dir).close();
                 }
             }
         }
@@ -2816,8 +2816,8 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            const open_dir = if (queue_top.fd != .zero)
-                queue_top.fd.asDir()
+            const open_dir: std.fs.Dir = if (queue_top.fd.isValid())
+                queue_top.fd.stdDir()
             else open_dir: {
                 // This saves us N copies of .toPosixPath
                 // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
@@ -2838,7 +2838,7 @@ pub const Resolver = struct {
                         .read_only = true,
                     });
                     if (dirfd_result.unwrap()) |result| {
-                        break :open_req result.asDir();
+                        break :open_req result.stdDir();
                     } else |err| {
                         break :open_req err;
                     }
@@ -2884,7 +2884,7 @@ pub const Resolver = struct {
                 };
             };
 
-            if (queue_top.fd == .zero) {
+            if (!queue_top.fd.isValid()) {
                 Fs.FileSystem.setMaxFd(open_dir.fd);
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs(.open_dirs)[open_dir_count] = open_dir;
@@ -2951,13 +2951,13 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) bun.toFD(open_dir.fd) else .zero;
+                new_entry.fd = if (r.store_fd) .fromStdDir(open_dir) else .invalid;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.FD.fromStdDir(open_dir), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2972,7 +2972,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                bun.toFD(open_dir.fd),
+                .fromStdDir(open_dir),
                 null,
             );
 
@@ -3166,7 +3166,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -4038,10 +4038,11 @@ pub const Resolver = struct {
                             bin_folders = BinFolderArray.init(0) catch unreachable;
                         }
 
-                        const this_dir = fd.asDir();
-                        var file = this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{ .iterate = true }) catch break :append_bin_dir;
+                        const this_dir = fd.stdDir();
+                        var file = bun.FD.fromStdDir(this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{}) catch
+                            break :append_bin_dir);
                         defer file.close();
-                        const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
+                        const bin_path = file.getFdPath(bufs(.node_bin_path)) catch break :append_bin_dir;
                         bin_folders_lock.lock();
                         defer bin_folders_lock.unlock();
 
@@ -4063,10 +4064,10 @@ pub const Resolver = struct {
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
                             }
 
-                            const this_dir = fd.asDir();
+                            const this_dir = fd.stdDir();
                             var file = this_dir.openDirZ(".bin", .{}) catch break :append_bin_dir;
                             defer file.close();
-                            const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
+                            const bin_path = bun.getFdPath(.fromStdDir(file), bufs(.node_bin_path)) catch break :append_bin_dir;
                             bin_folders_lock.lock();
                             defer bin_folders_lock.unlock();
 
@@ -4108,7 +4109,7 @@ pub const Resolver = struct {
             if (!r.opts.preserve_symlinks) {
                 if (parent_.getEntries(r.generation)) |parent_entries| {
                     if (parent_entries.get(base)) |lookup| {
-                        if (entries.fd != .zero and lookup.entry.cache.fd == .zero and r.store_fd) lookup.entry.cache.fd = entries.fd;
+                        if (entries.fd.isValid() and !lookup.entry.cache.fd.isValid() and r.store_fd) lookup.entry.cache.fd = entries.fd;
                         const entry = lookup.entry;
 
                         var symlink = entry.symlink(rfs, r.store_fd);
@@ -4142,9 +4143,9 @@ pub const Resolver = struct {
             const entry = lookup.entry;
             if (entry.kind(rfs, r.store_fd) == .file) {
                 info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, package_id, true) catch null
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
                 else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, null, false) catch null;
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
@@ -4355,7 +4356,7 @@ pub const GlobalCache = enum {
 
 comptime {
     _ = Resolver.Resolver__propForRequireMainPaths;
-    @export(&JSC.toJSHostFunction(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
+    @export(&JSC.toJSHostFn(Resolver.nodeModulePathsForJS), .{ .name = "Resolver__nodeModulePathsForJS" });
     @export(&Resolver.nodeModulePathsJSValue, .{ .name = "Resolver__nodeModulePathsJSValue" });
 }
 

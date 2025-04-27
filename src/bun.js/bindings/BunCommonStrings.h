@@ -68,6 +68,25 @@
     macro(rsaPss, "rsa-pss") \
     macro(s3Error, "S3Error") \
     macro(strict, "strict") \
+    macro(jwkCrv, "crv") \
+    macro(jwkD, "d") \
+    macro(jwkDp, "dp") \
+    macro(jwkDq, "dq") \
+    macro(jwkDsa, "DSA") \
+    macro(jwkE, "e") \
+    macro(jwkEc, "EC") \
+    macro(jwkG, "g") \
+    macro(jwkK, "k") \
+    macro(jwkP, "p") \
+    macro(jwkQ, "q") \
+    macro(jwkQi, "qi") \
+    macro(jwkKty, "kty") \
+    macro(jwkN, "n") \
+    macro(jwkOct, "oct") \
+    macro(jwkOkp, "OKP") \
+    macro(jwkRsa, "RSA") \
+    macro(jwkX, "x") \
+    macro(jwkY, "y") \
     macro(systemError, "SystemError") \
     macro(ucs2, "ucs2") \
     macro(utf16le, "utf16le") \

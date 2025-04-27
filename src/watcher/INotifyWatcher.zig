@@ -98,7 +98,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     }
 
     // TODO: convert to bun.sys.Error
-    this.fd = bun.toFD(try std.posix.inotify_init1(IN.CLOEXEC));
+    this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
     this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
     log("{} init", .{this.fd});
 }
@@ -219,7 +219,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
 pub fn stop(this: *INotifyWatcher) void {
     log("{} stop", .{this.fd});
     if (this.fd != bun.invalid_fd) {
-        _ = bun.sys.close(this.fd);
+        this.fd.close();
         this.fd = bun.invalid_fd;
     }
 }
@@ -315,7 +315,7 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Futex = bun.Futex;

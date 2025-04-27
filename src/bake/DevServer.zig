@@ -6122,7 +6122,7 @@ const HmrSocket = struct {
                 var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
 
                 _ = ws.send(&response, .binary, false, true);
-                s.notifyInspectorClientNavigation(pattern, rbi);
+                s.notifyInspectorClientNavigation(pattern, rbi.toOptional());
             },
             .testing_batch_events => switch (s.dev.testing_batch_events) {
                 .disabled => {

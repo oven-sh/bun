@@ -3,7 +3,8 @@
 #include "ErrorCode.h"
 #include "headers.h"
 
-using namespace Bun;
+namespace Bun {
+
 using namespace JSC;
 
 JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
@@ -77,7 +78,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         return {};
     }
     case 1: {
-        num = jsNumber(1);
+        num = jsNumber(0);
         break;
     }
     case 2: {
@@ -228,3 +229,5 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
 }
+
+} // namespace Bun

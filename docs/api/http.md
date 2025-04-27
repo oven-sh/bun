@@ -901,7 +901,7 @@ Set a custom idle timeout for individual requests:
 
 ```ts
 const server = Bun.serve({
-  fetch(req, server) {
+  fetch: async (req, server) => {
     // Set 60 second timeout for this request
     server.timeout(req, 60);
 

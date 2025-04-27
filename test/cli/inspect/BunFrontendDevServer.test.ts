@@ -181,6 +181,8 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     socketPath = `inspector-${Math.random().toString(36).substring(2)}.sock`;
 
     try {
+      const socketPromise = connect(`unix://${socketPath}`);
+
       // Start the server with inspector enabled (Unix socket only)
       devServerProcess = spawn({
         cmd: [bunExe(), `--inspect=unix:${socketPath}`, join(tempdir, "server.ts")],
@@ -189,7 +191,6 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      devServerProcess.unref();
 
       // Wait for the server to start
       let stdout = "";
@@ -211,11 +212,10 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
 
       // Connect to the inspector socket using Unix domain socket
       session = new BunFrontendDevServerSession();
-      const socket = await connect(`unix://${socketPath}`);
+      const socket = await socketPromise;
       const framer = new SocketFramer((message: string) => {
         session.onMessage(message);
       });
-
       session.socket = socket;
       session.framer = framer;
       socket.data = {
@@ -225,6 +225,10 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
       // Enable the BunFrontendDevServer domain
       await session.enable();
     } finally {
+      if (devServerProcess) {
+        devServerProcess.unref();
+      }
+
       process.chdir(cwd);
     }
   });

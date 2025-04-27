@@ -3,11 +3,11 @@ import { decodeSerializedError } from "bake/error-serialization.ts";
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, tmpdirSync } from "harness";
+import { bunEnv as env, bunExe, isPosix, tmpdirSync } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
-
+const bunEnv = { ...env, NODE_ENV: "development" };
 class BunFrontendDevServerSession extends InspectorSession {
   constructor() {
     super();

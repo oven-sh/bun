@@ -2072,5 +2072,6 @@ const Braces = @import("../../shell/braces.zig");
 const HashObject = bun.api.HashObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const TOMLObject = bun.api.TOMLObject;
+const CSVObject = bun.api.CSVObject;
+const Timer = bun.api.Timer;
 const FFIObject = bun.api.FFIObject;
-const CSVObject = @import("./CSVObject.zig");

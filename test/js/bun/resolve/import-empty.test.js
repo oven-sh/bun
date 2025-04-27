@@ -100,3 +100,25 @@ it("importing empty sqlite files returns database object", async () => {
     expect(empty_file_module.db).toBeInstanceOf(Database);
   }
 });
+
+// MARK: - CSV like
+
+it("importing empty csv file returns empty array as default export", async () => {
+  const empty_file_csv = await import("./empty-file", { with: { type: "csv" } });
+  expect(empty_file_csv.default).toEqual([]);
+});
+
+it("importing empty csv_no_header file returns empty array as default export", async () => {
+  const empty_file_csv_no_header = await import("./empty-file", { with: { type: "csv_no_header" } });
+  expect(empty_file_csv_no_header.default).toEqual([]);
+});
+
+it("importing empty tsv file returns empty array as default export", async () => {
+  const empty_file_tsv = await import("./empty-file", { with: { type: "tsv" } });
+  expect(empty_file_tsv.default).toEqual([]);
+});
+
+it("importing empty tsv_no_header file returns empty array as default export", async () => {
+  const empty_file_tsv_no_header = await import("./empty-file", { with: { type: "tsv_no_header" } });
+  expect(empty_file_tsv_no_header.default).toEqual([]);
+});

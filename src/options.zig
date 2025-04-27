@@ -697,6 +697,7 @@ pub const Loader = enum(u8) {
 
     pub fn handlesEmptyFile(this: Loader) bool {
         return switch (this) {
+            // .wasm, .file, .text, .csv, .csv_no_header, .tsv, .tsv_no_header => true,
             .wasm, .file, .text => true,
             else => false,
         };

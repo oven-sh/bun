@@ -6115,13 +6115,7 @@ const HmrSocket = struct {
             .set_url => {
                 const pattern = msg[1..];
                 const rbi = s.dev.routeToBundleIndexSlow(pattern) orelse {
-                    if (s.inspector_connection_id > -1) {
-                        if (s.inspector()) |agent| {
-                            var pattern_str = bun.String.init(pattern);
-                            defer pattern_str.deref();
-                            agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, -1);
-                        }
-                    }
+                    s.notifyInspectorClientNavigation(pattern, .none);
                     return;
                 };
 
@@ -6134,13 +6128,7 @@ const HmrSocket = struct {
                 var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
 
                 _ = ws.send(&response, .binary, false, true);
-                if (s.inspector_connection_id > -1) {
-                    if (s.inspector()) |agent| {
-                        var pattern_str = bun.String.init(pattern);
-                        defer pattern_str.deref();
-                        agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, rbi.get());
-                    }
-                }
+                s.notifyInspectorClientNavigation(pattern, rbi);
             },
             .testing_batch_events => switch (s.dev.testing_batch_events) {
                 .disabled => {
@@ -6206,6 +6194,16 @@ const HmrSocket = struct {
 
         bun.debugAssert(s.dev.active_websocket_connections.remove(s));
         s.dev.allocator.destroy(s);
+    }
+
+    fn notifyInspectorClientNavigation(s: *const HmrSocket, pattern: []const u8, rbi: RouteBundle.Index.Optional) void {
+        if (s.inspector_connection_id > -1) {
+            if (s.inspector()) |agent| {
+                var pattern_str = bun.String.init(pattern);
+                defer pattern_str.deref();
+                agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, rbi.unwrap() orelse -1);
+            }
+        }
     }
 };
 

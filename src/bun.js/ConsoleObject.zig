@@ -1502,7 +1502,7 @@ pub const Formatter = struct {
                                 }
 
                                 if (next_value.isNumber() or !next_value.isSymbol()) double_convert: {
-                                    var value = next_value.coerceToDouble(global);
+                                    var value = try next_value.toNumber(global);
 
                                     if (!std.math.isFinite(value)) {
                                         // for NaN and the string Infinity and -Infinity, parseInt returns NaN
@@ -1577,7 +1577,7 @@ pub const Formatter = struct {
                                 // because spec says to convert the value to a string
                                 // and then parse as a number, but we are just coercing
                                 // a number.
-                                break :brk next_value.coerceToDouble(global);
+                                break :brk try next_value.toNumber(global);
                             };
 
                             const abs = @abs(converted);

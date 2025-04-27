@@ -48,11 +48,18 @@ const InspectorBunFrontendDevServerAgentHandle = opaque {
 
 pub const BunFrontendDevServerAgent = struct {
     next_inspector_connection_id: i32 = 0,
+    next_inspector_build_id: i32 = 0,
     handle: ?*InspectorBunFrontendDevServerAgentHandle = null,
 
     pub fn nextConnectionID(this: *BunFrontendDevServerAgent) i32 {
         const id = this.next_inspector_connection_id;
         this.next_inspector_connection_id +%= 1;
+        return id;
+    }
+
+    pub fn nextBuildID(this: *BunFrontendDevServerAgent) i32 {
+        const id = this.next_inspector_build_id;
+        this.next_inspector_build_id +%= 1;
         return id;
     }
 

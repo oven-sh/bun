@@ -1706,8 +1706,6 @@ const ResponseAndMethod = struct {
     method: bun.http.Method,
 };
 
-var next_inspector_build_id = std.atomic.Value(i32).init(0);
-
 fn startAsyncBundle(
     dev: *DevServer,
     entry_points: EntryPointList,
@@ -1718,9 +1716,16 @@ fn startAsyncBundle(
     assert(entry_points.set.count() > 0);
     dev.log.clearAndFree();
 
-    const build_id = next_inspector_build_id.fetchAdd(1, .monotonic);
+    // Useful for:
+    // - "Is this the build I care about?"
+    // - A stateful build status message.
+    //    1. "Build started"
+    //    2. "Build finished" or "Build failed"
+    var inspector_build_id: i32 = -1;
+
     // Notify inspector about bundle start
     if (dev.inspector()) |agent| {
+        inspector_build_id = agent.nextBuildID();
         var sfa_state = std.heap.stackFallback(256, dev.allocator);
         const sfa = sfa_state.get();
 
@@ -1734,14 +1739,12 @@ fn startAsyncBundle(
         }
 
         for (entry_points.set.keys()) |key| {
-            const path = dev.relativePath(key);
-            defer dev.releaseRelativePathBuf();
-            try trigger_files.append(bun.String.createUTF8(path));
+            try trigger_files.append(bun.String.createUTF8(key));
         }
 
         agent.notifyBundleStart(
             trigger_files.items,
-            build_id,
+            inspector_build_id,
         );
     }
 
@@ -1783,7 +1786,7 @@ fn startAsyncBundle(
         dev.server_graph.reset();
     }
 
-    const start_data = try bv2.startFromBakeDevServer(entry_points, build_id);
+    const start_data = try bv2.startFromBakeDevServer(entry_points, inspector_build_id);
 
     dev.current_bundle = .{
         .bv2 = bv2,
@@ -2610,7 +2613,7 @@ pub fn finalizeBundle(
                 resp,
                 dev.bundling_failures.keys(),
                 .bundler,
-                if (!sent_any_failures) result.id else null,
+                if (!sent_any_failures) result.inspector_build_id else null,
             );
             sent_any_failures = true;
         }
@@ -2618,7 +2621,7 @@ pub fn finalizeBundle(
             if (dev.inspector()) |agent| {
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 defer buf.deinit();
-                try encodeSerializedFailuresWithAgent(dev.bundling_failures.keys(), &buf, result.id, agent.*);
+                try encodeSerializedFailuresWithAgent(dev.bundling_failures.keys(), &buf, result.inspector_build_id, agent.*);
             }
         }
 
@@ -2687,7 +2690,7 @@ pub fn finalizeBundle(
         Output.flush();
 
         if (dev.inspector()) |agent| {
-            agent.notifyBundleComplete(@floatFromInt(ms_elapsed), result.id);
+            agent.notifyBundleComplete(@floatFromInt(ms_elapsed), result.inspector_build_id);
         }
     }
 

@@ -1257,6 +1257,7 @@ fn ensureRouteIsBundled(
                 resp,
                 (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
                 .evaluation,
+                null,
             );
         },
         .loaded => switch (kind) {
@@ -1321,6 +1322,7 @@ fn checkRouteFailures(
             resp,
             dev.incremental_result.failures_added.items,
             .bundler,
+            null,
         );
         return .stop;
     } else {
@@ -1704,6 +1706,8 @@ const ResponseAndMethod = struct {
     method: bun.http.Method,
 };
 
+var next_inspector_build_id = std.atomic.Value(i32).init(0);
+
 fn startAsyncBundle(
     dev: *DevServer,
     entry_points: EntryPointList,
@@ -1713,6 +1717,33 @@ fn startAsyncBundle(
     assert(dev.current_bundle == null);
     assert(entry_points.set.count() > 0);
     dev.log.clearAndFree();
+
+    const build_id = next_inspector_build_id.fetchAdd(1, .monotonic);
+    // Notify inspector about bundle start
+    if (dev.inspector()) |agent| {
+        var sfa_state = std.heap.stackFallback(256, dev.allocator);
+        const sfa = sfa_state.get();
+
+        // Extract file paths from entry points
+        var trigger_files = try std.ArrayList(bun.String).initCapacity(sfa, entry_points.set.count());
+        defer {
+            for (trigger_files.items) |*str| {
+                str.deref();
+            }
+            trigger_files.deinit();
+        }
+
+        for (entry_points.set.keys()) |key| {
+            const path = dev.relativePath(key);
+            defer dev.releaseRelativePathBuf();
+            try trigger_files.append(bun.String.createUTF8(path));
+        }
+
+        agent.notifyBundleStart(
+            trigger_files.items,
+            build_id,
+        );
+    }
 
     dev.incremental_result.reset();
 
@@ -1752,7 +1783,7 @@ fn startAsyncBundle(
         dev.server_graph.reset();
     }
 
-    const start_data = try bv2.startFromBakeDevServer(entry_points);
+    const start_data = try bv2.startFromBakeDevServer(entry_points, build_id);
 
     dev.current_bundle = .{
         .bv2 = bv2,
@@ -2048,7 +2079,7 @@ pub const HotUpdateContext = struct {
 pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
-    result: bun.bundle_v2.DevServerOutput,
+    result: *const bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
     var had_sent_hmr_event = false;
     defer {
@@ -2557,6 +2588,7 @@ pub fn finalizeBundle(
     if (dev.incremental_result.failures_added.items.len > 0) {
         dev.bundles_since_last_error = 0;
 
+        var sent_any_failures = false;
         while (current_bundle.requests.popFirst()) |node| {
             defer dev.deferred_request_pool.put(node);
             const req = &node.data;
@@ -2578,8 +2610,18 @@ pub fn finalizeBundle(
                 resp,
                 dev.bundling_failures.keys(),
                 .bundler,
+                if (!sent_any_failures) result.id else null,
             );
+            sent_any_failures = true;
         }
+        if (!sent_any_failures) {
+            if (dev.inspector()) |agent| {
+                var buf = std.ArrayList(u8).init(bun.default_allocator);
+                defer buf.deinit();
+                try encodeSerializedFailuresWithAgent(dev.bundling_failures.keys(), &buf, result.id, agent.*);
+            }
+        }
+
         return;
     }
 
@@ -2603,12 +2645,14 @@ pub fn finalizeBundle(
             dev.printMemoryLine();
         }
 
+        const ms_elapsed = @divFloor(current_bundle.timer.read(), std.time.ns_per_ms);
+
         Output.prettyError("<green>{s} in {d}ms<r>", .{
             if (current_bundle.had_reload_event)
                 "Reloaded"
             else
                 "Bundled page",
-            @divFloor(current_bundle.timer.read(), std.time.ns_per_ms),
+            ms_elapsed,
         });
 
         // Compute a file name to display
@@ -2641,6 +2685,10 @@ pub fn finalizeBundle(
         }
         Output.prettyError("\n", .{});
         Output.flush();
+
+        if (dev.inspector()) |agent| {
+            agent.notifyBundleComplete(@floatFromInt(ms_elapsed), result.id);
+        }
     }
 
     // Release the lock because the underlying handler may acquire one.
@@ -2904,11 +2952,51 @@ const ErrorPageKind = enum {
     runtime,
 };
 
+fn encodeSerializedFailures(
+    dev: *const DevServer,
+    failures: []const SerializedFailure,
+    buf: *std.ArrayList(u8),
+    build_id_for_inspector: ?i32,
+) bun.OOM!void {
+    return encodeSerializedFailuresWithAgent(failures, buf, build_id_for_inspector, if (dev.inspector()) |agent| agent.* else .{});
+}
+
+fn encodeSerializedFailuresWithAgent(
+    failures: []const SerializedFailure,
+    buf: *std.ArrayList(u8),
+    build_id_for_inspector: ?i32,
+    inspector_agent: BunFrontendDevServerAgent,
+) bun.OOM!void {
+    const failures_start_buf_pos = buf.items.len;
+    for (failures) |fail| {
+        const len = bun.base64.encodeLen(fail.data);
+
+        try buf.ensureUnusedCapacity(len);
+        const start = buf.items.len;
+        buf.items.len += len;
+        const to_write_into = buf.items[start..];
+
+        var encoded = to_write_into[0..bun.base64.encode(to_write_into, fail.data)];
+        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
+            encoded.len -= 1;
+        }
+
+        buf.items.len = start + encoded.len;
+    }
+    if (inspector_agent.isEnabled()) {
+        const failures_encoded = buf.items[failures_start_buf_pos..];
+        var str = bun.String.initLatin1OrASCIIView(failures_encoded);
+        defer str.deref();
+        inspector_agent.notifyBundleFailed(&str, build_id_for_inspector orelse -1);
+    }
+}
+
 fn sendSerializedFailures(
     dev: *DevServer,
     resp: AnyResponse,
     failures: []const SerializedFailure,
     kind: ErrorPageKind,
+    build_id_for_inspector: ?i32,
 ) !void {
     var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator, 2048);
     errdefer buf.deinit();
@@ -2934,21 +3022,7 @@ fn sendSerializedFailures(
         ),
     });
 
-    for (failures) |fail| {
-        const len = bun.base64.encodeLen(fail.data);
-
-        try buf.ensureUnusedCapacity(len);
-        const start = buf.items.len;
-        buf.items.len += len;
-        const to_write_into = buf.items[start..];
-
-        var encoded = to_write_into[0..bun.base64.encode(to_write_into, fail.data)];
-        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
-            encoded.len -= 1;
-        }
-
-        buf.items.len = start + encoded.len;
-    }
+    try dev.encodeSerializedFailures(failures, &buf, build_id_for_inspector);
 
     const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
     const post = "</script></body></html>";
@@ -5708,8 +5782,8 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
     };
 }
 fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
-    if (!bun.FeatureFlags.bake_debugging_features) return;
-    if (dev.emit_visualizer_events == 0) return;
+    const inspector_agent = dev.inspector();
+    if (dev.emit_visualizer_events == 0 and inspector_agent == null) return;
 
     var sfb = std.heap.stackFallback(65536, dev.allocator);
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
@@ -5718,6 +5792,13 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
 
     dev.writeVisualizerMessage(&payload) catch return; // visualizer does not get an update if it OOMs
 
+    if (inspector_agent) |agent| encoded: {
+        var encoded = bun.base64.encodeAlloc(payload.allocator, payload.items) catch break :encoded;
+        defer encoded.deinitWithAllocator(payload.allocator);
+        var encoded_str = bun.String.initLatin1OrASCIIView(encoded.slice());
+        defer encoded_str.deref();
+        agent.notifyGraphUpdate(&encoded_str);
+    }
     dev.publish(.visualizer, payload.items, .binary);
 }
 
@@ -5964,10 +6045,25 @@ const HmrSocket = struct {
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
+    inspector_connection_id: i32 = -1,
+
+    var next_connection_id: std.atomic.Value(i32) = std.atomic.Value(i32).init(0);
+
+    pub inline fn inspector(s: *const HmrSocket) ?*const JSC.Debugger.BunFrontendDevServerAgent {
+        return s.dev.inspector();
+    }
 
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
-        _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
+        const send_status = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
         s.underlying = ws;
+
+        if (send_status != .dropped) {
+            // Notify inspector about client connection
+            if (s.inspector()) |agent| {
+                s.inspector_connection_id = next_connection_id.fetchAdd(1, .monotonic);
+                agent.notifyClientConnected(s.inspector_connection_id);
+            }
+        }
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -6018,8 +6114,17 @@ const HmrSocket = struct {
             },
             .set_url => {
                 const pattern = msg[1..];
-                const rbi = s.dev.routeToBundleIndexSlow(pattern) orelse
+                const rbi = s.dev.routeToBundleIndexSlow(pattern) orelse {
+                    if (s.inspector_connection_id > -1) {
+                        if (s.inspector()) |agent| {
+                            var pattern_str = bun.String.init(pattern);
+                            defer pattern_str.deref();
+                            agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, -1);
+                        }
+                    }
                     return;
+                };
+
                 if (s.active_route.unwrap()) |old| {
                     if (old == rbi) return;
                     s.dev.routeBundlePtr(old).active_viewers -= 1;
@@ -6027,7 +6132,15 @@ const HmrSocket = struct {
                 s.dev.routeBundlePtr(rbi).active_viewers += 1;
                 s.active_route = rbi.toOptional();
                 var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
+
                 _ = ws.send(&response, .binary, false, true);
+                if (s.inspector_connection_id > -1) {
+                    if (s.inspector()) |agent| {
+                        var pattern_str = bun.String.init(pattern);
+                        defer pattern_str.deref();
+                        agent.notifyClientNavigated(s.inspector_connection_id, &pattern_str, rbi.get());
+                    }
+                }
             },
             .testing_batch_events => switch (s.dev.testing_batch_events) {
                 .disabled => {
@@ -6075,6 +6188,13 @@ const HmrSocket = struct {
         _ = ws;
         _ = exit_code;
         _ = message;
+
+        if (s.inspector_connection_id > -1) {
+            // Notify inspector about client disconnection
+            if (s.inspector()) |agent| {
+                agent.notifyClientDisconnected(s.inspector_connection_id);
+            }
+        }
 
         if (s.subscriptions.visualizer) {
             s.dev.emit_visualizer_events -= 1;
@@ -6167,6 +6287,19 @@ fn markAllRouteChildrenFailed(dev: *DevServer, route_index: Route.Index) void {
         markAllRouteChildrenFailed(dev, child_index);
         next = route.next_sibling.unwrap();
     }
+}
+
+pub fn inspector(dev: *const DevServer) ?*const BunFrontendDevServerAgent {
+    if (dev.vm.debugger) |*debugger| {
+        @branchHint(.unlikely);
+
+        if (debugger.frontend_dev_server_agent.isEnabled()) {
+            @branchHint(.unlikely);
+            return &debugger.frontend_dev_server_agent;
+        }
+    }
+
+    return null;
 }
 
 /// This task informs the DevServer's thread about new files to be bundled.
@@ -7629,3 +7762,4 @@ const VLQ = SourceMap.VLQ;
 
 const StringJoiner = bun.StringJoiner;
 const AllocationScope = bun.AllocationScope;
+const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;

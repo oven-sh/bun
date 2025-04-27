@@ -1,0 +1,183 @@
+#include "InspectorBunFrontendDevServerAgent.h"
+
+#include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <JavaScriptCore/InspectorBackendDispatcher.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <wtf/text/WTFString.h>
+#include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <JavaScriptCore/ScriptArguments.h>
+#include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/InspectorConsoleAgent.h>
+#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <wtf/TZoneMallocInlines.h>
+#include "ZigGlobalObject.h"
+
+namespace Inspector {
+
+extern "C" void Bun__InspectorBunFrontendDevServerAgent__setEnabled(Inspector::InspectorBunFrontendDevServerAgent*);
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
+
+InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject& globalObject)
+    : InspectorAgentBase("BunFrontendDevServer"_s)
+    // , m_globalobject(globalObject)
+    , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
+    , m_enabled(false)
+{
+    UNUSED_PARAM(globalObject);
+}
+
+InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;
+
+void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+{
+}
+
+void InspectorBunFrontendDevServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
+{
+    m_frontendDispatcher = nullptr;
+    m_enabled = false;
+}
+
+Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::enable()
+{
+    if (m_enabled)
+        return {};
+
+    m_enabled = true;
+    Bun__InspectorBunFrontendDevServerAgent__setEnabled(this);
+    return {};
+}
+
+Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::disable()
+{
+    if (!m_enabled)
+        return {};
+
+    m_enabled = false;
+    Bun__InspectorBunFrontendDevServerAgent__setEnabled(nullptr);
+    return {};
+}
+
+void InspectorBunFrontendDevServerAgent::clientConnected(int connectionId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->clientConnected(connectionId);
+}
+
+void InspectorBunFrontendDevServerAgent::clientDisconnected(int connectionId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->clientDisconnected(connectionId);
+}
+
+void InspectorBunFrontendDevServerAgent::bundleStart(Ref<JSON::ArrayOf<String>>&& triggerFiles, int buildId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->bundleStart(WTFMove(triggerFiles), buildId);
+}
+
+void InspectorBunFrontendDevServerAgent::bundleComplete(double durationMs, int buildId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->bundleComplete(durationMs, buildId);
+}
+
+void InspectorBunFrontendDevServerAgent::bundleFailed(const String& buildErrorsPayloadBase64, int buildId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->bundleFailed(buildErrorsPayloadBase64, buildId);
+}
+
+void InspectorBunFrontendDevServerAgent::clientNavigated(int connectionId, const String& url, std::optional<int> routeBundleId)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->clientNavigated(connectionId, url, WTFMove(routeBundleId));
+}
+
+void InspectorBunFrontendDevServerAgent::clientErrorReported(const String& clientErrorPayloadBase64)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->clientErrorReported(clientErrorPayloadBase64);
+}
+
+void InspectorBunFrontendDevServerAgent::graphUpdate(const String& visualizerPayloadBase64)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->graphUpdate(visualizerPayloadBase64);
+}
+
+// C API implementations for Zig
+extern "C" {
+
+void InspectorBunFrontendDevServerAgent__notifyClientConnected(InspectorBunFrontendDevServerAgent* agent, int connectionId)
+{
+    agent->clientConnected(connectionId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyClientDisconnected(InspectorBunFrontendDevServerAgent* agent, int connectionId)
+{
+    agent->clientDisconnected(connectionId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendDevServerAgent* agent, BunString* triggerFiles, size_t triggerFilesLen, int buildId)
+{
+    // Create a JSON array for the triggerFiles
+    Ref<JSON::ArrayOf<String>> files = JSON::ArrayOf<String>::create();
+    for (size_t i = 0; i < triggerFilesLen; i++) {
+        files->addItem(triggerFiles[i].transferToWTFString());
+    }
+
+    agent->bundleStart(WTFMove(files), buildId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyBundleComplete(InspectorBunFrontendDevServerAgent* agent, double durationMs, int buildId)
+{
+    agent->bundleComplete(durationMs, buildId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, BunString* buildErrorsPayloadBase64, int buildId)
+{
+    agent->bundleFailed(buildErrorsPayloadBase64->transferToWTFString(), buildId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFrontendDevServerAgent* agent, int connectionId, BunString* url, int routeBundleId)
+{
+    std::optional<int> optionalRouteBundleId;
+    if (routeBundleId > -1) {
+        optionalRouteBundleId = { routeBundleId };
+    }
+
+    agent->clientNavigated(connectionId, url->toWTFString(), optionalRouteBundleId);
+}
+
+void InspectorBunFrontendDevServerAgent__notifyClientErrorReported(InspectorBunFrontendDevServerAgent* agent, BunString* clientErrorPayloadBase64)
+{
+    agent->clientErrorReported(clientErrorPayloadBase64->toWTFString());
+}
+
+void InspectorBunFrontendDevServerAgent__notifyGraphUpdate(InspectorBunFrontendDevServerAgent* agent, BunString* visualizerPayloadBase64)
+{
+    agent->graphUpdate(visualizerPayloadBase64->toWTFString());
+}
+}
+
+} // namespace Inspector

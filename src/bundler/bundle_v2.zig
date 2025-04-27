@@ -1227,6 +1227,7 @@ pub const BundleV2 = struct {
             .dev_server => struct {
                 files: bake.DevServer.EntryPointList,
                 css_data: *std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
+                build_id: i32,
             },
             .bake_production => bake.production.EntryPointMap,
         },
@@ -2552,15 +2553,19 @@ pub const BundleV2 = struct {
     }
 
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
+    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList, build_id: i32) !DevServerInput {
         this.unique_key = generateUniqueKey();
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        var ctx: DevServerInput = .{ .css_entry_points = .{} };
+        var ctx: DevServerInput = .{
+            .css_entry_points = .{},
+            .id = build_id,
+        };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
+            .build_id = build_id,
         });
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -2800,10 +2805,11 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try dev_server.finalizeBundle(this, .{
+        try dev_server.finalizeBundle(this, &.{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
+            .id = start.id,
         });
     }
 
@@ -18004,6 +18010,7 @@ pub const CssEntryPointMeta = struct {
 /// The lifetime of this structure is tied to the bundler's arena
 pub const DevServerInput = struct {
     css_entry_points: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
+    id: i32,
 };
 
 /// The lifetime of this structure is tied to the bundler's arena
@@ -18011,16 +18018,17 @@ pub const DevServerOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
+    id: i32,
 
-    pub fn jsPseudoChunk(out: DevServerOutput) *Chunk {
+    pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];
     }
 
-    pub fn cssChunks(out: DevServerOutput) []Chunk {
+    pub fn cssChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1..][0..out.css_file_list.count()];
     }
 
-    pub fn htmlChunks(out: DevServerOutput) []Chunk {
+    pub fn htmlChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1 + out.css_file_list.count() ..][0..out.html_files.count()];
     }
 };

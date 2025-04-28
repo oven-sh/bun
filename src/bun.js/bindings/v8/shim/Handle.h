@@ -29,7 +29,7 @@ struct ObjectLayout {
     }
 
     ObjectLayout(double number)
-        : m_taggedMap(const_cast<Map*>(&Map::heap_number_map))
+        : m_taggedMap(const_cast<Map*>(&Map::heap_number_map()))
         , m_contents({ .number = number })
     {
     }
@@ -80,10 +80,10 @@ struct Handle {
         }
         const Map* map_ptr = m_object.map();
         // TODO(@190n) exhaustively switch on InstanceType
-        if (map_ptr == &Map::object_map || map_ptr == &Map::string_map) {
+        if (map_ptr == &Map::object_map() || map_ptr == &Map::string_map()) {
             return true;
-        } else if (map_ptr == &Map::map_map || map_ptr == &Map::oddball_map
-            || map_ptr == &Map::heap_number_map) {
+        } else if (map_ptr == &Map::map_map() || map_ptr == &Map::oddball_map()
+            || map_ptr == &Map::heap_number_map()) {
             return false;
         } else {
             RELEASE_ASSERT_NOT_REACHED("unknown Map at %p with instance type %" PRIx16,

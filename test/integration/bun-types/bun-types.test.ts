@@ -73,7 +73,11 @@ beforeEach(async () => {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    await rm(TEMP_DIR, { recursive: true, force: true });
+    if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
+      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
+    } else {
+      await rm(TEMP_DIR, { recursive: true, force: true });
+    }
   }
 });
 

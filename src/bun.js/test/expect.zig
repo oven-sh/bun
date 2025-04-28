@@ -4956,7 +4956,7 @@ pub const Expect = struct {
             return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
         }
 
-        const expected_assertions: f64 = expected.coerceToDouble(globalThis);
+        const expected_assertions: f64 = try expected.toNumber(globalThis);
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});

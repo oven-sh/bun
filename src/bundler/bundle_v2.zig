@@ -5163,7 +5163,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(

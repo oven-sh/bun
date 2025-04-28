@@ -1,16 +1,21 @@
-const bun = @import("bun");
-const Output = bun.Output;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Output = bun.Output;
 const JSC = bun.JSC;
 const MutableString = bun.MutableString;
-const lshpack = @import("./lshpack.zig");
 const strings = bun.strings;
-pub const AutoFlusher = @import("../../webcore/streams.zig").AutoFlusher;
-const TLSSocket = @import("./socket.zig").TLSSocket;
-const TCPSocket = @import("./socket.zig").TCPSocket;
 const JSTLSSocket = JSC.Codegen.JSTLSSocket;
 const JSTCPSocket = JSC.Codegen.JSTCPSocket;
+const JSValue = JSC.JSValue;
+const BinaryType = JSC.ArrayBuffer.BinaryType;
+
+pub const AutoFlusher = @import("../../webcore/streams.zig").AutoFlusher;
+const lshpack = @import("./lshpack.zig");
+const TLSSocket = @import("./socket.zig").TLSSocket;
+const TCPSocket = @import("./socket.zig").TCPSocket;
+
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME = 16384 - FrameHeader.byteSize - 1;
 const BunSocket = union(enum) {
     none: void,
@@ -27,9 +32,6 @@ pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32)
     if (value.isEmptyOrUndefinedOrNull()) return null;
     return value;
 }
-const JSValue = JSC.JSValue;
-
-const BinaryType = JSC.ArrayBuffer.BinaryType;
 const MAX_WINDOW_SIZE = 2147483647;
 const MAX_HEADER_TABLE_SIZE = 4294967295;
 const MAX_STREAM_ID = 2147483647;
@@ -2970,7 +2972,11 @@ pub const H2FrameParser = struct {
         }
 
         if (try options.get(globalObject, "silent")) |js_silent| {
-            silent = js_silent.toBoolean();
+            if (js_silent.isBoolean()) {
+                silent = js_silent.asBoolean();
+            } else {
+                return globalObject.ERR(.INVALID_ARG_TYPE, "options.silent must be a boolean", .{}).throw();
+            }
         }
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
@@ -3791,6 +3797,7 @@ pub const H2FrameParser = struct {
         var has_priority: bool = false;
         var weight: i32 = 0;
         var parent: i32 = 0;
+        var silent: bool = false;
         var waitForTrailers: bool = false;
         var end_stream: bool = false;
         if (args_list.len > 4 and !args_list.ptr[4].isEmptyOrUndefinedOrNull()) {
@@ -3819,6 +3826,14 @@ pub const H2FrameParser = struct {
                 }
             }
 
+            if (try options.get(globalObject, "silent")) |silent_js| {
+                if (silent_js.isBoolean()) {
+                    silent = silent_js.asBoolean();
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.silent", "boolean", silent_js);
+                }
+            }
+
             if (try options.get(globalObject, "endStream")) |end_stream_js| {
                 if (end_stream_js.isBoolean()) {
                     if (end_stream_js.asBoolean()) {
@@ -3828,6 +3843,8 @@ pub const H2FrameParser = struct {
                             flags |= @intFromEnum(HeadersFrameFlags.END_STREAM);
                         }
                     }
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.endStream", "boolean", end_stream_js);
                 }
             }
 
@@ -3838,6 +3855,8 @@ pub const H2FrameParser = struct {
                         stream.exclusive = true;
                         has_priority = true;
                     }
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.exclusive", "boolean", exclusive_js);
                 }
             }
 
@@ -3852,6 +3871,8 @@ pub const H2FrameParser = struct {
                         return JSC.JSValue.jsNumber(stream.id);
                     }
                     stream.streamDependency = @intCast(parent);
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.parent", "number", parent_js);
                 }
             }
 
@@ -3866,6 +3887,8 @@ pub const H2FrameParser = struct {
                         return JSC.JSValue.jsNumber(stream_id);
                     }
                     stream.weight = @intCast(weight);
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.weight", "number", weight_js);
                 }
 
                 if (weight < 1 or weight > std.math.maxInt(u8)) {
@@ -3874,6 +3897,7 @@ pub const H2FrameParser = struct {
                     this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
                     return JSC.JSValue.jsNumber(stream_id);
                 }
+
                 stream.weight = @intCast(weight);
             }
 
@@ -3885,9 +3909,12 @@ pub const H2FrameParser = struct {
                         return JSC.JSValue.jsNumber(stream_id);
                     }
                     stream.attachSignal(this, signal_);
+                } else {
+                    return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
                 }
             }
         }
+
         // too much memory being use
         if (this.getSessionMemoryUsage() > this.maxSessionMemory) {
             stream.state = .CLOSED;
@@ -3951,6 +3978,10 @@ pub const H2FrameParser = struct {
             }
         } else {
             stream.waitForTrailers = waitForTrailers;
+        }
+
+        if (silent) {
+            // TODO: should we make use of this in the future? We validate it.
         }
 
         return JSC.JSValue.jsNumber(stream_id);

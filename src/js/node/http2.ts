@@ -3230,13 +3230,13 @@ class ClientHttp2Session extends Http2Session {
         options
           ? {
               host: url.hostname,
-              port,
+              port: String(port),
               ALPNProtocols: ["h2"],
               ...options,
             }
           : {
               host: url.hostname,
-              port,
+              port: String(port),
               ALPNProtocols: ["h2"],
             },
         onConnect.bind(this),
@@ -3355,6 +3355,7 @@ class ClientHttp2Session extends Http2Session {
         }
         headers[":scheme"] = scheme;
       }
+
       if (headers[":path"] == undefined) {
         headers[":path"] = "/";
       }

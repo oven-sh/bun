@@ -997,10 +997,10 @@ declare module "bun:sqlite" {
      *
      * You can change this with code like the below:
      * ```ts
-     * import { Database } from "bun:sqlite";
+     * import { Database, constants } from "bun:sqlite";
      *
      * const db = Database.open("mydb.sqlite");
-     * db.fileControl(constants.const SQLITE_FCNTL_PERSIST_WAL, 0);
+     * db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
      * // enable WAL
      * db.exec("PRAGMA journal_mode = WAL");
      * // .. do some work

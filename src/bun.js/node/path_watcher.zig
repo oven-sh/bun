@@ -67,10 +67,17 @@ pub const PathWatcherManager = struct {
     fn unrefPendingTask(this: *PathWatcherManager) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        this.pending_tasks -= 1;
-        if (this.deinit_on_last_task and this.pending_tasks == 0) {
+
+        const pending_task_count = this.pending_tasks;
+        bun.debugAssert(pending_task_count > 0);
+        this.pending_tasks = pending_task_count - 1;
+
+        if (pending_task_count == 1) {
             this.has_pending_tasks.store(false, .release);
-            this.deinit();
+
+            if (this.deinit_on_last_task) {
+                this.deinit();
+            }
         }
     }
 

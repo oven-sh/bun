@@ -3272,6 +3272,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.flags.has_written_status) {
                 this.renderMetadata();
             }
+            resp.flushHeaders();
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -3858,7 +3859,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
-            req.endStream(true);
+            req.endStream(req.shouldCloseConnection());
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
@@ -4258,7 +4259,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             if (this.resp == null) return;
             const resp = this.resp.?;
-            defer resp.flushHeaders();
 
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();

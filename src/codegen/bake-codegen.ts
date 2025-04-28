@@ -59,7 +59,7 @@ async function run() {
           syntax: !debug,
         },
         target: side === "server" ? "bun" : "browser",
-        drop: debug ? [] : ["ASSERT"],
+        drop: debug ? [] : ["ASSERT", "DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");

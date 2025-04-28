@@ -982,7 +982,7 @@ pub const PostgresRequest = struct {
                 },
                 .float8 => {
                     const l = try writer.length();
-                    try writer.f64(@bitCast(value.coerceToDouble(globalObject)));
+                    try writer.f64(@bitCast(try value.toNumber(globalObject)));
                     try l.writeExcludingSelf();
                 },
 

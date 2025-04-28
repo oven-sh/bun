@@ -580,8 +580,7 @@ pub const JSValue = enum(i64) {
 
     pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
         if (this.isNumber()) {
-            // const double = try this.toNumber(global);
-            const double = this.coerceToDouble(global);
+            const double = try this.toNumber(global);
             if (std.math.isNan(double)) {
                 return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
             }

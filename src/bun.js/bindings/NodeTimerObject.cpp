@@ -25,7 +25,13 @@ void callInternal(T* timeout, JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCell* callbackCell = timeout->m_callback.get().asCell();
+    JSValue callbackValue = timeout->m_callback.get();
+    JSCell* callbackCell = callbackValue.isCell() ? callbackValue.asCell() : nullptr;
+    if (!callbackCell) {
+        Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+        return;
+    }
+
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
@@ -45,6 +51,12 @@ void callInternal(T* timeout, JSGlobalObject* globalObject)
     }
 
     default: {
+        auto callData = JSC::getCallData(callbackCell);
+        if (callData.type == CallData::Type::None) {
+            Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            return;
+        }
+
         MarkedArgumentBuffer args;
         if (timeout->m_arguments) {
             JSValue argumentsValue = timeout->m_arguments.get();

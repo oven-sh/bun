@@ -697,6 +697,13 @@ pub const Loader = enum(u8) {
         };
     }
 
+    pub fn handlesEmptyFile(this: Loader) bool {
+        return switch (this) {
+            .wasm, .file, .text => true,
+            else => false,
+        };
+    }
+
     pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,

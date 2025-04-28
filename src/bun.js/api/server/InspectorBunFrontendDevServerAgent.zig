@@ -1,54 +1,31 @@
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
+const DevServer = bun.bake.DevServer;
 
 const InspectorBunFrontendDevServerAgentHandle = opaque {
-    pub fn notifyClientConnected(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyClientConnected(agent, connectionId);
-    }
-
-    pub fn notifyClientDisconnected(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyClientDisconnected(agent, connectionId);
-    }
-
-    pub fn notifyBundleStart(agent: *InspectorBunFrontendDevServerAgentHandle, triggerFiles: []bun.String, buildId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyBundleStart(agent, triggerFiles.ptr, triggerFiles.len, buildId);
-    }
-
-    pub fn notifyBundleComplete(agent: *InspectorBunFrontendDevServerAgentHandle, durationMs: f64, buildId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyBundleComplete(agent, durationMs, buildId);
-    }
-
-    pub fn notifyBundleFailed(agent: *InspectorBunFrontendDevServerAgentHandle, buildErrorsPayloadBase64: *bun.String, buildId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyBundleFailed(agent, buildErrorsPayloadBase64, buildId);
-    }
-
-    pub fn notifyClientNavigated(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32, url: *bun.String, routeBundleId: i32) void {
-        InspectorBunFrontendDevServerAgent__notifyClientNavigated(agent, connectionId, url, routeBundleId);
-    }
-
-    pub fn notifyClientErrorReported(agent: *InspectorBunFrontendDevServerAgentHandle, clientErrorPayloadBase64: *bun.String) void {
-        InspectorBunFrontendDevServerAgent__notifyClientErrorReported(agent, clientErrorPayloadBase64);
-    }
-
-    pub fn notifyGraphUpdate(agent: *InspectorBunFrontendDevServerAgentHandle, visualizerPayloadBase64: *bun.String) void {
-        InspectorBunFrontendDevServerAgent__notifyGraphUpdate(agent, visualizerPayloadBase64);
-    }
-
-    // C API for creating/destroying the C++ agent
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientConnected(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleStart(agent: *InspectorBunFrontendDevServerAgentHandle, triggerFiles: [*]bun.String, triggerFilesLen: usize, buildId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(agent: *InspectorBunFrontendDevServerAgentHandle, durationMs: f64, buildId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(agent: *InspectorBunFrontendDevServerAgentHandle, buildErrorsPayloadBase64: *bun.String, buildId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(agent: *InspectorBunFrontendDevServerAgentHandle, connectionId: i32, url: *bun.String, routeBundleId: i32) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(agent: *InspectorBunFrontendDevServerAgentHandle, clientErrorPayloadBase64: *bun.String) void;
-    extern "c" fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(agent: *InspectorBunFrontendDevServerAgentHandle, visualizerPayloadBase64: *bun.String) void;
+    const c = struct {
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientConnected(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, connectionId: i32) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, connectionId: i32) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleStart(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, triggerFiles: [*]bun.String, triggerFilesLen: usize) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, durationMs: f64) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, buildErrorsPayloadBase64: *bun.String) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, connectionId: i32, url: *bun.String, routeBundleId: i32) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, clientErrorPayloadBase64: *bun.String) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, visualizerPayloadBase64: *bun.String) void;
+    };
+    const notifyClientConnected = c.InspectorBunFrontendDevServerAgent__notifyClientConnected;
+    const notifyClientDisconnected = c.InspectorBunFrontendDevServerAgent__notifyClientDisconnected;
+    const notifyBundleStart = c.InspectorBunFrontendDevServerAgent__notifyBundleStart;
+    const notifyBundleComplete = c.InspectorBunFrontendDevServerAgent__notifyBundleComplete;
+    const notifyBundleFailed = c.InspectorBunFrontendDevServerAgent__notifyBundleFailed;
+    const notifyClientNavigated = c.InspectorBunFrontendDevServerAgent__notifyClientNavigated;
+    const notifyClientErrorReported = c.InspectorBunFrontendDevServerAgent__notifyClientErrorReported;
+    const notifyGraphUpdate = c.InspectorBunFrontendDevServerAgent__notifyGraphUpdate;
 };
 
 pub const BunFrontendDevServerAgent = struct {
     next_inspector_connection_id: i32 = 0,
-    next_inspector_build_id: i32 = 0,
     handle: ?*InspectorBunFrontendDevServerAgentHandle = null,
 
     pub fn nextConnectionID(this: *BunFrontendDevServerAgent) i32 {
@@ -57,61 +34,70 @@ pub const BunFrontendDevServerAgent = struct {
         return id;
     }
 
-    pub fn nextBuildID(this: *BunFrontendDevServerAgent) i32 {
-        const id = this.next_inspector_build_id;
-        this.next_inspector_build_id +%= 1;
-        return id;
-    }
-
     pub fn isEnabled(this: BunFrontendDevServerAgent) bool {
         return this.handle != null;
     }
 
-    pub fn notifyClientConnected(this: BunFrontendDevServerAgent, connectionId: i32) void {
+    pub fn notifyClientConnected(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, connectionId: i32) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyClientConnected(handle, connectionId);
+            handle.notifyClientConnected(devServerId.get(), connectionId);
         }
     }
 
-    pub fn notifyClientDisconnected(this: BunFrontendDevServerAgent, connectionId: i32) void {
+    pub fn notifyClientDisconnected(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, connectionId: i32) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyClientDisconnected(handle, connectionId);
+            handle.notifyClientDisconnected(devServerId.get(), connectionId);
         }
     }
 
-    pub fn notifyBundleStart(this: BunFrontendDevServerAgent, triggerFiles: []bun.String, buildId: i32) void {
+    pub fn notifyBundleStart(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, triggerFiles: []bun.String) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyBundleStart(handle, triggerFiles, buildId);
+            handle.notifyBundleStart(devServerId.get(), triggerFiles.ptr, triggerFiles.len);
         }
     }
 
-    pub fn notifyBundleComplete(this: BunFrontendDevServerAgent, durationMs: f64, buildId: i32) void {
+    pub fn notifyBundleComplete(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, durationMs: f64) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyBundleComplete(handle, durationMs, buildId);
+            handle.notifyBundleComplete(devServerId.get(), durationMs);
         }
     }
 
-    pub fn notifyBundleFailed(this: BunFrontendDevServerAgent, buildErrorsPayloadBase64: *bun.String, buildId: i32) void {
+    pub fn notifyBundleFailed(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, buildErrorsPayloadBase64: *bun.String) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyBundleFailed(handle, buildErrorsPayloadBase64, buildId);
+            handle.notifyBundleFailed(devServerId.get(), buildErrorsPayloadBase64);
         }
     }
 
-    pub fn notifyClientNavigated(this: BunFrontendDevServerAgent, connectionId: i32, url: *bun.String, routeBundleId: i32) void {
+    pub fn notifyClientNavigated(
+        this: BunFrontendDevServerAgent,
+        devServerId: DevServer.DebuggerId,
+        connectionId: i32,
+        url: *bun.String,
+        routeBundleId: ?DevServer.RouteBundle.Index,
+    ) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyClientNavigated(handle, connectionId, url, routeBundleId);
+            handle.notifyClientNavigated(
+                devServerId.get(),
+                connectionId,
+                url,
+                if (routeBundleId) |id| id.get() else -1,
+            );
         }
     }
 
-    pub fn notifyClientErrorReported(this: BunFrontendDevServerAgent, clientErrorPayloadBase64: *bun.String) void {
+    pub fn notifyClientErrorReported(
+        this: BunFrontendDevServerAgent,
+        devServerId: DevServer.DebuggerId,
+        clientErrorPayloadBase64: *bun.String,
+    ) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyClientErrorReported(handle, clientErrorPayloadBase64);
+            handle.notifyClientErrorReported(devServerId.get(), clientErrorPayloadBase64);
         }
     }
 
-    pub fn notifyGraphUpdate(this: BunFrontendDevServerAgent, visualizerPayloadBase64: *bun.String) void {
+    pub fn notifyGraphUpdate(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, visualizerPayloadBase64: *bun.String) void {
         if (this.handle) |handle| {
-            InspectorBunFrontendDevServerAgentHandle.notifyGraphUpdate(handle, visualizerPayloadBase64);
+            handle.notifyGraphUpdate(devServerId.get(), visualizerPayloadBase64);
         }
     }
 

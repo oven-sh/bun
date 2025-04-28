@@ -1227,7 +1227,6 @@ pub const BundleV2 = struct {
             .dev_server => struct {
                 files: bake.DevServer.EntryPointList,
                 css_data: *std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
-                inspector_build_id: i32,
             },
             .bake_production => bake.production.EntryPointMap,
         },
@@ -2553,19 +2552,17 @@ pub const BundleV2 = struct {
     }
 
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList, inspector_build_id: i32) !DevServerInput {
+    pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
         this.unique_key = generateUniqueKey();
 
         this.graph.heap.helpCatchMemoryIssues();
 
         var ctx: DevServerInput = .{
             .css_entry_points = .{},
-            .inspector_build_id = inspector_build_id,
         };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
-            .inspector_build_id = inspector_build_id,
         });
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -2809,7 +2806,6 @@ pub const BundleV2 = struct {
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
-            .inspector_build_id = start.inspector_build_id,
         });
     }
 
@@ -18010,9 +18006,6 @@ pub const CssEntryPointMeta = struct {
 /// The lifetime of this structure is tied to the bundler's arena
 pub const DevServerInput = struct {
     css_entry_points: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
-
-    /// Used for tracking start/end of a particular build.
-    inspector_build_id: i32,
 };
 
 /// The lifetime of this structure is tied to the bundler's arena
@@ -18020,9 +18013,6 @@ pub const DevServerOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
-
-    /// Used for tracking start/end of a particular build.
-    inspector_build_id: i32,
 
     pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];

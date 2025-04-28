@@ -374,10 +374,22 @@ pub const SendQueue = struct {
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     incoming_fd: ?bun.FileDescriptor = null,
+
+    socket: union(enum) {
+        uninitialized,
+        open: SocketType,
+        closed,
+    } = .uninitialized,
+
     pub fn init(mode: Mode) @This() {
         return .{ .queue = .init(bun.default_allocator), .mode = mode };
     }
     pub fn deinit(self: *@This()) void {
+        // must go first
+        if (self.socket == .open) {
+            self.socket.open.close(.normal);
+        }
+
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
         self.keep_alive.disable();
@@ -638,10 +650,7 @@ const MAX_HANDLE_RETRANSMISSIONS = 3;
 
 /// Used on POSIX
 const SocketIPCData = struct {
-    socket: Socket,
-
     send_queue: SendQueue,
-    disconnected: bool = false,
     is_server: bool = false,
     close_next_tick: ?JSC.Task = null,
 
@@ -666,8 +675,10 @@ const SocketIPCData = struct {
 
     pub fn close(this: *SocketIPCData, nextTick: bool) void {
         log("SocketIPCData#close", .{});
-        if (this.disconnected) return;
-        this.disconnected = true;
+        if (this.send_queue.socket != .open) {
+            this.send_queue.socket = .closed;
+            return;
+        }
         if (nextTick) {
             if (this.close_next_tick != null) return;
             this.close_next_tick = JSC.ManagedTask.New(SocketIPCData, closeTask).init(this);
@@ -680,8 +691,12 @@ const SocketIPCData = struct {
     pub fn closeTask(this: *SocketIPCData) void {
         log("SocketIPCData#closeTask", .{});
         this.close_next_tick = null;
-        bun.assert(this.disconnected);
-        this.socket.close(.normal);
+        if (this.send_queue.socket != .open) {
+            this.send_queue.socket = .closed;
+            return;
+        }
+        this.send_queue.socket.open.close(.normal);
+        this.send_queue.socket = .closed;
     }
 };
 
@@ -1194,16 +1209,13 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: c_int,
             _: ?*anyopaque,
         ) void {
+            // uSockets has already freed the underlying socket
             log("onClose", .{});
-            const ipc = this.ipc() orelse return;
-            // unref if needed
-            ipc.send_queue.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
-            // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
+            const ipc: *SocketIPCData = this.ipc() orelse return;
+            ipc.send_queue.socket = .closed;
             log("NewSocketIPCHandler#onClose\n", .{});
 
-            // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
-            ipc.disconnected = true;
-
+            // call an onClose handler if there is one
             this.handleIPCClose();
         }
 

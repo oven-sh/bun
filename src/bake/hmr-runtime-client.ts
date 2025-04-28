@@ -164,7 +164,7 @@ const handlers = {
     if (reader.hasMoreData()) {
       const rest = reader.rest();
       const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
-      ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
+      DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
       const blob = new Blob([rest], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       const script = document.createElement('script');

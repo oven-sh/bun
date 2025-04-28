@@ -42,6 +42,9 @@
 #include "NodeValidator.h"
 
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/CodeCache.h"
+#include "JavaScriptCore/BytecodeCacheError.h"
+#include "wtf/FileHandle.h"
 
 namespace Bun {
 using namespace WebCore;
@@ -829,7 +832,36 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(globalObject, scope, "TODO: Script.createCachedData"_s);
+
+    JSValue thisValue = callFrame->thisValue();
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+    }
+
+    const JSC::SourceCode& source = script->source();
+    JSC::CodeCache* cache = vm.codeCache();
+    JSC::ProgramExecutable* executable = JSC::ProgramExecutable::create(globalObject, source);
+    JSC::ParserError parserError;
+    JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
+    JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
+    JSC::BytecodeCacheError bytecodeCacheError;
+    FileSystem::FileHandle fileHandle;
+    RefPtr<JSC::CachedBytecode> bytecode = JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, fileHandle, bytecodeCacheError, {});
+
+    if (UNLIKELY(!bytecode)) {
+        return throwVMError(globalObject, scope, "createCachedData failed"_s);
+    }
+
+    std::span<const uint8_t> bytes = bytecode->span();
+
+    JSC::JSArrayBufferView* uint8Array = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), bytes.size());
+    if (UNLIKELY(!uint8Array)) {
+        return throwVMError(globalObject, scope, "Failed to create Uint8Array for cached data"_s);
+    }
+
+    std::memmove(uint8Array->vector(), bytes.data(), bytes.size());
+    return JSValue::encode(uint8Array);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

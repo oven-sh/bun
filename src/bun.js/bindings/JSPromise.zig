@@ -17,7 +17,6 @@ pub const JSPromise = opaque {
     extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
     extern fn JSC__JSPromise__reject(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectAsHandled(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
-    extern fn JSC__JSPromise__rejectAsHandledException(arg0: *JSPromise, arg1: *JSGlobalObject, arg2: ?*JSC.Exception) void;
     extern fn JSC__JSPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     /// **DEPRECATED** This function does not notify the VM about the rejection,
     /// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.

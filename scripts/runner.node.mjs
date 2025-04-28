@@ -481,8 +481,19 @@ async function runTests() {
 
       const coresDirBase = dirname(coresDir);
       const coresDirName = basename(coresDir);
+      const coreFileNames = readdirSync(coresDir);
 
-      if (readdirSync(coresDir).length > 0) {
+      if (coreFileNames.length > 0) {
+        console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
+        let totalBytes = 0;
+        let totalBlocks = 0;
+        for (const f of coreFileNames) {
+          const stat = fs.statSync(join(coresDir, f));
+          totalBytes += stat.size;
+          totalBlocks += stat.blocks;
+        }
+        console.log(`total apparent size = ${totalBytes} bytes`);
+        console.log(`total size on disk = ${512 * totalBlocks} bytes`);
         const outdir = mkdtempSync(join(tmpdir(), "cores-upload"));
         const outfileName = `${coresDirName}.tar.gz.age`;
         const outfileAbs = join(outdir, outfileName);
@@ -495,12 +506,13 @@ async function runTests() {
         // coresDirName in them. This way when you extract the tarball you get a folder named
         // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
         // current directory
+        const before = Date.now();
         const zipAndEncrypt = await spawnSafe({
           command: "bash",
           args: [
             "-c",
             // tar -S: handle sparse files efficiently
-            `set -euo pipefail && tar -Sc "$0" | gzip -6 | age -e -r ${ageRecipient} -o "$1"`,
+            `set -euo pipefail && tar -Sc "$0" | gzip -1 | age -e -r ${ageRecipient} -o "$1"`,
             // $0
             coresDirName,
             // $1
@@ -508,11 +520,13 @@ async function runTests() {
           ],
           cwd: coresDirBase,
           stdout: () => {},
+          timeout: 60_000,
         });
+        const elapsed = Date.now() - before;
         if (!zipAndEncrypt.ok) {
           throw new Error(zipAndEncrypt.error);
         }
-        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes)`);
+        console.log(`saved core dumps to ${outfileAbs} (${statSync(outfileAbs).size} bytes) in ${elapsed} ms`);
         await uploadArtifact(outfileAbs);
       } else {
         console.log(`no cores found in ${coresDir}`);

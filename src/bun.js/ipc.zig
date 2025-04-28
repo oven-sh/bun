@@ -386,9 +386,7 @@ pub const SendQueue = struct {
     }
     pub fn deinit(self: *@This()) void {
         // must go first
-        if (self.socket == .open) {
-            self.socket.open.close(.normal);
-        }
+        self.closeSocket(.failure);
 
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
@@ -396,6 +394,14 @@ pub const SendQueue = struct {
         self.internal_msg_queue.deinit();
         self.incoming.deinitWithAllocator(bun.default_allocator);
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
+    }
+
+    fn closeSocket(this: *SendQueue, reason: SocketType.CloseReason) void {
+        switch (this.socket) {
+            .open => |s| s.close(reason),
+            else => {},
+        }
+        this.socket = .closed;
     }
 
     /// returned pointer is invalidated if the queue is modified
@@ -450,7 +456,7 @@ pub const SendQueue = struct {
         }
     }
 
-    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, socket: SocketType, ack_nack: enum { ack, nack }) void {
+    pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, ack_nack: enum { ack, nack }) void {
         if (this.waiting_for_ack == null) {
             log("onAckNack: ack received but not waiting for ack", .{});
             return;
@@ -468,7 +474,7 @@ pub const SendQueue = struct {
                 item.data.cursor = 0;
                 this.insertMessage(item.*);
                 this.waiting_for_ack = null;
-                return this.continueSend(global, socket, .new_message_appended);
+                return this.continueSend(global, .new_message_appended);
             }
             // too many retries; give up
             var warning = bun.String.static("Handle did not reach the receiving process correctly");
@@ -486,7 +492,7 @@ pub const SendQueue = struct {
         // consume the message and continue sending
         item.complete(global); // call the callback & deinit
         this.waiting_for_ack = null;
-        this.continueSend(global, socket, .new_message_appended);
+        this.continueSend(global, .new_message_appended);
     }
     fn shouldRef(this: *SendQueue) bool {
         if (this.waiting_for_ack != null) return true; // waiting to receive an ack/nack from the other side
@@ -505,9 +511,13 @@ pub const SendQueue = struct {
         new_message_appended,
         on_writable,
     };
-    fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, socket: SocketType, reason: ContinueSendReason) void {
+    fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, reason: ContinueSendReason) void {
         this.debugLogMessageQueue();
         log("IPC continueSend: {s}", .{@tagName(reason)});
+        const socket = switch (this.socket) {
+            .open => |s| s,
+            else => return, // socket closed
+        };
 
         if (this.queue.items.len == 0) {
             return; // nothing to send
@@ -528,7 +538,7 @@ pub const SendQueue = struct {
             // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
             var itm = this.queue.orderedRemove(0);
             itm.complete(global); // call the callback & deinit
-            return _continueSend(this, global, socket, reason);
+            return _continueSend(this, global, reason);
         }
         log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
         const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send);
@@ -542,13 +552,13 @@ pub const SendQueue = struct {
                 // shift the item off the queue and move it to waiting_for_ack
                 const item = this.queue.orderedRemove(0);
                 this.waiting_for_ack = item;
-                return _continueSend(this, global, socket, reason); // in case the next item is an ack/nack waiting to be sent
+                return _continueSend(this, global, reason); // in case the next item is an ack/nack waiting to be sent
             } else {
                 // the message was fully sent, but there may be more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 var item = this.queue.orderedRemove(0);
                 item.complete(global); // call the callback & deinit
-                return _continueSend(this, global, socket, reason);
+                return _continueSend(this, global, reason);
             }
         } else if (n > 0 and n < @as(i32, @intCast(first.data.list.items.len))) {
             // the item was partially sent; update the cursor and wait for writable to send the rest
@@ -560,11 +570,11 @@ pub const SendQueue = struct {
             return;
         }
     }
-    fn continueSend(this: *SendQueue, global: *JSGlobalObject, socket: SocketType, reason: ContinueSendReason) void {
-        this._continueSend(global, socket, reason);
+    fn continueSend(this: *SendQueue, global: *JSGlobalObject, reason: ContinueSendReason) void {
+        this._continueSend(global, reason);
         this.updateRef(global);
     }
-    pub fn writeVersionPacket(this: *SendQueue, global: *JSGlobalObject, socket: SocketType) void {
+    pub fn writeVersionPacket(this: *SendQueue, global: *JSGlobalObject) void {
         bun.debugAssert(this.has_written_version == 0);
         bun.debugAssert(this.queue.items.len == 0);
         bun.debugAssert(this.waiting_for_ack == null);
@@ -572,11 +582,11 @@ pub const SendQueue = struct {
         if (bytes.len > 0) {
             this.queue.append(.{ .handle = null, .callback = .null }) catch bun.outOfMemory();
             this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
-            this.continueSend(global, socket, .new_message_appended);
+            this.continueSend(global, .new_message_appended);
         }
         if (Environment.allow_assert) this.has_written_version = 1;
     }
-    pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle, socket: SocketType) SerializeAndSendResult {
+    pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
         const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
         const msg = self.startMessage(global, callback, handle);
         const start_offset = msg.data.list.items.len;
@@ -585,7 +595,7 @@ pub const SendQueue = struct {
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
         log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
 
-        self.continueSend(global, socket, .new_message_appended);
+        self.continueSend(global, .new_message_appended);
 
         if (indicate_backoff) return .backoff;
         return .success;
@@ -610,10 +620,11 @@ const SocketType = struct {
         false => Socket,
     };
     backing: Backing,
-    fn wrap(backing: Backing) @This() {
+    pub fn wrap(backing: Backing) @This() {
         return .{ .backing = backing };
     }
-    fn close(this: @This(), reason: enum { normal, failure }) void {
+    const CloseReason = enum { normal, failure };
+    fn close(this: @This(), reason: CloseReason) void {
         switch (Environment.isWindows) {
             true => @compileError("Not implemented"),
             false => this.backing.close(switch (reason) {
@@ -663,14 +674,6 @@ const SocketIPCData = struct {
             const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
             managed.cancel();
         }
-    }
-
-    pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
-        this.send_queue.writeVersionPacket(global, .wrap(this.socket));
-    }
-
-    pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
-        return ipc_data.send_queue.serializeAndSend(global, value, is_internal, callback, handle, .wrap(ipc_data.socket));
     }
 
     pub fn close(this: *SocketIPCData, nextTick: bool) void {
@@ -963,7 +966,7 @@ pub fn doSend(ipc: ?*IPCData, globalObject: *JSC.JSGlobalObject, callFrame: *JSC
         }
     }
 
-    const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
+    const status = ipc_data.send_queue.serializeAndSend(globalObject, message, .external, callback, zig_handle);
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
@@ -996,7 +999,7 @@ const IPCCommand = union(enum) {
     nack,
 };
 
-fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCMessage, socket: SocketType, globalThis: *JSC.JSGlobalObject) void {
+fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCMessage, globalThis: *JSC.JSGlobalObject) void {
     const ipc: *IPCData = this.ipc() orelse return;
     if (Environment.isDebug) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -1055,7 +1058,7 @@ fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCM
                 ipc.send_queue.insertMessage(handle);
 
                 // Send if needed
-                ipc.send_queue.continueSend(globalThis, socket, .new_message_appended);
+                ipc.send_queue.continueSend(globalThis, .new_message_appended);
 
                 if (!ack) return;
 
@@ -1085,11 +1088,11 @@ fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCM
                 return;
             },
             .ack => {
-                ipc.send_queue.onAckNack(globalThis, socket, .ack);
+                ipc.send_queue.onAckNack(globalThis, .ack);
                 return;
             },
             .nack => {
-                ipc.send_queue.onAckNack(globalThis, socket, .nack);
+                ipc.send_queue.onAckNack(globalThis, .nack);
                 return;
             },
         }
@@ -1098,24 +1101,18 @@ fn handleIPCMessage(comptime Context: type, this: *Context, message: DecodedIPCM
     }
 }
 
-fn onData2(comptime Context: type, this: *Context, socket: SocketType, all_data: []const u8) void {
+fn onData2(comptime Context: type, this: *Context, all_data: []const u8) void {
     var data = all_data;
     const ipc: *IPCData = this.ipc() orelse return;
     log("onData '{'}'", .{std.zig.fmtEscapes(data)});
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
-    const globalThis: *JSC.JSGlobalObject = switch (@typeInfo(@TypeOf(this.globalThis))) {
-        .pointer => this.globalThis,
-        .optional => brk: {
-            if (this.globalThis) |global| {
-                break :brk global;
-            }
-            this.handleIPCClose();
-            socket.close(.failure);
-            return;
-        },
-        else => @compileError("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
+    const globalThisOptional: ?*JSC.JSGlobalObject = this.globalThis;
+    const globalThis = globalThisOptional orelse {
+        this.handleIPCClose();
+        ipc.send_queue.closeSocket(.failure);
+        return;
     };
 
     // Decode the message with just the temporary buffer, and if that
@@ -1129,18 +1126,18 @@ fn onData2(comptime Context: type, this: *Context, socket: SocketType, all_data:
                     return;
                 },
                 error.InvalidFormat => {
-                    socket.close(.failure);
+                    ipc.send_queue.closeSocket(.failure);
                     return;
                 },
                 error.OutOfMemory => {
                     Output.printErrorln("IPC message is too long.", .{});
                     this.handleIPCClose();
-                    socket.close(.failure);
+                    ipc.send_queue.closeSocket(.failure);
                     return;
                 },
             };
 
-            handleIPCMessage(Context, this, result.message, socket, globalThis);
+            handleIPCMessage(Context, this, result.message, globalThis);
 
             if (result.bytes_consumed < data.len) {
                 data = data[result.bytes_consumed..];
@@ -1163,18 +1160,18 @@ fn onData2(comptime Context: type, this: *Context, socket: SocketType, all_data:
                 return;
             },
             error.InvalidFormat => {
-                socket.close(.failure);
+                ipc.send_queue.closeSocket(.failure);
                 return;
             },
             error.OutOfMemory => {
                 Output.printErrorln("IPC message is too long.", .{});
                 this.handleIPCClose();
-                socket.close(.failure);
+                ipc.send_queue.closeSocket(.failure);
                 return;
             },
         };
 
-        handleIPCMessage(Context, this, result.message, socket, globalThis);
+        handleIPCMessage(Context, this, result.message, globalThis);
 
         if (result.bytes_consumed < slice.len) {
             slice = slice[result.bytes_consumed..];
@@ -1221,10 +1218,10 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
         pub fn onData(
             this: *Context,
-            socket: Socket,
+            _: Socket,
             all_data: []const u8,
         ) void {
-            onData2(Context, this, .wrap(socket), all_data);
+            onData2(Context, this, all_data);
         }
 
         pub fn onFd(
@@ -1242,11 +1239,11 @@ fn NewSocketIPCHandler(comptime Context: type) type {
 
         pub fn onWritable(
             context: *Context,
-            socket: Socket,
+            _: Socket,
         ) void {
             log("onWritable", .{});
             const ipc: *IPCData = context.ipc() orelse return;
-            ipc.send_queue.continueSend(context.getGlobalThis() orelse return, .wrap(socket), .on_writable);
+            ipc.send_queue.continueSend(context.getGlobalThis() orelse return, .on_writable);
         }
 
         pub fn onTimeout(

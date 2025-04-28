@@ -768,7 +768,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     const ipc_data = this.ipc();
-    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.disconnected == false);
+    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.send_queue.socket == .open and ipc_data.?.close_next_tick == null);
 }
 
 pub fn pid(this: *const Subprocess) i32 {
@@ -2365,9 +2365,9 @@ pub fn spawnMaybeSync(
             )) |socket| {
                 posix_ipc_info = IPC.Socket.from(socket);
                 subprocess.ipc_data = .{
-                    .socket = posix_ipc_info,
                     .send_queue = .init(mode),
                 };
+                subprocess.ipc_data.?.send_queue.socket = .{ .open = .wrap(posix_ipc_info) };
             }
         }
     }
@@ -2391,7 +2391,7 @@ pub fn spawnMaybeSync(
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
-        ipc_data.writeVersionPacket(globalThis);
+        ipc_data.send_queue.writeVersionPacket(globalThis);
     }
 
     if (subprocess.stdin == .pipe) {

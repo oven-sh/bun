@@ -748,7 +748,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                        BunObject_callback_udpSocket                                      DontDelete|Function 1
-    main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
+    main                                           BunObject_getter_wrap_main                                          DontDelete|CustomAccessor|ReadOnly
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
@@ -834,6 +834,22 @@ public:
     }
 };
 
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*, JSC::JSObject*);
+
+static JSC::EncodedJSValue BunObject_getter_wrap_main(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisEncoded, JSC::PropertyName prop)
+{
+    (void)prop;
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto thisValue = JSValue::decode(thisEncoded);
+    auto* thisObject = thisValue.getObject();
+    if (!thisObject) {
+        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisValue, "Object"_s));
+        return {};
+    }
+
+    return BunObject_getter_main(globalObject, thisObject);
+}
+
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
 #define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
 #define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
@@ -899,7 +915,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     }
 }
 
-}
+} // namespace Bun
 
 namespace Zig {
 void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
@@ -923,4 +939,4 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
 }
 
-}
+} // namespace Zig

@@ -3272,7 +3272,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.flags.has_written_status) {
                 this.renderMetadata();
             }
-            resp.flushHeaders();
+
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,

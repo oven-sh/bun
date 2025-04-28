@@ -1282,7 +1282,10 @@ extern "C"
         }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
-      uwsRes->flushHeaders();
+      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      {
+        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+      }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
       uwsRes->resetTimeout();
@@ -1305,7 +1308,6 @@ extern "C"
         // If not, they may throw a ConnectionError.
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
-      uwsRes->flushHeaders();
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone();
       uwsRes->resetTimeout();

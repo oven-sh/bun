@@ -89,33 +89,36 @@ using namespace WebCore;
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 JSC_DECLARE_HOST_FUNCTION(callJSBuffer);
 
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
 
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_equals);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_fill);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_includes);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
-JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_equals);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_fill);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_includes);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
+#pragma clang diagnostic pop
 
 extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
@@ -2263,7 +2266,7 @@ class JSBuffer : public JSC::JSNonFinalObject {
 
 const ClassInfo JSBuffer::s_info = {
     "Buffer"_s,
-    &JSC::JSUint8Array::s_info,
+    JSC::getUint8ArrayClassInfo(),
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(JSBuffer)

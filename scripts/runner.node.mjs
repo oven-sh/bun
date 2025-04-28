@@ -488,7 +488,7 @@ async function runTests() {
         let totalBytes = 0;
         let totalBlocks = 0;
         for (const f of coreFileNames) {
-          const stat = fs.statSync(join(coresDir, f));
+          const stat = statSync(join(coresDir, f));
           totalBytes += stat.size;
           totalBlocks += stat.blocks;
         }

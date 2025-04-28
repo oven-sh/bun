@@ -39,14 +39,16 @@ const {
   runSymbol,
   drainMicrotasks,
   setServerIdleTimeout,
-  setRequireHostHeader,
+  setServerCustomOptions,
 } = require("internal/http");
+const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { kIncomingMessage } = require("node:_http_common");
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
@@ -113,6 +115,28 @@ function onServerResponseClose() {
   }
 }
 
+function strictContentLength(response) {
+  if (response.strictContentLength) {
+    let contentLength = response._contentLength ?? response.getHeader("content-length");
+    if (
+      contentLength &&
+      response._hasBody &&
+      !response._removedContLen &&
+      !response.chunkedEncoding &&
+      !response.hasHeader("transfer-encoding")
+    ) {
+      if (typeof contentLength === "number") {
+        return contentLength;
+      } else if (typeof contentLength === "string") {
+        contentLength = parseInt(contentLength, 10);
+        if (NumberIsNaN(contentLength)) {
+          return;
+        }
+        return contentLength;
+      }
+    }
+  }
+}
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
@@ -229,13 +253,13 @@ const ServerResponsePrototype = {
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
         // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-        this._contentLength = handle.end(chunk, encoding);
+        this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
       });
     } else {
       // If there's no data but you already called end, then you're done.
       // We can ignore it in that case.
       if (!(!chunk && handle.ended) && !handle.aborted) {
-        handle.end(chunk, encoding);
+        handle.end(chunk, encoding, undefined, strictContentLength(this));
       }
     }
     this._header = " ";
@@ -335,10 +359,10 @@ const ServerResponsePrototype = {
         // If handle.writeHead throws, we don't want headersSent to be set to true.
         // So we set it here.
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+        result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
       });
     } else {
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this));
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
     }
 
     if (result < 0) {
@@ -390,6 +414,7 @@ const ServerResponsePrototype = {
   },
 
   _implicitHeader() {
+    if (this.headersSent) return;
     // @ts-ignore
     this.writeHead(this.statusCode);
   },
@@ -424,19 +449,20 @@ const ServerResponsePrototype = {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-        handle.write(data, encoding, callback);
+        handle.write(data, encoding, callback, strictContentLength(this));
       });
     } else {
-      handle.write(data, encoding, callback);
+      handle.write(data, encoding, callback, strictContentLength(this));
     }
   },
 
   writeHead(statusCode, statusMessage, headers) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
-      _writeHead(statusCode, statusMessage, headers, this);
-      updateHasBody(this, statusCode);
-      this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+    if (this.headersSent) {
+      throw $ERR_HTTP_HEADERS_SENT("writeHead");
     }
+    _writeHead(statusCode, statusMessage, headers, this);
+    updateHasBody(this, statusCode);
+    this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 
     return this;
   },
@@ -499,6 +525,7 @@ const ServerResponsePrototype = {
     if (handle) {
       if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
         this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
       }
       handle.flushHeaders();
@@ -585,13 +612,14 @@ type Server = InstanceType<typeof Server>;
 const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
+  this[kConnectionsCheckingInterval] = { _destroyed: false };
 
   this.listening = false;
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
   this[tlsSymbol] = null;
-
+  this.noDelay = true;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -671,12 +699,48 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
-
+// uWS::HttpParserError
+enum HttpParserError {
+  HTTP_PARSER_ERROR_NONE = 0,
+  HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
+  HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH = 2,
+  HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING = 3,
+  HTTP_PARSER_ERROR_MISSING_HOST_HEADER = 4,
+  HTTP_PARSER_ERROR_INVALID_REQUEST = 5,
+  HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 6,
+  HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
+  HTTP_PARSER_ERROR_INVALID_EOF = 8,
+  HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+}
+function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
+  const self = this as Server;
+  let err;
+  switch (errorCode) {
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
+      err = $HPE_INVALID_EOF_STATE("Parse Error");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
+      err = $HPE_INVALID_METHOD("Parse Error");
+      break;
+    default:
+      err = $HPE_INTERNAL("Parse Error");
+      break;
+  }
+  err.rawPacket = rawPacket;
+  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
+}
 const ServerPrototype = {
   constructor: Server,
   __proto__: EventEmitter.prototype,
   [kIncomingMessage]: undefined,
   [kServerResponse]: undefined,
+  [kConnectionsCheckingInterval]: undefined,
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -695,6 +759,12 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+    if (connectionsCheckingInterval) {
+      connectionsCheckingInterval._destroyed = true;
+    }
+    this.listening = false;
+
     server.stop(true);
   },
 
@@ -709,7 +779,12 @@ const ServerPrototype = {
       return;
     }
     this[serverSymbol] = undefined;
+    const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
+    if (connectionsCheckingInterval) {
+      connectionsCheckingInterval._destroyed = true;
+    }
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
+    this.listening = false;
     server.stop();
   },
 
@@ -1045,7 +1120,7 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setRequireHostHeader(this[serverSymbol], this.requireHostHeader);
+      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1062,7 +1137,7 @@ const ServerPrototype = {
         delete this[kDeferredTimeouts];
       }
 
-      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
+      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
     }
   },
 
@@ -1082,22 +1157,27 @@ $setPrototypeDirect.$call(Server, EventEmitter);
 
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
-  bytesWritten = 0;
   connecting = false;
   timeout = 0;
   [kHandle];
   server: Server;
   _httpMessage;
-
+  _secureEstablished = false;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
     this[kHandle] = handle;
+    this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
+
+  get bytesWritten() {
+    return this[kHandle]?.response?.getBytesWritten?.() ?? 0;
+  }
+  set bytesWritten(value) {}
 
   #closeHandle(handle, callback) {
     this[kHandle] = undefined;
@@ -1364,7 +1444,22 @@ function _writeHead(statusCode, reason, obj, response) {
         }
       } else {
         if (length % 2 !== 0) {
-          throw new Error("raw headers must have an even number of elements");
+          throw $ERR_INVALID_ARG_VALUE("headers", obj);
+        }
+        // Test non-chunked message does not have trailer header set,
+        // message will be terminated by the first empty line after the
+        // header fields, regardless of the header fields present in the
+        // message, and thus cannot contain a message body or 'trailers'.
+        if (response.chunkedEncoding !== true && response._trailer) {
+          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+        }
+        // Headers in obj should override previous headers but still
+        // allow explicit duplicates. To do so, we first remove any
+        // existing conflicts, then use appendHeader.
+
+        for (let n = 0; n < length; n += 2) {
+          k = obj[n + 0];
+          response.removeHeader(k);
         }
 
         for (let n = 0; n < length; n += 2) {
@@ -1685,4 +1780,5 @@ function ensureReadableStreamController(run) {
 export default {
   Server,
   ServerResponse,
+  kConnectionsCheckingInterval,
 };

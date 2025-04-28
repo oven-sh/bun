@@ -22,8 +22,7 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList),
-        dummyPorts);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

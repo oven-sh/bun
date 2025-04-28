@@ -1943,6 +1943,12 @@ private:
 
             // write bun types
             if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
+                // is this the best way to detect when this serialization is crossing the process boundary?
+                if (m_context == SerializationContext::Default && !Bun__isJSValueTransferable(m_lexicalGlobalObject, value)) {
+                    write(ObjectTag);
+                    write(TerminatorTag);
+                    return true;
+                }
                 StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
                 write(cloneable.tag);
                 cloneable.write(this, m_lexicalGlobalObject);
@@ -6056,9 +6062,9 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
 
     // Rethrow is a bit simpler here since we don't deal with return codes.
-    RETURN_IF_EXCEPTION(scope, jsNull());
+    RETURN_IF_EXCEPTION(scope, {});
 
-    return result.first ? result.first : jsNull();
+    return result.first;
 }
 // JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
 // {

@@ -184,3 +184,4 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);

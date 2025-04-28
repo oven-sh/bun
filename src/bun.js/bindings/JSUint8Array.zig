@@ -6,7 +6,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 
 pub const JSUint8Array = opaque {
-    pub const name = "Uint8Array_alias";
     pub fn ptr(this: *JSUint8Array) [*]u8 {
         return @as(*[*]u8, @ptrFromInt(@intFromPtr(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector)).*;
     }

@@ -302,22 +302,28 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns.lookup(hostname, options).then(res => {
-    throwIfEmpty(res);
+  dns
+    .lookup(hostname, options)
+    .then(res => {
+      throwIfEmpty(res);
 
-    if (options.order == "ipv4first") {
-      res.sort((a, b) => a.family - b.family);
-    } else if (options.order == "ipv6first") {
-      res.sort((a, b) => b.family - a.family);
-    }
+      if (options.order == "ipv4first") {
+        res.sort((a, b) => a.family - b.family);
+      } else if (options.order == "ipv6first") {
+        res.sort((a, b) => b.family - a.family);
+      }
 
-    if (options?.all) {
-      callback(null, res.map(mapLookupAll));
-    } else {
-      const [{ address, family }] = res;
-      callback(null, address, family);
-    }
-  }, callback);
+      if (options?.all) {
+        callback(null, res.map(mapLookupAll));
+      } else {
+        const [{ address, family }] = res;
+        callback(null, address, family);
+      }
+    })
+    .catch(err => {
+      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      callback(err, undefined, undefined);
+    });
 }
 
 function lookupService(address, port, callback) {

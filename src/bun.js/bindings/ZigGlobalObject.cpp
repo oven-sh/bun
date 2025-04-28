@@ -79,6 +79,7 @@
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
+#include "webcore/JSMIMEBindings.h"
 #include "JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
@@ -98,6 +99,8 @@
 #include "JSEventTarget.h"
 #include "JSFetchHeaders.h"
 #include "JSFFIFunction.h"
+#include "webcore/JSMIMEParams.h"
+#include "webcore/JSMIMEType.h"
 #include "JSMessageChannel.h"
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
@@ -173,11 +176,13 @@
 #include "JSSecretKeyObject.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
+#include "webcore/JSMIMEParams.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
+#include "node/NodeTimers.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -208,7 +213,7 @@ BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -842,14 +847,14 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &s_globalObjectMethodTable);
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
     ptr->finishCreation(vm);
     return ptr;
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &s_globalObjectMethodTable);
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &globalObjectMethodTable());
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -892,7 +897,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
-extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
@@ -949,7 +954,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return Zig::EvalGlobalObject::create(
                 vm,
                 structure,
-                &Zig::EvalGlobalObject::s_globalObjectMethodTable);
+                &Zig::EvalGlobalObject::globalObjectMethodTable());
 
         } else {
             auto* structure = Zig::GlobalObject::createStructure(vm);
@@ -1069,7 +1074,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
-extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0)
+extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
 {
     if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
         JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
@@ -1084,7 +1089,7 @@ extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* ar
     return nullptr;
 }
 
-extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* globalObject,
+extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* globalObject,
     void* map_ptr)
 {
     if (map_ptr == nullptr)
@@ -1184,57 +1189,64 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
     }
 }
+const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table = {
+        &supportsRichSourceInfo,
+        &shouldInterruptScript,
+        &javaScriptRuntimeFlags,
+        nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+        nullptr, // &shouldInterruptScriptBeforeTimeout,
+        &moduleLoaderImportModule, // moduleLoaderImportModule
+        &moduleLoaderResolve, // moduleLoaderResolve
+        &moduleLoaderFetch, // moduleLoaderFetch
+        &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+        &moduleLoaderEvaluate, // moduleLoaderEvaluate
+        &promiseRejectionTracker, // promiseRejectionTracker
+        &reportUncaughtExceptionAtEventLoop,
+        &currentScriptExecutionOwner,
+        &scriptExecutionStatus,
+        nullptr, // reportViolationForUnsafeEval
+        nullptr, // defaultLanguage
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+        &Zig::deriveShadowRealmGlobalObject,
+        &codeForEval, // codeForEval
+        &canCompileStrings, // canCompileStrings
+        &trustedScriptStructure, // trustedScriptStructure
+    };
+    return table;
+}
 
-const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
-    &supportsRichSourceInfo,
-    &shouldInterruptScript,
-    &javaScriptRuntimeFlags,
-    nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-    nullptr, // &shouldInterruptScriptBeforeTimeout,
-    &moduleLoaderImportModule, // moduleLoaderImportModule
-    &moduleLoaderResolve, // moduleLoaderResolve
-    &moduleLoaderFetch, // moduleLoaderFetch
-    &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
-    &moduleLoaderEvaluate, // moduleLoaderEvaluate
-    &promiseRejectionTracker, // promiseRejectionTracker
-    &reportUncaughtExceptionAtEventLoop,
-    &currentScriptExecutionOwner,
-    &scriptExecutionStatus,
-    nullptr, // reportViolationForUnsafeEval
-    nullptr, // defaultLanguage
-    nullptr, // compileStreaming
-    nullptr, // instantiateStreaming
-    &Zig::deriveShadowRealmGlobalObject,
-    &codeForEval, // codeForEval
-    &canCompileStrings, // canCompileStrings
-    &trustedScriptStructure, // trustedScriptStructure
-};
-
-const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
-    &supportsRichSourceInfo,
-    &shouldInterruptScript,
-    &javaScriptRuntimeFlags,
-    // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-    nullptr,
-    nullptr, // &shouldInterruptScriptBeforeTimeout,
-    &moduleLoaderImportModule, // moduleLoaderImportModule
-    &moduleLoaderResolve, // moduleLoaderResolve
-    &moduleLoaderFetch, // moduleLoaderFetch
-    &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
-    &moduleLoaderEvaluate, // moduleLoaderEvaluate
-    &promiseRejectionTracker, // promiseRejectionTracker
-    &reportUncaughtExceptionAtEventLoop,
-    &currentScriptExecutionOwner,
-    &scriptExecutionStatus,
-    nullptr, // reportViolationForUnsafeEval
-    nullptr, // defaultLanguage
-    nullptr, // compileStreaming
-    nullptr, // instantiateStreaming
-    &Zig::deriveShadowRealmGlobalObject,
-    &codeForEval, // codeForEval
-    &canCompileStrings, // canCompileStrings
-    &trustedScriptStructure, // trustedScriptStructure
-};
+const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table = {
+        &supportsRichSourceInfo,
+        &shouldInterruptScript,
+        &javaScriptRuntimeFlags,
+        // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+        nullptr,
+        nullptr, // &shouldInterruptScriptBeforeTimeout,
+        &moduleLoaderImportModule, // moduleLoaderImportModule
+        &moduleLoaderResolve, // moduleLoaderResolve
+        &moduleLoaderFetch, // moduleLoaderFetch
+        &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+        &moduleLoaderEvaluate, // moduleLoaderEvaluate
+        &promiseRejectionTracker, // promiseRejectionTracker
+        &reportUncaughtExceptionAtEventLoop,
+        &currentScriptExecutionOwner,
+        &scriptExecutionStatus,
+        nullptr, // reportViolationForUnsafeEval
+        nullptr, // defaultLanguage
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+        &Zig::deriveShadowRealmGlobalObject,
+        &codeForEval, // codeForEval
+        &canCompileStrings, // canCompileStrings
+        &trustedScriptStructure, // trustedScriptStructure
+    };
+    return table;
+}
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
     : Base(vm, structure, methodTable)
@@ -1519,183 +1531,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSValue job = callFrame->argument(0);
-    JSC::JSValue num = callFrame->argument(1);
-    JSC::JSValue arguments = {};
-    size_t argumentCount = callFrame->argumentCount();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    switch (argumentCount) {
-    case 0: {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout requires 1 argument (a function)"_s);
-        return {};
-    }
-    case 1:
-    case 2: {
-        break;
-    }
-    case 3: {
-        arguments = callFrame->argument(2);
-        break;
-    }
-
-    default: {
-        ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
-
-        if (UNLIKELY(!args)) {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-
-        arguments = JSValue(args);
-    }
-    }
-
-    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout expects a function"_s);
-        return {};
-    }
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments), Bun::CountdownOverflowBehavior::OneMs);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSValue job = callFrame->argument(0);
-    JSC::JSValue num = callFrame->argument(1);
-    JSC::JSValue arguments = {};
-    size_t argumentCount = callFrame->argumentCount();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    switch (argumentCount) {
-    case 0: {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval requires 1 argument (a function)"_s);
-        return {};
-    }
-    case 1: {
-        num = jsNumber(0);
-        break;
-    }
-    case 2: {
-        break;
-    }
-    case 3: {
-        arguments = callFrame->argument(2);
-        break;
-    }
-
-    default: {
-        ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
-
-        if (UNLIKELY(!args)) {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-
-        arguments = JSValue(args);
-    }
-    }
-
-    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval expects a function"_s);
-        return {};
-    }
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSValue timer_or_num = callFrame->argument(0);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSValue timer_or_num = callFrame->argument(0);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(timer_or_num));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSValue timer_or_num = callFrame->argument(0);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1829,7 +1664,7 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
+extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
 {
 
 // Windows doesn't have mmap
@@ -1867,7 +1702,7 @@ extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalOb
 #endif
 }
 
-extern "C" JSC__JSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
+extern "C" JSC::EncodedJSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(len, 1);
@@ -1883,7 +1718,7 @@ extern "C" JSC__JSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globa
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
 }
 
-extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, size_t len, void** ptr)
+extern "C" JSC::EncodedJSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, size_t len, void** ptr)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -1899,7 +1734,7 @@ extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalO
     return JSValue::encode(array);
 }
 
-extern "C" JSC__JSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
+extern "C" JSC::EncodedJSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1917,7 +1752,7 @@ extern "C" JSC__JSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexica
     return JSValue::encode(buf);
 }
 
-extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
+extern "C" JSC::EncodedJSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2173,7 +2008,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
         return {};
     return result;
 }
-extern "C" bool ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream1, JSC__JSValue* possibleReadableStream2)
+extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
 {
     auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
     if (UNLIKELY(!readableStream))
@@ -2199,7 +2034,7 @@ extern "C" bool ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::Gl
     return true;
 }
 
-extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
     if (UNLIKELY(!readableStream))
@@ -2213,7 +2048,7 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
-extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto value = JSC::JSValue::decode(possibleReadableStream);
     if (value.isEmpty() || !value.isCell())
@@ -2226,22 +2061,22 @@ extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig:
     readableStream->setNativeType(0);
     readableStream->setDisturbed(true);
 }
-extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
-extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
+extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
     return ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
 }
 
-extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
-extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject);
+extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);
     WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, void** ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);
     JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
@@ -2330,7 +2165,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2345,18 +2180,18 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
-extern "C" JSC__JSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
-extern "C" JSC__JSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
 }
-extern "C" JSC__JSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->lazyTestModuleObject());
 }
 
-static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2395,14 +2230,14 @@ static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig:
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2441,8 +2276,8 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2462,7 +2297,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue, JSC__JSValue contentTypeValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2483,8 +2318,8 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObj
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2504,7 +2339,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2932,6 +2767,16 @@ void GlobalObject::finishCreation(VM& vm)
             setupPrivateKeyObjectClassStructure(init);
         });
 
+    m_JSMIMEParamsClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSMIMEParamsClassStructure(init);
+        });
+
+    m_JSMIMETypeClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            WebCore::setupJSMIMETypeClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3288,7 +3133,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* globalObject = defaultGlobalObject(init.owner);
+
             auto* process = Bun::Process::create(
                 *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
 
@@ -3546,53 +3392,6 @@ JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirect(vm, property, JSValue::decode(value), 0);
     return true;
-}
-
-extern "C" JSC__JSValue Bun__Timer__setImmediate(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3);
-// https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto argCount = callFrame->argumentCount();
-    if (argCount == 0) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate requires 1 argument (a function)"_s);
-        return {};
-    }
-
-    auto job = callFrame->argument(0);
-
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate expects a function"_s);
-        return {};
-    }
-
-    JSC::JSValue arguments = {};
-    switch (argCount) {
-    case 0:
-    case 1: {
-        break;
-    }
-    case 2: {
-        arguments = callFrame->argument(1);
-        break;
-    }
-    default: {
-        ArgList argumentsList = ArgList(callFrame, 1);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
-
-        if (UNLIKELY(!args)) {
-            JSC::throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-
-        arguments = JSValue(args);
-    }
-    }
-
-    return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
 }
 
 // `console.Console` or `import { Console } from 'console';`
@@ -3915,24 +3714,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void JSC__JSGlobalObject__addGc(JSC__JSGlobalObject* globalObject)
+extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 
 // ====================== end conditional builtin globals ======================
-
-extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
-{
-#if !ENABLE(REMOTE_INSPECTOR)
-    return false;
-#else
-    globalObject->setInspectable(true);
-    auto& server = Inspector::RemoteInspectorServer::singleton();
-    return server.start(reinterpret_cast<const char*>(host), arg1);
-#endif
-}
 
 void GlobalObject::drainMicrotasks()
 {
@@ -4040,9 +3828,9 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     }
 }
 
-extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
-extern "C" void Bun__queueTaskWithTimeout(JSC__JSGlobalObject*, WebCore::EventLoopTask* task, int timeout);
-extern "C" void Bun__queueTaskConcurrently(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTaskWithTimeout(JSC::JSGlobalObject*, WebCore::EventLoopTask* task, int timeout);
+extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
@@ -4168,7 +3956,7 @@ void GlobalObject::reload()
     }
 }
 
-extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)
+extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();

@@ -48,6 +48,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
+#include <JavaScriptCore/PropertyNameArray.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -74,7 +76,7 @@ public:
     static JSBroadcastChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
         JSBroadcastChannelPrototype* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannelPrototype>(vm)) JSBroadcastChannelPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
+        ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
@@ -96,7 +98,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBroadcastChannelPrototype, JSBroadcastChannelPrototype::Base);
 
@@ -160,11 +162,82 @@ static const HashTableValue JSBroadcastChannelPrototypeTableValues[] = {
 
 const ClassInfo JSBroadcastChannelPrototype::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannelPrototype) };
 
-void JSBroadcastChannelPrototype::finishCreation(VM& vm)
+JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* channel = JSBroadcastChannel::toWrapped(vm, callFrame->thisValue());
+    if (!channel) {
+        return Bun::ERR::INVALID_THIS(throwScope, lexicalGlobalObject, "BroadcastChannel"_s);
+    }
+
+    JSValue depthValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+
+    auto depth = depthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (depth < 0) {
+        return JSValue::encode(jsNontrivialString(vm, "BroadcastChannel"_s));
+    }
+
+    if (!depthValue.isUndefinedOrNull()) {
+        depthValue = jsNumber(depth - 1);
+    }
+
+    JSObject* options = optionsValue.toObject(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    PropertyNameArray optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    options->getPropertyNames(lexicalGlobalObject, optionsArray, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject* newOptions = constructEmptyObject(lexicalGlobalObject);
+    for (size_t i = 0; i < optionsArray.size(); i++) {
+        auto name = optionsArray[i];
+
+        JSValue value = options->get(lexicalGlobalObject, name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        newOptions->putDirect(vm, name, value, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    PutPropertySlot slot(newOptions);
+    newOptions->put(newOptions, lexicalGlobalObject, Identifier::fromString(vm, "depth"_s), depthValue, slot);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
+    inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
+    inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
+
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    auto callData = JSC::getCallData(utilInspect);
+    MarkedArgumentBuffer arguments;
+    arguments.append(inputObj);
+    arguments.append(newOptions);
+
+    auto inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, inputObj, arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto inspectStringView = inspectString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSValue result = jsString(vm, makeString("BroadcastChannel "_s, inspectStringView.data));
+
+    return JSValue::encode(result);
+}
+
+void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    BunBuiltinNames& builtinNames = WebCore::builtinNames(vm);
+    putDirectNativeFunction(vm, globalObject, builtinNames.inspectCustomPublicName(), 2, jsBroadcastChannelPrototype_inspectCustom, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 const ClassInfo JSBroadcastChannel::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannel) };

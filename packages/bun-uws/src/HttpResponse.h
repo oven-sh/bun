@@ -539,10 +539,10 @@ public:
                 writeMark();
 
                 writeHeader("Transfer-Encoding", "chunked");
+                Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
-
-            Super::write("\r\n", 2);
+            
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {

@@ -134,7 +134,7 @@ function remapFileName(fileName: string) {
 }
 
 export function addMapping(blobUrl: string, value: SourceMapURL) {
-  ASSERT(!blobToSourceMap.has(blobUrl));
+  DEBUG.ASSERT(!blobToSourceMap.has(blobUrl));
   blobToSourceMap.set(blobUrl, value);
 }
 

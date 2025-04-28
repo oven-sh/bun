@@ -2,13 +2,13 @@
 comptime {
     @export(&getTitle, .{ .name = "Bun__Process__getTitle" });
     @export(&setTitle, .{ .name = "Bun__Process__setTitle" });
-    @export(&getArgv, .{ .name = "Bun__Process__getArgv" });
+    @export(&createArgv, .{ .name = "Bun__Process__createArgv" });
     @export(&getCwd, .{ .name = "Bun__Process__getCwd" });
     @export(&setCwd, .{ .name = "Bun__Process__setCwd" });
     @export(&exit, .{ .name = "Bun__Process__exit" });
-    @export(&getArgv0, .{ .name = "Bun__Process__getArgv0" });
+    @export(&createArgv0, .{ .name = "Bun__Process__createArgv0" });
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
-    @export(&getExecArgv, .{ .name = "Bun__Process__getExecArgv" });
+    @export(&createExecArgv, .{ .name = "Bun__Process__createExecArgv" });
 }
 
 var title_mutex = bun.Mutex{};
@@ -29,20 +29,20 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C
     return newvalue.toJS(globalObject);
 }
 
-pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn createArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return JSC.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
 }
 
 pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const out = bun.selfExePath() catch {
         // if for any reason we are unable to get the executable path, we just return argv[0]
-        return getArgv0(globalObject);
+        return createArgv0(globalObject);
     };
 
     return JSC.ZigString.fromUTF8(out).toJS(globalObject);
 }
 
-pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+fn createExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     var sfb = std.heap.stackFallback(4096, globalObject.allocator());
     const temp_alloc = sfb.get();
     const vm = globalObject.bunVM();
@@ -117,7 +117,7 @@ pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return bun.String.toJSArray(globalObject, args.items);
 }
 
-pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+fn createArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const vm = globalObject.bunVM();
 
     // Allocate up to 32 strings in stack
@@ -138,6 +138,8 @@ pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         // argv also omits the script name
         args_count + 2,
     ) catch bun.outOfMemory();
+    defer allocator.free(args);
+
     var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
 
     if (vm.standalone_module_graph != null) {
@@ -179,6 +181,16 @@ pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     }
 
     return bun.String.toJSArray(globalObject, args_list.items);
+}
+
+extern fn Bun__Process__getArgv(global: *JSGlobalObject) JSValue;
+pub fn getArgv(global: *JSGlobalObject) callconv(.c) JSValue {
+    return Bun__Process__getArgv(global);
+}
+
+extern fn Bun__Process__getExecArgv(global: *JSGlobalObject) JSValue;
+pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
+    return Bun__Process__getExecArgv(global);
 }
 
 pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

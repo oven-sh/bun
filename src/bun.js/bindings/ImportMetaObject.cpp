@@ -147,7 +147,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
 
 ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL)
 {
-    if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue::encode(specifierOrURL))) {
+    if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(specifierOrURL))) {
         return create(globalObject, url->href().string());
     }
 
@@ -199,7 +199,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         return {};
     }
 
-    JSC__JSValue from = JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::EncodedJSValue from = JSC::JSValue::encode(JSC::jsUndefined());
     bool isESM = true;
 
     if (callFrame->argumentCount() > 1) {

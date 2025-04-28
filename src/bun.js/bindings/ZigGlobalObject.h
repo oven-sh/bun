@@ -70,8 +70,8 @@ class SubtleCrypto;
 class EventTarget;
 }
 
-extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
@@ -373,9 +373,9 @@ public:
     };
     static constexpr size_t promiseFunctionsSize = 34;
 
-    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
+    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
-    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1))
     {
         auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
         if (JSFunction* func = barrier.get()) {

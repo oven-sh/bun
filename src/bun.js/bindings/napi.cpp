@@ -1198,7 +1198,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_set_ref(NapiRef* ref, JSC__JSValue val_)
+extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
 {
     NAPI_LOG_CURRENT_FUNCTION;
     JSC::JSValue val = JSC::JSValue::decode(val_);

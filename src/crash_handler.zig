@@ -1594,6 +1594,7 @@ inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.
 pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }
+extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
@@ -1626,6 +1627,8 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
             // TODO(@paperclover): see if zig 0.14 fixes this
+            WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+            return;
         },
         else => {
             // Assume debug symbol tooling is reliable.

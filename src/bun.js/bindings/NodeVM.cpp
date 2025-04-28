@@ -854,14 +854,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
     }
 
     std::span<const uint8_t> bytes = bytecode->span();
+    auto* buffer = WebCore::createBuffer(globalObject, bytes);
 
-    JSC::JSArrayBufferView* uint8Array = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), bytes.size());
-    if (UNLIKELY(!uint8Array)) {
-        return throwVMError(globalObject, scope, "Failed to create Uint8Array for cached data"_s);
+    if (UNLIKELY(!buffer)) {
+        return throwVMError(globalObject, scope, "Failed to create Buffer for cached data"_s);
     }
 
-    std::memmove(uint8Array->vector(), bytes.data(), bytes.size());
-    return JSValue::encode(uint8Array);
+    return JSValue::encode(buffer);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

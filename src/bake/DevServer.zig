@@ -98,9 +98,33 @@ server_register_update_callback: JSC.Strong.Optional,
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
+/// In end-to-end DevServer tests, flakiness was noticed around file watching
+/// and bundling times, where the test harness (bake-harness.ts) would not wait
+/// long enough for processing to complete. Checking client logs, for example,
+/// not only must wait on DevServer, but also wait on all connected WebSocket
+/// clients to recieve their update, but also wait for those modules
+/// (potentially async) to finish loading.
+///
+/// To solve the first part of this, DevServer exposes a special WebSocket
+/// payload, `testing_batch_events`, which informs the watcher to batch a set of
+/// files together. The various states are used to inform the test harness when
+/// it sees files, and when it finishes a build it will send a message
+/// identifying if the build had notified WebSockets. This makes sure that when
+/// an error happens, the test harness does not needlessly wait for it's clients
+/// to receive a "successful hot update" message when it will never come.
+///
+/// Sync events are sent over the `testing_watch_synchronization` topic.
 testing_batch_events: union(enum) {
     disabled,
+    /// A meta-state where the DevServer has been requested to start a batch,
+    /// but is currently bundling something so it must wait. In this state, the
+    /// harness is waiting for a "i am in batch mode" message, and it waits
+    /// until the bundle finishes.
     enable_after_bundle,
+    /// DevServer will not start new bundles, but instead write all files into
+    /// this `TestingBatch` object. Additionally, writes into this will signal
+    /// a message saying that new files have been seen. Once DevServer recieves
+    /// that signal, or times out, it will "release" this batch.
     enabled: TestingBatch,
 },
 
@@ -6411,16 +6435,16 @@ pub const HotReloadEvent = struct {
     }
 };
 
-/// All code working with atomics to communicate watcher is in this struct. It
-/// attempts to recycle as much memory as possible since files are very
-/// frequently updated (the whole point of hmr)
+/// All code working with atomics to communicate watcher <-> DevServer is here.
+/// It attempts to recycle as much memory as possible, since files are very
+/// frequently updated (the whole point of HMR)
 const WatcherAtomics = struct {
     const log = Output.scoped(.DevServerWatchAtomics, true);
 
-    /// Only two hot-reload tasks exist ever, since only one bundle may be active at
-    /// once. Memory is reused by swapping between these two. These items are
-    /// aligned to cache lines to reduce contention, since these structures are
-    /// carefully passed between two threads.
+    /// Only two hot-reload events exist ever, which is possible since only one
+    /// bundle may be active at once. Memory is reused by swapping between these
+    /// two. These items are aligned to cache lines to reduce contention, since
+    /// these structures are carefully passed between two threads.
     events: [2]HotReloadEvent align(std.atomic.cache_line),
     /// 0  - no watch
     /// 1  - has fired additional watch

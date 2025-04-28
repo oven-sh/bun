@@ -33,7 +33,6 @@ import * as stream from "node:stream";
 import { PassThrough } from "node:stream";
 import * as zlib from "node:zlib";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
-import { sleep } from "bun";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {

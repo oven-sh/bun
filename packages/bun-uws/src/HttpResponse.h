@@ -128,7 +128,7 @@ public:
             
 
             /* Terminating 0 chunk */
-            Super::write("\r\n0\r\n\r\n", 7);
+            Super::write("0\r\n\r\n", 5);
 
             httpResponseData->markDone();
 
@@ -453,6 +453,7 @@ public:
             writeMark();
 
             writeHeader("Transfer-Encoding", "chunked");
+            Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -569,6 +570,11 @@ public:
             auto [written, failed] = Super::write(data.data(), (int) length);
             has_failed = has_failed || failed;
             total_written += written;
+        }
+
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+            // Write End of Chunked Encoding after data has been written
+            Super::write("\r\n", 2);
         }
         
         /* Reset timeout on each sended chunk */

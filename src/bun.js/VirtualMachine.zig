@@ -3385,7 +3385,7 @@ pub const IPCInstance = struct {
 
     export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
         if (global.bunVM().getIPCInstance()) |current_ipc| {
-            current_ipc.data.close(true);
+            current_ipc.data.send_queue.closeSocketNextTick(true);
         }
     }
 

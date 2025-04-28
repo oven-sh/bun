@@ -756,7 +756,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 }
 pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
     const ipc_data = this.ipc() orelse return;
-    ipc_data.close(nextTick);
+    ipc_data.send_queue.closeSocketNextTick(nextTick);
 }
 pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     _ = globalThis;
@@ -768,7 +768,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     const ipc_data = this.ipc();
-    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.send_queue.socket == .open and ipc_data.?.close_next_tick == null);
+    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.send_queue.isConnected());
 }
 
 pub fn pid(this: *const Subprocess) i32 {

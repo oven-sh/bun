@@ -2367,7 +2367,7 @@ pub fn spawnMaybeSync(
                 subprocess.ipc_data = .{
                     .send_queue = .init(mode),
                 };
-                subprocess.ipc_data.?.send_queue.socket = .{ .open = .wrap(posix_ipc_info) };
+                subprocess.ipc_data.?.send_queue.socket = .{ .open = posix_ipc_info };
             }
         }
     }

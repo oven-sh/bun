@@ -3428,7 +3428,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             socket.setTimeout(0);
 
             instance.data = .{ .send_queue = .init(opts.mode) };
-            instance.data.send_queue.socket = .{ .open = .wrap(socket) };
+            instance.data.send_queue.socket = .{ .open = socket };
 
             break :instance instance;
         },

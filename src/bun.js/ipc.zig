@@ -377,7 +377,10 @@ pub const SendQueue = struct {
 
     socket: union(enum) {
         uninitialized,
-        open: SocketType,
+        open: switch (Environment.isWindows) {
+            true => *WindowsSocketType,
+            false => Socket,
+        },
         closed,
     } = .uninitialized,
 
@@ -408,9 +411,19 @@ pub const SendQueue = struct {
         return this.socket == .open and this.close_next_tick == null;
     }
 
-    fn closeSocket(this: *SendQueue, reason: SocketType.CloseReason) void {
+    fn closeSocket(this: *SendQueue, reason: enum { normal, failure }) void {
         switch (this.socket) {
-            .open => |s| s.close(reason),
+            .open => |s| switch (Environment.isWindows) {
+                true => {
+                    @compileError("TODO: close socket on windows");
+                },
+                false => {
+                    s.close(switch (reason) {
+                        .normal => .normal,
+                        .failure => .failure,
+                    });
+                },
+            },
             else => {},
         }
         this.socket = .closed;
@@ -433,6 +446,7 @@ pub const SendQueue = struct {
 
     fn _closeSocketTask(this: *SendQueue) void {
         log("SendQueue#closeSocketTask", .{});
+        bun.assert(this.close_next_tick != null);
         this.close_next_tick = null;
         this.closeSocket(.normal);
     }
@@ -547,10 +561,6 @@ pub const SendQueue = struct {
     fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, reason: ContinueSendReason) void {
         this.debugLogMessageQueue();
         log("IPC continueSend: {s}", .{@tagName(reason)});
-        const socket = switch (this.socket) {
-            .open => |s| s,
-            else => return, // socket closed
-        };
 
         if (this.queue.items.len == 0) {
             return; // nothing to send
@@ -574,7 +584,7 @@ pub const SendQueue = struct {
             return _continueSend(this, global, reason);
         }
         log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
-        const n = if (first.handle) |handle| socket.writeFd(to_send, handle.fd) else socket.write(to_send);
+        const n = this._write(to_send, if (first.handle) |handle| handle.fd else null);
         if (n == to_send.len) {
             if (first.handle) |_| {
                 // the message was fully written, but it had a handle.
@@ -640,6 +650,33 @@ pub const SendQueue = struct {
             log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[0..item.data.cursor]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
         }
     }
+
+    fn _write(this: @This(), data: []const u8, fd: ?bun.FileDescriptor) i32 {
+        const socket = switch (this.socket) {
+            .open => |s| s,
+            else => return 0, // socket closed
+        };
+        return switch (Environment.isWindows) {
+            true => {
+                if (fd) |_| {
+                    // TODO: send fd on windows
+                }
+                const prev_len = socket.outgoing.list.items.len;
+                socket.outgoing.write(data) catch bun.outOfMemory();
+                if (prev_len == 0) {
+                    _ = socket.flush(); // this might close the socket and deinit SocketType. TODO: handle this case.
+                }
+                return @intCast(data.len);
+            },
+            false => {
+                if (fd) |fd_unwrapped| {
+                    return socket.writeFd(data, fd_unwrapped);
+                } else {
+                    return socket.write(data, false);
+                }
+            },
+        };
+    }
 };
 const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, .{
     .onWrite = NamedPipeIPCData.onWrite,
@@ -647,49 +684,6 @@ const WindowsSocketType = bun.io.StreamingWriter(NamedPipeIPCData, .{
     .onWritable = null,
     .onClose = NamedPipeIPCData.onPipeClose,
 });
-const SocketType = struct {
-    const Backing = switch (Environment.isWindows) {
-        true => *WindowsSocketType,
-        false => Socket,
-    };
-    backing: Backing,
-    pub fn wrap(backing: Backing) @This() {
-        return .{ .backing = backing };
-    }
-    const CloseReason = enum { normal, failure };
-    fn close(this: @This(), reason: CloseReason) void {
-        switch (Environment.isWindows) {
-            true => @compileError("Not implemented"),
-            false => this.backing.close(switch (reason) {
-                .normal => .normal,
-                .failure => .failure,
-            }),
-        }
-    }
-    fn writeFd(this: @This(), data: []const u8, fd: bun.FileDescriptor) i32 {
-        return switch (Environment.isWindows) {
-            true => {
-                // TODO: implement writeFd on Windows
-                this.backing.outgoing.write(data) catch bun.outOfMemory();
-                return @intCast(data.len);
-            },
-            false => this.backing.writeFd(data, fd),
-        };
-    }
-    fn write(this: @This(), data: []const u8) i32 {
-        return switch (Environment.isWindows) {
-            true => {
-                const prev_len = this.backing.outgoing.list.items.len;
-                this.backing.outgoing.write(data) catch bun.outOfMemory();
-                if (prev_len == 0) {
-                    _ = this.backing.flush();
-                }
-                return @intCast(data.len);
-            },
-            false => this.backing.write(data, false),
-        };
-    }
-};
 const MAX_HANDLE_RETRANSMISSIONS = 3;
 
 /// Used on POSIX

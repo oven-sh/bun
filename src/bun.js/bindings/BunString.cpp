@@ -467,7 +467,7 @@ extern "C" BunString URL__getFileURLString(BunString* filePath)
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
 }
 
-extern "C" JSC__JSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
+extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
 {
     auto& globalObject = *jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();

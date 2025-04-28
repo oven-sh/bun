@@ -1347,7 +1347,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     },
                 };
 
-                handleIPCMessage(Context, this, result.message, .wrap(&ipc.writer), globalThis);
+                handleIPCMessage(Context, this, result.message, globalThis);
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];

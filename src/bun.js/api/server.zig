@@ -4258,6 +4258,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             if (this.resp == null) return;
             const resp = this.resp.?;
+            defer resp.flushHeaders();
 
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();

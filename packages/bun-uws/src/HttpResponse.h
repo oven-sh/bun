@@ -468,7 +468,12 @@ public:
         writeStatus(HTTP_200_OK);
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0) {
+            writeHeader("Connection", "close");
+        }
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
 
+        
         if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */

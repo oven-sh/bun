@@ -98,9 +98,33 @@ server_register_update_callback: JSC.Strong.Optional,
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
+/// In end-to-end DevServer tests, flakiness was noticed around file watching
+/// and bundling times, where the test harness (bake-harness.ts) would not wait
+/// long enough for processing to complete. Checking client logs, for example,
+/// not only must wait on DevServer, but also wait on all connected WebSocket
+/// clients to recieve their update, but also wait for those modules
+/// (potentially async) to finish loading.
+///
+/// To solve the first part of this, DevServer exposes a special WebSocket
+/// payload, `testing_batch_events`, which informs the watcher to batch a set of
+/// files together. The various states are used to inform the test harness when
+/// it sees files, and when it finishes a build it will send a message
+/// identifying if the build had notified WebSockets. This makes sure that when
+/// an error happens, the test harness does not needlessly wait for it's clients
+/// to receive a "successful hot update" message when it will never come.
+///
+/// Sync events are sent over the `testing_watch_synchronization` topic.
 testing_batch_events: union(enum) {
     disabled,
+    /// A meta-state where the DevServer has been requested to start a batch,
+    /// but is currently bundling something so it must wait. In this state, the
+    /// harness is waiting for a "i am in batch mode" message, and it waits
+    /// until the bundle finishes.
     enable_after_bundle,
+    /// DevServer will not start new bundles, but instead write all files into
+    /// this `TestingBatch` object. Additionally, writes into this will signal
+    /// a message saying that new files have been seen. Once DevServer recieves
+    /// that signal, or times out, it will "release" this batch.
     enabled: TestingBatch,
 },
 
@@ -1904,8 +1928,8 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     };
 
     // Insert the source map
-    const source_map_id = @as(u64, route_bundle.client_script_generation) << 32;
-    if (try dev.source_maps.putOrIncrementRefCount(source_map_id, 1)) |entry| {
+    const script_id = @as(u64, route_bundle.client_script_generation) << 32;
+    if (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) |entry| {
         var arena = std.heap.ArenaAllocator.init(sfa);
         defer arena.deinit();
         try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
@@ -1918,7 +1942,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         else
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
-        .source_map_id = source_map_id,
+        .script_id = script_id,
     });
 
     return client_bundle;
@@ -2543,7 +2567,7 @@ pub fn finalizeBundle(
                 // Build and send the source chunk
                 try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
                     .kind = .hmr_chunk,
-                    .source_map_id = hash,
+                    .script_id = hash,
                 });
             }
         } else {
@@ -4584,7 +4608,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
-                source_map_id: ?u64 = null,
+                script_id: u64,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
             },
@@ -4616,7 +4640,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => switch (side) {
+                    .server => comptime .init("({"),
+                    .client => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+                },
             };
 
             // A small amount of metadata is present at the end of the chunk
@@ -4658,16 +4685,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             );
                             g.owner().releaseRelativePathBuf();
                         }
-                        try w.writeAll("\n");
+                        try w.writeAll("\n})");
                     },
-                    .hmr_chunk => {},
+                    .hmr_chunk => switch (side) {
+                        .client => {
+                            try w.writeAll("}, \"");
+                            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
+                            try w.writeAll("\")");
+                        },
+                        .server => try w.writeAll("})"),
+                    },
                 }
-                try w.writeAll("})");
-                if (side == .client) if (options.source_map_id) |source_map_id| {
+                if (side == .client) {
                     try w.writeAll("\n//# sourceMappingURL=" ++ client_prefix ++ "/");
-                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));
+                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
                     try w.writeAll(".js.map\n");
-                };
+                }
                 break :end end_list.items;
             };
 
@@ -4723,7 +4756,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
             };
 
             j.pushStatic(
@@ -6402,16 +6435,16 @@ pub const HotReloadEvent = struct {
     }
 };
 
-/// All code working with atomics to communicate watcher is in this struct. It
-/// attempts to recycle as much memory as possible since files are very
-/// frequently updated (the whole point of hmr)
+/// All code working with atomics to communicate watcher <-> DevServer is here.
+/// It attempts to recycle as much memory as possible, since files are very
+/// frequently updated (the whole point of HMR)
 const WatcherAtomics = struct {
     const log = Output.scoped(.DevServerWatchAtomics, true);
 
-    /// Only two hot-reload tasks exist ever, since only one bundle may be active at
-    /// once. Memory is reused by swapping between these two. These items are
-    /// aligned to cache lines to reduce contention, since these structures are
-    /// carefully passed between two threads.
+    /// Only two hot-reload events exist ever, which is possible since only one
+    /// bundle may be active at once. Memory is reused by swapping between these
+    /// two. These items are aligned to cache lines to reduce contention, since
+    /// these structures are carefully passed between two threads.
     events: [2]HotReloadEvent align(std.atomic.cache_line),
     /// 0  - no watch
     /// 1  - has fired additional watch
@@ -7088,8 +7121,8 @@ pub const SourceMapStore = struct {
     }
 
     /// If an *Entry is returned, caller must initialize it with the source map.
-    pub fn putOrIncrementRefCount(store: *SourceMapStore, source_map_id: u64, ref_count: u32) !?*Entry {
-        const gop = try store.entries.getOrPut(store.owner().allocator, source_map_id);
+    pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: u64, ref_count: u32) !?*Entry {
+        const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{
                 .ref_count = ref_count,
@@ -7118,8 +7151,8 @@ pub const SourceMapStore = struct {
         }
     };
 
-    pub fn getParsedSourceMap(store: *SourceMapStore, source_map_id: u64) ?GetResult {
-        const index = store.entries.getIndex(source_map_id) orelse
+    pub fn getParsedSourceMap(store: *SourceMapStore, script_id: u64) ?GetResult {
+        const index = store.entries.getIndex(script_id) orelse
             return null; // source map was collected.
         const entry = &store.entries.values()[index];
 
@@ -7250,6 +7283,8 @@ const ErrorReportRequest = struct {
 
         const runtime_name = "Bun HMR Runtime";
 
+        const browser_url_origin = bun.jsc.URL.originFromSlice(browser_url) orelse browser_url;
+
         // All files that DevServer could provide a source map fit the pattern:
         // `/_bun/client/<label>-{u64}.js`
         // Where the u64 is a unique identifier pointing into sourcemaps.
@@ -7268,7 +7303,7 @@ const ErrorReportRequest = struct {
             const source_url = frame.source_url.value.ZigString.slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            const id = parseId(source_url, browser_url) orelse continue;
+            const id = parseId(source_url, browser_url_origin) orelse continue;
 
             // Get and cache the parsed source map
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);

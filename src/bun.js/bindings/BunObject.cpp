@@ -836,7 +836,7 @@ public:
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*, JSC::JSObject*);
 
-static JSC::EncodedJSValue BunObject_getter_wrap_main(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisEncoded, JSC::PropertyName prop)
+static JSC::EncodedJSValue SYSV_ABI BunObject_getter_wrap_main(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisEncoded, JSC::PropertyName prop)
 {
     (void)prop;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

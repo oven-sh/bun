@@ -2090,19 +2090,6 @@ export async function main() {
     ]);
   }
 
-  if (options["coredump-upload"]) {
-    // currently we only do core dumps on Linux, but this will support other platforms in the future
-    if (isLinux) {
-      // change coredump_filter to include as much info as possible in core dumps
-      try {
-        // bits 0-8
-        writeFileSync("/proc/self/coredump_filter", "0x1ff");
-      } catch (e) {
-        console.warn("failed to change coredump_filter:", e);
-      }
-    }
-  }
-
   const results = await runTests();
   const ok = results.every(({ ok }) => ok);
 

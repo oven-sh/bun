@@ -2382,8 +2382,6 @@ pub fn spawnMaybeSync(
             subprocess.ref(); // + one ref for the IPC
 
             if (ipc_data.configureServer(
-                Subprocess,
-                subprocess,
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();

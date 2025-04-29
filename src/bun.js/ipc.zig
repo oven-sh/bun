@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const uv = uv;
+const uv = bun.windows.libuv;
 
 const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
@@ -90,7 +90,7 @@ const advanced = struct {
         }
 
         const message_type: IPCMessageType = @enumFromInt(data[0]);
-        const message_len: u32 = @as(*align(1) const u32, @ptrCast(data[1 .. @sizeOf(u32) + 1])).*;
+        const message_len = std.mem.readInt(u32, data[1 .. @sizeOf(u32) + 1], .little);
 
         log("Received IPC message type {d} ({s}) len {d}", .{
             @intFromEnum(message_type),
@@ -385,7 +385,8 @@ pub const SendQueue = struct {
     windows: switch (Environment.isWindows) {
         true => struct {
             is_server: bool = false,
-            write_req: uv.uv_write_t,
+            write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+            write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
         },
         false => struct {},
     } = .{},
@@ -394,12 +395,13 @@ pub const SendQueue = struct {
         subprocess: *bun.api.Subprocess,
         virtual_machine: *bun.JSC.VirtualMachine.IPCInstance,
     };
+    pub const SocketType = switch (Environment.isWindows) {
+        true => *uv.Pipe,
+        false => Socket,
+    };
     pub const SocketUnion = union(enum) {
         uninitialized,
-        open: switch (Environment.isWindows) {
-            true => *uv.Pipe,
-            false => Socket,
-        },
+        open: SocketType,
         closed,
     };
 
@@ -711,12 +713,19 @@ pub const SendQueue = struct {
         }
     }
 
+    fn getSocket(this: *SendQueue) ?SocketType {
+        return switch (this.socket) {
+            .open => |s| s,
+            else => return null,
+        };
+    }
+
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
     fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
-        const socket = switch (this.socket) {
-            .open => |s| s,
-            else => return this._onWriteComplete(0), // socket closed
+        const socket = this.getSocket() orelse {
+            this._onWriteComplete(-1);
+            return;
         };
         return switch (Environment.isWindows) {
             true => {
@@ -725,9 +734,11 @@ pub const SendQueue = struct {
                 }
                 const pipe: *uv.Pipe = socket;
                 this.windows.write_buffer = uv.uv_buf_t.init(data);
-                this.windows.write_in_progress = true;
+                this.write_in_progress = true;
                 // if SendQueue is deinitialized while writing, the write request will be cancelled
-                if (this.windows.write_req.write(pipe.toStream(), &this.write_buffer, this, &_windowsOnWriteComplete).asErr()) |_| {
+                pipe.ref(); // ref on write
+                if (this.windows.write_req.write(pipe.asStream(), &this.windows.write_buffer, this, &_windowsOnWriteComplete).asErr()) |_| {
+                    pipe.unref();
                     this._onWriteComplete(-1);
                 }
                 // write request is queued. it will call _onWriteComplete when it completes.
@@ -742,6 +753,7 @@ pub const SendQueue = struct {
         };
     }
     fn _windowsOnWriteComplete(this: *SendQueue, status: uv.ReturnCode) void {
+        if (this.getSocket()) |socket| socket.unref(); // write complete; unref
         if (status.toError(.write)) |_| {
             this._onWriteComplete(-1);
         } else {
@@ -776,7 +788,6 @@ const SocketIPCData = struct {
 /// Used on Windows
 const NamedPipeIPCData = struct {
     send_queue: SendQueue,
-    connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
     pub fn deinit(this: *NamedPipeIPCData) void {
         log("deinit", .{});
@@ -789,13 +800,13 @@ const NamedPipeIPCData = struct {
     }
 
     fn detach(this: *NamedPipeIPCData) void {
-        log("NamedPipeIPCData#detach: is_server {}", .{this.send_queue.is_server});
+        log("NamedPipeIPCData#detach: is_server {}", .{this.send_queue.windows.is_server});
         const source = this.writer.source.?;
         // unref because we are closing the pipe
         source.pipe.unref();
         this.writer.source = null;
 
-        if (this.send_queue.is_server) {
+        if (this.send_queue.windows.is_server) {
             source.pipe.data = source.pipe;
             source.pipe.close(onServerPipeClose);
             this.onPipeClose();
@@ -832,57 +843,20 @@ const NamedPipeIPCData = struct {
         this.send_queue._onIPCCloseEvent();
     }
 
-    pub fn writeVersionPacket(this: *NamedPipeIPCData, global: *JSC.JSGlobalObject) void {
-        this.send_queue.writeVersionPacket(global, .wrap(&this.writer));
-    }
-
-    pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
-        if (this.disconnected) {
-            return .failure;
-        }
-        // ref because we have pending data
-        this.writer.source.?.pipe.ref();
-        return this.send_queue.serializeAndSend(global, value, is_internal, callback, handle, .wrap(&this.writer));
-    }
-
-    pub fn close(this: *NamedPipeIPCData, nextTick: bool) void {
-        log("NamedPipeIPCData#close", .{});
-        if (this.disconnected) return;
-        this.disconnected = true;
-        if (nextTick) {
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
-        } else {
-            this.closeTask();
-        }
-    }
-
-    pub fn closeTask(this: *NamedPipeIPCData) void {
-        log("NamedPipeIPCData#closeTask is_server {}", .{this.send_queue.is_server});
-        if (this.disconnected) {
-            _ = this.writer.flush();
-            this.writer.end();
-            if (this.writer.getStream()) |stream| {
-                stream.readStop();
-            }
-            if (!this.writer.hasPendingData()) {
-                this.detach();
-            }
-        }
-    }
-
     pub fn configureServer(this: *NamedPipeIPCData, ipc_pipe: *uv.Pipe) JSC.Maybe(void) {
         log("configureServer", .{});
         ipc_pipe.data = &this.send_queue;
         ipc_pipe.unref();
-        this.send_queue.is_server = true;
+        this.send_queue.socket = .{ .open = ipc_pipe };
+        this.send_queue.windows.is_server = true;
         const pipe: *uv.Pipe = this.send_queue.socket.open;
         pipe.data = &this.send_queue;
 
-        const stream: *uv.uv_stream_t = @ptrCast(pipe);
+        const stream: *uv.uv_stream_t = pipe.asStream();
 
         const readStartResult = stream.readStart(&this.send_queue, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead);
         if (readStartResult == .err) {
-            this.close(false);
+            this.send_queue.closeSocket(.failure);
             return readStartResult;
         }
         return .{ .result = {} };
@@ -900,25 +874,13 @@ const NamedPipeIPCData = struct {
             return err;
         };
         ipc_pipe.unref();
-        this.writer.owns_fd = false;
-        this.writer.setParent(this);
-        this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
-            this.close(false);
-            return err;
-        };
-        this.connect_req.data = &this.send_queue;
-        this.onClose = .{
-            .callback = @ptrCast(&IPCHandlers.WindowsNamedPipe.onClose),
-            .context = &this.send_queue,
-        };
+        this.send_queue.socket = .{ .open = ipc_pipe };
+        this.send_queue.windows.is_server = false;
 
-        const stream = this.writer.getStream() orelse {
-            this.close(false);
-            return error.FailedToConnectIPC;
-        };
+        const stream = ipc_pipe.asStream();
 
         stream.readStart(&this.send_queue, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead).unwrap() catch |err| {
-            this.close(false);
+            this.send_queue.closeSocket(.failure);
             return err;
         };
     }

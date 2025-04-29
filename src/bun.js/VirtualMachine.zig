@@ -3437,12 +3437,13 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
                 .context = {},
-                .data = .{ .send_queue = .init(opts.mode) },
+                .data = undefined,
             });
+            instance.data = .{ .send_queue = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized) };
 
             this.ipc = .{ .initialized = instance };
 
-            instance.data.configureClient(IPCInstance, instance, opts.info) catch {
+            instance.data.configureClient(opts.info) catch {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC pipe '{}'", .{opts.info});

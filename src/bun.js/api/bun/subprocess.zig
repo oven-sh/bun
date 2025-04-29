@@ -2340,7 +2340,7 @@ pub fn spawnMaybeSync(
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
         .ipc_data = if (!is_sync and comptime Environment.isWindows)
             if (maybe_ipc_mode) |ipc_mode| .{
-                .send_queue = .init(ipc_mode),
+                .send_queue = .init(ipc_mode, .{ .subprocess = subprocess }, .uninitialized),
             } else null
         else
             null,
@@ -2360,22 +2360,22 @@ pub fn spawnMaybeSync(
         if (maybe_ipc_mode) |mode| {
             if (uws.us_socket_from_fd(
                 jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                @sizeOf(*Subprocess),
+                @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
             )) |socket| {
-                posix_ipc_info = IPC.Socket.from(socket);
                 subprocess.ipc_data = .{
-                    .send_queue = .init(mode),
+                    .send_queue = .init(mode, .{ .subprocess = subprocess }, .uninitialized),
                 };
-                subprocess.ipc_data.?.send_queue.socket = .{ .open = posix_ipc_info };
+                posix_ipc_info = IPC.Socket.from(socket);
             }
         }
     }
 
     if (subprocess.ipc_data) |*ipc_data| {
         if (Environment.isPosix) {
-            if (posix_ipc_info.ext(*Subprocess)) |ctx| {
-                ctx.* = subprocess;
+            if (posix_ipc_info.ext(*IPC.SendQueue)) |ctx| {
+                ctx.* = &subprocess.ipc_data.?.send_queue;
+                subprocess.ipc_data.?.send_queue.socket = .{ .open = posix_ipc_info };
                 subprocess.ref(); // + one ref for the IPC
             }
         } else {
@@ -2642,8 +2642,6 @@ pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
 pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {
     return this.globalThis;
 }
-
-pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
 
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");

@@ -37,35 +37,6 @@ delete assert.CallTracker;
 delete assert.strict;
 
 /**
- * @link https://nodejs.org/api/test.html#class-suitecontext
- */
-class SuiteContext {
-  #name: string | undefined;
-  #filePath: string | undefined;
-  #abortController?: AbortController;
-
-  constructor(name: string | undefined, filePath: string | undefined) {
-    this.#name = name;
-    this.#filePath = filePath || Bun.main;
-  }
-
-  get name(): string {
-    return this.#name!;
-  }
-
-  get filePath(): string {
-    return this.#filePath!;
-  }
-
-  get signal(): AbortSignal {
-    if (this.#abortController === undefined) {
-      this.#abortController = new AbortController();
-    }
-    return this.#abortController.signal;
-  }
-}
-
-/**
  * @link https://nodejs.org/api/test.html#class-testcontext
  */
 class TestContext {

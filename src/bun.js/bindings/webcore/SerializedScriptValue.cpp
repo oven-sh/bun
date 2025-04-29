@@ -5850,8 +5850,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         return exceptionForSerializationFailure(code);
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
-    if (arrayBufferContentsArray.hasException())
+    if (arrayBufferContentsArray.hasException()) {
         return arrayBufferContentsArray.releaseException();
+    }
 
     // auto backingStores = ImageBitmap::detachBitmaps(WTFMove(imageBitmaps));
 

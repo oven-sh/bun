@@ -709,6 +709,7 @@ async function spawnSafe(options) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
     error = error.indexOf("\\n") !== -1 ? error.substring(0, error.indexOf("\\n")) : error;
+    error = `pid ${subprocess.pid} ${error}`;
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";

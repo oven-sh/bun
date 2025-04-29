@@ -6433,7 +6433,7 @@ declare module "bun" {
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err, ...(Readable | "ipc")[]];
+      stdio?: [In, Out, Err, ...Readable[]];
 
       /**
        * The file descriptor for the standard input. It may be:

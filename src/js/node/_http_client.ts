@@ -538,6 +538,7 @@ function ClientRequest(input, options, cb) {
 
   // --- For faking the events in the right order ---
   const maybeEmitSocket = () => {
+    if (this.destroyed) return;
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
       this.emit("socket", this.socket);

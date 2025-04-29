@@ -42,7 +42,7 @@ describe("static initializers", () => {
       expect(result.signalCode).toBeUndefined();
       expect(result.exitCode).toBe(0);
     } catch (e) {
-      console.error(stderr);
+      console.log(stderr);
       throw e;
     }
 

@@ -61,68 +61,68 @@ Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::disable()
     return {};
 }
 
-void InspectorBunFrontendDevServerAgent::clientConnected(int connectionId)
+void InspectorBunFrontendDevServerAgent::clientConnected(int devServerId, int connectionId)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->clientConnected(connectionId);
+    m_frontendDispatcher->clientConnected(devServerId, connectionId);
 }
 
-void InspectorBunFrontendDevServerAgent::clientDisconnected(int connectionId)
+void InspectorBunFrontendDevServerAgent::clientDisconnected(int devServerId, int connectionId)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->clientDisconnected(connectionId);
+    m_frontendDispatcher->clientDisconnected(devServerId, connectionId);
 }
 
-void InspectorBunFrontendDevServerAgent::bundleStart(Ref<JSON::ArrayOf<String>>&& triggerFiles, int buildId)
+void InspectorBunFrontendDevServerAgent::bundleStart(int devServerId, Ref<JSON::ArrayOf<String>>&& triggerFiles)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->bundleStart(WTFMove(triggerFiles), buildId);
+    m_frontendDispatcher->bundleStart(devServerId, WTFMove(triggerFiles));
 }
 
-void InspectorBunFrontendDevServerAgent::bundleComplete(double durationMs, int buildId)
+void InspectorBunFrontendDevServerAgent::bundleComplete(int devServerId, double durationMs)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->bundleComplete(durationMs, buildId);
+    m_frontendDispatcher->bundleComplete(devServerId, durationMs);
 }
 
-void InspectorBunFrontendDevServerAgent::bundleFailed(const String& buildErrorsPayloadBase64, int buildId)
+void InspectorBunFrontendDevServerAgent::bundleFailed(int devServerId, const String& buildErrorsPayloadBase64)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->bundleFailed(buildErrorsPayloadBase64, buildId);
+    m_frontendDispatcher->bundleFailed(devServerId, buildErrorsPayloadBase64);
 }
 
-void InspectorBunFrontendDevServerAgent::clientNavigated(int connectionId, const String& url, std::optional<int> routeBundleId)
+void InspectorBunFrontendDevServerAgent::clientNavigated(int devServerId, int connectionId, const String& url, std::optional<int> routeBundleId)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->clientNavigated(connectionId, url, WTFMove(routeBundleId));
+    m_frontendDispatcher->clientNavigated(devServerId, connectionId, url, WTFMove(routeBundleId));
 }
 
-void InspectorBunFrontendDevServerAgent::clientErrorReported(const String& clientErrorPayloadBase64)
+void InspectorBunFrontendDevServerAgent::clientErrorReported(int devServerId, const String& clientErrorPayloadBase64)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->clientErrorReported(clientErrorPayloadBase64);
+    m_frontendDispatcher->clientErrorReported(devServerId, clientErrorPayloadBase64);
 }
 
-void InspectorBunFrontendDevServerAgent::graphUpdate(const String& visualizerPayloadBase64)
+void InspectorBunFrontendDevServerAgent::graphUpdate(int devServerId, const String& visualizerPayloadBase64)
 {
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->graphUpdate(visualizerPayloadBase64);
+    // m_frontendDispatcher->graphUpdate(devServerId, visualizerPayloadBase64);
 }
 
 // C API implementations for Zig

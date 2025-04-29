@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isMacOS } from "harness";
+import { bunEnv, bunExe, isMacOSVersionAtLeast } from "harness";
 
 /**
  * This test prevents startup performance regressions by ensuring that Bun has
@@ -21,47 +21,51 @@ import { bunEnv, bunExe, isMacOS } from "harness";
  */
 describe("static initializers", () => {
   // Only macOS has DYLD_PRINT_INITIALIZERS
-  it.skipIf(!isMacOS || process.arch !== "arm64")("should only have one static initializer from bun itself", () => {
-    const env = {
-      ...bunEnv,
-      DYLD_PRINT_INITIALIZERS: "1",
-    } as const;
+  // macOS 13 has a bug in dyld that crashes if you use DYLD_PRINT_INITIALIZERS
+  it.skipIf(!isMacOSVersionAtLeast(14.0) || process.arch !== "arm64")(
+    "should only have one static initializer from bun itself",
+    () => {
+      const env = {
+        ...bunEnv,
+        DYLD_PRINT_INITIALIZERS: "1",
+      } as const;
 
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), "--version"],
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), "--version"],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
+      const stdout = result.stdout.toString();
+      const stderr = result.stderr.toString();
 
-    // Check it didn't crash (and if it did, print the errors)
-    try {
-      expect(result.signalCode).toBeUndefined();
-      expect(result.exitCode).toBe(0);
-    } catch (e) {
-      console.log(stderr);
-      throw e;
-    }
+      // Check it didn't crash (and if it did, print the errors)
+      try {
+        expect(result.signalCode).toBeUndefined();
+        expect(result.exitCode).toBe(0);
+      } catch (e) {
+        console.log(stderr);
+        throw e;
+      }
 
-    // Verify the version was printed correctly
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/);
+      // Verify the version was printed correctly
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/);
 
-    // Combine stdout and stderr since DYLD_PRINT_INITIALIZERS output goes to stderr
-    const output = stderr + stdout;
+      // Combine stdout and stderr since DYLD_PRINT_INITIALIZERS output goes to stderr
+      const output = stderr + stdout;
 
-    // Get all lines that contain initializers from the bun executable
-    const bunInitializers = output
-      .split("\n")
-      .map(a => a.trim())
-      .filter(line => line.includes("running initializer") && line.includes(bunExe()));
+      // Get all lines that contain initializers from the bun executable
+      const bunInitializers = output
+        .split("\n")
+        .map(a => a.trim())
+        .filter(line => line.includes("running initializer") && line.includes(bunExe()));
 
-    // We expect exactly one initializer from the bun executable itself
-    expect(
-      bunInitializers.length,
-      `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(1);
-  });
+      // We expect exactly one initializer from the bun executable itself
+      expect(
+        bunInitializers.length,
+        `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
+      ).toBe(1);
+    },
+  );
 });

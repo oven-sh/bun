@@ -44,6 +44,14 @@ describe("node:test", () => {
       stderr: expect.stringContaining("35 pass"),
     });
   });
+
+  test("should throw NotImplementedError if you call test() or describe() inside another test()", async () => {
+    const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[]) {

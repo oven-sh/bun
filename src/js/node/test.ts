@@ -36,6 +36,8 @@ delete assert.AssertionError;
 delete assert.CallTracker;
 delete assert.strict;
 
+let checkNotInsideTest: (ctx: TestContext | undefined, fn: string) => void;
+
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
  */
@@ -143,9 +145,7 @@ class TestContext {
   test(arg0: unknown, arg1: unknown, arg2: unknown) {
     const { name, fn, options } = createTest(arg0, arg1, arg2);
 
-    if (this.#insideTest) {
-      throwNotImplemented("test() inside another test()", 5090, "Use `bun:test` in the interim.");
-    }
+    this.#checkNotInsideTest("test");
 
     const { test } = bunTest();
     if (options.only) {
@@ -162,12 +162,23 @@ class TestContext {
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
     const { name, fn } = createDescribe(arg0, arg1, arg2);
 
-    if (this.#insideTest) {
-      throwNotImplemented("describe() inside another test()", 5090, "Use `bun:test` in the interim.");
-    }
+    this.#checkNotInsideTest("describe");
 
     const { describe } = bunTest();
     describe(name, fn);
+  }
+
+  #checkNotInsideTest(fn: string) {
+    if (this.#insideTest) {
+      throwNotImplemented(`${fn}() inside another test()`, 5090, "Use `bun:test` in the interim.");
+    }
+  }
+
+  static {
+    // expose this function to the rest of this file without exposing it to user JS
+    checkNotInsideTest = (ctx: TestContext | undefined, fn: string) => {
+      if (ctx) ctx.#checkNotInsideTest(fn);
+    };
   }
 }
 
@@ -290,6 +301,7 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
 function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
+  checkNotInsideTest(ctx, "test");
   const originalContext = ctx;
   const context = new TestContext(true, name, Bun.main, originalContext);
 
@@ -323,6 +335,7 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = parseTestOptions(arg0, arg1, arg2);
 
+  checkNotInsideTest(ctx, "describe");
   const originalContext = ctx;
   const context = new TestContext(false, name, Bun.main, originalContext);
 

@@ -30,12 +30,24 @@ describe("static initializers", () => {
     const result = Bun.spawnSync({
       cmd: [bunExe(), "--version"],
       env,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-
-    expect(result.exitCode).toBe(0);
 
     const stdout = result.stdout.toString();
     const stderr = result.stderr.toString();
+
+    // Check it didn't crash (and if it did, print the errors)
+    try {
+      expect(result.signalCode).toBeUndefined();
+      expect(result.exitCode).toBe(0);
+    } catch (e) {
+      console.log(stderr);
+      throw e;
+    }
+
+    // Verify the version was printed correctly
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/);
 
     // Combine stdout and stderr since DYLD_PRINT_INITIALIZERS output goes to stderr
     const output = stderr + stdout;
@@ -51,8 +63,5 @@ describe("static initializers", () => {
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
     ).toBe(1);
-
-    // Verify the version was printed correctly
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/);
   });
 });

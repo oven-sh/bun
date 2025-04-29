@@ -6,7 +6,7 @@
 //
 // Without this flag, each test is a "smoke test", running the iteration once.
 import { expect } from "bun:test";
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest } from "../bake-harness";
 
 // https://github.com/oven-sh/bun/issues/18910
 devTest("crash #18910", {

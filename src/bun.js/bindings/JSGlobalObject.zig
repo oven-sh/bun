@@ -403,8 +403,9 @@ pub const JSGlobalObject = opaque {
         JSC__JSGlobalObject__queueMicrotaskJob(this, function, first, second);
     }
 
-    pub fn throwValue(this: *JSGlobalObject, value: JSC.JSValue) JSError {
-        this.vm().throwError(this, value);
+    pub fn throwValue(this: *JSGlobalObject, value: JSError!JSC.JSValue) JSError {
+        const err = value catch |err| this.takeException(err);
+        this.vm().throwError(this, err);
         return error.JSError;
     }
 

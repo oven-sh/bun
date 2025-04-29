@@ -655,27 +655,20 @@ pub const TimeoutObject = struct {
         return TimeoutObject.js.callbackGetCached(thisValue).?;
     }
 
-    pub fn set_onTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) bool {
+    pub fn set_onTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) void {
         TimeoutObject.js.callbackSetCached(thisValue, globalThis, value);
         this.internals.flags.should_destroy_before_firing = !value.toBoolean();
-        return true;
     }
 
     pub fn get_idleTimeout(_: *TimeoutObject, thisValue: JSValue, _: *JSGlobalObject) JSValue {
         return TimeoutObject.js.idleTimeoutGetCached(thisValue).?;
     }
 
-    pub fn set_idleTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) bool {
+    pub fn set_idleTimeout(this: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) JSError!void {
         TimeoutObject.js.idleTimeoutSetCached(thisValue, globalThis, value);
 
         if (value.isNumber()) {
-            const num = value.toNumber(globalThis) catch |err| switch (err) {
-                error.JSError => return false,
-                error.OutOfMemory => {
-                    _ = globalThis.throwOutOfMemoryValue();
-                    return false;
-                },
-            };
+            const num = try value.toNumber(globalThis);
 
             // cancel if the value is exactly -1
             // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L612-L625
@@ -684,15 +677,18 @@ pub const TimeoutObject = struct {
             this.internals.flags.should_reschedule_interval = true;
         }
 
-        this.internals.interval = globalThis.bunVM().timer.jsValueToCountdown(globalThis, value, .one_ms, false) catch |err| switch (err) {
-            error.JSError => return false,
-            error.OutOfMemory => {
-                _ = globalThis.throwOutOfMemoryValue();
-                return false;
-            },
-        };
+        this.internals.interval = try globalThis.bunVM().timer.jsValueToCountdown(globalThis, value, .one_ms, false);
+    }
 
-        return true;
+    pub fn get_repeat(_: *TimeoutObject, thisValue: JSValue, _: *JSGlobalObject) JSValue {
+        return TimeoutObject.js.repeatGetCached(thisValue).?;
+    }
+
+    pub fn set_repeat(_: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) JSError!void {
+        TimeoutObject.js.repeatSetCached(thisValue, globalThis, value);
+
+        const num = try value.toNumber(globalThis);
+        _ = num;
     }
 
     pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

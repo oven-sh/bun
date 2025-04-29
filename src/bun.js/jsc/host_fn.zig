@@ -74,19 +74,26 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
     bun.assert((value == .zero) == globalThis.hasException());
 }
 
+pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
+    value catch |err| switch (err) {
+        error.JSError => return false,
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+            return false;
+        },
+    };
+    return true;
+}
+
 pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!JSValue) JSValue {
-    if (Environment.allow_assert and Environment.is_canary) {
-        const normal = value catch |err| switch (err) {
-            error.JSError => .zero,
-            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-        };
-        bun.assert((normal == .zero) == globalThis.hasException());
-        return normal;
-    }
-    return value catch |err| switch (err) {
+    const normal = value catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
     };
+    if (Environment.allow_assert and Environment.is_canary) {
+        bun.assert((normal == .zero) == globalThis.hasException());
+    }
+    return normal;
 }
 
 const ParsedHostFunctionErrorSet = struct {

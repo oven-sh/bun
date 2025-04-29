@@ -10384,14 +10384,14 @@ pub const PackageManager = struct {
                     allocator,
                 ) orelse return .zero;
                 if (input_str.len > 0)
-                    all_positionals.append(input_str.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
                 var iter = input.arrayIterator(globalThis);
                 while (iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;
-                    all_positionals.append(slice.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(slice.slice());
                 }
                 if (globalThis.hasException()) return .zero;
             } else {

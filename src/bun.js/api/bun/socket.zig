@@ -543,10 +543,9 @@ pub const Listener = struct {
         return this.strong_data.get() orelse JSValue.jsUndefined();
     }
 
-    pub fn setData(this: *Listener, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+    pub fn setData(this: *Listener, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         log("setData()", .{});
         this.strong_data.set(globalObject, value);
-        return true;
     }
 
     const UnixOrHost = union(enum) {
@@ -1998,10 +1997,9 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn setData(this: *This, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+        pub fn setData(this: *This, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             log("setData()", .{});
             This.js.dataSetCached(this.this_value, globalObject, value);
-            return true;
         }
 
         pub fn getListener(this: *This, _: *JSC.JSGlobalObject) JSValue {

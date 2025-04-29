@@ -354,10 +354,10 @@ pub const FileSystemRouter = struct {
         return JSValue.jsNull();
     }
 
-    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
-        const paths = this.router.getEntryPoints() catch unreachable;
-        const names = this.router.getNames() catch unreachable;
-        var name_strings = bun.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
+    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) bun.JSError!JSValue {
+        const paths = this.router.getEntryPoints();
+        const names = this.router.getNames();
+        var name_strings = try bun.default_allocator.alloc(ZigString, names.len * 2);
         defer bun.default_allocator.free(name_strings);
         var paths_strings = name_strings[names.len..];
         for (names, 0..) |name, i| {
@@ -619,12 +619,12 @@ pub const MatchedRoute = struct {
     pub fn getParams(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (this.route.params.len == 0)
             return JSValue.createEmptyObject(globalThis, 0);
 
         if (this.param_map == null) {
-            this.param_map = QueryStringMap.initWithScanner(
+            this.param_map = try QueryStringMap.initWithScanner(
                 globalThis.allocator(),
                 CombinedScanner.init(
                     "",
@@ -632,8 +632,7 @@ pub const MatchedRoute = struct {
                     this.route.name,
                     this.route.params,
                 ),
-            ) catch
-                unreachable;
+            );
         }
 
         return createQueryObject(globalThis, &this.param_map.?);
@@ -642,7 +641,7 @@ pub const MatchedRoute = struct {
     pub fn getQuery(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         if (this.route.query_string.len == 0 and this.route.params.len == 0) {
             return JSValue.createEmptyObject(globalThis, 0);
         } else if (this.route.query_string.len == 0) {
@@ -651,19 +650,15 @@ pub const MatchedRoute = struct {
 
         if (this.query_string_map == null) {
             if (this.route.params.len > 0) {
-                if (QueryStringMap.initWithScanner(globalThis.allocator(), CombinedScanner.init(
+                this.query_string_map = try QueryStringMap.initWithScanner(globalThis.allocator(), CombinedScanner.init(
                     this.route.query_string,
                     this.route.pathnameWithoutLeadingSlash(),
                     this.route.name,
 
                     this.route.params,
-                ))) |map| {
-                    this.query_string_map = map;
-                } else |_| {}
+                ));
             } else {
-                if (QueryStringMap.init(globalThis.allocator(), this.route.query_string)) |map| {
-                    this.query_string_map = map;
-                } else |_| {}
+                this.query_string_map = try QueryStringMap.init(globalThis.allocator(), this.route.query_string);
             }
         }
 

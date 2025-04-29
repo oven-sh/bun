@@ -366,12 +366,8 @@ pub fn getReferrerPolicy(
 ) JSC.JSValue {
     return ZigString.init("").toJS(globalThis);
 }
-pub fn getUrl(this: *Request, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    this.ensureURL() catch {
-        globalObject.throw("Failed to join URL", .{}) catch {}; // TODO: propagate
-        return .zero;
-    };
-
+pub fn getUrl(this: *Request, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    try this.ensureURL();
     return this.url.toJS(globalObject);
 }
 
@@ -403,7 +399,7 @@ pub fn getProtocol(this: *const Request) []const u8 {
     return "http://";
 }
 
-pub fn ensureURL(this: *Request) !void {
+pub fn ensureURL(this: *Request) bun.OOM!void {
     if (!this.url.isEmpty()) return;
 
     if (this.request_context.getRequest()) |req| {
@@ -463,11 +459,11 @@ pub fn ensureURL(this: *Request) !void {
                     };
                 } else {
                     // slow path
-                    const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
-                    }) catch bun.outOfMemory();
+                    });
                     defer bun.default_allocator.free(temp_url);
                     this.url = bun.String.createUTF8(temp_url);
                 }

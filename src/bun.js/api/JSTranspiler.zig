@@ -199,7 +199,7 @@ pub const TransformTask = struct {
 
     pub fn then(this: *TransformTask, promise: *JSC.JSPromise) void {
         if (this.log.hasAny() or this.err != null) {
-            const error_value: JSValue = brk: {
+            const error_value: bun.OOM!JSValue = brk: {
                 if (this.err) |err| {
                     if (!this.log.hasAny()) {
                         break :brk bun.api.BuildMessage.create(

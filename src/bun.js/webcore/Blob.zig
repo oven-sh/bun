@@ -2921,33 +2921,23 @@ pub fn setName(
     value: JSValue,
 
     // TODO: support JSError for getters/setters
-) bool {
+) JSError!void {
     // by default we don't have a name so lets allow it to be set undefined
     if (value.isEmptyOrUndefinedOrNull()) {
         this.name.deref();
         this.name = bun.String.dead;
         js.nameSetCached(jsThis, globalThis, value);
-        return true;
+        return;
     }
     if (value.isString()) {
         const old_name = this.name;
 
-        this.name = bun.String.fromJS(value, globalThis) catch |err| {
-            switch (err) {
-                error.JSError => {},
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory() catch {};
-                },
-            }
-            this.name = bun.String.empty;
-            return false;
-        };
+        errdefer this.name = bun.String.empty;
+        this.name = try bun.String.fromJS(value, globalThis);
         // We don't need to increment the reference count since tryFromJS already did it.
         js.nameSetCached(jsThis, globalThis, value);
         old_name.deref();
-        return true;
     }
-    return false;
 }
 
 pub fn getFileName(

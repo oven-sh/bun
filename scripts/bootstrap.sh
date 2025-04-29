@@ -411,7 +411,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt)" ]; then
+		if [ -f "$(which apt-get)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -562,7 +562,7 @@ check_ulimit() {
 package_manager() {
 	case "$pm" in
 	apt)
-		execute_sudo apt "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -611,6 +611,7 @@ install_packages() {
 		package_manager install \
 			--yes \
 			--no-install-recommends \
+			--fix-missing \
 			"$@"
 		;;
 	dnf)

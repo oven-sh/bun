@@ -1944,7 +1944,7 @@ private:
 
             // write bun types
             if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
-                if (m_forTransfer == SerializationForTransfer::Yes && !Bun__isJSValueTransferable(m_lexicalGlobalObject, value)) {
+                if (m_forTransfer == SerializationForTransfer::Yes && !SerializedScriptValue::isTransferable(m_lexicalGlobalObject, value)) {
                     write(ObjectTag);
                     write(TerminatorTag);
                     return true;

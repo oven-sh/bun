@@ -2191,8 +2191,6 @@ const GENERATED_CLASSES_HEADER = [
 
 #include "root.h"
 
-extern "C" bool Bun__isJSValueTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue encodedValue);
-
 namespace Zig {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
@@ -2292,7 +2290,7 @@ ${jsclasses
 
 function isTransferableCppImpl() {
   return `
-extern "C" bool Bun__isJSValueTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+bool WebCore::SerializedScriptValue::isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
   if (!value.isCell()) return true;
   auto cell = value.asCell();

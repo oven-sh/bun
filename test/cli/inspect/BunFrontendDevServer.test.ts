@@ -326,18 +326,18 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     const bundleStartEvent = await bundleStartEventPromise;
     expect(bundleStartEvent).toHaveProperty("triggerFiles");
     expect(Array.isArray(bundleStartEvent.triggerFiles)).toBe(true);
-    expect(bundleStartEvent).toHaveProperty("buildId");
-    expect(typeof bundleStartEvent.buildId).toBe("number");
+    expect(bundleStartEvent).toHaveProperty("serverId");
+    expect(typeof bundleStartEvent.serverId).toBe("number");
 
-    // Store the buildId for verification in bundleComplete
-    const buildId = bundleStartEvent.buildId;
+    // Store the serverId for verification in bundleComplete
+    const serverId = bundleStartEvent.serverId;
 
     // Wait for bundleComplete event
     const bundleCompleteEvent = await bundleCompleteEventPromise;
     expect(bundleCompleteEvent).toHaveProperty("durationMs");
     expect(typeof bundleCompleteEvent.durationMs).toBe("number");
-    expect(bundleCompleteEvent).toHaveProperty("buildId");
-    expect(bundleCompleteEvent.buildId).toBe(buildId);
+    expect(bundleCompleteEvent).toHaveProperty("serverId");
+    expect(bundleCompleteEvent.serverId).toBe(serverId);
 
     // Verify the duration is reasonable
     expect(bundleCompleteEvent.durationMs).toBeGreaterThan(-1);
@@ -352,7 +352,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
       }
     `;
 
-    // Listen for bundleStart event first to get the buildId
+    // Listen for bundleStart event first to get the serverId
     const bundleStartPromise = session.waitForEvent("BunFrontendDevServer.bundleStart");
 
     // Then listen for bundleFailed event
@@ -370,15 +370,15 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
 
     // Verify we got bundleStart event
     const bundleStartEvent = await bundleStartPromise;
-    expect(bundleStartEvent).toHaveProperty("buildId");
-    const buildId = bundleStartEvent.buildId;
+    expect(bundleStartEvent).toHaveProperty("serverId");
+    const serverId = bundleStartEvent.serverId;
 
     // Verify we got bundleFailed event
     const bundleFailedEvent = await bundleFailedPromise;
     expect(bundleFailedEvent).toHaveProperty("buildErrorsPayloadBase64");
     expect(typeof bundleFailedEvent.buildErrorsPayloadBase64).toBe("string");
-    expect(bundleFailedEvent).toHaveProperty("buildId");
-    expect(bundleFailedEvent.buildId).toBe(buildId);
+    expect(bundleFailedEvent).toHaveProperty("serverId");
+    expect(bundleFailedEvent.serverId).toBe(serverId);
 
     // Verify the payload is a valid base64 string
     const buffer = Uint8Array.from(atob(bundleFailedEvent.buildErrorsPayloadBase64), c => c.charCodeAt(0));

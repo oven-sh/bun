@@ -20,7 +20,7 @@ const MutableString = bun.MutableString;
 const FileDescriptorType = bun.FileDescriptor;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
@@ -90,7 +90,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.HardcodedModule.Alias.has(str, .node);
+        return bun.JSC.ModuleLoader.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -693,6 +693,13 @@ pub const Loader = enum(u8) {
             => true,
             .css => false,
             .html => false,
+            else => false,
+        };
+    }
+
+    pub fn handlesEmptyFile(this: Loader) bool {
+        return switch (this) {
+            .wasm, .file, .text => true,
             else => false,
         };
     }

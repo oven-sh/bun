@@ -15,6 +15,30 @@ function depromise<T>(_promise: Promise<T>): T {
 }
 
 {
+  // Test cases for https://github.com/oven-sh/bun/issues/17274
+
+  {
+    const proc = Bun.spawn(["cat"], {
+      stdin: "pipe",
+    });
+
+    proc.stdin.write("hello");
+  }
+
+  {
+    const proc = Bun.spawn(["cat"], {
+      stdin: "pipe",
+      onExit(proc, exitCode, signalCode, error) {
+        tsd.expectType(proc).is<Bun.Subprocess<"pipe", "pipe", "inherit">>();
+        console.log(`Process exited: ${exitCode}`);
+      },
+    });
+
+    proc.stdin.write("hello");
+  }
+}
+
+{
   const proc = Bun.spawn(["echo", "hello"], {
     cwd: "./path/to/subdir", // specify a working direcory
     env: { ...process.env, FOO: "bar" }, // specify environment variables
@@ -23,11 +47,11 @@ function depromise<T>(_promise: Promise<T>): T {
     },
   });
 
-  proc.pid; // process ID of subprocess
+  tsd.expectType(proc.pid).is<number>();
 
-  tsd.expectType<ReadableStream<Uint8Array>>(proc.stdout);
-  tsd.expectType<undefined>(proc.stderr);
-  tsd.expectType<undefined>(proc.stdin);
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBufferLike>>>();
+  tsd.expectType(proc.stderr).is<undefined>();
+  tsd.expectType(proc.stdin).is<undefined>();
 }
 
 {
@@ -115,14 +139,16 @@ function depromise<T>(_promise: Promise<T>): T {
   const proc = Bun.spawn(["echo", "hello"], {
     stdio: [null, null, null],
   });
-  tsd.expectType<undefined>(proc.stdin);
-  tsd.expectType<undefined>(proc.stdout);
-  tsd.expectType<undefined>(proc.stderr);
+
+  tsd.expectType(proc.stdin).is<undefined>();
+  tsd.expectType(proc.stdout).is<undefined>();
+  tsd.expectType(proc.stderr).is<undefined>();
 }
 {
   const proc = Bun.spawn(["echo", "hello"], {
     stdio: [new Request("1"), null, null],
   });
+
   tsd.expectType<number>(proc.stdin);
 }
 {
@@ -150,5 +176,4 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 tsd.expectNotAssignable<ReadableSubprocess>(Bun.spawn([], {}));
 tsd.expectNotAssignable<PipedSubprocess>(Bun.spawn([], {}));
 
-tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));
-tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], {}));
+tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));

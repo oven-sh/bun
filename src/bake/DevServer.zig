@@ -7,7 +7,7 @@
 //!
 //! All work is held in-memory, using manually managed data-oriented design.
 //! For questions about DevServer, please consult the delusional @paperclover
-pub const DevServer = @This();
+const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
@@ -72,8 +72,6 @@ html_router: HTMLRouter,
 assets: Assets,
 /// Similar to `assets`, specialized for the additional needs of source mappings.
 source_maps: SourceMapStore,
-// /// Allocations that require a reference count.
-// ref_strings: RefString.Store,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -93,16 +91,40 @@ has_tailwind_plugin_hack: ?bun.StringArrayHashMapUnmanaged(void) = null,
 
 // These values are handles to the functions in `hmr-runtime-server.ts`.
 // For type definitions, see `./bake.private.d.ts`
-server_fetch_function_callback: JSC.Strong,
-server_register_update_callback: JSC.Strong,
+server_fetch_function_callback: JSC.Strong.Optional,
+server_register_update_callback: JSC.Strong.Optional,
 
 // Watching
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
+/// In end-to-end DevServer tests, flakiness was noticed around file watching
+/// and bundling times, where the test harness (bake-harness.ts) would not wait
+/// long enough for processing to complete. Checking client logs, for example,
+/// not only must wait on DevServer, but also wait on all connected WebSocket
+/// clients to recieve their update, but also wait for those modules
+/// (potentially async) to finish loading.
+///
+/// To solve the first part of this, DevServer exposes a special WebSocket
+/// payload, `testing_batch_events`, which informs the watcher to batch a set of
+/// files together. The various states are used to inform the test harness when
+/// it sees files, and when it finishes a build it will send a message
+/// identifying if the build had notified WebSockets. This makes sure that when
+/// an error happens, the test harness does not needlessly wait for it's clients
+/// to receive a "successful hot update" message when it will never come.
+///
+/// Sync events are sent over the `testing_watch_synchronization` topic.
 testing_batch_events: union(enum) {
     disabled,
+    /// A meta-state where the DevServer has been requested to start a batch,
+    /// but is currently bundling something so it must wait. In this state, the
+    /// harness is waiting for a "i am in batch mode" message, and it waits
+    /// until the bundle finishes.
     enable_after_bundle,
+    /// DevServer will not start new bundles, but instead write all files into
+    /// this `TestingBatch` object. Additionally, writes into this will signal
+    /// a message saying that new files have been seen. Once DevServer recieves
+    /// that signal, or times out, it will "release" this batch.
     enabled: TestingBatch,
 },
 
@@ -236,13 +258,13 @@ pub const RouteBundle = struct {
 
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
-        cached_module_list: JSC.Strong,
+        cached_module_list: JSC.Strong.Optional,
         /// Cached to avoid re-creating the string every request.
         /// TODO: Invalidated when any client file associated with the route is updated.
-        cached_client_bundle_url: JSC.Strong,
+        cached_client_bundle_url: JSC.Strong.Optional,
         /// Cached to avoid re-creating the array every request.
         /// Invalidated when the list of CSS files changes.
-        cached_css_file_array: JSC.Strong,
+        cached_css_file_array: JSC.Strong.Optional,
 
         /// When state == .evaluation_failure, this is populated with the route
         /// evaluation error mirrored in the dev server hash map
@@ -339,7 +361,7 @@ pub const RouteBundle = struct {
         if (self.client_bundle) |bundle| cost += bundle.memoryCost();
         switch (self.data) {
             .framework => {
-                // the JSC.Strong children do not support memoryCost. likely not needed
+                // the JSC.Strong.Optional children do not support memoryCost. likely not needed
                 // .evaluate_failure is not owned
             },
             .html => |*html| {
@@ -946,10 +968,10 @@ fn initServerRuntime(dev: *DevServer) void {
     const fetch_function = interface.get(dev.vm.global, "handleRequest") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
     bun.assert(fetch_function.isCallable());
-    dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
+    dev.server_fetch_function_callback = .create(fetch_function, dev.vm.global);
     const register_update = interface.get(dev.vm.global, "registerUpdate") catch null orelse
         @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-    dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
+    dev.server_register_update_callback = .create(register_update, dev.vm.global);
 
     fetch_function.ensureStillAlive();
     register_update.ensureStillAlive();
@@ -1390,7 +1412,7 @@ fn onFrameworkRequestWithBundle(
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
                 const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
                 dev.releaseRelativePathBuf();
-                router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
+                router_type.server_file_string = .create(str, dev.vm.global);
                 break :str str;
             },
             // routeModules
@@ -1418,7 +1440,7 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = JSC.Strong.create(arr, global);
+                bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
@@ -1431,13 +1453,13 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = JSC.Strong.create(js, dev.vm.global);
+                bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
         },
@@ -1906,8 +1928,8 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     };
 
     // Insert the source map
-    const source_map_id = @as(u64, route_bundle.client_script_generation) << 32;
-    if (try dev.source_maps.putOrIncrementRefCount(source_map_id, 1)) |entry| {
+    const script_id = @as(u64, route_bundle.client_script_generation) << 32;
+    if (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) |entry| {
         var arena = std.heap.ArenaAllocator.init(sfa);
         defer arena.deinit();
         try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
@@ -1920,7 +1942,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         else
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
-        .source_map_id = source_map_id,
+        .script_id = script_id,
     });
 
     return client_bundle;
@@ -2545,7 +2567,7 @@ pub fn finalizeBundle(
                 // Build and send the source chunk
                 try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
                     .kind = .hmr_chunk,
-                    .source_map_id = hash,
+                    .script_id = hash,
                 });
             }
         } else {
@@ -3237,11 +3259,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (file.flags.kind) {
                 .js, .asset => {
                     g.owner().allocator.free(file.jsCode());
-                    const map = &g.source_maps.items[index.get()];
-                    g.owner().allocator.free(map.vlq());
-                    if (map.quoted_contents_flags.is_owned) {
-                        map.quotedContentsCowString().deinit(g.owner().allocator);
-                    }
+                    g.source_maps.items[index.get()].clearRetainingCapacity(g.owner().allocator);
                 },
                 .css => if (css == .unref_css) {
                     g.owner().assets.unrefByPath(key);
@@ -3308,6 +3326,37 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             pub fn quotedContents(self: @This()) []const u8 {
                 return self.quoted_contents_ptr[0..self.quoted_contents_flags.len];
+            }
+
+            pub fn clearRetainingCapacity(map: *@This(), alloc: Allocator) void {
+                alloc.free(map.vlq());
+                if (map.quoted_contents_flags.is_owned) {
+                    map.quotedContentsCowString().deinit(alloc);
+                }
+                map.* = .{
+                    // preserve `html_bundle_route_index` when the file is being
+                    // cleared so a route file can locate it's RouteBundle. It
+                    // is a bit jank that this data is stored in the PackedMap,
+                    // but it is a very convenient piece of unused memory
+                    // (remember, HTML has no source maps).
+                    .extra = if (map.vlq_len == 0)
+                        .{ .empty = .{
+                            .line_count = .none,
+                            .html_bundle_route_index = map.extra.empty.html_bundle_route_index,
+                        } }
+                    else
+                        .{ .end_state = .{
+                            .original_line = 0,
+                            .original_column = 0,
+                        } },
+                    .vlq_ptr = comptime &[0]u8{},
+                    .vlq_len = 0,
+                    .quoted_contents_ptr = comptime &[0]u8{},
+                    .quoted_contents_flags = .{
+                        .len = 0,
+                        .is_owned = false,
+                    },
+                };
             }
 
             pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.ptr.CowString) !PackedMap {
@@ -4559,7 +4608,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
-                source_map_id: ?u64 = null,
+                script_id: u64,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
             },
@@ -4591,7 +4640,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => switch (side) {
+                    .server => comptime .init("({"),
+                    .client => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+                },
             };
 
             // A small amount of metadata is present at the end of the chunk
@@ -4633,16 +4685,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             );
                             g.owner().releaseRelativePathBuf();
                         }
-                        try w.writeAll("\n");
+                        try w.writeAll("\n})");
                     },
-                    .hmr_chunk => {},
+                    .hmr_chunk => switch (side) {
+                        .client => {
+                            try w.writeAll("}, \"");
+                            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
+                            try w.writeAll("\")");
+                        },
+                        .server => try w.writeAll("})"),
+                    },
                 }
-                try w.writeAll("})");
-                if (side == .client) if (options.source_map_id) |source_map_id| {
+                if (side == .client) {
                     try w.writeAll("\n//# sourceMappingURL=" ++ client_prefix ++ "/");
-                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));
+                    try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&options.script_id), .lower));
                     try w.writeAll(".js.map\n");
-                };
+                }
                 break :end end_list.items;
             };
 
@@ -4698,7 +4756,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const runtime: bake.HmrRuntime = switch (kind) {
                 .initial_response => bun.bake.getHmrRuntime(side),
-                .hmr_chunk => comptime .init("({\n"),
+                .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
             };
 
             j.pushStatic(
@@ -5612,10 +5670,10 @@ pub const SerializedFailure = struct {
     //         //
     //     }
     //     if (value.jsType() == .DOMWrapper) {
-    //         if (value.as(JSC.BuildMessage)) |build_error| {
+    //         if (value.as(bun.api.BuildMessage)) |build_error| {
     //             _ = build_error; // autofix
     //             //
-    //         } else if (value.as(JSC.ResolveMessage)) |resolve_error| {
+    //         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
     //             _ = resolve_error; // autofix
     //             @panic("TODO");
     //         }
@@ -6377,16 +6435,16 @@ pub const HotReloadEvent = struct {
     }
 };
 
-/// All code working with atomics to communicate watcher is in this struct. It
-/// attempts to recycle as much memory as possible since files are very
-/// frequently updated (the whole point of hmr)
+/// All code working with atomics to communicate watcher <-> DevServer is here.
+/// It attempts to recycle as much memory as possible, since files are very
+/// frequently updated (the whole point of HMR)
 const WatcherAtomics = struct {
     const log = Output.scoped(.DevServerWatchAtomics, true);
 
-    /// Only two hot-reload tasks exist ever, since only one bundle may be active at
-    /// once. Memory is reused by swapping between these two. These items are
-    /// aligned to cache lines to reduce contention, since these structures are
-    /// carefully passed between two threads.
+    /// Only two hot-reload events exist ever, which is possible since only one
+    /// bundle may be active at once. Memory is reused by swapping between these
+    /// two. These items are aligned to cache lines to reduce contention, since
+    /// these structures are carefully passed between two threads.
     events: [2]HotReloadEvent align(std.atomic.cache_line),
     /// 0  - no watch
     /// 1  - has fired additional watch
@@ -6417,9 +6475,7 @@ const WatcherAtomics = struct {
         var ev: *HotReloadEvent = &state.events[state.current];
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
-                // New event, initialize the timer if it is empty.
-                if (ev.isEmpty())
-                    ev.timer = std.time.Timer.start() catch unreachable;
+                // New event is unreferenced by the DevServer thread.
             },
             1 => {
                 @branchHint(.unlikely);
@@ -6433,6 +6489,10 @@ const WatcherAtomics = struct {
             },
             else => unreachable,
         }
+
+        // Initialize the timer if it is empty.
+        if (ev.isEmpty())
+            ev.timer = std.time.Timer.start() catch unreachable;
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
@@ -7061,8 +7121,8 @@ pub const SourceMapStore = struct {
     }
 
     /// If an *Entry is returned, caller must initialize it with the source map.
-    pub fn putOrIncrementRefCount(store: *SourceMapStore, source_map_id: u64, ref_count: u32) !?*Entry {
-        const gop = try store.entries.getOrPut(store.owner().allocator, source_map_id);
+    pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: u64, ref_count: u32) !?*Entry {
+        const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{
                 .ref_count = ref_count,
@@ -7091,8 +7151,8 @@ pub const SourceMapStore = struct {
         }
     };
 
-    pub fn getParsedSourceMap(store: *SourceMapStore, source_map_id: u64) ?GetResult {
-        const index = store.entries.getIndex(source_map_id) orelse
+    pub fn getParsedSourceMap(store: *SourceMapStore, script_id: u64) ?GetResult {
+        const index = store.entries.getIndex(script_id) orelse
             return null; // source map was collected.
         const entry = &store.entries.values()[index];
 
@@ -7124,55 +7184,6 @@ pub const SourceMapStore = struct {
         }
     }
 };
-
-// NOTE: not used but keeping around in case a use case is found soon
-// /// Instead of a pointer to `struct { data: []const u8, ref_count: u32 }`, all
-// /// reference counts are in a shared map. This is used by strings shared between
-// /// source maps and the incremental graph. Not thread-safe.
-// ///
-// /// Transfer from default allocator to RefString with `dev.ref_strings.register(slice)`
-// ///
-// /// Prefer `CowString` (maybe allocated or borrowed) or `[]const u8` (known lifetime) over this structure.
-// const RefString = struct {
-//     /// Allocated by `dev.allocator`, free with `.unref()`
-//     data: []const u8,
-
-//     pub fn deref(str: RefString, store: *Store) void {
-//         const index = store.strings.getIndex(str.ptr) orelse unreachable;
-//         const slice = store.strings.entries.slice();
-//         const ref_count = &slice.items(.value)[index];
-//         if (ref_count.* == 1) {
-//             store.strings.swapRemoveAt(index);
-//             dev.allocator.free(str.data);
-//         } else {
-//             ref_count.* -= 1;
-//         }
-//     }
-
-//     pub fn dupeRef(str: RefString, store: *Store) RefString {
-//         const ref_count = store.strings.getPtr(str.ptr) orelse unreachable;
-//         ref_count.* += 1;
-//         return str;
-//     }
-
-//     pub const Store = struct {
-//         /// Key -> Data. Value -> Reference count
-//         strings: AutoArrayHashMapUnmanaged([*]u8, u32),
-
-//         pub const empty: Store = .{ .strings = .empty };
-
-//         /// `data` must be owned by `dev.allocator`
-//         pub fn register(store: *Store, data: []u8) !RefString {
-//             const gop = try store.strings.getOrPut(dev.allocator, data.ptr);
-//             if (gop.found_existing) {
-//                 gop.value_ptr.* += 1;
-//             } else {
-//                 gop.value_ptr = 1;
-//             }
-//             return .{ .data = data };
-//         }
-//     };
-// };
 
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;
@@ -7272,6 +7283,8 @@ const ErrorReportRequest = struct {
 
         const runtime_name = "Bun HMR Runtime";
 
+        const browser_url_origin = bun.jsc.URL.originFromSlice(browser_url) orelse browser_url;
+
         // All files that DevServer could provide a source map fit the pattern:
         // `/_bun/client/<label>-{u64}.js`
         // Where the u64 is a unique identifier pointing into sourcemaps.
@@ -7290,7 +7303,7 @@ const ErrorReportRequest = struct {
             const source_url = frame.source_url.value.ZigString.slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            const id = parseId(source_url, browser_url) orelse continue;
+            const id = parseId(source_url, browser_url_origin) orelse continue;
 
             // Get and cache the parsed source map
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);
@@ -7644,7 +7657,7 @@ const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Watcher = bun.Watcher;
 const StaticRoute = bun.server.StaticRoute;
 
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 
 const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;

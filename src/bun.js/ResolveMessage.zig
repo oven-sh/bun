@@ -193,7 +193,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        return JSC.BuildMessage.generatePositionObject(this.msg, globalThis);
+        return bun.api.BuildMessage.generatePositionObject(this.msg, globalThis);
     }
 
     pub fn getMessage(

@@ -53,7 +53,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = @import("../js_lexer.zig");
 const Logger = @import("../logger.zig");
@@ -408,7 +408,7 @@ pub const ThreadPool = struct {
     };
 };
 
-const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
+const Watcher = bun.JSC.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
@@ -1637,7 +1637,7 @@ pub const BundleV2 = struct {
                     if (path.len > 0 and
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Alias.has(path, .node) and
+                        !JSC.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -2999,7 +2999,7 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
                     // into a non-node module resolver that doesn't support
@@ -5163,7 +5163,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
@@ -15252,11 +15252,11 @@ pub const LinkerContext = struct {
                         code_result.buffer = buf.items;
                     }
 
-                    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                    switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,
-                        JSC.Node.Arguments.WriteFile{
+                        .{
                             .data = JSC.Node.StringOrBuffer{
-                                .buffer = JSC.Buffer{
+                                .buffer = bun.api.node.Buffer{
                                     .buffer = .{
                                         .ptr = @constCast(output_source_map.ptr),
                                         // TODO: handle > 4 GB files
@@ -15268,8 +15268,8 @@ pub const LinkerContext = struct {
                             .encoding = .buffer,
                             .dirfd = .fromStdDir(root_dir),
                             .file = .{
-                                .path = JSC.Node.PathLike{
-                                    .string = JSC.PathString.init(source_map_final_rel_path),
+                                .path = .{
+                                    .string = bun.PathString.init(source_map_final_rel_path),
                                 },
                             },
                         },
@@ -15343,11 +15343,11 @@ pub const LinkerContext = struct {
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
                             defer cached_bytecode.deref();
-                            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                                 &pathbuf,
-                                JSC.Node.Arguments.WriteFile{
-                                    .data = JSC.Node.StringOrBuffer{
-                                        .buffer = JSC.Buffer{
+                                .{
+                                    .data = .{
+                                        .buffer = .{
                                             .buffer = .{
                                                 .ptr = @constCast(bytecode.ptr),
                                                 .len = @as(u32, @truncate(bytecode.len)),
@@ -15360,8 +15360,8 @@ pub const LinkerContext = struct {
 
                                     .dirfd = .fromStdDir(root_dir),
                                     .file = .{
-                                        .path = JSC.Node.PathLike{
-                                            .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
+                                        .path = .{
+                                            .string = bun.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
                                         },
                                     },
                                 },
@@ -15399,11 +15399,11 @@ pub const LinkerContext = struct {
                 break :brk null;
             };
 
-            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
-                JSC.Node.Arguments.WriteFile{
-                    .data = JSC.Node.StringOrBuffer{
-                        .buffer = JSC.Buffer{
+                .{
+                    .data = .{
+                        .buffer = .{
                             .buffer = .{
                                 .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
@@ -15418,7 +15418,7 @@ pub const LinkerContext = struct {
                     .dirfd = .fromStdDir(root_dir),
                     .file = .{
                         .path = JSC.Node.PathLike{
-                            .string = JSC.PathString.init(rel_path),
+                            .string = bun.PathString.init(rel_path),
                         },
                     },
                 },
@@ -15519,11 +15519,11 @@ pub const LinkerContext = struct {
                     }
                 }
 
-                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                     &pathbuf,
-                    JSC.Node.Arguments.WriteFile{
-                        .data = JSC.Node.StringOrBuffer{
-                            .buffer = JSC.Buffer{
+                    .{
+                        .data = .{
+                            .buffer = .{
                                 .buffer = .{
                                     .ptr = @constCast(bytes.ptr),
                                     .len = @as(u32, @truncate(bytes.len)),
@@ -15535,7 +15535,7 @@ pub const LinkerContext = struct {
                         .dirfd = .fromStdDir(root_dir),
                         .file = .{
                             .path = JSC.Node.PathLike{
-                                .string = JSC.PathString.init(src.dest_path),
+                                .string = bun.PathString.init(src.dest_path),
                             },
                         },
                     },
@@ -16000,7 +16000,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,

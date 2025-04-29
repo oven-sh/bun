@@ -80,6 +80,7 @@ const {
   validateFunction,
   checkIsHttpToken,
   validateLinkHeaderValue,
+  validateUint32,
 } = require("internal/validators");
 
 let utcCache;
@@ -3229,13 +3230,13 @@ class ClientHttp2Session extends Http2Session {
         options
           ? {
               host: url.hostname,
-              port,
+              port: String(port),
               ALPNProtocols: ["h2"],
               ...options,
             }
           : {
               host: url.hostname,
-              port,
+              port: String(port),
               ALPNProtocols: ["h2"],
             },
         onConnect.bind(this),
@@ -3354,6 +3355,7 @@ class ClientHttp2Session extends Http2Session {
         }
         headers[":scheme"] = scheme;
       }
+
       if (headers[":path"] == undefined) {
         headers[":path"] = "/";
       }
@@ -3514,13 +3516,25 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   constructor(options, onRequestHandler) {
     //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
-    if (typeof options === "function") {
-      onRequestHandler = options;
-      options = { ALPNProtocols: ["h2"] };
-    } else if (options == null || typeof options == "object") {
-      options = { ...options, ALPNProtocols: ["h2"] };
+    if (typeof options !== "undefined") {
+      if (options && typeof options === "object") {
+        options = { ...options, ALPNProtocols: ["h2"] };
+      } else {
+        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      }
     } else {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+      options = { ALPNProtocols: ["h2"] };
+    }
+
+    const settings = options.settings;
+    if (typeof settings !== "undefined") {
+      validateObject(settings, "options.settings");
+    }
+    if (options.maxSessionInvalidFrames !== undefined)
+      validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+
+    if (options.maxSessionRejectedStreams !== undefined) {
+      validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
     }
     super(options, connectionListener);
     this.setMaxListeners(0);

@@ -10,7 +10,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 
 // This is close to WHATWG URL, but we don't want the validation errors
@@ -1056,7 +1056,7 @@ pub const FormData = struct {
     }
 
     comptime {
-        const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
+        const jsFunctionFromMultipartData = JSC.toJSHostFn(fromMultipartData);
         @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 

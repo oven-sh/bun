@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { tmpdirSync } from "harness";
 
 let dirc = 0;
 function nextdir() {
@@ -10,7 +10,10 @@ function nextdir() {
 
 // Helper function to create a temporary directory for testing
 function getTmpDir() {
-  const tempDir = path.join(os.tmpdir(), `bun-fs-mkdir-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const tempDir = path.join(
+    tmpdirSync("mkdir-test"),
+    `bun-fs-mkdir-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
 
   // Create the temp dir if it doesn't exist
   if (!fs.existsSync(tempDir)) {
@@ -40,37 +43,37 @@ describe("fs.mkdir", () => {
   it("creates directory using assigned path", async () => {
     const pathname = path.join(tmpdir, nextdir());
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) =>
       fs.mkdir(pathname, err => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
         resolve();
-      });
-    });
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
   });
 
   it("creates directory with assigned mode value", async () => {
     const pathname = path.join(tmpdir, nextdir());
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) =>
       fs.mkdir(pathname, 0o777, err => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
         resolve();
-      });
-    });
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
   });
 
   it("creates directory with mode passed as an options object", async () => {
     const pathname = path.join(tmpdir, nextdir());
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) =>
       fs.mkdir(pathname, { mode: 0o777 }, err => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
         resolve();
-      });
-    });
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
   });
 
   it("throws for invalid path types", () => {
@@ -213,15 +216,15 @@ describe("fs.mkdir - return values", () => {
     const firstPathCreated = path.join(tmpdir, dir1);
     const pathname = path.join(tmpdir, dir1, dir2);
 
-    return new Promise<void>((resolve, reject) => {
+    const result = await new Promise<string | undefined>((resolve, reject) =>
       fs.mkdir(pathname, { recursive: true }, (err, result) => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
-        expect(fs.statSync(pathname).isDirectory()).toBe(true);
-        expect(result).toBe(path.toNamespacedPath(firstPathCreated));
-        resolve();
-      });
-    });
+        resolve(result);
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
+    expect(fs.statSync(pathname).isDirectory()).toBe(true);
+    expect(result).toBe(path.toNamespacedPath(firstPathCreated));
   });
 
   it("returns last folder created with recursive when only last folder is new", async () => {
@@ -232,15 +235,15 @@ describe("fs.mkdir - return values", () => {
     // Create the parent directory
     fs.mkdirSync(path.join(tmpdir, dir1));
 
-    return new Promise<void>((resolve, reject) => {
+    const result = await new Promise<string | undefined>((resolve, reject) =>
       fs.mkdir(pathname, { recursive: true }, (err, result) => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
-        expect(fs.statSync(pathname).isDirectory()).toBe(true);
-        expect(result).toBe(path.toNamespacedPath(pathname));
-        resolve();
-      });
-    });
+        resolve(result);
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
+    expect(fs.statSync(pathname).isDirectory()).toBe(true);
+    expect(result).toBe(path.toNamespacedPath(pathname));
   });
 
   it("returns undefined with recursive when no new folders are created", async () => {
@@ -251,15 +254,15 @@ describe("fs.mkdir - return values", () => {
     // Create the directories first
     fs.mkdirSync(pathname, { recursive: true });
 
-    return new Promise<void>((resolve, reject) => {
+    const result = await new Promise<string | undefined>((resolve, reject) =>
       fs.mkdir(pathname, { recursive: true }, (err, result) => {
         if (err) return reject(err);
-        expect(fs.existsSync(pathname)).toBe(true);
-        expect(fs.statSync(pathname).isDirectory()).toBe(true);
-        expect(result).toBeUndefined();
-        resolve();
-      });
-    });
+        resolve(result);
+      }),
+    );
+    expect(fs.existsSync(pathname)).toBe(true);
+    expect(fs.statSync(pathname).isDirectory()).toBe(true);
+    expect(result).toBeUndefined();
   });
 
   it("mkdirSync returns first folder created with recursive when all folders are new", () => {

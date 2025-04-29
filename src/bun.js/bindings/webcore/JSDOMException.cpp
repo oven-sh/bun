@@ -134,9 +134,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
     JSValue cause = {};
 
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    if (argument1.value().isObject()) {
-        JSObject* optionsObj = asObject(argument1.value());
-
+    if (JSObject* optionsObj = argument1.value().getObject()) {
         // Get name from options
         JSValue nameValue = optionsObj->get(lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -145,9 +143,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
 
         // Get cause from options
-        if (optionsObj->hasProperty(lexicalGlobalObject, vm.propertyNames->cause)) {
-            JSValue causeValue = optionsObj->get(lexicalGlobalObject, vm.propertyNames->cause);
-            RETURN_IF_EXCEPTION(throwScope, {});
+        auto causeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->cause);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (causeValue) {
             cause = causeValue;
         }
     } else if (!argument1.value().isUndefined()) {

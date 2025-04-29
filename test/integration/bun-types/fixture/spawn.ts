@@ -65,6 +65,21 @@ function depromise<T>(_promise: Promise<T>): T {
 
 {
   const proc = Bun.spawn(["cat"], {
+    stdio: ["pipe", "pipe", "pipe", Bun.file("build.zip")],
+  });
+
+  tsd.expectType(proc.stdio[0]).is<null>();
+  tsd.expectType(proc.stdio[1]).is<null>();
+  tsd.expectType(proc.stdio[2]).is<null>();
+  tsd.expectType(proc.stdio[3]).is<number | undefined>();
+
+  tsd.expectType(proc.stdin).is<FileSink>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array>>();
+  tsd.expectType(proc.stderr).is<ReadableStream<Uint8Array>>();
+}
+
+{
+  const proc = Bun.spawn(["cat"], {
     stdin: "pipe", // return a FileSink for writing
   });
 

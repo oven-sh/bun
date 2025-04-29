@@ -1,3 +1,6 @@
 {
-  "name": "package-json-exports"
+  "name": "package-json-exports",
+  "dependencies": {
+    "package-json-exports": "file:"
+  }
 }

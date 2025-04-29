@@ -5768,8 +5768,8 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
     };
 }
 fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
-    const inspector_agent = dev.inspector();
-    if (dev.emit_visualizer_events == 0 and inspector_agent == null) return;
+    if (!bun.FeatureFlags.bake_debugging_features) return;
+    if (dev.emit_visualizer_events == 0) return;
 
     var sfb = std.heap.stackFallback(65536, dev.allocator);
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
@@ -5777,14 +5777,6 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     defer payload.deinit();
 
     dev.writeVisualizerMessage(&payload) catch return; // visualizer does not get an update if it OOMs
-
-    if (inspector_agent) |agent| encoded: {
-        var encoded = bun.base64.encodeAlloc(payload.allocator, payload.items) catch break :encoded;
-        defer encoded.deinitWithAllocator(payload.allocator);
-        var encoded_str = bun.String.initLatin1OrASCIIView(encoded.slice());
-        defer encoded_str.deref();
-        agent.notifyGraphUpdate(dev.debugger_id, &encoded_str);
-    }
     dev.publish(.visualizer, payload.items, .binary);
 }
 

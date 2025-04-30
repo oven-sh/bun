@@ -5204,7 +5204,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         on_clienterror: JSC.Strong.Optional = .empty,
 
-        inspector_server_id: i32 = -1,
+        inspector_server_id: JSC.Debugger.DebuggerId = .init(0),
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -5700,7 +5700,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            if (this.inspector_server_id > -1) {
+            if (this.inspector_server_id.toOptional().unwrap() != null) {
                 if (this.vm.debugger) |*debugger| {
                     debugger.http_server_agent.notifyServerRoutesUpdated(
                         AnyServer.from(this),
@@ -6207,14 +6207,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         fn notifyInspectorServerStopped(this: *ThisServer) void {
-            if (this.inspector_server_id > -1) {
+            if (this.inspector_server_id.toOptional().unwrap() != null) {
                 @branchHint(.unlikely);
                 if (this.vm.debugger) |*debugger| {
                     @branchHint(.unlikely);
                     debugger.http_server_agent.notifyServerStopped(
                         AnyServer.from(this),
                     );
-                    this.inspector_server_id = -1;
+                    this.inspector_server_id = .init(0);
                 }
             }
         }
@@ -7482,17 +7482,37 @@ pub const AnyServer = struct {
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
-    pub fn setInspectorServerID(this: AnyServer, id: i32) void {
+    pub fn setInspectorServerID(this: AnyServer, id: JSC.Debugger.DebuggerId) void {
         switch (this.ptr.tag()) {
-            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).inspector_server_id = id,
-            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).inspector_server_id = id,
-            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).inspector_server_id = id,
-            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).inspector_server_id = id,
+            Ptr.case(HTTPServer) => {
+                this.ptr.as(HTTPServer).inspector_server_id = id;
+                if (this.ptr.as(HTTPServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(HTTPSServer) => {
+                this.ptr.as(HTTPSServer).inspector_server_id = id;
+                if (this.ptr.as(HTTPSServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(DebugHTTPServer) => {
+                this.ptr.as(DebugHTTPServer).inspector_server_id = id;
+                if (this.ptr.as(DebugHTTPServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(DebugHTTPSServer) => {
+                this.ptr.as(DebugHTTPSServer).inspector_server_id = id;
+                if (this.ptr.as(DebugHTTPSServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         }
     }
 
-    pub fn inspectorServerID(this: AnyServer) i32 {
+    pub fn inspectorServerID(this: AnyServer) JSC.Debugger.DebuggerId {
         return switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).inspector_server_id,
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).inspector_server_id,

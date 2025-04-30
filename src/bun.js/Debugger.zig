@@ -415,7 +415,7 @@ pub const LifecycleAgent = struct {
     }
 };
 
-pub const DebuggerId = bun.GenericIndex(u31, Debugger);
+pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 

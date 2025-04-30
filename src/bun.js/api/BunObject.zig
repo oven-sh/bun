@@ -1098,10 +1098,6 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                         debugger.http_server_agent.notifyServerStarted(
                             JSC.API.AnyServer.from(server),
                         );
-                        if (server.dev_server) |dev_server| {
-                            dev_server.debugger_id = .init(@intCast(server.inspector_server_id));
-                        }
-
                         debugger.http_server_agent.notifyServerRoutesUpdated(
                             JSC.API.AnyServer.from(server),
                         ) catch bun.outOfMemory();

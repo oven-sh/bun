@@ -4,7 +4,7 @@ const HTTPServerAgent = @This();
 agent: ?*InspectorHTTPServerAgent = null,
 
 /// This becomes the "server ID" field.
-next_server_id: ServerId = 0,
+next_server_id: ServerId = .init(0),
 
 pub fn isEnabled(this: *const HTTPServerAgent) bool {
     return this.agent != null;
@@ -13,14 +13,13 @@ pub fn isEnabled(this: *const HTTPServerAgent) bool {
 //#region Events
 pub fn notifyServerStarted(this: *HTTPServerAgent, instance: JSC.API.AnyServer) void {
     if (this.agent) |agent| {
-        const server_id = this.next_server_id + 1;
-        this.next_server_id = server_id;
-        instance.setInspectorServerID(server_id);
+        this.next_server_id = .init(this.next_server_id.get() + 1);
+        instance.setInspectorServerID(this.next_server_id);
         var url = instance.getURLAsString();
         defer url.deref();
 
         agent.notifyServerStarted(
-            server_id,
+            this.next_server_id,
             @intCast(instance.vm().hot_reload_counter),
             &url,
             @floatFromInt(std.time.milliTimestamp()),
@@ -170,7 +169,7 @@ export fn Bun__HTTPServerAgent__setEnabled(agent: ?*InspectorHTTPServerAgent) vo
 //#endregion
 
 // Typedefs from HTTPServer.json
-pub const ServerId = i32;
+pub const ServerId = JSC.Debugger.DebuggerId;
 pub const RequestId = i32;
 pub const RouteId = i32;
 pub const HotReloadId = i32;

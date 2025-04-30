@@ -18,10 +18,12 @@ endif()
 
 set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${RUST_TARGET}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
 
-set(LOLHTML_BUILD_ARGS
-  --target-dir ${BUILD_PATH}/lolhtml
-  --target ${RUST_TARGET}
-)
+set(LOLHTML_BUILD_ARGS --target-dir ${BUILD_PATH}/lolhtml)
+
+# For some reason, this doesn't work on musl?
+if(CMAKE_CROSSCOMPILING OR NOT ABI STREQUAL "musl")
+  list(APPEND LOLHTML_BUILD_ARGS --target ${RUST_TARGET})
+endif()
 
 if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)

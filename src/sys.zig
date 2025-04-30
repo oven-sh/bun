@@ -1397,7 +1397,7 @@ pub fn openFileAtWindowsNtPath(
                 bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
                 if (rc == .SUCCESS) {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.toFD(result) });
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), .fromNative(result) });
                 } else {
                     log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
                 }

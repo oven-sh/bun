@@ -1059,6 +1059,7 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
     app.post(internal_prefix ++ "/report_error", *DevServer, dev, wrapGenericRequestHandler(ErrorReportRequest.run, is_ssl));
+    app.post(internal_prefix ++ "/unref", *DevServer, dev, wrapGenericRequestHandler(UnrefSourceMapRequest.run, is_ssl));
 
     app.any(internal_prefix, *DevServer, dev, wrapGenericRequestHandler(onNotFound, is_ssl));
 
@@ -2670,8 +2671,14 @@ pub fn finalizeBundle(
                 while (it.next()) |socket_ptr_ptr| {
                     const socket: *HmrSocket = socket_ptr_ptr.*;
                     if (socket.subscriptions.hot_update) {
-                        sockets += 1;
-                        socket.referenced_source_maps.put(dev.allocator, script_id, {}) catch bun.outOfMemory();
+                        const entry = socket.referenced_source_maps.getOrPut(dev.allocator, script_id) catch bun.outOfMemory();
+                        if (!entry.found_existing) {
+                            sockets += 1;
+                        } else {
+                            // Source maps are hashed, so that creating an exact
+                            // copy of a previous source map will simply
+                            // reference the old one.
+                        }
                     }
                 }
                 mapLog("inc {x}, for {d} sockets", .{ script_id.get(), sockets });
@@ -4816,9 +4823,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             try w.writeAll("null");
                         }
                         try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
-                        try w.writeAll(",\n  generation: ");
-                        try w.print("{d}", .{options.script_id.get() >> 32});
-                        try w.writeAll(",\n  version: \"");
+                        try w.writeAll(",\n  generation: \"");
+                        const generation: u32 = @intCast(options.script_id.get() >> 32);
+                        try w.print("{s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation))});
+                        try w.writeAll("\",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
                         try w.writeAll("\"");
 
@@ -5973,14 +5981,13 @@ fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !v
         try w.writeInt(u32, @intCast(keys.len), .little);
         for (keys, values) |key, value| {
             bun.assert(value.ref_count > 0);
-            try w.writeInt(u64, key.get(), .little);
+            try w.writeAll(std.mem.asBytes(&key.get()));
             try w.writeInt(u32, value.ref_count, .little);
             if (dev.source_maps.locateWeakRef(key)) |entry| {
                 try w.writeInt(u32, entry.ref.count, .little);
                 // floats are easier to decode in JS
                 try w.writeAll(std.mem.asBytes(&@as(f64, @floatFromInt(entry.ref.expire))));
             } else {
-                try w.writeInt(u32, 0, .little);
                 try w.writeInt(u32, 0, .little);
             }
             try w.writeInt(u32, @truncate(value.file_paths.len), .little);
@@ -6182,7 +6189,7 @@ pub const MessageId = enum(u8) {
 /// Avoid changing message ID values, as some of these are hard-coded in tests.
 pub const IncomingMessageId = enum(u8) {
     /// Initialization packet.
-    /// - `u32`: Source Map ID, embedded in the client config.
+    /// - [8]u8: Source Map ID, from the client config. Encoded in HEX
     ///
     /// Responsibilities:
     /// - Clear SourceMapStore's weak reference, move as a strong ref on HmrSocket.
@@ -6280,12 +6287,11 @@ const HmrSocket = struct {
 
         switch (@as(IncomingMessageId, @enumFromInt(msg[0]))) {
             .init => {
-                var fbs = std.io.fixedBufferStream(msg[1..]);
-                const r = fbs.reader();
-
-                const source_map_id = SourceMapStore.Key.init(r.readInt(u64, .little) catch
-                    return ws.close());
-
+                if (msg.len != 9) return ws.close();
+                var generation: u32 = undefined;
+                _ = std.fmt.hexToBytes(std.mem.asBytes(&generation), msg[1..]) catch
+                    return ws.close();
+                const source_map_id = SourceMapStore.Key.init(@as(u64, generation) << 32);
                 if (s.dev.source_maps.removeOrUpgradeWeakRef(source_map_id, .upgrade)) {
                     s.referenced_source_maps.put(s.dev.allocator, source_map_id, {}) catch
                         bun.outOfMemory();
@@ -7423,6 +7429,13 @@ pub const SourceMapStore = struct {
         /// Since server-side error remapping is semi-rare, the parsed source
         /// maps are released as soon as the error is finished printing, with
         /// currently no re-use.
+        ///
+        /// TODO: design flaw. this just caches the entire source map in memory
+        /// route bundle source maps contain the ENTIRE project source code.
+        /// this wouldn't be so bad except for the fact that a second copy is
+        /// required in the. these are separate string slices. since source maps
+        /// are not accessed frequently, it probably makes sense to make this
+        /// StaticRoute lazily constructed / not constructed at all.
         response: *StaticRoute,
         /// Pointer into `response.blob` to where `mappings` is stored.
         mappings_data: bun.StringPointer,
@@ -7491,6 +7504,7 @@ pub const SourceMapStore = struct {
     pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: Key, ref_count: u32) !PutOrIncrementRefCount {
         const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
         if (!gop.found_existing) {
+            bun.debugAssert(ref_count > 0); // invalid state
             gop.value_ptr.* = .{
                 .ref_count = ref_count,
                 .source_contents = undefined,
@@ -7500,6 +7514,7 @@ pub const SourceMapStore = struct {
             };
             return .{ .uninitialized = gop.value_ptr };
         } else {
+            bun.debugAssert(ref_count >= 0); // okay since ref_count is already 1
             gop.value_ptr.*.ref_count += ref_count;
             return .{ .shared = gop.value_ptr };
         }
@@ -7620,10 +7635,7 @@ pub const SourceMapStore = struct {
             } else {
                 store.weak_refs.unget(&.{item}) catch
                     unreachable; // there is enough space since the last item was just removed.
-                return .{ .rearm = .{
-                    .sec = item.expire - @as(i64, @intCast(now)) + 1,
-                    .nsec = 0,
-                } };
+                return .{ .rearm = .{ .sec = item.expire, .nsec = 0 } };
             }
         }
 
@@ -8045,6 +8057,38 @@ const ErrorReportRequest = struct {
         }
 
         return result;
+    }
+};
+
+/// Problem statement documented on `script_unref_payload`
+/// Takes 8 bytes: The generation ID in hex.
+const UnrefSourceMapRequest = struct {
+    dev: *DevServer,
+    body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
+
+    fn run(dev: *DevServer, _: *Request, resp: anytype) void {
+        const ctx = bun.new(UnrefSourceMapRequest, .{
+            .dev = dev,
+            .body = .init(dev.allocator),
+        });
+        ctx.dev.server.?.onPendingRequest();
+        ctx.body.readBody(resp);
+    }
+
+    fn finalize(ctx: *UnrefSourceMapRequest) void {
+        ctx.dev.server.?.onStaticRequestComplete();
+        bun.destroy(ctx);
+    }
+
+    fn runWithBody(ctx: *UnrefSourceMapRequest, body: []const u8, r: AnyResponse) !void {
+        if (body.len != 8) return error.InvalidRequest;
+        var generation: u32 = undefined;
+        _ = std.fmt.hexToBytes(std.mem.asBytes(&generation), body) catch
+            return error.InvalidRequest;
+        const source_map_key = SourceMapStore.Key.init(@as(u64, generation) << 32);
+        _ = ctx.dev.source_maps.removeOrUpgradeWeakRef(source_map_key, .remove);
+        r.writeStatus("204 No Content");
+        r.end("", false);
     }
 };
 

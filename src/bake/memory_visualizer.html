@@ -147,18 +147,6 @@
         <td>DevServer AllocationScope</td>
         <td class="memory-cell" id="devserver_tracked">—</td>
       </tr>
-      <tr>
-        <td>Process Used</td>
-        <td class="memory-cell" id="process_used">—</td>
-      </tr>
-      <tr>
-        <td>System Used</td>
-        <td class="memory-cell" id="system_used">—</td>
-      </tr>
-      <tr>
-        <td>System Total</td>
-        <td class="memory-cell" id="system_total">—</td>
-      </tr>
     </tbody>
   </table>
 
@@ -210,6 +198,15 @@
       const hi = readUint32(buffer, offset + 4);
       // Use BigInt for 64-bit numbers to avoid precision loss
       return (BigInt(hi) << 32n) | BigInt(lo);
+    }
+
+    function readKey(buffer, offset) {
+      // Read 8 bytes and convert to a hex string
+      let hexString = '';
+      for (let i = 0; i < 8; i++) {
+        hexString += buffer[offset + i].toString(16).padStart(2, '0');
+      }
+      return hexString.toUpperCase();
     }
 
     function readFloat64(buffer, offset) {
@@ -279,7 +276,7 @@
 
       const sourceMaps = [];
       for (let i = 0; i < sourceMapsCount; i++) {
-        const key = readUint64(buffer, offset);
+        const key = readKey(buffer, offset);
         offset += 8;
 
         const refCount = readUint32(buffer, offset);
@@ -288,8 +285,11 @@
         const weakRefs = readUint32(buffer, offset);
         offset += 4;
 
-        const weakRefExpire = readFloat64(buffer, offset);
-        offset += 8;
+        let weakRefExpire = 0;
+        if (weakRefs > 0) {
+          weakRefExpire = readFloat64(buffer, offset);
+          offset += 8;
+        }
 
         const filePathsCount = readUint32(buffer, offset);
         offset += 4;
@@ -297,19 +297,8 @@
         const mapCost = readUint32(buffer, offset);
         offset += 4;
 
-        // Format key properly in hexadecimal (handle negative BigInt values)
-        let keyHex = key.toString(16);
-        // Remove negative sign if present
-        if (keyHex.startsWith('-')) {
-          // For negative BigInts, we need to get the two's complement representation
-          // Convert to a positive hex representation with correct length
-          keyHex = (BigInt(2) ** BigInt(64) + key).toString(16);
-        }
-        // Ensure it's padded to 16 hex digits
-        keyHex = keyHex.padStart(16, '0');
-
         sourceMaps.push({
-          key: keyHex,
+          key,
           refCount,
           weakRefs,
           weakRefExpire: weakRefs > 0 ? weakRefExpire * 1000 : 0,
@@ -349,9 +338,9 @@
 
       // Update the overall memory statistics (no color coding)
       document.getElementById('devserver_tracked').textContent = formatBytes(data.devserver_tracked);
-      document.getElementById('process_used').textContent = formatBytes(data.process_used);
-      document.getElementById('system_used').textContent = formatBytes(data.system_used);
-      document.getElementById('system_total').textContent = formatBytes(data.system_total);
+      // document.getElementById('process_used').textContent = formatBytes(data.process_used);
+      // document.getElementById('system_used').textContent = formatBytes(data.system_used);
+      // document.getElementById('system_total').textContent = formatBytes(data.system_total);
     }
 
     function updateSourceMapsTable(sourceMaps) {
@@ -369,7 +358,7 @@
         // Key cell
         const keyCell = document.createElement('td');
         keyCell.className = 'key-cell';
-        keyCell.textContent = '0x' + sourceMap.key;
+        keyCell.textContent = sourceMap.key;
         row.appendChild(keyCell);
 
         // Ref count cell

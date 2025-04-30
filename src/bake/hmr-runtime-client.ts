@@ -100,6 +100,12 @@ const handlers = {
 
     ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
     ws.send("n" + location.pathname); // IncomingMessageId.set_url
+
+    const fn = globalThis[Symbol.for('bun:loadData')];
+    if (fn) {
+      document.removeEventListener('visibilitychange', fn);
+      ws.send("i" + config.generation);
+    }
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);

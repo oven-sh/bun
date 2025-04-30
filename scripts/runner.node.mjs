@@ -156,7 +156,78 @@ if (options["quiet"]) {
 }
 
 /**
- *
+ * @typedef {Object} TestExpectation
+ * @property {string} filename
+ * @property {string[]} expectations
+ * @property {string[] | undefined} bugs
+ * @property {string[] | undefined} modifiers
+ * @property {string | undefined} comment
+ */
+
+/**
+ * @returns {TestExpectation[]}
+ */
+function getTestExpectations() {
+  const expectationsPath = join(cwd, "test", "expectations.txt");
+  const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
+  const bugPattern = /^((?:(?:webkit\.org\/b\/|github\.com\/)\d+|Bug\([^)]+\))\s*)+/;
+  const modifierPattern = /\[\s*([^\]]+)\s*\]/;
+  const expectationPattern = /\[\s*([^\]]+)\s*\]$/;
+
+  /** @type {TestExpectation[]} */
+  const expectations = [];
+
+  for (const line of lines) {
+    let content = line.trim();
+    if (!content || content.startsWith("#")) {
+      continue;
+    }
+
+    let comment;
+    const eol = content.indexOf("#");
+    if (eol !== -1) {
+      comment = content.substring(eol + 1).trim();
+      content = content.substring(0, eol).trim();
+    }
+
+    const bugsMatch = content.match(bugPattern);
+    const bugs = bugsMatch ? bugsMatch[0].trim().split(/\s+/) : [];
+
+    if (bugsMatch) {
+      content = content.substring(bugsMatch[0].length).trim();
+    }
+
+    let modifiers = [];
+    const modifiersMatch = content.match(modifierPattern);
+    if (modifiersMatch) {
+      modifiers = modifiersMatch[1].trim().split(/\s+/);
+      content = content.substring(modifiersMatch[0].length).trim();
+    }
+
+    let expectationValues = ["Skip"];
+    let filename = content.trim();
+
+    const expectationsMatch = content.match(expectationPattern);
+    if (expectationsMatch) {
+      expectationValues = expectationsMatch[1].trim().split(/\s+/);
+      filename = content.substring(0, content.length - expectationsMatch[0].length).trim();
+    }
+
+    if (filename) {
+      expectations.push({
+        filename,
+        expectations: expectationValues,
+        bugs: bugs.length ? bugs : undefined,
+        modifiers: modifiers.length ? modifiers : undefined,
+        comment,
+      });
+    }
+  }
+
+  return expectations;
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -693,8 +764,8 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    // Used in Node.js tests.
-    TEST_TMPDIR: tmpdirPath,
+    ASAN_OPTIONS: "allow_user_segv_handler=1",
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
 
   if (env) {
@@ -1072,9 +1143,6 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
-/** Files with these extensions are not treated as test cases */
-const IGNORED_EXTENSIONS = new Set([".md"]);
-
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -1084,13 +1152,14 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
-      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
+      if (isHidden(filename)) {
         continue;
       }
-      if (entry.isFile() && isTest(filename)) {
-        yield filename;
+      if (entry.isFile()) {
+        if (isTest(filename)) {
+          yield filename;
+        }
       } else if (entry.isDirectory()) {
         yield* getFiles(cwd, filename);
       }
@@ -1371,7 +1440,7 @@ async function getExecPathFromBuildKite(target, buildId) {
     });
 
     for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+      if (/^bun.*\.zip$/i.test(entry) && entry.includes("-profile.zip")) {
         zipPath = join(releasePath, entry);
         break downloadLoop;
       }
@@ -1994,6 +2063,9 @@ function escapeXml(str) {
 }
 
 export async function main() {
+  console.log(getTestExpectations());
+  process.exit(0);
+
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
   }

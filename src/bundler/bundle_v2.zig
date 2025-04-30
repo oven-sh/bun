@@ -10767,11 +10767,11 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
@@ -10923,17 +10923,17 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
         } };
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
             if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
                 @breakpoint();

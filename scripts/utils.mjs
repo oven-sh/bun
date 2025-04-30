@@ -2894,6 +2894,7 @@ const emojiMap = {
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
   debug: ["🐞", "bug"],
+  asan: ["🐛", "bug"],
   assert: ["🔍", "mag"],
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],

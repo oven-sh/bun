@@ -1,0 +1,92 @@
+# Documentation: http://trac.webkit.org/wiki/TestExpectations
+# Format: [modifier] test-name [[ expectations ]] [# comment]
+
+# Tests skipped when running with ASAN due to flakiness
+[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # flaky
+[ ASAN ] test/js/bun/sqlite/sqlite.test.js [ SKIP ] # flaky
+[ ASAN ] test/js/bun/http/req-url-leak.test.ts [ SKIP ] # flaky
+[ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ SKIP ] # flaky
+[ ASAN ] test/js/web/fetch/fetch.test.ts [ SKIP ] # flaky
+
+# Memory issues and leaks
+[ ASAN ] test/regression/issue/ctrl-c.test.ts [ SKIP ]
+[ ASAN ] test/regression/issue/17454/destructure_string.test.ts [ SKIP ]
+[ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ SKIP ]
+[ ASAN ] test/js/third_party/next-auth/next-auth.test.ts [ SKIP ]
+[ ASAN ] test/js/third_party/es-module-lexer/es-module-lexer.test.ts [ SKIP ]
+[ ASAN ] test/js/node/url/pathToFileURL.test.ts [ SKIP ]
+[ ASAN ] test/js/third_party/astro/astro-post.test.js [ SKIP ]
+[ ASAN ] test/js/sql/tls-sql.test.ts [ SKIP ]
+[ ASAN ] test/js/web/streams/streams-leak.test.ts [ SKIP ]
+
+# HTTP/HTTPS related tests
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-headers-after-destroy.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-https-server-connections-checking-leak.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-invalidheaderfields-client.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-connect-options.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-writehead.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-removed-header-stays-removed.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-trailers.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-headers.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-http2-options-server-request.js [ SKIP ] # repros on linux
+
+# File system related tests
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-update-file.js [ SKIP ]
+[ ASAN ] test/js/node/watch/fs.watch.test.ts [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-fs-utimes.js [ SKIP ]
+[ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ SKIP ]
+
+# Process/Spawn related tests
+[ ASAN ] test/js/bun/spawn/spawn.test.ts [ SKIP ]
+[ ASAN ] test/js/bun/spawn/spawn-pipe-leak.test.ts [ SKIP ]
+[ ASAN ] test/js/bun/spawn/spawn-streaming-stdin.test.ts [ SKIP ]
+[ ASAN ] test/js/bun/spawn/spawn-maxbuf.test.ts [ SKIP ]
+
+# GC/Memory related tests
+[ ASAN ] test/js/node/test/parallel/test-primitive-timer-leak.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ SKIP ]
+[ ASAN ] test/js/node/test/parallel/test-common-gc.js [ SKIP ]
+
+# Inspect/Debugging tests
+[ ASAN ] test/cli/inspect/inspect.test.ts [ SKIP ]
+
+# Integration and CLI tests
+[ ASAN ] test/napi/napi.test.ts [ SKIP ]
+[ ASAN ] test/js/first_party/ws/ws.test.ts [ SKIP ] # resuming an already-closed socket
+[ ASAN ] test/integration/next-pages/test/next-build.test.ts [ SKIP ]
+[ ASAN ] test/integration/vite-build/vite-build.test.ts [ SKIP ]
+[ ASAN ] test/cli/run/run-crash-handler.test.ts [ SKIP ]
+[ ASAN ] test/js/bun/wasm/wasi.test.js [ SKIP ]
+[ ASAN ] test/cli/run/require-cache.test.ts [ SKIP ]
+[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ]
+[ ASAN ] test/integration/bun-types/bun-types.test.ts [ SKIP ]
+[ ASAN ] test/cli/install/bun-repl.test.ts [ SKIP ]
+[ ASAN ] test/cli/create/create-jsx.test.ts [ SKIP ]
+[ ASAN ] test/cli/hot/hot.test.ts [ SKIP ]
+
+# Linux-specific issues
+[ ASAN ] test/js/node/test/parallel/test-zlib-invalid-input-memory.js [ SKIP ] # linux only & doesn't repro
+[ ASAN ] test/js/bun/resolve/load-same-js-file-a-lot.test.ts [ SKIP ] # linux only?
+
+# Bundler tests
+[ ASAN ] test/bundler/native-plugin.test.ts [ SKIP ]
+[ ASAN ] test/bundler/bundler_edgecase.test.ts [ SKIP ]
+[ ASAN ] test/bundler/esbuild/default.test.ts [ SKIP ]
+[ ASAN ] test/bundler/bundler_npm.test.ts [ SKIP ]
+[ ASAN ] test/bundler/bundler_loader.test.ts [ SKIP ]
+
+# Bake/Dev tests
+[ ASAN ] test/bake/dev/react-spa.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/css.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/hot.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/esm.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/bundle.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/sourcemap.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/html.test.ts [ SKIP ]
+[ ASAN ] test/bake/dev/ecosystem.test.ts [ SKIP ]
+
+# Misc tests
+[ ASAN ] test/js/node/v8/capture-stack-trace.test.js [ SKIP ] # repros on all

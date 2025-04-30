@@ -1,3 +1,29 @@
+optionx(ENABLE_RUST BOOL "If Rust should be used for compilation" DEFAULT ON)
+
+if(NOT ENABLE_RUST)
+  return()
+endif()
+
+if(ARCH STREQUAL "x64")
+  set(DEFAULT_RUST_ARCH x86_64)
+elseif(ARCH STREQUAL "aarch64")
+  set(DEFAULT_RUST_ARCH aarch64)
+else()
+  unsupported(ARCH)
+endif()
+
+if(APPLE)
+  set(DEFAULT_RUST_TARGET ${DEFAULT_RUST_ARCH}-apple-darwin)
+elseif(LINUX)
+  set(DEFAULT_RUST_TARGET ${DEFAULT_RUST_ARCH}-unknown-linux-gnu)
+elseif(WIN32)
+  set(DEFAULT_RUST_TARGET ${DEFAULT_RUST_ARCH}-pc-windows-msvc)
+else()
+  unsupported(CMAKE_SYSTEM_NAME)
+endif()
+
+optionx(RUST_TARGET STRING "The target architecture for Rust" DEFAULT ${DEFAULT_RUST_TARGET})
+
 if(DEFINED ENV{CARGO_HOME})
   set(CARGO_HOME $ENV{CARGO_HOME})
 elseif(CMAKE_HOST_WIN32)
@@ -8,6 +34,15 @@ elseif(CMAKE_HOST_WIN32)
 else()
   set(CARGO_HOME $ENV{HOME}/.cargo)
 endif()
+
+find_command(
+  VARIABLE
+    CARGO_EXECUTABLE
+  COMMAND
+    cargo
+  PATHS
+    ${CARGO_HOME}/bin
+)
 
 if(DEFINED ENV{RUSTUP_HOME})
   set(RUSTUP_HOME $ENV{RUSTUP_HOME})
@@ -20,33 +55,27 @@ else()
   set(RUSTUP_HOME $ENV{HOME}/.rustup)
 endif()
 
-find_command(
-  VARIABLE
-    CARGO_EXECUTABLE
-  COMMAND
-    cargo
-  PATHS
-    ${CARGO_HOME}/bin
-  REQUIRED
-    OFF
-)
+if(CMAKE_CROSSCOMPILING)
+  find_command(
+    VARIABLE
+      RUSTUP_EXECUTABLE
+    COMMAND
+      rustup
+    PATHS
+      ${CARGO_HOME}/bin
+  )
 
-if(EXISTS ${CARGO_EXECUTABLE})
-  if(CARGO_EXECUTABLE MATCHES "^${CARGO_HOME}")
-    setx(CARGO_HOME ${CARGO_HOME})
-    setx(RUSTUP_HOME ${RUSTUP_HOME})
-  endif()
-
-  return()
+  register_command(
+    TARGET
+      clone-rust
+    COMMENT
+      "Downloading Rust toolchain: ${RUST_TARGET}"
+    COMMAND
+      ${RUSTUP_EXECUTABLE}
+        target
+        add
+        ${RUST_TARGET}
+    OUTPUTS
+      ${CARGO_EXECUTABLE}
+  )
 endif()
-
-if(CMAKE_HOST_WIN32)
-  set(CARGO_INSTALL_COMMAND "choco install rust")
-else()
-  set(CARGO_INSTALL_COMMAND "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh")
-endif()
-
-message(FATAL_ERROR "Command not found: cargo\n"
-  "Do you have Rust installed? To fix this, try running:\n"
-  "   ${CARGO_INSTALL_COMMAND}\n"
-)

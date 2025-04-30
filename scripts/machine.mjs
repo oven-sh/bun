@@ -800,7 +800,7 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 30;
+  return 40;
 }
 
 /**

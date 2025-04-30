@@ -1,8 +1,7 @@
 if(DEBUG)
   set(bun bun-debug)
-# elseif(ENABLE_SMOL)
-#   set(bun bun-smol-profile)
-#   set(bunStrip bun-smol)
+elseif(ENABLE_ASAN)
+  set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -10,10 +9,6 @@ elseif(ENABLE_ASSERTIONS)
 else()
   set(bun bun-profile)
   set(bunStrip bun)
-endif()
-
-if(TEST)
-  set(bun ${bun}-test)
 endif()
 
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
@@ -361,7 +356,6 @@ register_command(
     ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
     ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
   OUTPUTS
-    ${CODEGEN_PATH}/bake_empty_file
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
@@ -544,14 +538,8 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
-
-# In debug builds, these are not embedded, but rather referenced at runtime.
-if (DEBUG)
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/bake_empty_file)
-else()
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
-endif()
 
 if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
@@ -599,6 +587,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -871,7 +860,7 @@ if(NOT WIN32)
   )
   if(DEBUG)
     # TODO: this shouldn't be necessary long term
-    if (NOT ABI STREQUAL "musl")
+    if(NOT ABI STREQUAL "musl" AND NOT CMAKE_CROSSCOMPILING)
       target_compile_options(${bun} PUBLIC
         -fsanitize=null
         -fsanitize-recover=all
@@ -885,15 +874,6 @@ if(NOT WIN32)
       )
       target_link_libraries(${bun} PRIVATE
         -fsanitize=null
-      )
-    endif()
-
-    if (ENABLE_ASAN)
-      target_compile_options(${bun} PUBLIC
-        -fsanitize=address
-      )
-      target_link_libraries(${bun} PUBLIC
-        -fsanitize=address
       )
     endif()
 
@@ -1201,44 +1181,47 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Testing ${bun}"
-    COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bunExe}
-        --revision
-    CWD
-      ${BUILD_PATH}
-  )
-
-  if(CI)
-    set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+  # If cross-compiling, we can't test the binary
+  if(NOT CMAKE_CROSSCOMPILING)
     register_command(
       TARGET
         ${bun}
       TARGET_PHASE
         POST_BUILD
       COMMENT
-        "Generating features.json"
+        "Testing ${bun}"
       COMMAND
         ${CMAKE_COMMAND}
-          -E env
-            BUN_GARBAGE_COLLECTOR_LEVEL=1
-            BUN_DEBUG_QUIET_LOGS=1
-            BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-          ${BUILD_PATH}/${bunExe}
-          ${BUN_FEATURES_SCRIPT}
+        -E env BUN_DEBUG_QUIET_LOGS=1
+        ${BUILD_PATH}/${bunExe}
+          --revision
       CWD
         ${BUILD_PATH}
-      ARTIFACTS
-        ${BUILD_PATH}/features.json
     )
+
+    if(CI)
+      set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        COMMENT
+          "Generating features.json"
+        COMMAND
+          ${CMAKE_COMMAND}
+            -E env
+              BUN_GARBAGE_COLLECTOR_LEVEL=1
+              BUN_DEBUG_QUIET_LOGS=1
+              BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+            ${BUILD_PATH}/${bunExe}
+            ${BUN_FEATURES_SCRIPT}
+        CWD
+          ${BUILD_PATH}
+        ARTIFACTS
+          ${BUILD_PATH}/features.json
+      )
+    endif()
   endif()
 
   if(CMAKE_HOST_APPLE AND bunStrip)
@@ -1266,14 +1249,23 @@ if(NOT BUN_CPP_ONLY)
 
   if(CI)
     set(bunTriplet bun-${OS}-${ARCH})
+
     if(LINUX AND ABI STREQUAL "musl")
       set(bunTriplet ${bunTriplet}-musl)
     endif()
+
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
+
     string(REPLACE bun ${bunTriplet} bunPath ${bun})
-    set(bunFiles ${bunExe} features.json)
+
+    set(bunFiles ${bunExe})
+
+    if(NOT CMAKE_CROSSCOMPILING)
+      list(APPEND bunFiles features.json)
+    endif()
+
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)
@@ -1283,7 +1275,6 @@ if(NOT BUN_CPP_ONLY)
     if(APPLE OR LINUX)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
-
 
     register_command(
       TARGET

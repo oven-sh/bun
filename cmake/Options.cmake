@@ -26,15 +26,6 @@ else()
   setx(DEBUG OFF)
 endif()
 
-optionx(BUN_TEST BOOL "Build Bun's unit test suite instead of the normal build" DEFAULT OFF)
-
-if (BUN_TEST)
-  setx(TEST ON)
-else()
-  setx(TEST OFF)
-endif()
-
-
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()
@@ -46,7 +37,7 @@ elseif(WIN32)
 elseif(LINUX)
   setx(OS "linux")
 else()
-  message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
+  unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
@@ -54,7 +45,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   setx(ARCH "x64")
 else()
-  message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+  unsupported(CMAKE_SYSTEM_PROCESSOR)
 endif()
 
 if(LINUX)
@@ -71,14 +62,7 @@ if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
 
-# Disabling logs by default for tests yields faster builds
-if (DEBUG AND NOT TEST)
-  set(DEFAULT_ENABLE_LOGS ON)
-else()
-  set(DEFAULT_ENABLE_LOGS OFF)
-endif()
-
-optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEFAULT_ENABLE_LOGS})
+optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
 optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
@@ -101,18 +85,24 @@ optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT
 
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+
+  if(ENABLE_VALGRIND AND NOT ENABLE_BASELINE)
+    message(WARNING "If valgrind is enabled, baseline must also be enabled")
+    setx(ENABLE_BASELINE ON)
+  endif()
 endif()
-if(DEBUG AND APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ON)
+
+if(DEBUG AND APPLE AND ARCH STREQUAL "aarch64")
+  set(DEFAULT_ASAN ON)
 else()
-  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
+  set(DEFAULT_ASAN OFF)
 endif()
 
-optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
+optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
 
-if(USE_VALGRIND AND NOT USE_BASELINE)
-  message(WARNING "If valgrind is enabled, baseline must also be enabled")
-  setx(USE_BASELINE ON)
+if(ENABLE_ASAN AND ENABLE_LTO)
+  message(WARNING "ASAN with LTO is not supported, disabling LTO")
+  setx(ENABLE_LTO OFF)
 endif()
 
 if(BUILDKITE_COMMIT)

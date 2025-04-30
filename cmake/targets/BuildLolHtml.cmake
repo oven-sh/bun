@@ -16,10 +16,11 @@ else()
   set(LOLHTML_BUILD_TYPE release)
 endif()
 
-set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
+set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/${RUST_TARGET}/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 set(LOLHTML_BUILD_ARGS
   --target-dir ${BUILD_PATH}/lolhtml
+  --target ${RUST_TARGET}
 )
 
 if(RELEASE)
@@ -27,10 +28,12 @@ if(RELEASE)
 endif()
 
 # Windows requires unwind tables, apparently.
-if (NOT WIN32)
-  # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
-  # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
-  set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
+if(NOT WIN32)
+  set(RUST_FLAGS "-Cpanic=abort -Cdebuginfo=0 -Cforce-unwind-tables=no -Copt-level=s")
+endif()
+
+if(TARGET clone-rust)
+  set(LOLHTML_TARGETS clone-rust)
 endif()
 
 register_command(
@@ -42,15 +45,22 @@ register_command(
     ${CARGO_EXECUTABLE}
       build
       ${LOLHTML_BUILD_ARGS}
+  TARGETS
+    ${LOLHTML_TARGETS}
   ARTIFACTS
     ${LOLHTML_LIBRARY}
   ENVIRONMENT
     CARGO_TERM_COLOR=always
     CARGO_TERM_VERBOSE=true
     CARGO_TERM_DIAGNOSTIC=true
-    CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}
     CARGO_HOME=${CARGO_HOME}
     RUSTUP_HOME=${RUSTUP_HOME}
+    CC=${CMAKE_C_COMPILER}
+    CFLAGS=${CMAKE_C_FLAGS}
+    CXX=${CMAKE_CXX_COMPILER}
+    CXXFLAGS=${CMAKE_CXX_FLAGS}
+    AR=${CMAKE_AR}
+    RUSTFLAGS=${RUST_FLAGS}
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

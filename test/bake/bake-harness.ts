@@ -1683,6 +1683,7 @@ function testImpl<T extends DevServerTest>(
           BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

@@ -687,3 +687,13 @@ resp.text().then((a) => {
     delete URL.prototype.ok;
   }
 });
+
+test.only("can retrieve bytecode with createCachedData", () => {
+  const script = new Script("1 + 1;", {
+    produceCachedData: false,
+  });
+  const cachedData = script.createCachedData();
+  expect(cachedData).toBeDefined();
+  expect(cachedData).toBeInstanceOf(Buffer);
+  expect(cachedData.byteLength).toBeGreaterThan(100);
+});

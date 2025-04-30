@@ -722,3 +722,12 @@ test("accepts valid bytecode", () => {
   });
   expect(secondScript.cachedDataRejected).toBeFalse();
 });
+
+test("can't use bytecode from a different script", () => {
+  const firstScript = new Script("1 + 1;");
+  const cachedData = firstScript.createCachedData();
+  const secondScript = new Script("2 + 2;", {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeTrue();
+});

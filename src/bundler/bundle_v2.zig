@@ -1089,6 +1089,7 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
+    /// `heap` is not freed when `deinit`ing the BundleV2
     pub fn init(
         transpiler: *Transpiler,
         bake_options: ?BakeOptions,
@@ -1096,7 +1097,7 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
-        heap: ?ThreadlocalArena,
+        heap: ThreadlocalArena,
     ) !*BundleV2 {
         transpiler.env.loadTracy();
 
@@ -1111,7 +1112,7 @@ pub const BundleV2 = struct {
             .framework = null,
             .graph = .{
                 .pool = undefined,
-                .heap = heap orelse try ThreadlocalArena.init(),
+                .heap = heap,
                 .allocator = undefined,
                 .kit_referenced_server_data = false,
                 .kit_referenced_client_data = false,
@@ -1666,7 +1667,15 @@ pub const BundleV2 = struct {
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(
+            transpiler,
+            null,
+            allocator,
+            event_loop,
+            enable_reloading,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -1718,11 +1727,19 @@ pub const BundleV2 = struct {
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
         server_transpiler: *Transpiler,
-        kit_options: BakeOptions,
+        bake_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(server_transpiler, kit_options, allocator, event_loop, false, null, null);
+        var this = try BundleV2.init(
+            server_transpiler,
+            bake_options,
+            allocator,
+            event_loop,
+            false,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -2453,7 +2470,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn deinit(this: *BundleV2) void {
+    pub fn deinitWithoutFreeingArena(this: *BundleV2) void {
         {
             // We do this first to make it harder for any dangling pointers to data to be used in there.
             var on_parse_finalizers = this.finalizers;
@@ -3855,7 +3872,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             defer {
                 this.graph.pool.reset();
                 ast_memory_allocator.pop();
-                this.deinit();
+                this.deinitWithoutFreeingArena();
             }
 
             errdefer {

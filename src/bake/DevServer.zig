@@ -2181,8 +2181,10 @@ pub fn finalizeBundle(
 ) bun.OOM!void {
     var had_sent_hmr_event = false;
     defer {
-        bv2.deinit();
+        var heap = bv2.graph.heap;
+        bv2.deinitWithoutFreeingArena();
         dev.current_bundle = null;
+        heap.deinit();
 
         dev.assets.reindexIfNeeded(dev.allocator) catch {
             // not fatal: the assets may be reindexed some time later.

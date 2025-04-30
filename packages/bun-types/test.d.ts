@@ -21,7 +21,7 @@ declare module "bun:test" {
    */
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
-  export const fail: (message?: string) => void;
+  export const fail: (message?: string) => never;
 
   export const mock: {
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;

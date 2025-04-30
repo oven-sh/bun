@@ -3,6 +3,7 @@ const { isIP, isIPv6 } = require("node:net");
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
+const { validateHeaderName } = require("node:_http_common");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -172,6 +173,10 @@ function ClientRequest(input, options, cb) {
     }
 
     return this;
+  };
+
+  this.flushHeaders = function () {
+    send();
   };
 
   this.destroy = function (err?: Error) {
@@ -533,6 +538,7 @@ function ClientRequest(input, options, cb) {
 
   // --- For faking the events in the right order ---
   const maybeEmitSocket = () => {
+    if (this.destroyed) return;
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
       this.emit("socket", this.socket);
@@ -777,16 +783,43 @@ function ClientRequest(input, options, cb) {
   const headersArray = $isJSArray(headers);
   if (headersArray) {
     const length = headers.length;
-    if (length % 2 !== 0) {
-      throw $ERR_INVALID_ARG_VALUE("options.headers", "headers");
-    }
-    for (let i = 0; i < length; ) {
-      this.appendHeader(headers[i++], headers[i++]);
+    if ($isJSArray(headers[0])) {
+      // [[key, value], [key, value], ...]
+      for (let i = 0; i < length; i++) {
+        const actualHeader = headers[i];
+        if (actualHeader.length !== 2) {
+          throw $ERR_INVALID_ARG_VALUE("options.headers", "expected array of [key, value]");
+        }
+        const key = actualHeader[0];
+        validateHeaderName(key);
+        const lowerKey = key?.toLowerCase();
+        if (lowerKey === "host") {
+          if (!this.getHeader(key)) {
+            this.setHeader(key, actualHeader[1]);
+          }
+        } else {
+          this.appendHeader(key, actualHeader[1]);
+        }
+      }
+    } else {
+      // [key, value, key, value, ...]
+      if (length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("options.headers", "expected [key, value, key, value, ...]");
+      }
+      for (let i = 0; i < length; ) {
+        this.appendHeader(headers[i++], headers[i++]);
+      }
     }
   } else {
     if (headers) {
       for (let key in headers) {
-        this.setHeader(key, headers[key]);
+        const value = headers[key];
+        if (key === "host" || key === "hostname") {
+          if (value !== null && value !== undefined && typeof value !== "string") {
+            throw $ERR_INVALID_ARG_TYPE(`options.${key}`, ["string", "undefined", "null"], value);
+          }
+        }
+        this.setHeader(key, value);
       }
     }
 

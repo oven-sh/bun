@@ -614,18 +614,22 @@ public:
         httpContext->getSocketContextData()->onSocketClosed = onClose;
     }
 
+    void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
+        httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);
     }
 
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {
-        httpContext->getSocketContextData()->usingCustomExpectHandler = value;
+        httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
         return std::move(*this);
     }
 
     TemplatedApp &&setRequireHostHeader(bool value) {
-        httpContext->getSocketContextData()->requireHostHeader = value;
+        httpContext->getSocketContextData()->flags.requireHostHeader = value;
         return std::move(*this);
     }
 

@@ -10,8 +10,10 @@ const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
+const fail = @import("./fail.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
+const Fail = fail.Fail;
 
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
@@ -374,6 +376,14 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("describe"),
             describe,
+        );
+
+        const fail_fn = JSC.host_fn.NewFunction(globalObject, ZigString.static("fail"), 1, Fail.call, false);
+
+        module.put(
+            globalObject,
+            ZigString.static("fail"),
+            fail_fn,
         );
 
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {

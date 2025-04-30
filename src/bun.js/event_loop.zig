@@ -1404,17 +1404,19 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        var global = this.global;
-        const global_vm = global.vm();
-
         var to_run_now = this.immediate_tasks;
 
         this.immediate_tasks = this.next_immediate_tasks;
         this.next_immediate_tasks = .{};
 
-        for (to_run_now.items) |task| {
-            task.runImmediateTask(virtual_machine);
-            this.drainMicrotasksWithGlobal(global, global_vm);
+        if (to_run_now.items.len > 0) {
+            this.enter();
+
+            for (to_run_now.items) |task| {
+                task.runImmediateTask(virtual_machine);
+            }
+
+            this.exit();
         }
 
         if (this.next_immediate_tasks.capacity > 0) {

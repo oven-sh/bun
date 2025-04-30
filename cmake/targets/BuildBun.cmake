@@ -726,7 +726,7 @@ elseif(BUN_CPP_ONLY)
     COMMAND
       ${CMAKE_COMMAND} -E true
     ARTIFACTS
-      ${BUN_CPP_OUTPUT}
+      ${BUN_CPP_OUTPUT}.gz
   )
 else()
   add_executable(${bun} ${BUN_CPP_SOURCES} ${WINDOWS_RESOURCES})

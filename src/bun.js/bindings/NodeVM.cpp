@@ -1774,7 +1774,7 @@ static RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC
     JSC::CodeCache* cache = vm.codeCache();
     JSC::ParserError parserError;
     JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
-    if (!unlinked) {
+    if (!unlinked || !parserError.isValid()) {
         return nullptr;
     }
     JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;

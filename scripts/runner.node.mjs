@@ -1301,6 +1301,7 @@ function getRelevantTests(cwd) {
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
+  const expectations = getTestExpectations();
 
   if (options["node-tests"]) {
     tests = tests.filter(isNodeTest);
@@ -1437,13 +1438,17 @@ async function getExecPathFromBuildKite(target, buildId) {
     await spawnSafe({
       command: "buildkite-agent",
       args,
+      timeout: 60000,
     });
 
-    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && entry.includes("-profile.zip")) {
-        zipPath = join(releasePath, entry);
-        break downloadLoop;
-      }
+    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+      .filter(filename => /^bun.*\.zip$/i.test(filename))
+      .map(filename => join(releasePath, filename))
+      .sort((a, b) => b.includes("profile") - a.includes("profile"))
+      .at(0);
+
+    if (zipPath) {
+      break downloadLoop;
     }
 
     console.warn(`Waiting for ${target}.zip to be available...`);
@@ -2063,9 +2068,6 @@ function escapeXml(str) {
 }
 
 export async function main() {
-  console.log(getTestExpectations());
-  process.exit(0);
-
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
   }

@@ -1076,16 +1076,16 @@ async function getPipeline(options = {}) {
   dryRun = dryRun || !!buildImages;
 
   /** @type {string | undefined} */
-  let buildId;
-  if (skipBuilds && !forceBuilds) {
-    const lastBuild = await getLastSuccessfulBuild();
-    if (lastBuild) {
-      const { id } = lastBuild;
-      buildId = id;
-    } else {
-      console.warn("No last successful build found, must force builds...");
-    }
-  }
+  let buildId = "01968806-1c9a-479e-894a-ad29ac95466b";
+  // if (skipBuilds && !forceBuilds) {
+  //   const lastBuild = await getLastSuccessfulBuild();
+  //   if (lastBuild) {
+  //     const { id } = lastBuild;
+  //     buildId = id;
+  //   } else {
+  //     console.warn("No last successful build found, must force builds...");
+  //   }
+  // }
 
   if (!buildId) {
     steps.push(

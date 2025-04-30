@@ -1402,6 +1402,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     .filter(({ modifiers, expectations }) => testModifiers.some(modifier => modifiers.includes(modifier)))
     .map(({ filename }) => filename);
   console.log("skipExpectations", skipExpectations);
+  console.log("availableTests", availableTests.slice(0, 10));
   if (skipExpectations.length) {
     const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
     console.log("skippedTests", skippedTests);

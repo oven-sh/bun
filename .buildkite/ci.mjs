@@ -392,6 +392,7 @@ function getBuildEnv(target, options) {
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
     CANARY_REVISION: revision,
     ABI: abi === "musl" ? "musl" : undefined,
+    CMAKE_VERBOSE_MAKEFILE: "ON",
     CMAKE_TLS_VERIFY: "0",
   };
 }

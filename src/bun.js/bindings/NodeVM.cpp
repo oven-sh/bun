@@ -451,6 +451,7 @@ public:
     JSC::JSUint8Array* getBytecodeBuffer();
 
     const JSC::SourceCode& source() const { return m_source; }
+    std::vector<uint8_t>& cachedData() { return m_options.cachedData; }
     RefPtr<JSC::CachedBytecode> cachedBytecode() const { return m_cachedBytecode; }
     JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
@@ -768,10 +769,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RETURN_IF_EXCEPTION(scope, {});
 
     const bool produceCachedData = options.produceCachedData;
-    auto cachedData = WTFMove(options.cachedData);
     auto filename = options.filename;
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source, WTFMove(options));
+
+    std::vector<uint8_t>& cachedData = script->cachedData();
 
     if (!cachedData.empty()) {
         JSC::ProgramExecutable* executable = script->cachedExecutable();
@@ -782,7 +784,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(source, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(cachedData, nullptr, {});
+        Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
 
         if (!unlinkedBlock) {
@@ -1776,7 +1778,7 @@ static RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC
     JSC::CodeCache* cache = vm.codeCache();
     JSC::ParserError parserError;
     JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
-    if (!unlinked || !parserError.isValid()) {
+    if (!unlinked || parserError.isValid()) {
         return nullptr;
     }
     JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;

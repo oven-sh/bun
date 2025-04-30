@@ -1502,7 +1502,7 @@ pub const Formatter = struct {
                                 }
 
                                 if (next_value.isNumber() or !next_value.isSymbol()) double_convert: {
-                                    var value = next_value.coerceToDouble(global);
+                                    var value = try next_value.toNumber(global);
 
                                     if (!std.math.isFinite(value)) {
                                         // for NaN and the string Infinity and -Infinity, parseInt returns NaN
@@ -1577,7 +1577,7 @@ pub const Formatter = struct {
                                 // because spec says to convert the value to a string
                                 // and then parse as a number, but we are just coercing
                                 // a number.
-                                break :brk next_value.coerceToDouble(global);
+                                break :brk try next_value.toNumber(global);
                             };
 
                             const abs = @abs(converted);
@@ -2864,7 +2864,8 @@ pub const Formatter = struct {
                     const prev_quote_keys = this.quote_keys;
                     this.quote_keys = true;
                     defer this.quote_keys = prev_quote_keys;
-                    try this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                    const tag = ConsoleObject.Formatter.Tag.get(result, this.globalThis);
+                    try this.format(tag, Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     return;
                 }
 
@@ -3360,6 +3361,8 @@ pub const Formatter = struct {
                     if (arrayBuffer.typed_array_type == .Uint8Array and
                         arrayBuffer.value.isBuffer(this.globalThis))
                         "Buffer"
+                    else if (arrayBuffer.typed_array_type == .ArrayBuffer and arrayBuffer.shared)
+                        "SharedArrayBuffer"
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );

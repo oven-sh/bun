@@ -151,7 +151,7 @@ pub const PluginRunner = struct {
             bun.String.init(namespace_slice)
         else
             bun.String.empty;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             namespace,
             bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
             bun.String.init(importer),
@@ -241,7 +241,7 @@ pub const PluginRunner = struct {
 
     pub fn onResolveJSC(this: *const PluginRunner, namespace: bun.String, specifier: bun.String, importer: bun.String, target: JSC.JSGlobalObject.BunPluginTarget) bun.JSError!?JSC.ErrorableString {
         var global = this.global_object;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
@@ -1102,8 +1102,10 @@ pub const Transpiler = struct {
             return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
-        if (loader != .wasm and source.contents.len == 0 and source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0) {
-            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+        if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+            if (!loader.handlesEmptyFile()) {
+                return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+            }
         }
 
         switch (loader) {

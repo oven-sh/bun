@@ -136,14 +136,7 @@ using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-JSC_DECLARE_CUSTOM_SETTER(Process_setTitle);
-JSC_DECLARE_CUSTOM_GETTER(Process_getArgv);
-JSC_DECLARE_CUSTOM_SETTER(Process_setArgv);
-JSC_DECLARE_CUSTOM_GETTER(Process_getTitle);
-JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
-JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -157,6 +150,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
+static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
 
 static JSValue constructArch(VM& vm, JSObject* processObject)
@@ -642,8 +636,8 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     if (fired) {
         if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = jsDynamicCast<JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
-            if (nextTickQueue) nextTickQueue->drain(vm, globalObject);
+            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+            nextTickQueue->drain(vm, globalObject);
         }
     }
 }
@@ -1603,7 +1597,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__getExecArgv(globalObject)), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);
         RETURN_IF_EXCEPTION(scope, {});
         header->putDirect(vm, JSC::Identifier::fromString(vm, "nodejsVersion"_s), JSC::jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "wordSize"_s), JSC::jsNumber(64), 0);
@@ -2121,13 +2115,7 @@ static JSValue constructPpid(VM& vm, JSObject* processObject)
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    return JSValue::decode(Bun__Process__getArgv0(globalObject));
-}
-
-static JSValue constructExecArgv(VM& vm, JSObject* processObject)
-{
-    auto* globalObject = processObject->globalObject();
-    return JSValue::decode(Bun__Process__getExecArgv(globalObject));
+    return JSValue::decode(Bun__Process__createArgv0(globalObject));
 }
 
 static JSValue constructExecPath(VM& vm, JSObject* processObject)
@@ -2136,10 +2124,106 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getExecPath(globalObject));
 }
 
-static JSValue constructArgv(VM& vm, JSObject* processObject)
+// get from zig
+extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = processObject->globalObject();
-    return JSValue::decode(Bun__Process__getArgv(globalObject));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(process->getArgv(globalObject));
+}
+
+// get from js
+JSC_DEFINE_CUSTOM_GETTER(processArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(process->getArgv(globalObject));
+}
+
+JSValue Process::getArgv(JSGlobalObject* globalObject)
+{
+    if (auto argv = m_argv.get()) {
+        return argv;
+    }
+
+    JSValue argv = JSValue::decode(Bun__Process__createArgv(globalObject));
+    setArgv(globalObject, argv);
+    return argv;
+}
+
+void Process::setArgv(JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = globalObject->vm();
+    m_argv.set(vm, this, value);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) {
+        return true;
+    }
+
+    JSValue value = JSValue::decode(encodedValue);
+    process->setArgv(globalObject, value);
+    return true;
+}
+
+extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(process->getExecArgv(globalObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(process->getExecArgv(globalObject));
+}
+
+JSValue Process::getExecArgv(JSGlobalObject* globalObject)
+{
+    if (auto argv = m_execArgv.get()) {
+        return argv;
+    }
+
+    JSValue argv = JSValue::decode(Bun__Process__createExecArgv(globalObject));
+    setExecArgv(globalObject, argv);
+    return argv;
+}
+
+void Process::setExecArgv(JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = globalObject->vm();
+    m_execArgv.set(vm, this, value);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) {
+        return true;
+    }
+
+    JSValue value = JSValue::decode(encodedValue);
+    process->setExecArgv(globalObject, value);
+    return true;
 }
 
 static JSValue constructBrowser(VM& vm, JSObject* processObject)
@@ -2503,6 +2587,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    visitor.append(thisObject->m_argv);
+    visitor.append(thisObject->m_execArgv);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
@@ -2830,6 +2916,66 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_ref, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue maybeRefable = callFrame->argument(0);
+    if (maybeRefable.isUndefinedOrNull()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue ref = maybeRefable.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.ref"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto refBoolean = ref.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!refBoolean) {
+        ref = maybeRefable.get(globalObject, Identifier::fromString(vm, "ref"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (ref.isCallable()) {
+        CallData callData = getCallData(ref);
+        JSC::profiledCall(globalObject, ProfilingReason::API, ref, callData, maybeRefable, {});
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue maybeUnrefable = callFrame->argument(0);
+    if (maybeUnrefable.isUndefinedOrNull()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue unref = maybeUnrefable.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.unref"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto unrefBoolean = unref.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!unrefBoolean) {
+        unref = maybeUnrefable.get(globalObject, Identifier::fromString(vm, "unref"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (unref.isCallable()) {
+        CallData callData = getCallData(unref);
+        JSC::profiledCall(globalObject, ProfilingReason::API, unref, callData, maybeUnrefable, {});
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsUndefined());
@@ -2945,13 +3091,12 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSValue nextTickQueueObject;
+    JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
-        auto nextTickQueue = Bun::JSNextTickQueue::create(globalObject);
-        nextTickQueueObject = nextTickQueue;
+        nextTickQueueObject = JSNextTickQueue::create(globalObject);
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
     } else {
-        nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
+        nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
@@ -3269,7 +3414,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
   arch                             constructArch                                       PropertyCallback
-  argv                             constructArgv                                       PropertyCallback
+  argv                             processArgv                                         CustomAccessor
   argv0                            constructArgv0                                      PropertyCallback
   assert                           Process_functionAssert                              Function 1
   availableMemory                  Process_availableMemory                             Function 0
@@ -3287,7 +3432,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   dlopen                           Process_functionDlopen                              Function 1
   emitWarning                      Process_emitWarning                                 Function 1
   env                              constructEnv                                        PropertyCallback
-  execArgv                         constructExecArgv                                   PropertyCallback
+  execArgv                         processExecArgv                                     CustomAccessor
   execPath                         constructExecPath                                   PropertyCallback
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
@@ -3307,6 +3452,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   platform                         constructPlatform                                   PropertyCallback
   ppid                             constructPpid                                       PropertyCallback
   reallyExit                       Process_functionReallyExit                          Function 1
+  ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
   revision                         constructRevision                                   PropertyCallback
@@ -3319,6 +3465,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
+  unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback

@@ -546,7 +546,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         environmentData = JSMap::create(vm, globalObject->mapStructure());
         RETURN_IF_EXCEPTION(scope, {});
     }
-    globalObject->m_nodeWorkerEnvironmentData.set(vm, globalObject, environmentData);
+    globalObject->setNodeWorkerEnvironmentData(environmentData);
 
     JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});

@@ -26,6 +26,8 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    WriteBarrier<Unknown> m_argv;
+    WriteBarrier<Unknown> m_execArgv;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -63,6 +65,12 @@ public:
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+
+    JSValue getArgv(JSGlobalObject* globalObject);
+    void setArgv(JSGlobalObject* globalObject, JSValue argv);
+
+    JSValue getExecArgv(JSGlobalObject* globalObject);
+    void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

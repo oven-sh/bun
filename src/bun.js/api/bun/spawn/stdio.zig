@@ -391,7 +391,7 @@ pub const Stdio = union(enum) {
             out_stdio.* = .{
                 .array_buffer = JSC.ArrayBuffer.Strong{
                     .array_buffer = array_buffer,
-                    .held = JSC.Strong.create(array_buffer.value, globalThis),
+                    .held = .create(array_buffer.value, globalThis),
                 },
             };
             return;

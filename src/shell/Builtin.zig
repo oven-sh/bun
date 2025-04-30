@@ -395,7 +395,7 @@ pub fn init(
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
                     const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = JSC.ArrayBuffer.Strong{
                         .array_buffer = buf,
-                        .held = JSC.Strong.create(buf.value, globalObject),
+                        .held = .create(buf.value, globalObject),
                     }, .i = 0 };
 
                     if (node.redirect.stdin) {

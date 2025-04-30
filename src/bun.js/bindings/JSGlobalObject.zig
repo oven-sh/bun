@@ -230,9 +230,12 @@ pub const JSGlobalObject = opaque {
     extern fn Bun__runOnLoadPlugins(*JSC.JSGlobalObject, ?*const bun.String, *const bun.String, BunPluginTarget) JSValue;
     extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const bun.String, *const bun.String, *const String, BunPluginTarget) JSValue;
 
-    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) ?JSValue {
+    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
         const result = Bun__runOnLoadPlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, target);
+        if (this.hasException()) {
+            return error.JSError;
+        }
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
         }
@@ -240,10 +243,15 @@ pub const JSGlobalObject = opaque {
         return result;
     }
 
-    pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) ?JSValue {
+    pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         JSC.markBinding(@src());
 
         const result = Bun__runOnResolvePlugins(this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target);
+
+        if (this.hasException()) {
+            return error.JSError;
+        }
+
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
         }

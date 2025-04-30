@@ -119,6 +119,7 @@ Quote"Backslash
 "Warning log
   warn: console.warn an error
       at <file>:56:14
+      at loadAndEvaluateModule (2:1)
 
   52 | console.group("Different logs");
 53 | console.log("Regular log");
@@ -129,6 +130,7 @@ Quote"Backslash
                    ^
 error: console.error an error
       at <file>:57:15
+      at loadAndEvaluateModule (2:1)
 
   41 | console.groupEnd(); // Extra
 42 | console.groupEnd(); // Extra
@@ -140,11 +142,39 @@ error: console.error an error
 NamedError: console.error a named error
       at new NamedError (<file>:46:5)
       at <file>:58:15
+      at loadAndEvaluateModule (2:1)
 
   NamedError: console.warn a named error
       at new NamedError (<file>:46:5)
       at <file>:59:14
+      at loadAndEvaluateModule (2:1)
 
   Error log"
 `);
+});
+
+it("console.log with SharedArrayBuffer", () => {
+  const proc = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      console.log(new ArrayBuffer(0));
+      console.log(new SharedArrayBuffer(0));
+      console.log(new ArrayBuffer(3));
+      console.log(new SharedArrayBuffer(3));
+    `,
+    ],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(proc.stderr.toString("utf8")).toBeEmpty();
+  expect(proc.exitCode).toBe(0);
+  expect(proc.stdout.toString("utf8")).toMatchInlineSnapshot(`
+    "ArrayBuffer(0) []
+    SharedArrayBuffer(0) []
+    ArrayBuffer(3) [ 0, 0, 0 ]
+    SharedArrayBuffer(3) [ 0, 0, 0 ]
+    "
+  `);
 });

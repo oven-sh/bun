@@ -328,7 +328,7 @@ pub const ServerInitContext = struct {
 
 const UserRouteBuilder = struct {
     route: RouteDeclaration,
-    callback: JSC.Strong = .empty,
+    callback: JSC.Strong.Optional = .empty,
 
     // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
     pub const RouteDeclaration = struct {
@@ -1028,22 +1028,14 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (try obj.getTruthy(global, "requestCert")) |request_cert| {
-                if (request_cert.isBoolean()) {
-                    result.request_cert = if (request_cert.asBoolean()) 1 else 0;
-                    any = true;
-                } else {
-                    return global.throw("Expected requestCert to be a boolean", .{});
-                }
+            if (try obj.getBooleanStrict(global, "requestCert")) |request_cert| {
+                result.request_cert = if (request_cert) 1 else 0;
+                any = true;
             }
 
-            if (try obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
-                if (reject_unauthorized.isBoolean()) {
-                    result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
-                    any = true;
-                } else {
-                    return global.throw("Expected rejectUnauthorized to be a boolean", .{});
-                }
+            if (try obj.getBooleanStrict(global, "rejectUnauthorized")) |reject_unauthorized| {
+                result.reject_unauthorized = if (reject_unauthorized) 1 else 0;
+                any = true;
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
@@ -1402,7 +1394,7 @@ pub const ServerConfig = struct {
                                 .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                 .method = .any,
                             },
-                            .callback = JSC.Strong.create(value.withAsyncContextIfNeeded(global), global),
+                            .callback = .create(value.withAsyncContextIfNeeded(global), global),
                         }) catch bun.outOfMemory();
                         bun.default_allocator.free(path);
                         continue;
@@ -1433,7 +1425,7 @@ pub const ServerConfig = struct {
                                         .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                         .method = .{ .specific = method },
                                     },
-                                    .callback = JSC.Strong.create(function.withAsyncContextIfNeeded(global), global),
+                                    .callback = .create(function.withAsyncContextIfNeeded(global), global),
                                 }) catch bun.outOfMemory();
                             }
                         }
@@ -3280,6 +3272,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.flags.has_written_status) {
                 this.renderMetadata();
             }
+
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -3866,7 +3859,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
-            req.endStream(true);
+            req.endStream(req.shouldCloseConnection());
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
@@ -5175,11 +5168,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
 
         pub const App = uws.NewApp(ssl_enabled);
-
-        listener: ?*App.ListenSocket = null,
-        js_value: JSC.Strong = .empty,
-        /// Potentially null before listen() is called, and once .destroy() is called.
         app: ?*App = null,
+        listener: ?*App.ListenSocket = null,
+        js_value: JSC.Strong.Optional = .empty,
+        /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *JSC.VirtualMachine,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
@@ -5209,6 +5201,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// User routes may get applied multiple times due to SNI.
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
+
+        on_clienterror: JSC.Strong.Optional = .empty,
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -6106,7 +6100,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
-                        .strong = JSC.Strong.create(this.all_closed_promise.value(), this.globalThis),
+                        .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = JSC.Debugger.AsyncTaskTracker.init(vm),
                 });
@@ -6205,6 +6199,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.user_routes.deinit(bun.default_allocator);
 
             this.config.deinit();
+
+            this.on_clienterror.deinit();
             if (this.app) |app| {
                 this.app = null;
                 app.destroy();
@@ -6489,7 +6485,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 success: void,
                 pending: JSC.JSValue,
             };
-            var strong_promise: JSC.Strong = .empty;
+            var strong_promise: JSC.Strong.Optional = .empty;
             var needs_to_drain = true;
 
             defer {
@@ -6760,7 +6756,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 prepared.ctx.toAsync(req, prepared.request_object);
 
                 return .{
-                    .js_request = JSC.Strong.create(prepared.js_request, global),
+                    .js_request = .create(prepared.js_request, global),
                     .request = prepared.request_object,
                     .ctx = AnyRequestContext.init(prepared.ctx),
                     .response = uws.AnyResponse.init(resp),
@@ -7338,11 +7334,30 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             return route_list_value;
         }
+
+        pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
+            if (this.on_clienterror.get()) |callback| {
+                const is_ssl = protocol_enum == .https;
+                const node_socket = Bun__createNodeHTTPServerSocket(is_ssl, socket, this.globalThis);
+                if (node_socket.isEmptyOrUndefinedOrNull()) {
+                    return;
+                }
+
+                const error_code_value = JSValue.jsNumber(error_code);
+                const raw_packet_value = JSC.ArrayBuffer.createBuffer(this.globalThis, raw_packet);
+                const loop = this.globalThis.bunVM().eventLoop();
+                loop.enter();
+                defer loop.exit();
+                _ = callback.call(this.globalThis, .undefined, &.{ JSValue.jsBoolean(is_ssl), node_socket, error_code_value, raw_packet_value }) catch |err| {
+                    this.globalThis.reportActiveExceptionAsUnhandled(err);
+                };
+            }
+        }
     };
 }
 
 pub const SavedRequest = struct {
-    js_request: JSC.Strong,
+    js_request: JSC.Strong.Optional,
     request: *Request,
     ctx: AnyRequestContext,
     response: uws.AnyResponse,
@@ -7638,6 +7653,51 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 }
+pub export fn Server__setOnClientError(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    Server__setOnClientError_(server, callback, globalThis) catch |err| switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+        },
+    };
+}
+pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set clientError: The 'this' value is not a Server.", .{});
+    }
+
+    if (!callback.isFunction()) {
+        return globalThis.throw("Failed to set clientError: The provided value is not a function.", .{});
+    }
+
+    if (server.as(HTTPServer)) |this| {
+        if (this.app) |app| {
+            this.on_clienterror.deinit();
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
+            app.onClientError(*HTTPServer, this, HTTPServer.onClientErrorCallback);
+        }
+    } else if (server.as(HTTPSServer)) |this| {
+        if (this.app) |app| {
+            this.on_clienterror.deinit();
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
+            app.onClientError(*HTTPSServer, this, HTTPSServer.onClientErrorCallback);
+        }
+    } else if (server.as(DebugHTTPServer)) |this| {
+        if (this.app) |app| {
+            this.on_clienterror.deinit();
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
+            app.onClientError(*DebugHTTPServer, this, DebugHTTPServer.onClientErrorCallback);
+        }
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        if (this.app) |app| {
+            this.on_clienterror.deinit();
+            this.on_clienterror = JSC.Strong.Optional.create(callback, globalThis);
+            app.onClientError(*DebugHTTPSServer, this, DebugHTTPSServer.onClientErrorCallback);
+        }
+    } else {
+        bun.debugAssert(false);
+    }
+}
 pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) void {
     Server__setRequireHostHeader_(server, require_host_header, globalThis) catch |err| switch (err) {
         error.JSError => {},
@@ -7646,6 +7706,7 @@ pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_hea
         },
     };
 }
+
 pub fn Server__setRequireHostHeader_(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set requireHostHeader: The 'this' value is not a Server.", .{});
@@ -7668,6 +7729,7 @@ comptime {
     _ = Server__setIdleTimeout;
     _ = Server__setRequireHostHeader;
     _ = NodeHTTPResponse.create;
+    _ = Server__setOnClientError;
 }
 
 extern fn NodeHTTPServer__onRequest_http(
@@ -7693,6 +7755,8 @@ extern fn NodeHTTPServer__onRequest_https(
     upgrade_ctx: ?*uws.uws_socket_context_t,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
+
+extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *JSC.JSGlobalObject) JSC.JSValue;
 
 extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
 

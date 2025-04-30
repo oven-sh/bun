@@ -115,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 #endif
 
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSValue::encode(num), JSC::JSValue::encode(arguments));
+    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate

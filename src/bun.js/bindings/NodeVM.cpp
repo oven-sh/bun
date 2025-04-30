@@ -1789,7 +1789,10 @@ static JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, JSC::S
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::ProgramExecutable* executable = JSC::ProgramExecutable::create(globalObject, source);
+    RETURN_IF_EXCEPTION(scope, {});
+
     RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, executable, source);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (UNLIKELY(!bytecode)) {
         return throwVMError(globalObject, scope, "createCachedData failed"_s);

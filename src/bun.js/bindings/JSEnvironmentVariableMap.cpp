@@ -302,9 +302,9 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSC::JSObject* object, JSC::JSG
     }
     auto value = descriptor.value();
     value = value ? value : jsUndefined();
+    if (propertyName.publicName()->length() == 0) return false;
     auto string = value.toStringOrNull(globalObject);
     if (UNLIKELY(!string)) return false;
-    if (string->length() == 0) return false;
     descriptor.value() = string;
     return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
 }
@@ -317,9 +317,9 @@ bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globa
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
         return false;
     }
+    if (propertyName.publicName()->length() == 0) return false;
     auto string = value.toStringOrNull(globalObject);
     if (UNLIKELY(!string)) return false;
-    if (string->length() == 0) return false;
     return Base::put(cell, globalObject, propertyName, string, slot);
 }
 

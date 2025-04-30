@@ -704,3 +704,21 @@ test("can't use export syntax in vm.Script", () => {
     script.runInThisContext();
   }).toThrow();
 });
+
+test("rejects invalid bytecode", () => {
+  const cachedData = Buffer.from("fhqwhgads");
+  const script = new Script("1 + 1;", {
+    cachedData,
+  });
+  expect(script.cachedDataRejected).toBeTrue();
+});
+
+test("accepts valid bytecode", () => {
+  const source = "1 + 1;";
+  const firstScript = new Script(source);
+  const cachedData = firstScript.createCachedData();
+  const secondScript = new Script(source, {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeFalse();
+});

@@ -7,9 +7,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 if (isMainThread) {
   let action = process.argv.at(-1);
-  if (process.argv.length === 2) {
-    action = "Bun.connect";
-  }
 
   const server = Bun.serve({
     port: 0,
@@ -20,7 +17,7 @@ if (isMainThread) {
   let remaining = RUN_COUNT;
 
   while (remaining--) {
-    const promises = [];
+    const promises: Promise<unknown>[] = [];
 
     for (let i = 0; i < CONCURRENCY; i++) {
       const worker = new Worker(import.meta.url, {
@@ -31,16 +28,17 @@ if (isMainThread) {
         env: process.env,
       });
       worker.ref();
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve, reject } = Promise.withResolvers();
       promises.push(promise);
 
       worker.on("online", () => {
-        sleep(1)
+        sleep(10000)
           .then(() => {
             return worker.terminate();
           })
           .finally(resolve);
       });
+      worker.on("error", e => reject(e));
     }
 
     await Promise.all(promises);

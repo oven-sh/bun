@@ -492,6 +492,10 @@ pub const String = extern struct {
         return String.init(ZigString.initUTF16(value));
     }
 
+    pub fn initLatin1OrASCIIView(value: []const u8) String {
+        return String.init(ZigString.init(value));
+    }
+
     /// Create a `String` from a byte slice.
     ///
     /// Checks if `value` is ASCII (using `strings.isAllASCII`) and, if so,

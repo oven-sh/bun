@@ -847,14 +847,14 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &s_globalObjectMethodTable);
     ptr->finishCreation(vm);
     return ptr;
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &globalObjectMethodTable());
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &s_globalObjectMethodTable);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -954,7 +954,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return Zig::EvalGlobalObject::create(
                 vm,
                 structure,
-                &Zig::EvalGlobalObject::globalObjectMethodTable());
+                &Zig::EvalGlobalObject::s_globalObjectMethodTable);
 
         } else {
             auto* structure = Zig::GlobalObject::createStructure(vm);
@@ -1189,64 +1189,57 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
     }
 }
-const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
-{
-    static const JSC::GlobalObjectMethodTable table = {
-        &supportsRichSourceInfo,
-        &shouldInterruptScript,
-        &javaScriptRuntimeFlags,
-        nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-        nullptr, // &shouldInterruptScriptBeforeTimeout,
-        &moduleLoaderImportModule, // moduleLoaderImportModule
-        &moduleLoaderResolve, // moduleLoaderResolve
-        &moduleLoaderFetch, // moduleLoaderFetch
-        &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
-        &moduleLoaderEvaluate, // moduleLoaderEvaluate
-        &promiseRejectionTracker, // promiseRejectionTracker
-        &reportUncaughtExceptionAtEventLoop,
-        &currentScriptExecutionOwner,
-        &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
-        &Zig::deriveShadowRealmGlobalObject,
-        &codeForEval, // codeForEval
-        &canCompileStrings, // canCompileStrings
-        &trustedScriptStructure, // trustedScriptStructure
-    };
-    return table;
-}
 
-const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
-{
-    static const JSC::GlobalObjectMethodTable table = {
-        &supportsRichSourceInfo,
-        &shouldInterruptScript,
-        &javaScriptRuntimeFlags,
-        // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-        nullptr,
-        nullptr, // &shouldInterruptScriptBeforeTimeout,
-        &moduleLoaderImportModule, // moduleLoaderImportModule
-        &moduleLoaderResolve, // moduleLoaderResolve
-        &moduleLoaderFetch, // moduleLoaderFetch
-        &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
-        &moduleLoaderEvaluate, // moduleLoaderEvaluate
-        &promiseRejectionTracker, // promiseRejectionTracker
-        &reportUncaughtExceptionAtEventLoop,
-        &currentScriptExecutionOwner,
-        &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
-        &Zig::deriveShadowRealmGlobalObject,
-        &codeForEval, // codeForEval
-        &canCompileStrings, // canCompileStrings
-        &trustedScriptStructure, // trustedScriptStructure
-    };
-    return table;
-}
+const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
+    &supportsRichSourceInfo,
+    &shouldInterruptScript,
+    &javaScriptRuntimeFlags,
+    nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    nullptr, // &shouldInterruptScriptBeforeTimeout,
+    &moduleLoaderImportModule, // moduleLoaderImportModule
+    &moduleLoaderResolve, // moduleLoaderResolve
+    &moduleLoaderFetch, // moduleLoaderFetch
+    &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+    &moduleLoaderEvaluate, // moduleLoaderEvaluate
+    &promiseRejectionTracker, // promiseRejectionTracker
+    &reportUncaughtExceptionAtEventLoop,
+    &currentScriptExecutionOwner,
+    &scriptExecutionStatus,
+    nullptr, // reportViolationForUnsafeEval
+    nullptr, // defaultLanguage
+    nullptr, // compileStreaming
+    nullptr, // instantiateStreaming
+    &Zig::deriveShadowRealmGlobalObject,
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
+};
+
+const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
+    &supportsRichSourceInfo,
+    &shouldInterruptScript,
+    &javaScriptRuntimeFlags,
+    // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    nullptr,
+    nullptr, // &shouldInterruptScriptBeforeTimeout,
+    &moduleLoaderImportModule, // moduleLoaderImportModule
+    &moduleLoaderResolve, // moduleLoaderResolve
+    &moduleLoaderFetch, // moduleLoaderFetch
+    &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+    &moduleLoaderEvaluate, // moduleLoaderEvaluate
+    &promiseRejectionTracker, // promiseRejectionTracker
+    &reportUncaughtExceptionAtEventLoop,
+    &currentScriptExecutionOwner,
+    &scriptExecutionStatus,
+    nullptr, // reportViolationForUnsafeEval
+    nullptr, // defaultLanguage
+    nullptr, // compileStreaming
+    nullptr, // instantiateStreaming
+    &Zig::deriveShadowRealmGlobalObject,
+    &codeForEval, // codeForEval
+    &canCompileStrings, // canCompileStrings
+    &trustedScriptStructure, // trustedScriptStructure
+};
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
     : Base(vm, structure, methodTable)
@@ -1531,8 +1524,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

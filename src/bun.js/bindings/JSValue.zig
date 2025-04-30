@@ -2591,7 +2591,7 @@ pub const JSValue = enum(i64) {
         return Bun__JSValue__deserialize(global, bytes.ptr, bytes.len);
     }
 
-    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;
+    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue, forTransfer: bool) SerializedScriptValue.External;
     extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
 
     pub const SerializedScriptValue = struct {
@@ -2611,8 +2611,8 @@ pub const JSValue = enum(i64) {
 
     /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
-    pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
-        const value = Bun__serializeJSValue(global, this);
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) ?SerializedScriptValue {
+        const value = Bun__serializeJSValue(global, this, forTransfer);
         return if (value.bytes) |bytes|
             .{ .data = bytes[0..value.size], .handle = value.handle.? }
         else

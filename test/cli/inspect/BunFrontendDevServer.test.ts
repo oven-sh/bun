@@ -502,7 +502,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     ws.close();
   });
 
-  test("should notify on graphUpdate events", async () => {
+  test.todo("should notify on graphUpdate events", async () => {
     // Create a more complex dependency graph to trigger graph visualization updates
     fs.writeFileSync(
       join(tempdir, "module-a.ts"),

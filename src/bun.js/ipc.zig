@@ -406,9 +406,11 @@ pub const SendQueue = struct {
     };
 
     pub fn init(mode: Mode, owner: SendQueueOwner, socket: SocketUnion) @This() {
+        log("SendQueue#init", .{});
         return .{ .queue = .init(bun.default_allocator), .mode = mode, .owner = owner, .socket = socket };
     }
     pub fn deinit(self: *@This()) void {
+        log("SendQueue#deinit", .{});
         // must go first
         self.closeSocket(.failure);
 
@@ -431,6 +433,7 @@ pub const SendQueue = struct {
     }
 
     fn closeSocket(this: *SendQueue, reason: enum { normal, failure }) void {
+        log("SendQueue#closeSocket", .{});
         switch (this.socket) {
             .open => |s| switch (Environment.isWindows) {
                 true => {
@@ -482,6 +485,7 @@ pub const SendQueue = struct {
     }
 
     fn _onIPCCloseEvent(this: *SendQueue) void {
+        log("SendQueue#_onIPCCloseEvent", .{});
         if (this.socket != .open) {
             this.socket = .closed;
             return;
@@ -495,6 +499,7 @@ pub const SendQueue = struct {
 
     /// returned pointer is invalidated if the queue is modified
     pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+        log("SendQueue#startMessage", .{});
         if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
 
         // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
@@ -534,6 +539,7 @@ pub const SendQueue = struct {
     }
     /// returned pointer is invalidated if the queue is modified
     pub fn insertMessage(this: *SendQueue, message: SendHandle) void {
+        log("SendQueue#insertMessage", .{});
         if (Environment.allow_assert) bun.debugAssert(this.has_written_version == 1);
         if ((this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) and !this.write_in_progress) {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
@@ -546,6 +552,7 @@ pub const SendQueue = struct {
     }
 
     pub fn onAckNack(this: *SendQueue, global: *JSGlobalObject, ack_nack: enum { ack, nack }) void {
+        log("SendQueue#onAckNack", .{});
         if (this.waiting_for_ack == null) {
             log("onAckNack: ack received but not waiting for ack", .{});
             return;
@@ -584,6 +591,7 @@ pub const SendQueue = struct {
         this.continueSend(global, .new_message_appended);
     }
     fn shouldRef(this: *SendQueue) bool {
+        log("SendQueue#shouldRef", .{});
         if (this.waiting_for_ack != null) return true; // waiting to receive an ack/nack from the other side
         if (this.queue.items.len == 0) return false; // nothing to send
         const first = &this.queue.items[0];
@@ -591,6 +599,7 @@ pub const SendQueue = struct {
         return false; // error state.
     }
     pub fn updateRef(this: *SendQueue, global: *JSGlobalObject) void {
+        log("SendQueue#updateRef", .{});
         switch (this.shouldRef()) {
             true => this.keep_alive.ref(global.bunVM()),
             false => this.keep_alive.unref(global.bunVM()),
@@ -601,6 +610,7 @@ pub const SendQueue = struct {
         on_writable,
     };
     fn _continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, reason: ContinueSendReason) void {
+        log("SendQueue#_continueSend", .{});
         this.debugLogMessageQueue();
         log("IPC continueSend: {s}", .{@tagName(reason)});
 
@@ -635,6 +645,7 @@ pub const SendQueue = struct {
         // the write is queued. this._onWriteComplete() will be called when the write completes.
     }
     fn _onWriteComplete(this: *SendQueue, n: i32) void {
+        log("SendQueue#_onWriteComplete", .{});
         if (!this.write_in_progress) {
             bun.debugAssert(false);
             return;
@@ -676,10 +687,12 @@ pub const SendQueue = struct {
         }
     }
     fn continueSend(this: *SendQueue, global: *JSGlobalObject, reason: ContinueSendReason) void {
+        log("SendQueue#continueSend", .{});
         this._continueSend(global, reason);
         this.updateRef(global);
     }
     pub fn writeVersionPacket(this: *SendQueue, global: *JSGlobalObject) void {
+        log("SendQueue#writeVersionPacket", .{});
         bun.debugAssert(this.has_written_version == 0);
         bun.debugAssert(this.queue.items.len == 0);
         bun.debugAssert(this.waiting_for_ack == null);
@@ -692,6 +705,7 @@ pub const SendQueue = struct {
         if (Environment.allow_assert) this.has_written_version = 1;
     }
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
+        log("SendQueue#serializeAndSend", .{});
         const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
         const msg = self.startMessage(global, callback, handle);
         const start_offset = msg.data.list.items.len;
@@ -723,6 +737,7 @@ pub const SendQueue = struct {
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
     fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
+        log("SendQueue#_write", .{});
         const socket = this.getSocket() orelse {
             this._onWriteComplete(-1);
             return;
@@ -753,6 +768,7 @@ pub const SendQueue = struct {
         };
     }
     fn _windowsOnWriteComplete(this: *SendQueue, status: uv.ReturnCode) void {
+        log("SendQueue#_windowsOnWriteComplete", .{});
         if (this.getSocket()) |socket| socket.unref(); // write complete; unref
         if (status.toError(.write)) |_| {
             this._onWriteComplete(-1);

@@ -141,6 +141,7 @@ extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
+extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
@@ -1460,7 +1461,7 @@ JSC_DEFINE_CUSTOM_GETTER(processConnected, (JSC::JSGlobalObject * lexicalGlobalO
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsBoolean(Bun__GlobalObject__hasIPC(process->globalObject())));
+    return JSValue::encode(jsBoolean(Bun__GlobalObject__connectedIPC(process->globalObject())));
 }
 JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
 {
@@ -2274,26 +2275,16 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    Bun__closeChildIPC(globalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
     auto global = jsCast<GlobalObject*>(globalObject);
 
-    if (!Bun__GlobalObject__hasIPC(globalObject)) {
+    if (!Bun__GlobalObject__connectedIPC(globalObject)) {
         Process__emitErrorEvent(global, JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s)));
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
-    auto process = jsCast<Process*>(global->processObject());
-
-    process->queueNextTick(globalObject, finishFn);
+    Bun__closeChildIPC(globalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
 

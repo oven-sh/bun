@@ -874,14 +874,17 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
         try globalObject.validateObject("options", options_, .{});
     }
 
-    const ipc_data = ipc orelse {
+    const connected = ipc != null and ipc.?.isConnected();
+    if (!connected) {
         const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "{s}", .{@as([]const u8, switch (from) {
             .process => "process.send() can only be used if the IPC channel is open.",
             .subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
             .subprocess_exited => "Subprocess.send() cannot be used after the process has exited.",
         })}).toJS();
         return doSendErr(globalObject, callback, ex, from);
-    };
+    }
+
+    const ipc_data = ipc.?;
 
     if (message.isUndefined()) {
         return globalObject.throwMissingArgumentsValue(&.{"message"});

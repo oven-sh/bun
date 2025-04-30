@@ -25,8 +25,20 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
+pub export fn Bun__GlobalObject__connectedIPC(global: *JSGlobalObject) bool {
+    if (global.bunVM().ipc) |ipc| {
+        if (ipc == .initialized) {
+            return ipc.initialized.data.isConnected();
+        }
+        return true;
+    }
+    return false;
+}
 pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
-    return global.bunVM().ipc != null;
+    if (global.bunVM().ipc != null) {
+        return true;
+    }
+    return false;
 }
 
 export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {

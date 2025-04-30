@@ -113,6 +113,7 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
+#include "JSEnvironmentVariableMap.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -2629,7 +2630,11 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // objects have been handled. If we reach this point and
             // the input is not an Object object then we should throw
             // a DataCloneError.
-            if (inObject->classInfo() != JSFinalObject::info())
+            auto* inInfo = inObject->classInfo();
+            if (
+                inInfo != JSFinalObject::info()
+                && inInfo != JSEnvironmentVariableMap::info()
+                && true)
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

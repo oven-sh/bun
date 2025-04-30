@@ -1,18 +1,17 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
-
 #include "helpers.h"
-
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
-
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include "JSEnvironmentVariableMap.h"
+#include "ErrorCode.h"
 
 using namespace JSC;
 
@@ -277,6 +276,63 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
+const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "EnvironmentVariableMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
+
+void JSEnvironmentVariableMap::finishCreation(JSC::VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+bool JSEnvironmentVariableMap::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+    if (descriptor.getterPresent() || descriptor.setterPresent()) {
+        scope.throwException(globalObject, createError(globalObject, Bun::ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s));
+        return false;
+    }
+    if (!descriptor.configurable() || !descriptor.writable() || !descriptor.enumerable()) {
+        scope.throwException(globalObject, createError(globalObject, Bun::ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s));
+        return false;
+    }
+    auto value = descriptor.value();
+    value = value ? value : jsUndefined();
+    auto string = value.toStringOrNull(globalObject);
+    if (UNLIKELY(!string)) return false;
+    if (string->length() == 0) return false;
+    descriptor.value() = string;
+    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+}
+
+bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+    auto string = value.toStringOrNull(globalObject);
+    if (UNLIKELY(!string)) return false;
+    if (string->length() == 0) return false;
+    return Base::put(cell, globalObject, propertyName, string, slot);
+}
+
+template<typename Visitor>
+void JSEnvironmentVariableMap::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSEnvironmentVariableMap* thisObject = jsCast<JSEnvironmentVariableMap*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSEnvironmentVariableMap);
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -284,15 +340,11 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    auto* object = JSEnvironmentVariableMap::create(vm, globalObject, JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
 #if OS(WINDOWS)
-    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    JSArray* keyArray
+        = constructEmptyArray(globalObject, nullptr, count);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -350,25 +402,19 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     if (!hasTZ) {
         TZAttrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
 
     unsigned int NODE_TLS_REJECT_UNAUTHORIZED_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
     if (!hasNodeTLSRejectUnauthorized) {
         NODE_TLS_REJECT_UNAUTHORIZED_Attrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, NODE_TLS_REJECT_UNAUTHORIZED), JSC::CustomGetterSetter::create(vm, jsNodeTLSRejectUnauthorizedGetter, jsNodeTLSRejectUnauthorizedSetter), NODE_TLS_REJECT_UNAUTHORIZED_Attrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, NODE_TLS_REJECT_UNAUTHORIZED), JSC::CustomGetterSetter::create(vm, jsNodeTLSRejectUnauthorizedGetter, jsNodeTLSRejectUnauthorizedSetter), NODE_TLS_REJECT_UNAUTHORIZED_Attrs);
 
     unsigned int BUN_CONFIG_VERBOSE_FETCH_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
     if (!hasBunConfigVerboseFetch) {
         BUN_CONFIG_VERBOSE_FETCH_Attrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
 #if OS(WINDOWS)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);

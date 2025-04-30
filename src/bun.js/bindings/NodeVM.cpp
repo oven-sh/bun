@@ -792,7 +792,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 DeferGC deferGC(vm);
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
             }
-            codeBlock->jitNextInvocation();
             JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
             if (compilationResult != JSC::CompilationResult::CompilationFailed) {
                 executable->installCode(codeBlock);
@@ -1452,7 +1451,7 @@ void NodeVMScript::cacheBytecode()
     }
 
     m_cachedBytecode = getBytecode(globalObject(), m_cachedExecutable.get(), m_source);
-    m_cachedDataProduced = true;
+    m_cachedDataProduced = m_cachedBytecode != nullptr;
 }
 
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
@@ -1485,6 +1484,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
+    visitor.append(thisObject->m_cachedBytecodeBuffer);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
@@ -1773,6 +1773,9 @@ static RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC
     JSC::CodeCache* cache = vm.codeCache();
     JSC::ParserError parserError;
     JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
+    if (!unlinked) {
+        return nullptr;
+    }
     JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     JSC::BytecodeCacheError bytecodeCacheError;
     FileSystem::FileHandle fileHandle;
@@ -1794,9 +1797,8 @@ static JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, JSC::S
     std::span<const uint8_t> bytes = bytecode->span();
     auto* buffer = WebCore::createBuffer(globalObject, bytes);
 
-    if (UNLIKELY(!buffer)) {
-        return throwVMError(globalObject, scope, "Failed to create Buffer for cached data"_s);
-    }
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(buffer);
 
     return JSValue::encode(buffer);
 }

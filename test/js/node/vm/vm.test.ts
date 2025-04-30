@@ -688,7 +688,7 @@ resp.text().then((a) => {
   }
 });
 
-test.only("can retrieve bytecode with createCachedData", () => {
+test("can retrieve bytecode with createCachedData", () => {
   const script = new Script("1 + 1;", {
     produceCachedData: false,
   });
@@ -696,4 +696,11 @@ test.only("can retrieve bytecode with createCachedData", () => {
   expect(cachedData).toBeDefined();
   expect(cachedData).toBeInstanceOf(Buffer);
   expect(cachedData.byteLength).toBeGreaterThan(100);
+});
+
+test("can't use export syntax in vm.Script", () => {
+  expect(() => {
+    const script = new Script("export default {};");
+    script.runInThisContext();
+  }).toThrow();
 });

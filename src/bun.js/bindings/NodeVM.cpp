@@ -244,6 +244,7 @@ public:
                 }
                 any = true;
             }
+            RETURN_IF_EXCEPTION(scope, false);
 
             if (JSValue contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s))) {
                 if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
@@ -252,6 +253,7 @@ public:
                 }
                 any = true;
             }
+            RETURN_IF_EXCEPTION(scope, false);
 
             if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
                 RETURN_IF_EXCEPTION(scope, false);

@@ -646,7 +646,7 @@ pub const SendQueue = struct {
     }
     fn _onWriteComplete(this: *SendQueue, n: i32) void {
         log("SendQueue#_onWriteComplete", .{});
-        if (!this.write_in_progress) {
+        if (!this.write_in_progress or this.queue.items.len < 1) {
             bun.debugAssert(false);
             return;
         }
@@ -773,7 +773,7 @@ pub const SendQueue = struct {
         if (status.toError(.write)) |_| {
             this._onWriteComplete(-1);
         } else {
-            this._onWriteComplete(status.int());
+            this._onWriteComplete(@bitCast(this.windows.write_buffer.len));
         }
     }
     fn getGlobalThis(this: *SendQueue) ?*JSC.JSGlobalObject {

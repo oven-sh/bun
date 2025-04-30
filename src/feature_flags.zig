@@ -159,4 +159,4 @@ pub fn bake() bool {
 
 /// Additional debugging features for bake.DevServer, such as the incremental visualizer.
 /// To use them, extra flags are passed in addition to this one.
-pub const bake_debugging_features = true;
+pub const bake_debugging_features = env.is_canary or env.isDebug;

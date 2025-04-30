@@ -305,11 +305,8 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 return globalThis.throwValue(err.toErrorInstance(globalThis));
             }
 
-            var allocator = globalThis.bunVM().allocator;
-            var this = allocator.create(ThisSink) catch {
-                return globalThis.throwValue(Syscall.Error.oom.toJSC(globalThis));
-            };
-            this.sink.construct(allocator);
+            var this = bun.new(SinkType, undefined);
+            this.construct(bun.default_allocator);
             return createObject(globalThis, this, 0);
         }
 

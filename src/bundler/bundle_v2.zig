@@ -2560,7 +2560,6 @@ pub const BundleV2 = struct {
 
         var ctx: DevServerInput = .{
             .css_entry_points = .{},
-            .inspector_build_id = inspector_build_id,
         };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
@@ -18020,9 +18019,6 @@ pub const DevServerOutput = struct {
     chunks: []Chunk,
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
-
-    /// Used for tracking start/end of a particular build.
-    inspector_build_id: i32,
 
     pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];

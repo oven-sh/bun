@@ -1028,22 +1028,14 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (try obj.getTruthy(global, "requestCert")) |request_cert| {
-                if (request_cert.isBoolean()) {
-                    result.request_cert = if (request_cert.asBoolean()) 1 else 0;
-                    any = true;
-                } else {
-                    return global.throw("Expected requestCert to be a boolean", .{});
-                }
+            if (try obj.getBooleanStrict(global, "requestCert")) |request_cert| {
+                result.request_cert = if (request_cert) 1 else 0;
+                any = true;
             }
 
-            if (try obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
-                if (reject_unauthorized.isBoolean()) {
-                    result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
-                    any = true;
-                } else {
-                    return global.throw("Expected rejectUnauthorized to be a boolean", .{});
-                }
+            if (try obj.getBooleanStrict(global, "rejectUnauthorized")) |reject_unauthorized| {
+                result.reject_unauthorized = if (reject_unauthorized) 1 else 0;
+                any = true;
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
@@ -3280,6 +3272,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.flags.has_written_status) {
                 this.renderMetadata();
             }
+
             // We are already corked!
             const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
                 globalThis,
@@ -3866,7 +3859,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
-            req.endStream(true);
+            req.endStream(req.shouldCloseConnection());
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {

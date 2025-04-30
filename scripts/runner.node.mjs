@@ -1354,7 +1354,6 @@ async function getVendorTests(cwd) {
  * @returns {string[]}
  */
 function getRelevantTests(cwd, testModifiers, testExpectations) {
-  console.log("getRelevantTests", cwd, testModifiers, testExpectations);
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];

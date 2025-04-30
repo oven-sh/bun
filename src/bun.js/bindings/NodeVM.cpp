@@ -789,6 +789,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             JSC::JSScope* jsScope = globalObject->globalScope();
             JSC::CodeBlock* codeBlock = nullptr;
             {
+                // JSC::ProgramCodeBlock::create() requires GC to be deferred.
                 DeferGC deferGC(vm);
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
             }

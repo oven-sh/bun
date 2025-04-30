@@ -688,21 +688,16 @@ resp.text().then((a) => {
   }
 });
 
-test("can retrieve bytecode with createCachedData", () => {
-  const script = new Script("1 + 1;", {
-    produceCachedData: false,
-  });
-  const cachedData = script.createCachedData();
-  expect(cachedData).toBeDefined();
-  expect(cachedData).toBeInstanceOf(Buffer);
-  expect(cachedData.byteLength).toBeGreaterThan(100);
-});
-
 test("can't use export syntax in vm.Script", () => {
   expect(() => {
     const script = new Script("export default {};");
     script.runInThisContext();
-  }).toThrow();
+  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
+
+  expect(() => {
+    const script = new Script("export default {};");
+    script.createCachedData();
+  }).toThrow({ message: "createCachedData failed" });
 });
 
 test("rejects invalid bytecode", () => {
@@ -715,12 +710,18 @@ test("rejects invalid bytecode", () => {
 
 test("accepts valid bytecode", () => {
   const source = "1 + 1;";
-  const firstScript = new Script(source);
+  const firstScript = new Script(source, {
+    produceCachedData: false,
+  });
   const cachedData = firstScript.createCachedData();
+  expect(cachedData).toBeDefined();
+  expect(cachedData).toBeInstanceOf(Buffer);
   const secondScript = new Script(source, {
     cachedData,
   });
   expect(secondScript.cachedDataRejected).toBeFalse();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(2);
 });
 
 test("can't use bytecode from a different script", () => {
@@ -730,4 +731,6 @@ test("can't use bytecode from a different script", () => {
     cachedData,
   });
   expect(secondScript.cachedDataRejected).toBeTrue();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(4);
 });

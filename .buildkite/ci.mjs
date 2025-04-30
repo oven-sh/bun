@@ -737,7 +737,6 @@ function getBenchmarkStep(buildPlatforms) {
  * @property {string | boolean} [buildImages]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
- * @property {Profile[]} [buildProfiles]
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
@@ -978,6 +977,7 @@ async function getPipelineOptions() {
         ?.map(item => item.trim())
         ?.filter(Boolean);
 
+    const buildProfiles = parseArray(options["build-profiles"]);
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
@@ -990,12 +990,11 @@ async function getPipelineOptions() {
       testFiles: parseArray(options["test-files"]),
       unifiedBuilds: parseBoolean(options["unified-builds"]),
       unifiedTests: parseBoolean(options["unified-tests"]),
-      buildProfiles: parseArray(options["build-profiles"]),
       buildPlatforms: buildPlatformKeys?.length
-        ? buildPlatformKeys.map(key => buildPlatformsMap.get(key))
+        ? buildPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...buildPlatformsMap.get(key), profile })))
         : Array.from(buildPlatformsMap.values()),
       testPlatforms: testPlatformKeys?.length
-        ? testPlatformKeys.map(key => testPlatformsMap.get(key))
+        ? testPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...testPlatformsMap.get(key), profile })))
         : Array.from(testPlatformsMap.values()),
       dryRun: parseBoolean(options["dry-run"]),
     };
@@ -1030,7 +1029,6 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: Array.from(new Set(buildPlatforms.map(({ profile }) => profile))),
   };
 }
 
@@ -1053,7 +1051,7 @@ async function getPipeline(options = {}) {
     return;
   }
 
-  const { buildProfiles = [], buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
@@ -1090,22 +1088,20 @@ async function getPipeline(options = {}) {
 
   if (!buildId) {
     steps.push(
-      ...buildPlatforms
-        .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
-        .map(target => {
-          const imageKey = getImageKey(target);
+      ...buildPlatforms.map(target => {
+        const imageKey = getImageKey(target);
 
-          return getStepWithDependsOn(
-            {
-              key: getTargetKey(target),
-              group: getTargetLabel(target),
-              steps: unifiedBuilds
-                ? [getBuildBunStep(target, options)]
-                : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
-            },
-            imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
-          );
-        }),
+        return getStepWithDependsOn(
+          {
+            key: getTargetKey(target),
+            group: getTargetLabel(target),
+            steps: unifiedBuilds
+              ? [getBuildBunStep(target, options)]
+              : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
+          },
+          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+        );
+      }),
     );
   }
 
@@ -1113,13 +1109,11 @@ async function getPipeline(options = {}) {
     const { skipTests, forceTests, unifiedTests, testFiles } = options;
     if (!skipTests || forceTests) {
       steps.push(
-        ...testPlatforms
-          .flatMap(platform => buildProfiles.map(profile => ({ ...platform, profile })))
-          .map(target => ({
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
-          })),
+        ...testPlatforms.map(target => ({
+          key: getTargetKey(target),
+          group: getTargetLabel(target),
+          steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+        })),
       );
     }
   }

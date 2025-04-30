@@ -231,8 +231,6 @@ pub const asset_prefix = internal_prefix ++ "/asset";
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 pub const client_prefix = internal_prefix ++ "/client";
 
-pub const DebuggerId = bun.GenericIndex(u31, DevServer);
-
 pub const RouteBundle = struct {
     pub const Index = bun.GenericIndex(u30, RouteBundle);
 
@@ -6216,9 +6214,10 @@ const HmrSocket = struct {
                 var pattern_str = bun.String.init(pattern);
                 defer pattern_str.deref();
                 agent.notifyClientNavigated(
+                    s.dev.debugger_id,
                     s.inspector_connection_id,
                     &pattern_str,
-                    if (rbi.unwrap()) |id| id.get() else -1,
+                    rbi.unwrap(),
                 );
             }
         }
@@ -7781,3 +7780,4 @@ const VLQ = SourceMap.VLQ;
 const StringJoiner = bun.StringJoiner;
 const AllocationScope = bun.AllocationScope;
 const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
+const DebuggerId = JSC.Debugger.DebuggerId;

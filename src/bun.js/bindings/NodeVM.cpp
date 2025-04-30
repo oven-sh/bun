@@ -46,6 +46,9 @@
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "wtf/FileHandle.h"
 
+#include "JavaScriptCore/ProgramCodeBlock.h"
+#include "JavaScriptCore/JIT.h"
+
 namespace Bun {
 using namespace WebCore;
 
@@ -146,7 +149,7 @@ public:
         return any;
     }
 
-    bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool* outProduceCachedData)
+    bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData)
     {
         JSValue produceCachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s));
         if (produceCachedDataOpt && !produceCachedDataOpt.isUndefined()) {
@@ -155,13 +158,13 @@ public:
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
                 return false;
             }
-            *outProduceCachedData = produceCachedDataOpt.asBoolean();
+            outProduceCachedData = produceCachedDataOpt.asBoolean();
             return true;
         }
         return false;
     }
 
-    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options)
+    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::vector<uint8_t>& outCachedData)
     {
         JSValue cachedDataOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s));
         if (cachedDataOpt && !cachedDataOpt.isUndefined()) {
@@ -171,32 +174,34 @@ public:
                 return false;
             }
 
-            // If it's a cell, verify it's a Buffer, TypedArray, or DataView
+            // If it's a cell, verify it's a Buffer, TypedArray or DataView
             if (cachedDataOpt.isCell()) {
-                JSCell* cell = cachedDataOpt.asCell();
                 bool isValidType = false;
 
-                // Check if it's a Buffer, TypedArray, or DataView
-                if (cell->inherits<JSC::JSArrayBufferView>() || cell->inherits<JSC::JSArrayBuffer>()) {
+                if (auto* arrayBufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedDataOpt)) {
+                    if (!arrayBufferView->isDetached()) {
+                        std::span<const uint8_t> span = arrayBufferView->span();
+                        outCachedData = { span.begin(), span.end() };
+                        isValidType = true;
+                    }
+                } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(cachedDataOpt)) {
+                    std::span<const uint8_t> span = arrayBuffer->impl()->span();
+                    outCachedData = { span.begin(), span.end() };
                     isValidType = true;
-                } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedDataOpt)) {
-                    isValidType = !view->isDetached();
                 }
 
                 if (!isValidType) {
                     ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
                     return false;
                 }
-                return true;
 
-                // TODO: actually use it
-                // this->cachedData = true;
+                return true;
             }
         }
         return false;
     }
 
-    bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>* outTimeout)
+    bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>& outTimeout)
     {
         JSValue timeoutOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "timeout"_s));
         if (timeoutOpt && !timeoutOpt.isUndefined()) {
@@ -209,7 +214,7 @@ public:
             V::validateInteger(scope, globalObject, timeoutOpt, "options.timeout"_s, jsNumber(1), jsNumber(std::numeric_limits<int64_t>().max()), &timeoutValue);
             RETURN_IF_EXCEPTION(scope, {});
 
-            *outTimeout = timeoutValue;
+            outTimeout = timeoutValue;
             return true;
         }
         return false;
@@ -220,8 +225,8 @@ class ScriptOptions : public BaseOptions {
 public:
     std::optional<int64_t> timeout = std::nullopt;
     bool importModuleDynamically = false;
-    bool cachedData = false;
     bool produceCachedData = false;
+    std::vector<uint8_t> cachedData;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
     {
@@ -248,21 +253,19 @@ public:
                 any = true;
             }
 
-            if (validateTimeout(globalObject, vm, scope, options, &this->timeout)) {
+            if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
             }
 
-            if (validateProduceCachedData(globalObject, vm, scope, options, &this->produceCachedData)) {
+            if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
             }
 
-            if (validateCachedData(globalObject, vm, scope, options)) {
+            if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
-                // TODO: actually use it
-                this->cachedData = true;
             }
         }
 
@@ -294,7 +297,7 @@ public:
                 any = true;
             }
 
-            if (validateTimeout(globalObject, vm, scope, options, &this->timeout)) {
+            if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
             }
@@ -316,10 +319,10 @@ public:
 
 class CompileFunctionOptions : public BaseOptions {
 public:
-    bool cachedData = false;
-    bool produceCachedData;
-    JSGlobalObject* parsingContext;
+    std::vector<uint8_t> cachedData;
+    JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions;
+    bool produceCachedData = false;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
     {
@@ -330,16 +333,14 @@ public:
         if (!optionsArg.isUndefined() && !optionsArg.isString()) {
             JSObject* options = asObject(optionsArg);
 
-            if (validateProduceCachedData(globalObject, vm, scope, options, &this->produceCachedData)) {
+            if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
             }
 
-            if (validateCachedData(globalObject, vm, scope, options)) {
+            if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
                 RETURN_IF_EXCEPTION(scope, false);
                 any = true;
-                // TODO: actually use it
-                this->cachedData = true;
             }
 
             JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
@@ -452,6 +453,8 @@ public:
     JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
+    TriState cachedDataRejected() const { return m_cachedDataRejected; }
+    void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
 
     DECLARE_VISIT_CHILDREN;
 
@@ -462,11 +465,12 @@ private:
     mutable JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
+    TriState m_cachedDataRejected = TriState::Indeterminate;
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)
         : Base(vm, structure)
         , m_source(source)
-        , m_options(options)
+        , m_options(WTFMove(options))
     {
     }
 
@@ -760,9 +764,39 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
     RETURN_IF_EXCEPTION(scope, {});
-    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source, options);
 
-    if (options.produceCachedData) {
+    const bool produceCachedData = options.produceCachedData;
+    auto cachedData = WTFMove(options.cachedData);
+    auto filename = options.filename;
+
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source, WTFMove(options));
+
+    if (!cachedData.empty()) {
+        JSC::ProgramExecutable* executable = script->cachedExecutable();
+        if (!executable) {
+            executable = script->createExecutable();
+        }
+        ASSERT(executable);
+
+        JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
+        JSC::SourceCodeKey key(source, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+        Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(cachedData, nullptr, {});
+        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
+        JSC::JSScope* jsScope = globalObject->globalScope();
+        JSC::CodeBlock* codeBlock = nullptr;
+        {
+            DeferGC deferGC(vm);
+            codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+        }
+        codeBlock->jitNextInvocation();
+        JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
+        if (compilationResult != JSC::CompilationResult::CompilationFailed) {
+            executable->installCode(codeBlock);
+            script->cachedDataRejected(TriState::False);
+        } else {
+            script->cachedDataRejected(TriState::True);
+        }
+    } else if (produceCachedData) {
         script->cacheBytecode();
         // TODO(@heimskr): is there ever a case where bytecode production fails?
         script->cachedDataProduced(true);
@@ -845,11 +879,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject * globalObject, 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return constructScript(globalObject, callFrame, callFrame->newTarget());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    return JSValue::encode(jsBoolean(true)); // TODO
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -986,6 +1015,26 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     }
 
     return JSValue::encode(jsBoolean(script->cachedDataProduced()));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = JSValue::decode(thisValueEncoded);
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    if (UNLIKELY(!script)) {
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+    }
+
+    switch (script->cachedDataRejected()) {
+    case TriState::True:
+        return JSValue::encode(jsBoolean(true));
+    case TriState::False:
+        return JSValue::encode(jsBoolean(false));
+    default:
+        return JSValue::encode(jsUndefined());
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1346,7 +1395,6 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, NodeVMScriptPrototype::Base);
 
 static const struct HashTableValue scriptPrototypeTableValues[] = {
-    { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptCreateCachedData, 1 } },
     { "runInContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInContext, 2 } },
     { "runInNewContext"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, scriptRunInNewContext, 2 } },
@@ -1354,6 +1402,7 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
     { "sourceMapURL"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetSourceMapURL, nullptr } },
     { "cachedData"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedData, nullptr } },
     { "cachedDataProduced"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataProduced, nullptr } },
+    { "cachedDataRejected"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, scriptGetCachedDataRejected, nullptr } },
 };
 
 // NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -1466,7 +1515,7 @@ JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)
 
 NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, SourceCode source, ScriptOptions options)
 {
-    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, source, options);
+    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, source, WTFMove(options));
     ptr->finishCreation(vm);
     return ptr;
 }

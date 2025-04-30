@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import fs from "node:fs";
 import { basename, join } from "node:path";
-import { debug } from "node:console";
+import { tmpdir } from "node:os";
 
 // usage: bun debug-coredump.ts
 // -p <PID of the test that crashed> (buildkite should show this)
@@ -34,7 +34,7 @@ if (coresUrl === undefined) throw new Error("no cores-url given");
 if (identityFile === undefined) throw new Error("no identity-file given");
 
 const id = Bun.hash(buildUrl + coresUrl).toString(36);
-const dir = join(import.meta.dir, "..", `debug-coredump-${id}.tmp`);
+const dir = join(tmpdir(), `debug-coredump-${id}.tmp`);
 fs.mkdirSync(dir, { recursive: true });
 
 if (!fs.existsSync(join(dir, "bun-profile")) || !fs.existsSync(join(dir, `bun-${pid}.core`))) {
@@ -57,6 +57,9 @@ if (!fs.existsSync(join(dir, "bun-profile")) || !fs.existsSync(join(dir, `bun-${
 } else {
   console.log(`already downloaded in ${dir}`);
 }
+
+console.log("launching debugger:");
+console.log(`${debuggerPath} --core ${join(dir, `bun-${pid}.core`)} ${join(dir, "bun-profile")}`);
 
 const proc = await Bun.spawn([debuggerPath, "--core", join(dir, `bun-${pid}.core`), join(dir, "bun-profile")], {
   stdin: "inherit",

@@ -540,7 +540,7 @@ pub const SendQueue = struct {
         // fallback case: append a new message to the queue
         callback.protect(); // now it is owned by the queue and will be unprotected on deinit.
         self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
-        return &self.queue.items[0];
+        return &self.queue.items[self.queue.items.len - 1];
     }
     /// returned pointer is invalidated if the queue is modified
     pub fn insertMessage(this: *SendQueue, message: SendHandle) void {

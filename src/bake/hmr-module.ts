@@ -14,9 +14,11 @@ import {
   __name,
   __using,
 } from "../runtime.bun";
+import { derefMapping, type SourceMapURL } from "./client/stack-trace";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
-let registry = new Map<Id, HMRModule>();
+const registry = new Map<Id, HMRModule>();
+const registrySourceMapIds = new Map<string, SourceMapURL>();
 /** Server */
 export const serverManifest = {};
 /** Server */
@@ -28,7 +30,7 @@ let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
-let lazyDynamicImportWithOptions;
+let lazyDynamicImportWithOptions: null | Function = null;
 
 const enum State {
   Pending,
@@ -591,7 +593,7 @@ type HMREvent =
   | "bun:ws:connect";
 
 /** Called when modules are replaced. */
-export async function replaceModules(modules: Record<Id, UnloadedModule>) {
+export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
 
   emitEvent("bun:beforeUpdate", null);
@@ -607,6 +609,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
+    // Unref old source maps, and track new ones
+    if (side === "client") {
+      DEBUG.ASSERT(sourceMapId);
+      const existingSourceMapId = registrySourceMapIds.get(key);
+      if (existingSourceMapId) derefMapping(existingSourceMapId);
+      registrySourceMapIds.set(key, sourceMapId);
+    }
+
     const existing = registry.get(key);
     if (!existing) continue;
 

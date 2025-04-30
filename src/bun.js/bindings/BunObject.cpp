@@ -630,7 +630,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     WTF::URL url;
 
     auto path = JSC::JSValue::encode(arg0);
-    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
+    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(path);
     if (!domURL) {
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));

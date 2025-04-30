@@ -6433,7 +6433,8 @@ declare module "bun" {
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err];
+      stdio?: [In, Out, Err, ...Readable[]];
+
       /**
        * The file descriptor for the standard input. It may be:
        *
@@ -6735,6 +6736,11 @@ declare module "bun" {
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
+     * Access extra file descriptors passed to the `stdio` option in the options object.
+     */
+    readonly stdio: [null, null, null, ...number[]];
+
+    /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
@@ -6750,6 +6756,7 @@ declare module "bun" {
      * ```
      */
     readonly pid: number;
+
     /**
      * The exit code of the process
      *

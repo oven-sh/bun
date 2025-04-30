@@ -404,7 +404,8 @@ function getBuildEnv(target, options) {
 function getBuildCommand(target, options) {
   const { profile } = target;
 
-  return `bun run build:${profile}`;
+  const label = profile || "release";
+  return `bun run build:${label}`;
 }
 
 /**

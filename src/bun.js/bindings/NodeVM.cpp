@@ -782,19 +782,24 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::SourceCodeKey key(source, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(cachedData, nullptr, {});
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
-        JSC::JSScope* jsScope = globalObject->globalScope();
-        JSC::CodeBlock* codeBlock = nullptr;
-        {
-            DeferGC deferGC(vm);
-            codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
-        }
-        codeBlock->jitNextInvocation();
-        JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
-        if (compilationResult != JSC::CompilationResult::CompilationFailed) {
-            executable->installCode(codeBlock);
-            script->cachedDataRejected(TriState::False);
-        } else {
+
+        if (!unlinkedBlock) {
             script->cachedDataRejected(TriState::True);
+        } else {
+            JSC::JSScope* jsScope = globalObject->globalScope();
+            JSC::CodeBlock* codeBlock = nullptr;
+            {
+                DeferGC deferGC(vm);
+                codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+            }
+            codeBlock->jitNextInvocation();
+            JSC::CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
+            if (compilationResult != JSC::CompilationResult::CompilationFailed) {
+                executable->installCode(codeBlock);
+                script->cachedDataRejected(TriState::False);
+            } else {
+                script->cachedDataRejected(TriState::True);
+            }
         }
     } else if (produceCachedData) {
         script->cacheBytecode();

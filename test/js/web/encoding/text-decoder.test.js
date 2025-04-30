@@ -538,3 +538,32 @@ describe("stream", () => {
     });
   }
 });
+
+describe("TextDecoder", () => {
+  {
+    it("coerces the fatal flag to boolean : 1 : true", () => {
+        let decoder = new TextDecoder("utf-8", { fatal: 1 });
+        expect(decoder.fatal).toBe(true);
+	});    
+
+    it("coerces the fatal flag to boolean : 0 : false", () => {
+        let decoder = new TextDecoder("utf-8", { fatal: 0 });
+        expect(decoder.fatal).toBe(false);
+	}); 
+
+    it("coerces the fatal flag to boolean : string : true", () => {
+        let decoder = new TextDecoder("utf-8", { fatal: "string" });
+        expect(decoder.fatal).toBe(true);
+	});
+    
+    it("coerces the fatal flag to boolean : null -> false", () => {
+        let decoder = new TextDecoder("utf-8", { fatal: null });
+        expect(decoder.fatal).toBe(false);
+	});
+
+    it("coerces the fatal flag to boolean : \"\" -> false", () => {
+        let decoder = new TextDecoder("utf-8", { fatal: "" });
+        expect(decoder.fatal).toBe(false);
+        });
+  }
+});

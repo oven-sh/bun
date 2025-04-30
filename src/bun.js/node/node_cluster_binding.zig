@@ -65,7 +65,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         }
     };
 
-    const good = ipc_instance.data.send_queue.serializeAndSend(globalThis, message, .internal, .null, null);
+    const good = ipc_instance.data.serializeAndSend(globalThis, message, .internal, .null, null);
 
     if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
@@ -197,12 +197,12 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        ipc_data.send_queue.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.send_queue.internal_msg_queue.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
+        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder
-    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(ipc_data.send_queue.internal_msg_queue.seq));
-    ipc_data.send_queue.internal_msg_queue.seq +%= 1;
+    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
+    ipc_data.internal_msg_queue.seq +%= 1;
 
     // similar code as bun.JSC.Subprocess.doSend
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -210,7 +210,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
-    const success = ipc_data.send_queue.serializeAndSend(globalThis, message, .internal, .null, null);
+    const success = ipc_data.serializeAndSend(globalThis, message, .internal, .null, null);
     return if (success == .success) .true else .false;
 }
 
@@ -219,8 +219,8 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc() orelse return .undefined;
     // TODO: remove these strongs.
-    ipc_data.send_queue.internal_msg_queue.worker = .create(arguments[1], globalThis);
-    ipc_data.send_queue.internal_msg_queue.cb = .create(arguments[2], globalThis);
+    ipc_data.internal_msg_queue.worker = .create(arguments[1], globalThis);
+    ipc_data.internal_msg_queue.cb = .create(arguments[2], globalThis);
     return .undefined;
 }
 
@@ -233,12 +233,12 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
     if (try message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
-            if (ipc_data.send_queue.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
+            if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
                 defer cbstrong.deinit();
-                _ = ipc_data.send_queue.internal_msg_queue.callbacks.swapRemove(ack);
+                _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
-                event_loop.runCallback(cb, globalThis, ipc_data.send_queue.internal_msg_queue.worker.get().?, &.{
+                event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
                     message,
                     .null, // handle
                 });
@@ -246,8 +246,8 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
             }
         }
     }
-    const cb = ipc_data.send_queue.internal_msg_queue.cb.get().?;
-    event_loop.runCallback(cb, globalThis, ipc_data.send_queue.internal_msg_queue.worker.get().?, &.{
+    const cb = ipc_data.internal_msg_queue.cb.get().?;
+    event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
         message,
         .null, // handle
     });

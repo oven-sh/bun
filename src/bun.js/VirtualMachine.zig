@@ -3327,12 +3327,12 @@ pub const IPCInstance = struct {
 
     globalThis: ?*JSGlobalObject,
     context: if (Environment.isPosix) *uws.SocketContext else void,
-    data: IPC.IPCData,
+    data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
     const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 
-    pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
+    pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
     }
     pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
@@ -3368,7 +3368,6 @@ pub const IPCInstance = struct {
     pub fn handleIPCClose(this: *IPCInstance) void {
         IPC.log("IPCInstance#handleIPCClose", .{});
         var vm = VirtualMachine.get();
-        vm.ipc = null;
         const event_loop = vm.eventLoop();
         node_cluster_binding.child_singleton.deinit();
         event_loop.enter();
@@ -3378,14 +3377,11 @@ pub const IPCInstance = struct {
             uws.us_socket_context_free(0, this.context);
         }
         vm.channel_ref.disable();
-
-        if (this.ipc()) |ipc_data| ipc_data.deinit();
-        this.deinit();
     }
 
     export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
         if (global.bunVM().getIPCInstance()) |current_ipc| {
-            current_ipc.data.send_queue.closeSocketNextTick(true);
+            current_ipc.data.closeSocketNextTick(true);
         }
     }
 
@@ -3419,9 +3415,9 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             this.ipc = .{ .initialized = instance };
 
-            instance.data = .{ .send_queue = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized) };
+            instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data.send_queue, null) orelse {
+            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data, null) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3429,7 +3425,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             };
             socket.setTimeout(0);
 
-            instance.data.send_queue.socket = .{ .open = socket };
+            instance.data.socket = .{ .open = socket };
 
             break :instance instance;
         },
@@ -3439,11 +3435,11 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
                 .context = {},
                 .data = undefined,
             });
-            instance.data = .{ .send_queue = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized) };
+            instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
             this.ipc = .{ .initialized = instance };
 
-            instance.data.configureClient(opts.info) catch {
+            instance.data.windowsConfigureClient(opts.info) catch {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
@@ -3454,7 +3450,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
         },
     };
 
-    instance.data.send_queue.writeVersionPacket(this.global);
+    instance.data.writeVersionPacket(this.global);
 
     return instance;
 }

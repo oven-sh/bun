@@ -30,7 +30,7 @@ has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true)
 this_jsvalue: JSC.JSValue = .zero,
 
 /// `null` indicates all of the IPC data is uninitialized.
-ipc_data: ?IPC.IPCData,
+ipc_data: ?IPC.SendQueue,
 flags: Flags = .{},
 
 weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -756,7 +756,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
 }
 pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
     const ipc_data = this.ipc() orelse return;
-    ipc_data.send_queue.closeSocketNextTick(nextTick);
+    ipc_data.closeSocketNextTick(nextTick);
 }
 pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     _ = globalThis;
@@ -768,7 +768,7 @@ pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JS
 pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
     _ = globalThis;
     const ipc_data = this.ipc();
-    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.send_queue.isConnected());
+    return JSValue.jsBoolean(ipc_data != null and ipc_data.?.isConnected());
 }
 
 pub fn pid(this: *const Subprocess) i32 {
@@ -2339,9 +2339,9 @@ pub fn spawnMaybeSync(
         .ref_count = .initExactRefs(2),
         .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
         .ipc_data = if (!is_sync and comptime Environment.isWindows)
-            if (maybe_ipc_mode) |ipc_mode| .{
-                .send_queue = .init(ipc_mode, .{ .subprocess = subprocess }, .uninitialized),
-            } else null
+            if (maybe_ipc_mode) |ipc_mode| ( //
+                .init(ipc_mode, .{ .subprocess = subprocess }, .uninitialized) //
+            ) else null
         else
             null,
 
@@ -2363,9 +2363,7 @@ pub fn spawnMaybeSync(
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
             )) |socket| {
-                subprocess.ipc_data = .{
-                    .send_queue = .init(mode, .{ .subprocess = subprocess }, .uninitialized),
-                };
+                subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);
             }
         }
@@ -2374,14 +2372,11 @@ pub fn spawnMaybeSync(
     if (subprocess.ipc_data) |*ipc_data| {
         if (Environment.isPosix) {
             if (posix_ipc_info.ext(*IPC.SendQueue)) |ctx| {
-                ctx.* = &subprocess.ipc_data.?.send_queue;
-                subprocess.ipc_data.?.send_queue.socket = .{ .open = posix_ipc_info };
-                subprocess.ref(); // + one ref for the IPC
+                ctx.* = &subprocess.ipc_data.?;
+                subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
         } else {
-            subprocess.ref(); // + one ref for the IPC
-
-            if (ipc_data.configureServer(
+            if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
@@ -2389,7 +2384,7 @@ pub fn spawnMaybeSync(
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
-        ipc_data.send_queue.writeVersionPacket(globalThis);
+        ipc_data.writeVersionPacket(globalThis);
     }
 
     if (subprocess.stdin == .pipe) {
@@ -2615,26 +2610,18 @@ pub fn handleIPCClose(this: *Subprocess) void {
     const globalThis = this.globalThis;
     this.updateHasPendingActivity();
 
-    defer this.deref();
-    var ok = false;
-    if (this.ipc()) |ipc_data| {
-        ok = true;
-        ipc_data.deinit();
-    }
-    this.ipc_data = null;
-
     if (this_jsvalue != .zero) {
         // Avoid keeping the callback alive longer than necessary
         JSC.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
         if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
-            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(ok)});
+            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(true)});
         }
     }
 }
 
-pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
+pub fn ipc(this: *Subprocess) ?*IPC.SendQueue {
     return &(this.ipc_data orelse return null);
 }
 pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {

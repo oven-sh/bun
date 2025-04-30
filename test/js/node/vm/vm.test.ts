@@ -706,6 +706,7 @@ test("rejects invalid bytecode", () => {
     cachedData,
   });
   expect(script.cachedDataRejected).toBeTrue();
+  expect(script.runInThisContext()).toBe(2);
 });
 
 test("accepts valid bytecode", () => {

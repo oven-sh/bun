@@ -32,7 +32,7 @@ if (isMainThread) {
       promises.push(promise);
 
       worker.on("online", () => {
-        sleep(10000)
+        sleep(1)
           .then(() => {
             return worker.terminate();
           })

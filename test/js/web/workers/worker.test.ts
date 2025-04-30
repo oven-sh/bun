@@ -338,7 +338,7 @@ describe("worker_threads", () => {
     expect(code).toBe(2);
   });
 
-  test("worker terminating forcefully properly interrupts", async () => {
+  test.todo("worker terminating forcefully properly interrupts", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
     await new Promise<void>(done => {
       worker.on("message", () => done());

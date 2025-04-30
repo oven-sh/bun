@@ -6006,9 +6006,16 @@ pub const IncomingMessageId = enum(u8) {
     set_url = 'n',
     /// Tells the DevServer to batch events together.
     testing_batch_events = 'H',
+    /// Console log from the client
+    console_log = 'l',
 
     /// Invalid data
     _,
+};
+
+pub const ConsoleLogKind = enum(u8) {
+    log = 'l',
+    err = 'e',
 };
 
 const HmrTopic = enum(u8) {
@@ -6180,6 +6187,24 @@ const HmrSocket = struct {
 
                     event.entry_points.deinit(s.dev.allocator);
                 },
+            },
+            .console_log => {
+                const kind: ConsoleLogKind = switch (msg[1]) {
+                    'l' => .log,
+                    'e' => .err,
+                    else => {
+                        ws.close();
+                        return;
+                    },
+                };
+
+                const data = msg[2..];
+
+                if (s.dev.inspector()) |agent| {
+                    var log_str = bun.String.init(data);
+                    defer log_str.deref();
+                    agent.notifyConsoleLog(s.dev.debugger_id, kind, &log_str);
+                }
             },
             _ => ws.close(),
         }

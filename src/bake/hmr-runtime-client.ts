@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import './debug';
+import "./debug";
 import {
   loadModuleAsync,
   replaceModules,
@@ -15,7 +15,7 @@ import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
-import { addMapping, SourceMapURL } from './client/stack-trace';
+import { addMapping, SourceMapURL } from "./client/stack-trace";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -75,7 +75,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
     console.error(e);
     fullReload();
   });
-}
+};
 
 let isFirstRun = true;
 const handlers = {
@@ -163,13 +163,13 @@ const handlers = {
     // JavaScript modules
     if (reader.hasMoreData()) {
       const rest = reader.rest();
-      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
+      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
       DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
-      const blob = new Blob([rest], { type: 'application/javascript' });
+      const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
-      const script = document.createElement('script');
+      const script = document.createElement("script");
       scriptTags.set(sourceMapId, [script, rest.byteLength]);
-      script.className = 'bun-hmr-script';
+      script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);
@@ -196,7 +196,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
   } else if (error) {
     console.error(error);
   } else {
-    console.error('Failed to load HMR script', event);
+    console.error("Failed to load HMR script", event);
   }
   fullReload();
 }
@@ -238,6 +238,19 @@ window.addEventListener("unhandledrejection", event => {
       console.error(reloadError.message);
     }
   }
+}
+
+if (true) {
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = function (...args: any[]) {
+    originalLog(...args);
+    ws.send("l" + "l" + JSON.stringify(args));
+  };
+  console.error = function (...args: any[]) {
+    originalError(...args);
+    ws.send("l" + "e" + JSON.stringify(args));
+  };
 }
 
 try {

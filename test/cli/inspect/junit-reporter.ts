@@ -21,9 +21,9 @@ interface Message {
 }
 
 export class InspectorSession {
-  private messageCallbacks: Map<number, (result: any) => void>;
-  private eventListeners: Map<string, ((params: any) => void)[]>;
-  private nextId: number;
+  protected messageCallbacks: Map<number, (result: any) => void>;
+  protected eventListeners: Map<string, ((params: any) => void)[]>;
+  nextId: number;
   framer?: SocketFramer;
   socket?: Socket<{ onData: (socket: Socket<any>, data: Buffer) => void }>;
 
@@ -36,6 +36,7 @@ export class InspectorSession {
   onMessage(data: string) {
     if (debug) console.log(data);
     const message: Message = JSON.parse(data);
+    // console.log({ message });
 
     if (message.id && this.messageCallbacks.has(message.id)) {
       const callback = this.messageCallbacks.get(message.id)!;
@@ -113,7 +114,7 @@ export class JUnitReporter {
     this.setupEventListeners();
   }
 
-  private async enableDomains() {
+  protected async enableDomains() {
     this.session.send("Inspector.enable");
     this.session.send("TestReporter.enable");
     this.session.send("LifecycleReporter.enable");
@@ -121,7 +122,7 @@ export class JUnitReporter {
     this.session.send("Runtime.enable");
   }
 
-  private setupEventListeners() {
+  protected setupEventListeners() {
     this.session.addEventListener("TestReporter.found", this.handleTestFound.bind(this));
     this.session.addEventListener("TestReporter.start", this.handleTestStart.bind(this));
     this.session.addEventListener("TestReporter.end", this.handleTestEnd.bind(this));

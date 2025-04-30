@@ -15,6 +15,8 @@ mode: enum {
 
 test_reporter_agent: TestReporterAgent = .{},
 lifecycle_reporter_agent: LifecycleAgent = .{},
+frontend_dev_server_agent: BunFrontendDevServerAgent = .{},
+
 must_block_until_connected: bool = false,
 
 pub const Wait = enum { off, shortly, forever };
@@ -411,6 +413,8 @@ pub const LifecycleAgent = struct {
         return this.handle != null;
     }
 };
+
+pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 
 const std = @import("std");
 const bun = @import("bun");

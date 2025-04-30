@@ -594,16 +594,16 @@ register_command(
       build ${ZIG_STEPS}
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
-      -Dobj_format=${ZIG_OBJECT_FORMAT}
+      -Dobj-format=${ZIG_OBJECT_FORMAT}
       -Dtarget=${ZIG_TARGET}
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
-      -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable-logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Dversion=${VERSION}
-      -Dreported_nodejs_version=${NODEJS_VERSION}
+      -Dreported-nodejs-version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
-      -Dcodegen_path=${CODEGEN_PATH}
-      -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
+      -Dcodegen-path=${CODEGEN_PATH}
+      -Dcodegen-embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
       --summary all
       ${ZIG_FLAGS_BUN}

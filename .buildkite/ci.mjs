@@ -383,29 +383,28 @@ function getTestAgent(platform, options) {
  * @returns {Record<string, string | undefined>}
  */
 function getBuildEnv(target, options) {
-  const { profile, baseline, abi } = target;
-  const release = !profile || profile === "release";
+  const { baseline, abi } = target;
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
-  const isMusl = abi === "musl";
-
-  let CMAKE_BUILD_TYPE = release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo";
-  if (isMusl && release) {
-    CMAKE_BUILD_TYPE = "MinSizeRel";
-  }
-
   return {
-    CMAKE_BUILD_TYPE,
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
     CANARY_REVISION: revision,
-    ENABLE_ASSERTIONS: release ? "OFF" : "ON",
-    ENABLE_LOGS: release ? "OFF" : "ON",
-    ENABLE_ASAN: profile === "asan" ? "ON" : "OFF",
-    ABI: isMusl ? "musl" : undefined,
+    ABI: abi === "musl" ? "musl" : undefined,
     CMAKE_TLS_VERIFY: "0",
   };
+}
+
+/**
+ * @param {Target} target
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getBuildCommand(target, options) {
+  const { profile } = target;
+
+  return `bun run build:${profile}`;
 }
 
 /**
@@ -421,7 +420,7 @@ function getBuildVendorStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: "bun run build:ci --target dependencies",
+    command: `${getBuildCommand(platform, options)} --target dependencies`,
   };
 }
 
@@ -431,6 +430,7 @@ function getBuildVendorStep(platform, options) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
+  const command = getBuildCommand(platform, options);
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -444,7 +444,7 @@ function getBuildCppStep(platform, options) {
     // We used to build the C++ dependencies and bun in seperate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: ["bun run build:ci --target bun", "bun run build:ci --target dependencies"],
+    command: [`${command} --target bun`, `${command} --target dependencies`],
   };
 }
 
@@ -478,7 +478,7 @@ function getBuildZigStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
+    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
     timeout_in_minutes: 35,
   };
 }
@@ -500,7 +500,7 @@ function getLinkBunStep(platform, options) {
       BUN_LINK_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun",
+    command: `${getBuildCommand(platform, options)} --target bun`,
   };
 }
 
@@ -517,7 +517,7 @@ function getBuildBunStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: "bun run build:ci",
+    command: getBuildCommand(platform, options),
   };
 }
 
@@ -1027,7 +1027,7 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: ["release"],
+    buildProfiles: Array.from(new Set(buildPlatforms.map(({ profile }) => profile))),
   };
 }
 

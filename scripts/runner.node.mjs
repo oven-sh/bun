@@ -25,17 +25,23 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep, extname } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  getAbi,
+  getAbiVersion,
+  getArch,
   getBranch,
   getBuildLabel,
   getBuildUrl,
   getCommit,
+  getDistro,
+  getDistroVersion,
   getEnv,
   getFileUrl,
   getHostname,
   getLoggedInUserCountOrDetails,
+  getOs,
   getSecret,
   getShell,
   getWindowsExitReason,
@@ -228,6 +234,50 @@ function getTestExpectations() {
 }
 
 /**
+ * @param {string} testPath
+ * @returns {string[]}
+ */
+function getTestModifiers(testPath) {
+  const ext = extname(testPath);
+  const filename = basename(testPath, ext);
+  const modifiers = filename.split("-").filter(value => value !== "bun");
+
+  const os = getOs();
+  const arch = getArch();
+  modifiers.push(os, arch, `${os}-${arch}`);
+
+  const distro = getDistro();
+  if (distro) {
+    modifiers.push(distro, `${os}-${distro}`, `${os}-${arch}-${distro}`);
+    const distroVersion = getDistroVersion();
+    if (distroVersion) {
+      modifiers.push(
+        distroVersion,
+        `${distro}-${distroVersion}`,
+        `${os}-${distro}-${distroVersion}`,
+        `${os}-${arch}-${distro}-${distroVersion}`,
+      );
+    }
+  }
+
+  const abi = getAbi();
+  if (abi) {
+    modifiers.push(abi, `${os}-${abi}`, `${os}-${arch}-${abi}`);
+    const abiVersion = getAbiVersion();
+    if (abiVersion) {
+      modifiers.push(
+        abiVersion,
+        `${abi}-${abiVersion}`,
+        `${os}-${abi}-${abiVersion}`,
+        `${os}-${arch}-${abi}-${abiVersion}`,
+      );
+    }
+  }
+
+  return modifiers.map(value => value.toUpperCase());
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -239,10 +289,14 @@ async function runTests() {
   }
   !isQuiet && console.log("Bun:", execPath);
 
+  const expectations = getTestExpectations();
+  const modifiers = getTestModifiers(execPath);
+  !isQuiet && console.log("Modifiers:", modifiers);
+
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
@@ -1295,13 +1349,14 @@ async function getVendorTests(cwd) {
 
 /**
  * @param {string} cwd
+ * @param {string[]} testModifiers
+ * @param {TestExpectation[]} testExpectations
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
+function getRelevantTests(cwd, testModifiers, testExpectations) {
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
-  const expectations = getTestExpectations();
 
   if (options["node-tests"]) {
     tests = tests.filter(isNodeTest);
@@ -1339,6 +1394,22 @@ function getRelevantTests(cwd) {
         }
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const skipExpectations = testExpectations
+    .filter(({ modifiers, expectations }) => testModifiers.some(modifier => modifiers.includes(modifier)))
+    .map(({ filename }) => filename);
+  if (skipExpectations.length) {
+    const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
+    if (skippedTests.length) {
+      for (const testPath of skippedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      !isQuiet && console.log("Skipping tests:", skipExpectations, skippedTests.length, "/", availableTests.length);
     }
   }
 

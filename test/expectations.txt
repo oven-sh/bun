@@ -9,6 +9,8 @@
 [ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
 [ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
 [ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
+[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
+[ ASAN ] test/cli/install/bun-install.test.ts [ FLAKY ] # destroy(Closer) logs
 
 # Tests failed due to ASAN
 [ ASAN ] test/js/node/test/parallel/test-common-gc.js [ FAIL ]
@@ -20,6 +22,7 @@
 [ ASAN ] test/js/bun/sqlite/sqlite.test.js [ FAIL ] # can continue to use existing statements after database has been GC'd
 [ ASAN ] test/integration/bun-types/bun-types.test.ts [ FAIL ] # @types/bun integration test > checks without lib.dom.d.ts
 [ ASAN ] test/cli/create/create-jsx.test.ts [ FAIL ] # development: false > react spa (tailwind) > build
+[ ASAN ] test/bake/dev/stress.test.ts [ FLAKY ] # DEV:stress-1: crash #18910
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/test/parallel/test-http2-removed-header-stays-removed.js [ CRASH ]
@@ -40,6 +43,7 @@
 [ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-linux-parallel-remove.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-utimes.js [ CRASH ]
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
+[ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
 [ ASAN ] test/integration/vite-build/vite-build.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
@@ -65,6 +69,7 @@
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
+[ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
 
 # Tests failed due to ASAN: unknown-crash
 [ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions

@@ -2,7 +2,7 @@ const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const js = bun.JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
@@ -394,7 +394,7 @@ pub const Data = struct {
     }
 };
 
-pub const BabyString = packed struct {
+pub const BabyString = packed struct(u32) {
     offset: u16,
     len: u16,
 
@@ -448,8 +448,8 @@ pub const Msg = struct {
 
     pub fn toJS(this: Msg, globalObject: *bun.JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         return switch (this.metadata) {
-            .build => JSC.BuildMessage.create(globalObject, allocator, this),
-            .resolve => JSC.ResolveMessage.create(globalObject, allocator, this, ""),
+            .build => bun.api.BuildMessage.create(globalObject, allocator, this),
+            .resolve => bun.api.ResolveMessage.create(globalObject, allocator, this, ""),
         };
     }
 
@@ -758,15 +758,15 @@ pub const Log = struct {
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {
-                    .build => JSC.BuildMessage.create(global, allocator, msg),
-                    .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
+                    .build => bun.api.BuildMessage.create(global, allocator, msg),
+                    .resolve => bun.api.ResolveMessage.create(global, allocator, msg, ""),
                 };
             },
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
                     errors_stack[i] = switch (msg.metadata) {
-                        .build => JSC.BuildMessage.create(global, allocator, msg),
-                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
+                        .build => bun.api.BuildMessage.create(global, allocator, msg),
+                        .resolve => bun.api.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
                 const out = JSC.ZigString.init(message);

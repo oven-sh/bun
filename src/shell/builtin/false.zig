@@ -17,7 +17,7 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("root").bun;
+const bun = @import("bun");
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;

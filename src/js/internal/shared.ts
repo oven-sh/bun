@@ -7,7 +7,7 @@ class NotImplementedError extends Error {
       feature +
         " is not yet implemented in Bun." +
         (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : "") +
-        (!!extra ? ". " + extra : ""),
+        (extra ? ". " + extra : ""),
     );
     this.name = "NotImplementedError";
     this.code = "ERR_NOT_IMPLEMENTED";

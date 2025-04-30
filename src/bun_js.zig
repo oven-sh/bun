@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 
 const lex = bun.js_lexer;
@@ -322,8 +322,8 @@ pub const Run = struct {
         }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => JSC.HotReloader.enableHotModuleReloading(vm),
-            .watch => JSC.WatchReloader.enableHotModuleReloading(vm),
+            .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+            .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
             else => {},
         }
 
@@ -476,7 +476,7 @@ pub const Run = struct {
             );
         }
 
-        JSC.napi.fixDeadCodeElimination();
+        bun.api.napi.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
         vm.globalExit();
     }

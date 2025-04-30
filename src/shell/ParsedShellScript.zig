@@ -1,4 +1,7 @@
-pub usingnamespace JSC.Codegen.JSParsedShellScript;
+pub const js = JSC.Codegen.JSParsedShellScript;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs
@@ -45,7 +48,7 @@ pub fn finalize(
 
 pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments_ = callframe.arguments_old(2);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const str_js = arguments.nextEat() orelse {
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };
@@ -161,7 +164,7 @@ pub fn createParsedShellScript(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
 }
 
 const ParsedShellScript = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
 const interpreter = @import("./interpreter.zig");
@@ -174,6 +177,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
 const Node = JSC.Node;
-const ArgumentsSlice = JSC.Node.ArgumentsSlice;
+const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const assert = bun.assert;
 const log = bun.Output.scoped(.ParsedShellScript, true);

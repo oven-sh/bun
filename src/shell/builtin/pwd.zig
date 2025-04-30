@@ -84,7 +84,7 @@ pub inline fn bltn(this: *Pwd) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellCat, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

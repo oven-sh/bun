@@ -91,7 +91,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 
                 .Null, .Empty => {
                     break :brk .{
-                        .InternalBlob = JSC.WebCore.InternalBlob{
+                        .InternalBlob = .{
                             .bytes = std.ArrayList(u8).init(bun.default_allocator),
                         },
                     };
@@ -343,13 +343,13 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Api = @import("../../../api/schema.zig").Api;
 const JSC = bun.JSC;
 const uws = bun.uws;
-const Headers = JSC.WebCore.Headers;
+const Headers = bun.http.Headers;
 const AnyServer = JSC.API.AnyServer;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const writeStatus = @import("../server.zig").writeStatus;
 const AnyResponse = uws.AnyResponse;

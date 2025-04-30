@@ -4,7 +4,7 @@ meta: Meta = .{},
 
 pub const Args = union(enum) {
     slices: []const Slice,
-    args: []const JSC.Node.BlobOrStringOrBuffer,
+    args: []const node.BlobOrStringOrBuffer,
     raw: []const []const u8,
 
     pub fn len(this: *const @This()) usize {
@@ -153,8 +153,10 @@ pub const PromisePair = struct {
 
 const Command = @This();
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const protocol = @import("valkey_protocol.zig");
 const std = @import("std");
 const Slice = JSC.ZigString.Slice;
+
+const node = bun.api.node;

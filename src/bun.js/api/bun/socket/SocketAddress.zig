@@ -5,7 +5,11 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
-pub usingnamespace JSC.Codegen.JSSocketAddress;
+pub const js = JSC.Codegen.JSSocketAddress;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 pub const new = bun.TrivialNew(SocketAddress);
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
@@ -111,9 +115,9 @@ pub const Options = struct {
     }
     inline fn throwBadPort(global: *JSC.JSGlobalObject, port_: JSC.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
-            return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number.", .{}).throw();
+            return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
-        return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
+        return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };
 
@@ -408,7 +412,7 @@ pub fn address(this: *SocketAddress) bun.String {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
-    const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
+    const presentation = bun.webcore.encoding.toBunStringComptime(formatted, .latin1);
     bun.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;
@@ -612,7 +616,7 @@ comptime {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;

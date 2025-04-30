@@ -1,5 +1,5 @@
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const NetworkThread = bun.http.NetworkThread;
 const Global = bun.Global;
@@ -261,7 +261,7 @@ pub const ShellSubprocess = struct {
                         subprocess.weak_file_sink_stdin_ptr = pipe;
                         return pipe.toJSWithDestructor(
                             globalThis,
-                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                            JSC.WebCore.sink_destructor.Ptr.init(subprocess),
                         );
                     }
                 },
@@ -287,7 +287,7 @@ pub const ShellSubprocess = struct {
                     this.buffer.deref();
                 },
                 .memfd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .ignore => {},
@@ -301,7 +301,7 @@ pub const ShellSubprocess = struct {
                     _ = pipe.end(null);
                 },
                 inline .memfd, .fd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {
@@ -419,7 +419,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => {
                     this.pipe.close();
@@ -432,7 +432,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -443,10 +443,11 @@ pub const ShellSubprocess = struct {
         }
     };
 
-    pub const Flags = packed struct(u3) {
+    pub const Flags = packed struct(u8) {
         is_sync: bool = false,
         killed: bool = false,
         waiting_for_onexit: bool = false,
+        _: u5 = 0,
     };
     pub const SignalCode = bun.SignalCode;
 
@@ -796,7 +797,7 @@ pub const ShellSubprocess = struct {
             if (should_close_memfd) {
                 inline for (0..spawn_args.stdio.len) |fd_index| {
                     if (spawn_args.stdio[fd_index] == .memfd) {
-                        _ = bun.sys.close(spawn_args.stdio[fd_index].memfd);
+                        spawn_args.stdio[fd_index].memfd.close();
                         spawn_args.stdio[fd_index] = .ignore;
                     }
                 }
@@ -876,7 +877,7 @@ pub const ShellSubprocess = struct {
         subprocess.process.setExitHandler(subprocess);
 
         if (subprocess.stdin == .pipe) {
-            subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+            subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
 
         if (comptime !is_sync) {

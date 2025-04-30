@@ -632,6 +632,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/sqlite/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/node/*.cpp
   ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
@@ -909,6 +910,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Werror=unused
       -Wno-unused-function
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )
@@ -925,6 +927,7 @@ if(NOT WIN32)
       -Werror=nonnull
       -Werror=move
       -Werror=sometimes-uninitialized
+      -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
       -Werror
     )
@@ -1087,6 +1090,7 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
+  Highway
   LibDeflate
   LolHtml
   Lshpack

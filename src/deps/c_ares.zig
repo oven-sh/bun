@@ -1,6 +1,6 @@
 const c = @import("std").c;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
@@ -1999,7 +1999,7 @@ pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
 comptime {
-    const Bun__canonicalizeIP = JSC.toJSHostFunction(Bun__canonicalizeIP_);
+    const Bun__canonicalizeIP = JSC.toJSHostFn(Bun__canonicalizeIP_);
     @export(&Bun__canonicalizeIP, .{ .name = "Bun__canonicalizeIP" });
 }
 pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -2014,7 +2014,7 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
     const script_ctx = globalThis.bunVM();
-    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(script_ctx, arguments.slice());
     const addr_arg = args.nextEat().?;
 
     const addr = try bun.String.fromJS(addr_arg, globalThis);

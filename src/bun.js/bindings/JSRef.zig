@@ -1,6 +1,6 @@
 pub const JSRef = union(enum) {
     weak: JSC.JSValue,
-    strong: JSC.Strong,
+    strong: JSC.Strong.Optional,
     finalized: void,
 
     pub fn initWeak(value: JSC.JSValue) @This() {
@@ -8,7 +8,7 @@ pub const JSRef = union(enum) {
     }
 
     pub fn initStrong(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) @This() {
-        return .{ .strong = JSC.Strong.create(value, globalThis) };
+        return .{ .strong = .create(value, globalThis) };
     }
 
     pub fn empty() @This() {
@@ -48,14 +48,14 @@ pub const JSRef = union(enum) {
             this.strong.set(globalThis, value);
             return;
         }
-        this.* = .{ .strong = JSC.Strong.create(value, globalThis) };
+        this.* = .{ .strong = .create(value, globalThis) };
     }
 
     pub fn upgrade(this: *@This(), globalThis: *JSC.JSGlobalObject) void {
         switch (this.*) {
             .weak => {
                 bun.assert(this.weak != .zero);
-                this.* = .{ .strong = JSC.Strong.create(this.weak, globalThis) };
+                this.* = .{ .strong = .create(this.weak, globalThis) };
             },
             .strong => {},
             .finalized => {
@@ -79,4 +79,4 @@ pub const JSRef = union(enum) {
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const bun = @import("root").bun;
+const bun = @import("bun");

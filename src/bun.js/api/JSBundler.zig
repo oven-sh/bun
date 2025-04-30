@@ -2,19 +2,16 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
-const WebCore = @import("../webcore/response.zig");
+const WebCore = bun.webcore;
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
-const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
 const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -22,7 +19,6 @@ const strings = bun.strings;
 const JSError = bun.JSError;
 const OOM = bun.OOM;
 
-const To = Base.To;
 const Request = WebCore.Request;
 const String = bun.String;
 const FetchEvent = WebCore.FetchEvent;
@@ -341,13 +337,13 @@ pub const JSBundler = struct {
 
                 defer path.deinit();
 
-                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                var dir = bun.FD.fromStdDir(std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
                     return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                };
+                });
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
+                const rootdir = dir.getFdPath(&rootdir_buf) catch |err| {
                     return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
@@ -1090,14 +1086,17 @@ pub const JSBundler = struct {
 
 const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
-    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+    pub const js = JSC.Codegen.JSBuildArtifact;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     blob: JSC.WebCore.Blob,
     loader: options.Loader = .file,
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .empty,
+    sourcemap: JSC.Strong.Optional = .empty,
 
     pub const OutputKind = enum {
         chunk,

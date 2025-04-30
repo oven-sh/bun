@@ -10,7 +10,7 @@ const Api = api.Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -20,7 +20,7 @@ const MutableString = bun.MutableString;
 const FileDescriptorType = bun.FileDescriptor;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
@@ -90,7 +90,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.HardcodedModule.Alias.has(str, .node);
+        return bun.JSC.ModuleLoader.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -693,6 +693,13 @@ pub const Loader = enum(u8) {
             => true,
             .css => false,
             .html => false,
+            else => false,
+        };
+    }
+
+    pub fn handlesEmptyFile(this: Loader) bool {
+        return switch (this) {
+            .wasm, .file, .text => true,
             else => false,
         };
     }
@@ -2032,7 +2039,7 @@ pub const BundleOptions = struct {
 
         if (opts.write and opts.output_dir.len > 0) {
             opts.output_dir_handle = try openOutputDir(opts.output_dir);
-            opts.output_dir = try fs.getFdPath(bun.toFD(opts.output_dir_handle.?.fd));
+            opts.output_dir = try fs.getFdPath(.fromStdDir(opts.output_dir_handle.?));
         }
 
         opts.polyfill_node_globals = opts.target == .browser;
@@ -2350,12 +2357,6 @@ pub const RouteConfig = struct {
     // maybe like CBOR
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
-
-    static_dir: string = "",
-    static_dir_handle: ?std.fs.Dir = null,
-    static_dir_enabled: bool = false,
-    single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = .zero,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{

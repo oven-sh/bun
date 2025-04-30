@@ -16,7 +16,10 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub usingnamespace JSC.Codegen.JSTextDecoder;
+pub const js = JSC.Codegen.JSTextDecoder;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
 
 pub const new = bun.TrivialNew(TextDecoder);
 
@@ -228,7 +231,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                     if (deinit) bun.default_allocator.free(input);
                     if (comptime fail_if_invalid) {
                         if (err == error.InvalidByteSequence) {
-                            return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
+                            return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "Invalid byte sequence", .{}).throw();
                         }
                     }
 
@@ -267,7 +270,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
 
             if (saw_error and this.fatal) {
                 decoded.deinit(bun.default_allocator);
-                return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
+                return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
             var output = bun.String.fromUTF16(decoded.items);
@@ -334,7 +337,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 const TextDecoder = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Output = bun.Output;
 const MutableString = bun.MutableString;

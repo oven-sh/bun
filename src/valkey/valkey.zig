@@ -5,7 +5,7 @@
 pub const ValkeyContext = @import("ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct {
+pub const ConnectionFlags = packed struct(u8) {
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
     enable_offline_queue: bool = true,
@@ -84,7 +84,7 @@ pub const TLS = union(enum) {
 
 /// Connection options for Valkey client
 pub const Options = struct {
-    idle_timeout_ms: u32 = 30000,
+    idle_timeout_ms: u32 = 0,
     connection_timeout_ms: u32 = 10000,
     enable_auto_reconnect: bool = true,
     max_retries: u32 = 20,
@@ -892,11 +892,11 @@ pub const ValkeyClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection is closed and offline queue is disabled", .{}).toJS());
+                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
                 }
             },
             .failed => {
-                promise.reject(globalThis, globalThis.ERR_REDIS_CONNECTION_CLOSED("Connection has failed", .{}).toJS());
+                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
             },
         }
 
@@ -965,7 +965,7 @@ const JSValkeyClient = JSC.API.Valkey;
 
 const JSC = bun.JSC;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const protocol = @import("valkey_protocol.zig");
 const js_valkey = @import("js_valkey.zig");
 const debug = bun.Output.scoped(.Redis, false);

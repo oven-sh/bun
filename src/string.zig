@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const OOM = bun.OOM;
@@ -191,7 +191,7 @@ pub const String = extern struct {
     }
 
     pub fn createUTF8(bytes: []const u8) String {
-        return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
+        return JSC.WebCore.encoding.toBunStringComptime(bytes, .utf8);
     }
 
     pub fn createUTF16(bytes: []const u16) String {
@@ -447,7 +447,7 @@ pub const String = extern struct {
     /// Max WTFStringImpl length.
     /// **Not** in bytes. In characters.
     pub inline fn max_length() usize {
-        return JSC.string_allocation_limit;
+        return JSC.VirtualMachine.string_allocation_limit;
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
@@ -490,6 +490,10 @@ pub const String = extern struct {
     /// - Does not increment reference counts
     pub fn fromUTF16(value: []const u16) String {
         return String.init(ZigString.initUTF16(value));
+    }
+
+    pub fn initLatin1OrASCIIView(value: []const u8) String {
+        return String.init(ZigString.init(value));
     }
 
     /// Create a `String` from a byte slice.
@@ -673,14 +677,14 @@ pub const String = extern struct {
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
         if (self.isUTF16()) {
-            return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
+            return JSC.WebCore.encoding.encodeIntoFrom16(self.utf16(), out, enc, true);
         }
 
         if (self.isUTF8()) {
             @panic("TODO");
         }
 
-        return JSC.WebCore.Encoder.encodeIntoFrom8(self.latin1(), out, enc);
+        return JSC.WebCore.encoding.encodeIntoFrom8(self.latin1(), out, enc);
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
@@ -1118,10 +1122,10 @@ pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice = ZigString.Slice.empty,
     underlying: String = String.dead,
 
-    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false,
+    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.isDebug) false,
 
     pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             bun.assert(!this.did_report_extra_memory_debug);
             this.did_report_extra_memory_debug = true;
         }
@@ -1157,7 +1161,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = JSC.WebCore.encoding.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
         };
     }
 

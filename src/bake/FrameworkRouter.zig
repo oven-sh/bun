@@ -91,7 +91,7 @@ pub const Type = struct {
     /// `FrameworkRouter` itself does not use this value.
     server_file: OpaqueFileId,
     /// `FrameworkRouter` itself does not use this value.
-    server_file_string: JSC.Strong,
+    server_file_string: JSC.Strong.Optional,
 
     pub fn rootRouteIndex(type_index: Index) Route.Index {
         return Route.Index.init(type_index.get());
@@ -412,7 +412,7 @@ pub const Style = union(enum) {
     nextjs_pages,
     nextjs_app_ui,
     nextjs_app_routes,
-    javascript_defined: JSC.Strong,
+    javascript_defined: JSC.Strong.Optional,
 
     pub const map = bun.ComptimeStringMap(Style, .{
         .{ "nextjs-pages", .nextjs_pages },
@@ -431,7 +431,7 @@ pub const Style = union(enum) {
                 return style;
             }
         } else if (value.isCallable()) {
-            return .{ .javascript_defined = JSC.Strong.create(value, global) };
+            return .{ .javascript_defined = .create(value, global) };
         }
 
         return global.throwInvalidArguments(error_message, .{});
@@ -1080,9 +1080,9 @@ fn scanInner(
 /// production usage. It uses a slower but easier to use pattern for object
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
-    pub const codegen = JSC.Codegen.JSFrameworkFileSystemRouter;
-    pub const toJS = codegen.toJS;
-    pub const fromJS = codegen.fromJS;
+    pub const js = JSC.Codegen.JSFrameworkFileSystemRouter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
@@ -1097,7 +1097,7 @@ pub const JSFrameworkRouter = struct {
     pub fn getBindings(global: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.JSObject.create(.{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
-            .FrameworkRouter = codegen.getConstructor(global),
+            .FrameworkRouter = js.getConstructor(global),
         }, global).toJS();
     }
 
@@ -1321,7 +1321,7 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const Resolver = bun.resolver.Resolver;
 const DirInfo = bun.resolver.DirInfo;

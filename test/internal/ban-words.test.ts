@@ -5,20 +5,21 @@ import path from "path";
 const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
   " != undefined": { reason: "This is by definition Undefined Behavior." },
   " == undefined": { reason: "This is by definition Undefined Behavior." },
-  '@import("root").bun.': { reason: "Only import 'bun' once" },
+  "undefined != ": { reason: "This is by definition Undefined Behavior." },
+  "undefined == ": { reason: "This is by definition Undefined Behavior." },
+
+  '@import("bun").': { reason: "Only import 'bun' once" },
   "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
-  "undefined != ": { reason: "This is by definition Undefined Behavior." },
-  "undefined == ": { reason: "This is by definition Undefined Behavior." },
-  "bun.toFD(std.fs.cwd().fd)": { reason: "Use bun.FD.cwd()" },
+  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 2 },
   "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
-  "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
+  "std.unicode": { reason: "Use bun.strings instead", limit: 33 },
+
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },
   "== allocator.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
@@ -27,8 +28,19 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 242, regex: true },
-  "usingnamespace": { reason: "Zig deprecates this, and will not support it in incremental compilation.", limit: 370 },
+
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 241, regex: true },
+  "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
+
+  "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
+  "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
+  "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 64 },
+  ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
+  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
+
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 289 },
+
+  "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
 };
 const words_keys = [...Object.keys(words)];
 
@@ -38,6 +50,7 @@ for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;
   if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
+  if (file.parentPath.startsWith("src" + path.sep + "codegen")) continue;
   const content = await Bun.file(file.parentPath + path.sep + file.name).text();
   for (const word of words_keys) {
     let regex = words[word].regex ? new RegExp(word, "g") : undefined;

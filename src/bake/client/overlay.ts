@@ -514,7 +514,7 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
   }
 
   dom.appendChild(
-    elem("div", { class: "r-error-trace" }, [...trace.map(frame => renderTraceFrame(frame, "trace-frame"))]),
+    elem("div", { class: "r-error-trace" }, trace.map(frame => renderTraceFrame(frame, "trace-frame"))),
   );
   domErrorContent.appendChild(dom);
 }

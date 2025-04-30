@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -8,8 +8,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
-const root = @import("root");
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -335,7 +334,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -682,7 +681,12 @@ pub const Arguments = struct {
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-            const preloads = args.options("--preload");
+            var preloads = args.options("--preload");
+            if (preloads.len == 0) {
+                if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
+                    preloads = bun.default_allocator.dupe([]const u8, &.{preload}) catch unreachable;
+                }
+            }
             const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
@@ -1627,9 +1631,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }

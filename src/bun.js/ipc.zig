@@ -1,5 +1,5 @@
 const uws = bun.uws;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
@@ -144,8 +144,7 @@ const advanced = struct {
     }
 
     pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = value.serialize(global, true) orelse return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -162,8 +161,7 @@ const advanced = struct {
     }
 
     pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = value.serialize(global, true) orelse return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -452,7 +450,12 @@ const NamedPipeIPCData = struct {
     mode: Mode,
 
     // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onPipeClose) = .{},
+    writer: bun.io.StreamingWriter(@This(), .{
+        .onWrite = onWrite,
+        .onError = onError,
+        .onWritable = null,
+        .onClose = onPipeClose,
+    }) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     disconnected: bool = false,
@@ -629,7 +632,7 @@ const NamedPipeIPCData = struct {
 
         const stream = this.writer.getStream() orelse {
             this.close(false);
-            return JSC.Maybe(void).errno(bun.C.E.PIPE, .pipe);
+            return JSC.Maybe(void).errno(bun.sys.E.PIPE, .pipe);
         };
 
         const readStartResult = stream.readStart(instance, NewNamedPipeIPCHandler(Context).onReadAlloc, NewNamedPipeIPCHandler(Context).onReadError, NewNamedPipeIPCHandler(Context).onRead);
@@ -893,7 +896,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             return available.ptr[0..suggested_size];
         }
 
-        fn onReadError(this: *Context, err: bun.C.E) void {
+        fn onReadError(this: *Context, err: bun.sys.E) void {
             log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             if (this.ipc()) |ipc_data| {
                 ipc_data.close(true);

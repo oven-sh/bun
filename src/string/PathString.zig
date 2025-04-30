@@ -1,14 +1,18 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
+const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
+const use_small_path_string_ = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
+
+const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
 
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
-pub const PathString = packed struct {
-    const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
-    pub const use_small_path_string = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
-    pub const PathInt = if (use_small_path_string) PathIntLen else usize;
-    pub const PointerIntType = if (use_small_path_string) u53 else usize;
+pub const PathString = packed struct(PathStringBackingIntType) {
+    pub const PathInt = if (use_small_path_string_) PathIntLen else usize;
+    pub const PointerIntType = if (use_small_path_string_) u53 else usize;
+    pub const use_small_path_string = use_small_path_string_;
+
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 

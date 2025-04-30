@@ -402,6 +402,7 @@ function getBuildEnv(target, options) {
     CANARY_REVISION: revision,
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
+    ENABLE_ASAN: profile === "asan" ? "ON" : "OFF",
     ABI: isMusl ? "musl" : undefined,
     CMAKE_TLS_VERIFY: "0",
   };

@@ -94,11 +94,13 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             if (enable_debug) {
                 counter.debug.assertValid();
             }
-            scope.log("0x{x}   ref {d} -> {d}", .{
-                @intFromPtr(self),
-                counter.active_counts,
-                counter.active_counts + 1,
-            });
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x}   ref {d} -> {d}", .{
+                    @intFromPtr(self),
+                    counter.active_counts,
+                    counter.active_counts + 1,
+                });
+            }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts += 1;
         }
@@ -108,11 +110,13 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             if (enable_debug) {
                 counter.debug.assertValid();
             }
-            scope.log("0x{x} deref {d} -> {d}", .{
-                @intFromPtr(self),
-                counter.active_counts,
-                counter.active_counts - 1,
-            });
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x} deref {d} -> {d}", .{
+                    @intFromPtr(self),
+                    counter.active_counts,
+                    counter.active_counts - 1,
+                });
+            }
             counter.assertNonThreadSafeCountIsSingleThreaded();
             counter.active_counts -= 1;
             if (counter.active_counts == 0) {
@@ -200,11 +204,13 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
             const new_count = counter.active_counts.fetchAdd(1, .seq_cst);
-            scope.log("0x{x}   ref {d} -> {d}", .{
-                @intFromPtr(self),
-                new_count - 1,
-                new_count,
-            });
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x}   ref {d} -> {d}", .{
+                    @intFromPtr(self),
+                    new_count - 1,
+                    new_count,
+                });
+            }
             bun.debugAssert(new_count > 0);
         }
 
@@ -212,11 +218,13 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
             const counter = getCounter(self);
             if (enable_debug) counter.debug.assertValid();
             const new_count = counter.active_counts.fetchSub(1, .seq_cst);
-            scope.log("0x{x} deref {d} -> {d}", .{
-                @intFromPtr(self),
-                new_count + 1,
-                new_count,
-            });
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x} deref {d} -> {d}", .{
+                    @intFromPtr(self),
+                    new_count + 1,
+                    new_count,
+                });
+            }
             bun.debugAssert(new_count > 0);
             if (new_count == 1) {
                 if (enable_debug) {

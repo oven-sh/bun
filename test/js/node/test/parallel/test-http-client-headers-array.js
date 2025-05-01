@@ -1,22 +1,18 @@
 'use strict';
 
-require('../common');
+const {mustCall} = require('../common');
 
 const assert = require('assert');
 const http = require('http');
 
 function execute(options) {
-  http.createServer(function(req, res) {
+  http.createServer(mustCall(function(req, res) {
     const expectHeaders = {
       'x-foo': 'boom',
       'cookie': 'a=1; b=2; c=3',
       'connection': 'keep-alive',
       'host': 'example.com',
     };
-    if(typeof Bun !== 'undefined') {
-      expectHeaders['user-agent'] = `Bun/${Bun.version}`;
-      expectHeaders['accept'] = '*/*';
-    }
 
     // no Host header when you set headers an array
     if (!Array.isArray(options.headers)) {
@@ -29,20 +25,26 @@ function execute(options) {
           `Basic ${Buffer.from(options.auth).toString('base64')}`;
     }
 
+    if(typeof Bun !== 'undefined') {
+      // bun adds these headers by default
+      expectHeaders['user-agent'] ??= `Bun/${Bun.version}`;
+      expectHeaders['accept'] ??= '*/*';
+    }
+
     this.close();
 
     assert.deepStrictEqual(req.headers, expectHeaders);
 
     res.writeHead(200, { 'Connection': 'close' });
     res.end();
-  }).listen(0, function() {
+  })).listen(0, mustCall(function() {
     options = Object.assign(options, {
       port: this.address().port,
       path: '/'
     });
     const req = http.request(options);
     req.end();
-  });
+  }));
 }
 
 // Should be the same except for implicit Host header on the first two

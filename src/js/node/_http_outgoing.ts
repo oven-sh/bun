@@ -200,8 +200,15 @@ const OutgoingMessagePrototype = {
 
   appendHeader(name, value) {
     validateString(name, "name");
+    validateHeaderValue(name, value);
     var headers = (this[headersSymbol] ??= new Headers());
-    headers.append(name, value);
+    if ($isJSArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        headers.append(name, value[i]);
+      }
+    } else {
+      headers.append(name, value);
+    }
     return this;
   },
 
@@ -259,7 +266,14 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
-    setHeader(headers, name, value);
+    if ($isJSArray(value)) {
+      if (value.length > 0) setHeader(headers, name, value[0]);
+      for (let i = 1; i < value.length; i++) {
+        headers.append(name, value[i]);
+      }
+    } else {
+      setHeader(headers, name, value);
+    }
     return this;
   },
   setHeaders(headers) {

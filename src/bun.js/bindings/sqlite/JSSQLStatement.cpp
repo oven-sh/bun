@@ -294,6 +294,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetParamCount);
 
+JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
 
@@ -545,6 +546,7 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "columns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnNames, 0 } },
     { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnCount, 0 } },
     { "paramsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetParamCount, 0 } },
+    { "columnTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnTypes, 0 } },
     { "safeIntegers"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetSafeIntegers, jsSqlStatementSetSafeIntegers } },
 
 };
@@ -2349,6 +2351,52 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalG
     CHECK_PREPARED
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(sqlite3_bind_parameter_count(castedThis->stmt))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+    CHECK_PREPARED
+
+    int count = sqlite3_column_count(castedThis->stmt);
+    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
+    
+    for (int i = 0; i < count; i++) {
+        JSC::JSValue typeValue;
+        
+        // Try to get declared column type first
+        const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
+        
+        if (declType != nullptr) {
+            // SQLite allows any type name in CREATE TABLE, but we'll normalize common ones
+            String typeStr = String::fromUTF8(declType);
+            String typeStrUpper = typeStr.convertToASCIIUppercase();
+
+            if (typeStrUpper.contains("INT")) {
+                typeValue = JSC::jsNontrivialString(vm, "integer"_s);
+            } else if (typeStrUpper.contains("CHAR") || typeStrUpper.contains("CLOB") || typeStrUpper.contains("TEXT")) {
+                typeValue = JSC::jsNontrivialString(vm, "text"_s);
+            } else if (typeStrUpper.contains("REAL") || typeStrUpper.contains("FLOA") || typeStrUpper.contains("DOUB")) {
+                typeValue = JSC::jsNontrivialString(vm, "float"_s);
+            } else if (typeStrUpper.contains("BLOB")) {
+                typeValue = JSC::jsNontrivialString(vm, "blob"_s);
+            } else {
+                // Pass the type as-is for other types
+                typeValue = JSC::jsNontrivialString(vm, typeStr);
+            }
+        } else {
+            // If no declared type (e.g., for expressions or results of functions),
+            // fallback to a generic type
+            typeValue = JSC::jsNontrivialString(vm, "any"_s);
+        }
+        
+        array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+    }
+    
+    return JSC::JSValue::encode(array);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

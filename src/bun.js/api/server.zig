@@ -385,6 +385,7 @@ pub const ServerConfig = struct {
     sni: ?bun.BabyList(SSLConfig) = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
     development: DevelopmentOption = .development,
+    broadcast_console_log_from_browser_to_server_for_bake: bool = false,
 
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
@@ -1306,6 +1307,10 @@ pub const ServerConfig = struct {
                         args.development = if (!hmr) .development_without_hmr else .development;
                     } else {
                         args.development = .development;
+                    }
+
+                    if (try dev.getBooleanStrict(global, "console")) |console| {
+                        args.broadcast_console_log_from_browser_to_server_for_bake = console;
                     }
                 } else {
                     args.development = if (dev.toBoolean()) .development else .production;
@@ -6228,6 +6233,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     .framework = bake_options.framework,
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
+                    .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
                 })
             else
                 null;

@@ -9,6 +9,7 @@ import {
   emitEvent,
   fullReload,
 } from "./hmr-module";
+import { inspect } from "./client/inspect";
 import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";
@@ -240,18 +241,56 @@ window.addEventListener("unhandledrejection", event => {
   }
 }
 
-if (true) {
+// This implements streaming console.log and console.error from the browser to the server.
+//
+//   Bun.serve({
+//     development: {
+//       console: true,
+//       ^^^^^^^^^^^^^^^^
+//     },
+//   })
+//
+let isStreamingConsoleLogFromBrowserToServer = document.querySelector("meta[name='bun:echo-console-log']");
+if (isStreamingConsoleLogFromBrowserToServer) {
+  // Ensure it only runs once, and avoid the extra noise in the HTML.
+  isStreamingConsoleLogFromBrowserToServer.remove();
+
   const originalLog = console.log;
   const originalError = console.error;
-  console.log = function (...args: any[]) {
-    originalLog(...args);
-    // TODO: Copy + paste WebKit's console.log implementation to create RemoteObjects etc.
-    ws.send("l" + "l" + JSON.stringify(args));
-  };
-  console.error = function (...args: any[]) {
-    originalError(...args);
-    ws.send("l" + "e" + JSON.stringify(args));
-  };
+
+  function websocketInspect(logLevel: "l" | "e", values: any[]) {
+    let str = "l" + logLevel;
+    let first = true;
+    for (const value of values) {
+      if (first) {
+        first = false;
+      } else {
+        str += " ";
+      }
+
+      if (typeof value === "string") {
+        str += value;
+      } else {
+        str += inspect(value);
+      }
+    }
+
+    ws.send(str);
+  }
+
+  if (typeof originalLog === "function") {
+    console.log = function log(...args: any[]) {
+      originalLog(...args);
+      websocketInspect("l", args);
+    };
+  }
+
+  if (typeof originalError === "function") {
+    console.error = function error(...args: any[]) {
+      originalError(...args);
+      websocketInspect("e", args);
+    };
+  }
 }
 
 try {

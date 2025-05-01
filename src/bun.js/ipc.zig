@@ -444,7 +444,6 @@ pub const SendQueue = struct {
                     const pipe: *uv.Pipe = s;
                     const stream: *uv.uv_stream_t = @ptrCast(pipe);
                     stream.readStop();
-                    pipe.unref();
 
                     pipe.data = pipe;
                     pipe.close(&_windowsOnClosed);

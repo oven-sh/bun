@@ -5700,31 +5700,77 @@ declare module "bun" {
     index: string;
   }
 
+  /**
+   * Represents a TCP or TLS socket connection used for network communication.
+   * This interface provides methods for reading, writing, managing the connection state,
+   * and handling TLS-specific features if applicable.
+   *
+   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   *
+   * @category HTTP & Networking
+   */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Write `data` to the socket
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
      *
-     * @param data The data to write to the socket
-     * @param byteOffset The offset in the buffer to start writing from (defaults to 0)
-     * @param byteLength The number of bytes to write (defaults to the length of the buffer)
+     * For optimal performance with multiple small writes, consider batching multiple
+     * writes together into a single `socket.write()` call.
      *
-     * When passed a string, `byteOffset` and `byteLength` refer to the UTF-8 offset, not the string character offset.
+     * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
+     * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
+     * @param byteLength The number of bytes to write from the buffer. Defaults to the remaining length of the buffer from the offset. Ignored for strings.
+     * @returns The number of bytes written. Returns `-1` if the socket is closed or shutting down. Can return less than the input size if the socket's buffer is full (backpressure).
+     * @example
+     * ```ts
+     * // Send a string
+     * const bytesWritten = socket.write("Hello, world!\n");
      *
-     * This is unbuffered as of Bun v0.2.2. That means individual write() calls
-     * will be slow. In the future, Bun will buffer writes and flush them at the
-     * end of the tick, when the event loop is idle, or sooner if the buffer is full.
+     * // Send binary data
+     * const buffer = new Uint8Array([0x01, 0x02, 0x03]);
+     * socket.write(buffer);
+     *
+     * // Send part of a buffer
+     * const largeBuffer = new Uint8Array(1024);
+     * // ... fill largeBuffer ...
+     * socket.write(largeBuffer, 100, 50); // Write 50 bytes starting from index 100
+     * ```
      */
     write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * The data context for the socket.
+     * The user-defined data associated with this socket instance.
+     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * It can be read or updated at any time.
+     *
+     * @example
+     * ```ts
+     * // In a socket handler
+     * function open(socket: Socket<{ userId: string }>) {
+     *   console.log(`Socket opened for user: ${socket.data.userId}`);
+     *   socket.data.lastActivity = Date.now(); // Update data
+     * }
+     * ```
      */
     data: Data;
 
     /**
-     * Like {@link Socket.write} except it includes a TCP FIN packet
+     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
+     * After calling `end()`, no more data can be written using `write()` or `end()`.
+     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
+     * This sends a TCP FIN packet after writing the data.
      *
-     * Use it to send your last message and close the connection.
+     * @param data Optional final data to write before closing. Same types as `write()`.
+     * @param byteOffset Optional offset for buffer data.
+     * @param byteLength Optional length for buffer data.
+     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @example
+     * ```ts
+     * socket.end("Goodbye!");
+     * ```
+     * @example
+     * ```ts
+     * socket.end(); // Close write side without sending final data
+     * ```
      */
     end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
@@ -5751,20 +5797,33 @@ declare module "bun" {
     timeout(seconds: number): void;
 
     /**
-     * Forcefully close the socket. The other end may not receive all data, and
-     * the socket will be closed immediately.
+     * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
+     * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
+     * Consider using `close()` or `end()` for graceful shutdowns.
      *
-     * This passes `SO_LINGER` with `l_onoff` set to `1` and `l_linger` set to
-     * `0` and then calls `close(2)`.
+     * @example
+     * ```ts
+     * socket.terminate();
+     * ```
      */
     terminate(): void;
 
     /**
-     * Shutdown writes to a socket
+     * Shuts down the write-half or both halves of the connection.
+     * This allows the socket to enter a half-closed state where it can still receive data
+     * but can no longer send data (`halfClose = true`), or close both read and write
+     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Calls `shutdown(2)` syscall internally.
      *
-     * This makes the socket a half-closed socket. It can still receive data.
+     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @example
+     * ```ts
+     * // Stop sending data, but allow receiving
+     * socket.shutdown(true);
      *
-     * This calls [shutdown(2)](https://man7.org/linux/man-pages/man2/shutdown.2.html) internally
+     * // Shutdown both reading and writing
+     * socket.shutdown();
+     * ```
      */
     shutdown(halfClose?: boolean): void;
 
@@ -5790,6 +5849,11 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     * This attempts to send the data immediately, but success depends on the network conditions
+     * and the receiving end.
+     * It might be necessary after several `write` calls if immediate sending is critical,
+     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
@@ -5807,17 +5871,24 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
+     */
     readonly remoteFamily: "IPv4" | "IPv6";
 
     /**
      * Remote IP address connected to the socket
+     * @example "192.168.1.100"
+     * @example "2001:db8::1"
      */
     readonly remoteAddress: string;
 
+     * @example 8080
+     */
     readonly remotePort: number;
 
+     */
     readonly localFamily: "IPv4" | "IPv6";
 
+     */
     readonly localAddress: string;
 
     /**
@@ -5985,6 +6056,8 @@ declare module "bun" {
     /**
      * See `Session Resumption` for more information.
      * @return `true` if the session was reused, `false` otherwise.
+     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
+     * Returns `true` if the session was resumed, `false` otherwise.
      */
     isSessionReused(): boolean;
 
@@ -6027,9 +6100,24 @@ declare module "bun" {
     setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
 
     /**
-     * The number of bytes written to the socket.
+     * The total number of bytes successfully written to the socket since it was established.
+     * This includes data currently buffered by the OS but not yet acknowledged by the remote peer.
      */
     readonly bytesWritten: number;
+
+    /**
+     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
+     * for automatic resource management.
+     * @example
+     * ```ts
+     * async function processSocket() {
+     *   using socket = await Bun.connect({ ... });
+     *   socket.write("Data");
+     *   // socket.end() is called automatically when exiting the scope
+     * }
+     * ```
+     */
+    [Symbol.dispose](): void;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {

@@ -140,7 +140,7 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *JSC.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = value.serialize(global) orelse
+        const serialized = value.serialize(global, true) orelse
             return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
 

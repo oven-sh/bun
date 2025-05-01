@@ -767,11 +767,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     bool asNodeBuffer = false;
     if (optionsObject.isObject()) {
         JSC::JSObject* options = optionsObject.getObject();
-        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(
-                globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
             if (!binaryTypeValue.isString()) {
-                throwTypeError(globalObject, throwScope,
-                    "binaryType must be a string"_s);
+                throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
                 return {};
             }
 
@@ -782,8 +780,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList),
-        dummyPorts);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope,

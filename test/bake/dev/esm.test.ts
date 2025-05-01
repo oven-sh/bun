@@ -22,12 +22,10 @@ const liveBindingTest = devTest("live bindings with `var`", {
     await dev.fetch("/").equals("State: 1");
     await dev.fetch("/").equals("State: 2");
     await dev.fetch("/").equals("State: 3");
-    console.log("patching");
     await dev.patch("routes/index.ts", {
       find: "State",
       replace: "Value",
     });
-    console.log("patching");
     await dev.fetch("/").equals("Value: 4");
     await dev.fetch("/").equals("Value: 5");
     await dev.write(

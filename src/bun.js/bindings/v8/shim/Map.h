@@ -54,14 +54,15 @@ struct Map {
     {
     }
 
-    // Tag it as the map_map() Map
+    // Separate constructor for map_map (the Map used by maps). We need this because map_map's
+    // metaMap needs to point to itself, and we can't call map_map() while initializing map_map()
+    // because that would recurse infinitely.
     enum class MapMapTag {
         MapMap
     };
 
-public:
     Map(MapMapTag)
-        : m_metaMap(const_cast<Map*>(this))
+        : m_metaMap(this)
         , m_unused(0xaaaaaaaa)
         , m_instanceType(InstanceType::Object)
     {

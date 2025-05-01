@@ -6433,7 +6433,8 @@ declare module "bun" {
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err];
+      stdio?: [In, Out, Err, ...Readable[]];
+
       /**
        * The file descriptor for the standard input. It may be:
        *
@@ -6727,13 +6728,18 @@ declare module "bun" {
    * - {@link NullSubprocess} (ignore, ignore, ignore)
    */
   interface Subprocess<
-    In extends SpawnOptions.Writable,
-    Out extends SpawnOptions.Readable,
-    Err extends SpawnOptions.Readable,
+    In extends SpawnOptions.Writable = SpawnOptions.Writable,
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
+
+    /**
+     * Access extra file descriptors passed to the `stdio` option in the options object.
+     */
+    readonly stdio: [null, null, null, ...number[]];
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
@@ -6751,6 +6757,7 @@ declare module "bun" {
      * ```
      */
     readonly pid: number;
+
     /**
      * The exit code of the process
      *
@@ -6834,7 +6841,10 @@ declare module "bun" {
    * - {@link ReadableSyncSubprocess} (pipe, pipe)
    * - {@link NullSyncSubprocess} (ignore, ignore)
    */
-  interface SyncSubprocess<Out extends SpawnOptions.Readable, Err extends SpawnOptions.Readable> {
+  interface SyncSubprocess<
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
     stdout: SpawnOptions.ReadableToSyncIO<Out>;
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;

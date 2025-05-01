@@ -228,7 +228,32 @@ describe("TextDecoder", () => {
     expect(decoder.decode(bytes.subarray(0, amount.written))).toBe(text);
     gcTrace(true);
   });
+  
+  it("coerces the fatal flag to boolean : 1 -> true", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: 1 });
+    expect(decoder.fatal).toBe(true);
+  });    
 
+  it("coerces the fatal flag to boolean : 0 -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: 0 });
+    expect(decoder.fatal).toBe(false);
+  }); 
+
+  it("coerces the fatal flag to boolean : string -> true", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: "string" });
+    expect(decoder.fatal).toBe(true);
+  });
+    
+  it("coerces the fatal flag to boolean : null -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: null });
+    expect(decoder.fatal).toBe(false);
+  });
+
+  it("coerces the fatal flag to boolean : empty-string -> false", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: "" });
+    expect(decoder.fatal).toBe(false);
+  });
+  
   it("should respect fatal when encountering invalid data", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(() => {

@@ -184,11 +184,11 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     return SocketAddress.create(global, options);
 }
 
-pub fn createFromAddrFamily(global: *JSC.JSGlobalObject, address_js: JSValue, family_js: JSValue) bun.JSError!*SocketAddress {
+pub fn initFromAddrFamily(global: *JSC.JSGlobalObject, address_js: JSValue, family_js: JSValue) bun.JSError!SocketAddress {
     if (!address_js.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", address_js);
     const address_: bun.String = try .fromJS(address_js, global);
     const family_: AF = try .fromJS(global, family_js);
-    return .create(global, .{
+    return .initJS(global, .{
         .address = address_,
         .family = family_,
     });
@@ -201,6 +201,10 @@ pub fn createFromAddrFamily(global: *JSC.JSGlobalObject, address_js: JSValue, fa
 /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
 ///   after passing it in.
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
+    return .new(try .initJS(global, options));
+}
+
+pub fn initJS(global: *JSC.JSGlobalObject, options: Options) bun.JSError!SocketAddress {
     var presentation: bun.String = .empty;
 
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
@@ -248,10 +252,10 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
         },
     };
 
-    return .new(.{
+    return .{
         ._addr = addr,
         ._presentation = presentation,
-    });
+    };
 }
 
 pub const AddressError = error{

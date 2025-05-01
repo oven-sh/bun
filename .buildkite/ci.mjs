@@ -436,7 +436,10 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: "bun run build:ci --target bun",
+    // We used to build the C++ dependencies and bun in seperate steps.
+    // However, as long as the zig build takes longer than both sequentially,
+    // it's cheaper to run them in the same step. Can be revisited in the future.
+    command: ["bun run build:ci --target bun", "bun run build:ci --target dependencies"],
   };
 }
 
@@ -484,11 +487,7 @@ function getLinkBunStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    depends_on: [
-      `${getTargetKey(platform)}-build-vendor`,
-      `${getTargetKey(platform)}-build-cpp`,
-      `${getTargetKey(platform)}-build-zig`,
-    ],
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -1089,12 +1088,7 @@ async function getPipeline(options = {}) {
               group: getTargetLabel(target),
               steps: unifiedBuilds
                 ? [getBuildBunStep(target, options)]
-                : [
-                    getBuildVendorStep(target, options),
-                    getBuildCppStep(target, options),
-                    getBuildZigStep(target, options),
-                    getLinkBunStep(target, options),
-                  ],
+                : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
             },
             imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
           );

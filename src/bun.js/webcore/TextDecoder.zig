@@ -314,11 +314,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             }
 
             if (try options.get(globalThis, "fatal")) |fatal| {
-                if (fatal.isBoolean()) {
-                    decoder.fatal = fatal.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
-                }
+                decoder.fatal = fatal.toBoolean();
             }
 
             if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {

@@ -249,7 +249,7 @@ export function define(
     structuredClone,
     ...rest
   } = {} as Partial<ClassDefinition>,
-): Partial<ClassDefinition> {
+): ClassDefinition {
   return new ClassDefinition({
     ...rest,
     call,

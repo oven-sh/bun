@@ -660,8 +660,11 @@ for (const { body, fn } of bodyTypes) {
 }
 
 function arrayBuffer(buffer: BufferSource) {
-  if (buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer) {
+  if (buffer instanceof ArrayBuffer) {
     return buffer;
+  }
+  if (buffer instanceof SharedArrayBuffer) {
+    return new Uint8Array(new Uint8Array(buffer)).buffer;
   }
   return buffer.buffer;
 }

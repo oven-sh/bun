@@ -113,6 +113,7 @@ const WrappedType = enum {
     tls,
     tcp,
 };
+
 const Handlers = struct {
     onOpen: JSC.JSValue = .zero,
     onClose: JSC.JSValue = .zero,
@@ -510,6 +511,7 @@ fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {
         return null;
     }
 }
+
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
 
@@ -536,10 +538,7 @@ pub const Listener = struct {
         none: void,
     };
 
-    pub fn getData(
-        this: *Listener,
-        _: *JSC.JSGlobalObject,
-    ) JSValue {
+    pub fn getData(this: *Listener, _: *JSC.JSGlobalObject) JSValue {
         log("getData()", .{});
         return this.strong_data.get() orelse JSValue.jsUndefined();
     }
@@ -1304,14 +1303,7 @@ fn JSSocketType(comptime ssl: bool) type {
     }
 }
 
-fn selectALPNCallback(
-    _: ?*BoringSSL.SSL,
-    out: [*c][*c]const u8,
-    outlen: [*c]u8,
-    in: [*c]const u8,
-    inlen: c_uint,
-    arg: ?*anyopaque,
-) callconv(.C) c_int {
+fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.C) c_int {
     const this = bun.cast(*TLSSocket, arg);
     if (this.protos) |protos| {
         if (protos.len == 0) {
@@ -1332,13 +1324,10 @@ fn selectALPNCallback(
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         const This = @This();
-        pub const js = if (!ssl)
-            JSC.Codegen.JSTCPSocket
-        else
-            JSC.Codegen.JSTLSSocket;
+        pub const js = if (!ssl) JSC.Codegen.JSTCPSocket else JSC.Codegen.JSTLSSocket;
         pub const toJS = js.toJS;
         pub const fromJS = js.fromJS;
-        pub const fromJSDirect = js.fromjsDirect;
+        pub const fromJSDirect = js.fromJSDirect;
 
         pub const new = bun.TrivialNew(@This());
 
@@ -1395,6 +1384,7 @@ fn NewSocket(comptime ssl: bool) type {
         };
 
         const log = Output.scoped(.Socket, false);
+
         const WriteResult = union(enum) {
             fail: void,
             success: struct {
@@ -1402,6 +1392,7 @@ fn NewSocket(comptime ssl: bool) type {
                 total: usize = 0,
             },
         };
+
         const Flags = packed struct(u16) {
             is_active: bool = false,
             /// Prevent onClose from calling into JavaScript while we are finalizing
@@ -3667,6 +3658,7 @@ pub const DuplexUpgradeContext = struct {
     task_event: EventState = .StartTLS,
     ssl_config: ?JSC.API.ServerConfig.SSLConfig,
     is_open: bool = false,
+
     pub const EventState = enum(u8) {
         StartTLS,
         Close,
@@ -3824,6 +3816,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             client.deinit();
         }
     }
+
     fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
         const this: *WindowsNamedPipeListeningContext = @ptrCast(@alignCast(pipe.data));
         this.deinit();
@@ -3903,6 +3896,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         bun.destroy(this);
     }
 } else void;
+
 pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     named_pipe: uws.WindowsNamedPipe,
     socket: SocketType,
@@ -3913,6 +3907,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     task: JSC.AnyTask,
     task_event: EventState = .none,
     is_open: bool = false,
+
     pub const EventState = enum(u8) {
         deinit,
         none,
@@ -4165,6 +4160,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         }
         return &this.named_pipe;
     }
+
     fn deinit(this: *WindowsNamedPipeContext) void {
         log("deinit", .{});
         const socket = this.socket;
@@ -4336,6 +4332,7 @@ pub fn jsGetBufferedAmount(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     }
     return JSC.JSValue.jsNumber(0);
 }
+
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),

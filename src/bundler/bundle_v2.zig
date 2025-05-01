@@ -2557,7 +2557,9 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        var ctx: DevServerInput = .{ .css_entry_points = .{} };
+        var ctx: DevServerInput = .{
+            .css_entry_points = .{},
+        };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
@@ -2800,7 +2802,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try dev_server.finalizeBundle(this, .{
+        try dev_server.finalizeBundle(this, &.{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
@@ -5163,7 +5165,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
@@ -18012,15 +18014,15 @@ pub const DevServerOutput = struct {
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
 
-    pub fn jsPseudoChunk(out: DevServerOutput) *Chunk {
+    pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];
     }
 
-    pub fn cssChunks(out: DevServerOutput) []Chunk {
+    pub fn cssChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1..][0..out.css_file_list.count()];
     }
 
-    pub fn htmlChunks(out: DevServerOutput) []Chunk {
+    pub fn htmlChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1 + out.css_file_list.count() ..][0..out.html_files.count()];
     }
 };

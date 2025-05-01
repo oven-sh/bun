@@ -10,9 +10,6 @@ const validators = @import("./../util/validators.zig");
 const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
 const sockaddr = SocketAddress.sockaddr;
 
-//
-//
-
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
@@ -25,7 +22,7 @@ pub const toJS = js.toJS;
 ref_count: RefCount = .init(),
 globalThis: *JSC.JSGlobalObject,
 da_rules: std.ArrayList(Rule),
-mutex: std.Thread.Mutex = .{},
+mutex: bun.Mutex = .{},
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!*@This() {
     _ = callFrame;
@@ -57,29 +54,18 @@ pub fn isBlockList(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     return .jsBoolean(value.as(@This()) != null);
 }
 
-// [kInspect](depth, options)
-pub fn customInspect(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = this;
-    _ = globalThis;
-    _ = callframe;
-    @panic("TODO");
-}
-
 pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     this.mutex.lock();
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    var new_address = false;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
-    const address = address_js.as(SocketAddress) orelse blk: {
-        new_address = true;
+    const address = if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
-        break :blk try SocketAddress.createFromAddrFamily(globalThis, address_js, family_js);
+        break :blk (try SocketAddress.initFromAddrFamily(globalThis, address_js, family_js))._addr;
     };
-    defer if (new_address) bun.destroy(address);
-    try this.da_rules.insert(0, .{ .addr = address._addr });
+    try this.da_rules.insert(0, .{ .addr = address });
     return .jsUndefined();
 }
 
@@ -88,29 +74,23 @@ pub fn addRange(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
     const start_js, const end_js, var family_js = arguments;
-    var new_start = false;
-    var new_end = false;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
-    const start = start_js.as(SocketAddress) orelse blk: {
-        new_start = true;
+    const start = if (start_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, start_js, "start", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
-        break :blk try SocketAddress.createFromAddrFamily(globalThis, start_js, family_js);
+        break :blk (try SocketAddress.initFromAddrFamily(globalThis, start_js, family_js))._addr;
     };
-    defer if (new_start) bun.destroy(start);
-    const end = end_js.as(SocketAddress) orelse blk: {
-        new_end = true;
+    const end = if (end_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, end_js, "end", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
-        break :blk try SocketAddress.createFromAddrFamily(globalThis, end_js, family_js);
+        break :blk (try SocketAddress.initFromAddrFamily(globalThis, end_js, family_js))._addr;
     };
-    defer if (new_end) bun.destroy(end);
-    if (_compare(start._addr, end._addr)) |ord| {
+    if (_compare(start, end)) |ord| {
         if (ord.compare(.gt)) {
             return globalThis.throwInvalidArgumentValueCustom("start", start_js, "must come before end");
         }
     }
-    try this.da_rules.insert(0, .{ .range = .{ .start = start._addr, .end = end._addr } });
+    try this.da_rules.insert(0, .{ .range = .{ .start = start, .end = end } });
     return .jsUndefined();
 }
 
@@ -119,22 +99,19 @@ pub fn addSubnet(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JS
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
     const network_js, const prefix_js, var family_js = arguments;
-    var new_network = false;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
-    const network = network_js.as(SocketAddress) orelse blk: {
-        new_network = true;
+    const network = if (network_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, network_js, "network", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
-        break :blk try SocketAddress.createFromAddrFamily(globalThis, network_js, family_js);
+        break :blk (try SocketAddress.initFromAddrFamily(globalThis, network_js, family_js))._addr;
     };
-    defer if (new_network) bun.destroy(network);
     var prefix: u8 = 0;
-    switch (network._addr.sin.family) {
+    switch (network.sin.family) {
         std.posix.AF.INET => prefix = @intCast(try validators.validateInt32(globalThis, prefix_js, "prefix", .{}, 0, 32)),
         std.posix.AF.INET6 => prefix = @intCast(try validators.validateInt32(globalThis, prefix_js, "prefix", .{}, 0, 128)),
         else => {},
     }
-    try this.da_rules.insert(0, .{ .subnet = .{ .network = network._addr, .prefix = prefix } });
+    try this.da_rules.insert(0, .{ .subnet = .{ .network = network, .prefix = prefix } });
     return .jsUndefined();
 }
 
@@ -143,46 +120,45 @@ pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
     defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    var new_address = false;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
-    const address = address_js.as(SocketAddress) orelse blk: {
-        new_address = true;
+    const address = if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
-        break :blk SocketAddress.createFromAddrFamily(globalThis, address_js, family_js) catch |err| {
+        break :blk (SocketAddress.initFromAddrFamily(globalThis, address_js, family_js) catch |err| {
             bun.debugAssert(err == error.JSError);
             globalThis.clearException();
             return .jsBoolean(false);
-        };
+        })._addr;
     };
-    defer if (new_address) bun.destroy(address);
     for (this.da_rules.items) |item| {
         switch (item) {
             .addr => |a| {
-                const order = _compare(address._addr, a) orelse continue;
+                const order = _compare(address, a) orelse continue;
                 if (order.compare(.eq)) return .jsBoolean(true);
             },
             .range => |r| {
-                const os = _compare(address._addr, r.start) orelse continue;
-                const oe = _compare(address._addr, r.end) orelse continue;
+                const os = _compare(address, r.start) orelse continue;
+                const oe = _compare(address, r.end) orelse continue;
                 if (os.compare(.gte) and oe.compare(.lte)) return .jsBoolean(true);
             },
             .subnet => |s| {
-                if (s.network.as_v4()) |a_l| if (address._addr.as_v4()) |a_r| {
-                    const set_net = std.bit_set.IntegerBitSet(32){ .mask = @byteSwap(@bitReverse(a_l)) };
-                    const set_adr = std.bit_set.IntegerBitSet(32){ .mask = @byteSwap(@bitReverse(a_r)) };
-                    const intersection = set_net.xorWith(set_adr);
-                    const t = @ctz(intersection.mask);
-                    const h = t >= s.prefix;
-                    if (h) return .jsBoolean(true);
+                if (address.as_v4()) |ip_addr| if (s.network.as_v4()) |subnet_addr| {
+                    if (s.prefix == 32) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    const one: u32 = 1;
+                    const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(32 - s.prefix);
+                    const ip_net: u32 = @byteSwap(ip_addr) & mask_addr;
+                    const subnet_net: u32 = @byteSwap(subnet_addr) & mask_addr;
+                    if (ip_net == subnet_net) return .jsBoolean(true);
                 };
-                if (address._addr.sin.family == std.posix.AF.INET6 and s.network.sin.family == std.posix.AF.INET6) {
-                    const set_net = std.bit_set.IntegerBitSet(128){ .mask = @byteSwap(@bitReverse(@as(u128, @bitCast(s.network.sin6.addr)))) };
-                    const set_adr = std.bit_set.IntegerBitSet(128){ .mask = @byteSwap(@bitReverse(@as(u128, @bitCast(address._addr.sin6.addr)))) };
-                    const intersection = set_net.xorWith(set_adr);
-                    const t = @ctz(intersection.mask);
-                    const h = t >= s.prefix;
-                    if (h) return .jsBoolean(true);
+                if (address.sin.family == std.posix.AF.INET6 and s.network.sin.family == std.posix.AF.INET6) {
+                    const ip_addr: u128 = @bitCast(address.sin6.addr);
+                    const subnet_addr: u128 = @bitCast(s.network.sin6.addr);
+                    if (s.prefix == 128) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    const one: u128 = 1;
+                    const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(128 - s.prefix);
+                    const ip_net: u128 = @byteSwap(ip_addr) & mask_addr;
+                    const subnet_net: u128 = @byteSwap(subnet_addr) & mask_addr;
+                    if (ip_net == subnet_net) return .jsBoolean(true);
                 }
             },
         }

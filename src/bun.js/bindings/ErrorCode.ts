@@ -130,6 +130,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_HANDLE_TYPE", TypeError],
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_INVALID_IP_ADDRESS", TypeError],
+  ["ERR_INVALID_MIME_SYNTAX", TypeError],
   ["ERR_INVALID_MODULE", Error],
   ["ERR_INVALID_OBJECT_DEFINE_PROPERTY", TypeError],
   ["ERR_INVALID_PACKAGE_CONFIG", Error],

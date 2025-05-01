@@ -26,11 +26,11 @@ interface Config {
   roots: FileIndex[];
 }
 
+/** 
+ * Set globally in debug builds.
+ * Removed using --drop=ASSERT in releases.
+ */
 declare namespace DEBUG {
-  /** 
-   * Set globally in debug builds.
-   * Removed using --drop=DEBUG.ASSERT in releases.
-   */
   declare function ASSERT(condition: any, message?: string): asserts condition;
 }
 

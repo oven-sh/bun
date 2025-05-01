@@ -127,7 +127,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["junit"]: {
       type: "boolean",
-      default: isCI, // Always enable JUnit in CI
+      default: false, // Disabled for now, because it's too much $
     },
     ["junit-temp-dir"]: {
       type: "string",

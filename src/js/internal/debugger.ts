@@ -27,32 +27,16 @@ class SocketFramer {
   }
 
   send(socket: Socket<{ framer: SocketFramer; backend: Backend }>, data: string): void {
+    // We need to encode the data using TextEncoder because the string could contain
+    // multi-byte characters, which makes the length not actually data.length
+    const encoded = new TextEncoder().encode(data);
     if (!!$debug) {
-      const encoded = new TextEncoder().encode(data);
       $debug("local:", data);
-      $debug("DATALENGTH", data.length, encoded.length, encoded.byteLength);
     }
 
-    socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
+    socketFramerMessageLengthBuffer.writeUInt32BE(encoded.length, 0);
     socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
-    socket.pause();
-    socket.resume();
-    socket.ref();
-    setTimeout(() => {
-      socket.flush();
-    }, 10);
-    // let totalWritten = 0;
-    // let written = 0;
-    // do {
-    //   written = socket.write(data.slice(totalWritten));
-    //   if (written > 0) {
-    //     totalWritten += written;
-    //   }
-    //   if (!!$debug) {
-    //     $debug("written:", written, "totalWritten:", totalWritten, "total:", data.length);
-    //   }
-    // } while (totalWritten < data.length);
+    socket.$write(encoded);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {

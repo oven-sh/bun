@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import './debug';
+import "./debug";
 import {
   loadModuleAsync,
   replaceModules,
@@ -9,13 +9,16 @@ import {
   emitEvent,
   fullReload,
 } from "./hmr-module";
+import { inspect } from "./client/inspect";
 import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
-import { addMapping, SourceMapURL } from './client/stack-trace';
+import { addMapping, SourceMapURL } from "./client/stack-trace";
+
+const consoleErrorWithoutInspector = console.error;
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -75,7 +78,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
     console.error(e);
     fullReload();
   });
-}
+};
 
 let isFirstRun = true;
 const handlers = {
@@ -163,13 +166,13 @@ const handlers = {
     // JavaScript modules
     if (reader.hasMoreData()) {
       const rest = reader.rest();
-      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
+      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
       DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
-      const blob = new Blob([rest], { type: 'application/javascript' });
+      const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
-      const script = document.createElement('script');
+      const script = document.createElement("script");
       scriptTags.set(sourceMapId, [script, rest.byteLength]);
-      script.className = 'bun-hmr-script';
+      script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);
@@ -196,7 +199,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
   } else if (error) {
     console.error(error);
   } else {
-    console.error('Failed to load HMR script', event);
+    console.error("Failed to load HMR script", event);
   }
   fullReload();
 }
@@ -240,6 +243,57 @@ window.addEventListener("unhandledrejection", event => {
   }
 }
 
+// This implements streaming console.log and console.error from the browser to the server.
+//
+//   Bun.serve({
+//     development: {
+//       console: true,
+//       ^^^^^^^^^^^^^^^^
+//     },
+//   })
+//
+
+let isStreamingConsoleLogFromBrowserToServer = document.querySelector("meta[name='bun:echo-console-log']");
+if (isStreamingConsoleLogFromBrowserToServer) {
+  // Ensure it only runs once, and avoid the extra noise in the HTML.
+  isStreamingConsoleLogFromBrowserToServer.remove();
+  const originalLog = console.log;
+
+  function websocketInspect(logLevel: "l" | "e", values: any[]) {
+    let str = "l" + logLevel;
+    let first = true;
+    for (const value of values) {
+      if (first) {
+        first = false;
+      } else {
+        str += " ";
+      }
+
+      if (typeof value === "string") {
+        str += value;
+      } else {
+        str += inspect(value);
+      }
+    }
+
+    ws.sendBuffered(str);
+  }
+
+  if (typeof originalLog === "function") {
+    console.log = function log(...args: any[]) {
+      originalLog(...args);
+      websocketInspect("l", args);
+    };
+  }
+
+  if (typeof consoleErrorWithoutInspector === "function") {
+    console.error = function error(...args: any[]) {
+      consoleErrorWithoutInspector(...args);
+      websocketInspect("e", args);
+    };
+  }
+}
+
 try {
   const { refresh } = config;
   if (refresh) {
@@ -251,6 +305,8 @@ try {
 
   emitEvent("bun:ready", null);
 } catch (e) {
-  console.error(e);
+  // Use consoleErrorWithoutInspector to avoid double-reporting errors.
+  consoleErrorWithoutInspector(e);
+
   onRuntimeError(e, true, false);
 }

@@ -203,6 +203,34 @@ When `development` is `true`, Bun will:
 - Include the `SourceMap` header in the response so that devtools can show the original source code
 - Disable minification
 - Re-bundle assets on each request to a .html file
+- Enable hot module reloading (unless `hmr: false` is set)
+
+#### Echo console logs from browser to terminal
+
+Bun.serve() supports echoing console logs from the browser to the terminal.
+
+To enable this, pass `console: true` in the `development` object in `Bun.serve()`.
+
+```ts
+import homepage from "./index.html";
+
+Bun.serve({
+  // development can also be an object.
+  development: {
+    // Enable Hot Module Reloading
+    hmr: true,
+
+    // Echo console logs from the browser to the terminal
+    console: true,
+  },
+
+  routes: {
+    "/": homepage,
+  },
+});
+```
+
+When `console: true` is set, Bun will stream console logs from the browser to the terminal. This reuses the existing WebSocket connection from HMR to send the logs.
 
 #### Production mode
 

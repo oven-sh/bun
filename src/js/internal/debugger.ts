@@ -28,12 +28,31 @@ class SocketFramer {
 
   send(socket: Socket<{ framer: SocketFramer; backend: Backend }>, data: string): void {
     if (!!$debug) {
+      const encoded = new TextEncoder().encode(data);
       $debug("local:", data);
+      $debug("DATALENGTH", data.length, encoded.length, encoded.byteLength);
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(data.length, 0);
     socket.$write(socketFramerMessageLengthBuffer);
     socket.$write(data);
+    socket.pause();
+    socket.resume();
+    socket.ref();
+    setTimeout(() => {
+      socket.flush();
+    }, 10);
+    // let totalWritten = 0;
+    // let written = 0;
+    // do {
+    //   written = socket.write(data.slice(totalWritten));
+    //   if (written > 0) {
+    //     totalWritten += written;
+    //   }
+    //   if (!!$debug) {
+    //     $debug("written:", written, "totalWritten:", totalWritten, "total:", data.length);
+    //   }
+    // } while (totalWritten < data.length);
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
@@ -483,6 +502,8 @@ async function connectToUnixServer(
 
         socket.data.framer.onData(socket, bytes);
       },
+      // THIS NEEDS TO BE HERE OTHERWISE IT WILL NEVER WRITE BUFFERED DATA!!
+      drain: socket => {},
       close: socket => {
         if (socket.data) {
           const { backend, framer } = socket.data;

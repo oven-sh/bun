@@ -19,6 +19,7 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
+    broadcast_console_log_from_browser_to_server: bool,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -216,6 +217,15 @@ has_pre_crash_handler: bool,
 /// DISABLED in releases, ENABLED in debug.
 /// Can be enabled with env var `BUN_ASSUME_PERFECT_INCREMENTAL=1`
 assume_perfect_incremental_bundling: bool = false,
+
+/// If true, console logs from the browser will be echoed to the server console.
+/// This works by overriding console.log & console.error in hmr-runtime-client.ts
+/// with a function that sends the message from the client to the server.
+///
+/// There are two usecases:
+/// - Echoing browser console logs to the server for debugging
+/// - WebKit Inspector remote debugging integration
+broadcast_console_log_from_browser_to_server: bool = false,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -448,7 +458,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
         .relative_path_buf_lock = .unlocked,
         .testing_batch_events = .disabled,
-
+        .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
@@ -789,6 +799,7 @@ pub fn deinit(dev: *DevServer) void {
             },
             .enable_after_bundle => {},
         },
+        .broadcast_console_log_from_browser_to_server = {},
     };
     dev.allocation_scope.deinit();
     bun.destroy(dev);
@@ -839,7 +850,7 @@ pub fn memoryCost(dev: *DevServer) usize {
         .framework = {},
         .bundler_options = {},
         .allocation_scope = {},
-
+        .broadcast_console_log_from_browser_to_server = {},
         // to be counted.
         .root = {
             cost += dev.root.len;
@@ -1483,6 +1494,7 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     const blob = html.cached_response orelse generate: {
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
+
         html.cached_response = StaticRoute.initFromAnyBlob(
             &.fromOwnedSlice(dev.allocator, payload),
             .{
@@ -1542,11 +1554,19 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
         "<script type=\"module\" crossorigin src=\"\"></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
-        "-0000000000000000.js".len;
+        "-0000000000000000.js".len +
+        if (dev.shouldReceiveConsoleLogFromBrowser()) "<meta name=\"bun:echo-console-log\" content=\"1\">".len else 0;
 
     var array: std.ArrayListUnmanaged(u8) = try std.ArrayListUnmanaged(u8).initCapacity(dev.allocator, payload_size);
     errdefer array.deinit(dev.allocator);
     array.appendSliceAssumeCapacity(before_head_end);
+
+    // Mark the meta tag if console log streaming is enabled
+    // This will get removed from the HTML before the client-side code executes.
+    if (dev.shouldReceiveConsoleLogFromBrowser()) {
+        array.appendSliceAssumeCapacity("<meta name=\"bun:echo-console-log\" content=\"1\">");
+    }
+
     // Insert all link tags before "</head>"
     for (css_ids) |name| {
         array.appendSliceAssumeCapacity("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/");
@@ -2310,7 +2330,6 @@ pub fn finalizeBundle(
         }
         dev.allocation_scope.assertOwned(compile_result.code);
         html.bundled_html_text = compile_result.code;
-
         html.script_injection_offset = .init(compile_result.script_injection_offset);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
@@ -6006,9 +6025,16 @@ pub const IncomingMessageId = enum(u8) {
     set_url = 'n',
     /// Tells the DevServer to batch events together.
     testing_batch_events = 'H',
+    /// Console log from the client
+    console_log = 'l',
 
     /// Invalid data
     _,
+};
+
+pub const ConsoleLogKind = enum(u8) {
+    log = 'l',
+    err = 'e',
 };
 
 const HmrTopic = enum(u8) {
@@ -6180,6 +6206,41 @@ const HmrSocket = struct {
 
                     event.entry_points.deinit(s.dev.allocator);
                 },
+            },
+            .console_log => {
+                if (msg.len < 2) {
+                    ws.close();
+                    return;
+                }
+
+                const kind: ConsoleLogKind = switch (msg[1]) {
+                    'l' => .log,
+                    'e' => .err,
+                    else => {
+                        ws.close();
+                        return;
+                    },
+                };
+
+                const data = msg[2..];
+
+                if (s.dev.inspector()) |agent| {
+                    var log_str = bun.String.init(data);
+                    defer log_str.deref();
+                    agent.notifyConsoleLog(s.dev.debugger_id, kind, &log_str);
+                }
+
+                if (s.dev.broadcast_console_log_from_browser_to_server) {
+                    switch (kind) {
+                        .log => {
+                            bun.Output.print("{s}\n", .{data});
+                        },
+                        .err => {
+                            bun.Output.printError("{s}\n", .{data});
+                        },
+                    }
+                    bun.Output.flush();
+                }
             },
             _ => ws.close(),
         }
@@ -6857,6 +6918,13 @@ fn releaseRelativePathBuf(dev: *DevServer) void {
     if (bun.Environment.isDebug) {
         dev.relative_path_buf = undefined;
     }
+}
+
+/// Either of two conditions make this true:
+/// - The inspector is enabled
+/// - The user passed "console": true in serve({development: {console: true}}) options
+fn shouldReceiveConsoleLogFromBrowser(dev: *const DevServer) bool {
+    return dev.inspector() != null or dev.broadcast_console_log_from_browser_to_server;
 }
 
 fn dumpStateDueToCrash(dev: *DevServer) !void {

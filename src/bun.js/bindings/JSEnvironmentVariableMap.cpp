@@ -24,6 +24,45 @@ namespace Bun {
 
 using namespace WebCore;
 
+JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return JSValue::encode(jsUndefined());
+
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString value = { nullptr, 0 };
+
+    if (UNLIKELY(name.len == 0))
+        return JSValue::encode(jsUndefined());
+
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue result = jsString(vm, Zig::toStringCopy(value));
+    thisObject->putDirect(vm, propertyName, result, 0);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    if (!object)
+        return false;
+
+    auto string = JSValue::decode(value).toString(globalObject);
+    if (UNLIKELY(!string))
+        return false;
+
+    object->putDirect(vm, propertyName, string, 0);
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -283,16 +322,6 @@ bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globa
     return Base::put(cell, globalObject, propertyName, string, slot);
 }
 
-template<typename Visitor>
-void JSEnvironmentVariableMap::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSEnvironmentVariableMap* thisObject = jsCast<JSEnvironmentVariableMap*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSEnvironmentVariableMap);
-
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -358,11 +387,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             }
         }
 
-        ZigString zname = toZigString(idName);
-        ZigString zvalue = { nullptr, 0 };
-        if (UNLIKELY(zname.len == 0)) continue;
-        if (!Bun__getEnvValue(globalObject, &zname, &zvalue)) continue;
-        object->putDirect(vm, identifier, jsString(vm, Zig::toStringCopy(zvalue)), 0);
+        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

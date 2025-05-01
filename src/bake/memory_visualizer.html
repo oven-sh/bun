@@ -147,6 +147,10 @@
         <td>DevServer AllocationScope</td>
         <td class="memory-cell" id="devserver_tracked">—</td>
       </tr>
+      <tr>
+        <td>Process usage</td>
+        <td class="memory-cell" id="process_used">—</td>
+      </tr>
     </tbody>
   </table>
 
@@ -338,7 +342,7 @@
 
       // Update the overall memory statistics (no color coding)
       document.getElementById('devserver_tracked').textContent = formatBytes(data.devserver_tracked);
-      // document.getElementById('process_used').textContent = formatBytes(data.process_used);
+      document.getElementById('process_used').textContent = formatBytes(data.process_used);
       // document.getElementById('system_used').textContent = formatBytes(data.system_used);
       // document.getElementById('system_total').textContent = formatBytes(data.system_total);
     }

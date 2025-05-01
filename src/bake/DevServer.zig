@@ -2218,11 +2218,13 @@ pub fn finalizeBundle(
     bv2: *bun.bundle_v2.BundleV2,
     result: *const bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
+    assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
     defer {
         var heap = bv2.graph.heap;
         bv2.deinitWithoutFreeingArena();
         dev.current_bundle = null;
+        dev.log.clearAndFree();
         heap.deinit();
 
         dev.assets.reindexIfNeeded(dev.allocator) catch {
@@ -2720,6 +2722,7 @@ pub fn finalizeBundle(
                             // copy of a previous source map will simply
                             // reference the old one.
                         }
+                        entry.value_ptr.* = {};
                     }
                 }
                 mapLog("inc {x}, for {d} sockets", .{ script_id.get(), sockets });
@@ -2871,9 +2874,9 @@ pub fn finalizeBundle(
 }
 
 fn startNextBundleIfPresent(dev: *DevServer) void {
+    assert(dev.magic == .valid);
     // Clear the current bundle
     assert(dev.current_bundle == null);
-    dev.log.clearAndFree();
     dev.emitVisualizerMessageIfNeeded();
 
     // If there were pending requests, begin another bundle.

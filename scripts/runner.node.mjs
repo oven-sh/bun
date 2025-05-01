@@ -25,17 +25,23 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep, extname } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  getAbi,
+  getAbiVersion,
+  getArch,
   getBranch,
   getBuildLabel,
   getBuildUrl,
   getCommit,
+  getDistro,
+  getDistroVersion,
   getEnv,
   getFileUrl,
   getHostname,
   getLoggedInUserCountOrDetails,
+  getOs,
   getSecret,
   getShell,
   getWindowsExitReason,
@@ -155,82 +161,117 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
-let isAsanBuild = false;
-
-const skipAsanTests = new Set([
-  "test/js/node/child_process/child_process.test.ts", // flaky
-  "test/js/bun/sqlite/sqlite.test.js", // flaky
-  "test/js/bun/http/req-url-leak.test.ts", // flaky
-  "test/integration/next-pages/test/dev-server-ssr-100.test.ts", // flaky
-  "test/js/web/fetch/fetch.test.ts", // flaky
-  "test/regression/issue/ctrl-c.test.ts",
-  "test/regression/issue/17454/destructure_string.test.ts",
-  "test/js/web/fetch/fetch-leak.test.ts",
-  "test/js/third_party/next-auth/next-auth.test.ts",
-  "test/js/third_party/es-module-lexer/es-module-lexer.test.ts",
-  "test/js/node/url/pathToFileURL.test.ts",
-  "test/js/third_party/astro/astro-post.test.js",
-  "test/js/sql/tls-sql.test.ts",
-  "test/js/web/streams/streams-leak.test.ts",
-  "test/js/node/test/parallel/test-http2-compat-serverresponse-headers-after-destroy.js",
-  "test/js/node/test/parallel/test-https-server-connections-checking-leak.js",
-  "test/js/node/test/parallel/test-fs-watch-recursive-update-file.js",
-  "test/js/node/test/parallel/test-http2-invalidheaderfields-client.js",
-  "test/js/node/watch/fs.watch.test.ts",
-  "test/napi/napi.test.ts",
-  "test/js/node/test/parallel/test-http2-connect-options.js",
-  "test/js/node/test/parallel/test-http2-compat-serverresponse-writehead.js",
-  "test/js/bun/spawn/spawn.test.ts",
-  "test/js/node/test/parallel/test-primitive-timer-leak.js",
-  "test/js/node/test/parallel/test-gc-http-client-connaborted.js",
-  "test/cli/inspect/inspect.test.ts",
-  "test/cli/inspect/inspect.test.ts",
-  "test/js/node/test/parallel/test-http2-removed-header-stays-removed.js",
-  "test/js/node/test/parallel/test-fs-watch.js",
-  "test/js/node/test/parallel/test-fs-utimes.js",
-  "test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js",
-  "test/js/node/test/parallel/test-common-gc.js",
-  "test/js/node/fs/abort-signal-leak-read-write-file.test.ts",
-  "test/js/first_party/ws/ws.test.ts", // resuming an already-closed socket
-  "test/js/node/test/parallel/test-zlib-invalid-input-memory.js", // linux only & doesn't repro
-  "test/js/bun/resolve/load-same-js-file-a-lot.test.ts", // linux only?
-  "test/js/node/test/parallel/test-http2-options-server-request.js", // repros on linux
-  "test/js/node/test/parallel/test-http2-compat-serverresponse-trailers.js",
-  "test/js/node/test/parallel/test-http2-compat-serverresponse-headers.js",
-  "test/integration/next-pages/test/next-build.test.ts",
-  "test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js",
-  "test/integration/vite-build/vite-build.test.ts",
-  "test/cli/run/run-crash-handler.test.ts",
-  "test/js/bun/wasm/wasi.test.js",
-  "test/cli/run/require-cache.test.ts",
-  "test/js/bun/spawn/spawn-pipe-leak.test.ts",
-  "test/js/bun/shell/bunshell.test.ts",
-  "test/integration/bun-types/bun-types.test.ts",
-  "test/bundler/native-plugin.test.ts",
-  "test/bundler/bundler_edgecase.test.ts",
-  "test/bake/dev/react-spa.test.ts",
-  "test/cli/install/bun-repl.test.ts",
-  "test/bundler/esbuild/default.test.ts",
-  "test/cli/create/create-jsx.test.ts",
-  "test/bake/dev/css.test.ts",
-  "test/js/bun/spawn/spawn-streaming-stdin.test.ts",
-  "test/bundler/bundler_npm.test.ts",
-  "test/js/bun/spawn/spawn-maxbuf.test.ts",
-  "test/bake/dev/hot.test.ts",
-  "test/bundler/bundler_loader.test.ts",
-  "test/bake/dev/esm.test.ts",
-  "test/bake/dev/bundle.test.ts",
-  "test/cli/hot/hot.test.ts",
-  "test/bake/dev/sourcemap.test.ts",
-  "test/bake/dev/sourcemap.test.ts",
-  "test/bake/dev/html.test.ts",
-  "test/bake/dev/ecosystem.test.ts",
-  "test/bake/dev/ecosystem.test.ts",
-  "test/js/node/v8/capture-stack-trace.test.js", // repros on all
-]);
+/**
+ * @typedef {Object} TestExpectation
+ * @property {string} filename
+ * @property {string[]} expectations
+ * @property {string[] | undefined} bugs
+ * @property {string[] | undefined} modifiers
+ * @property {string | undefined} comment
+ */
 
 /**
- *
+ * @returns {TestExpectation[]}
+ */
+function getTestExpectations() {
+  const expectationsPath = join(cwd, "test", "expectations.txt");
+  if (!existsSync(expectationsPath)) {
+    return [];
+  }
+  const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
+
+  /** @type {TestExpectation[]} */
+  const expectations = [];
+
+  for (const line of lines) {
+    const content = line.trim();
+    if (!content || content.startsWith("#")) {
+      continue;
+    }
+
+    let comment;
+    const commentIndex = content.indexOf("#");
+    let cleanLine = content;
+    if (commentIndex !== -1) {
+      comment = content.substring(commentIndex + 1).trim();
+      cleanLine = content.substring(0, commentIndex).trim();
+    }
+
+    let modifiers = [];
+    let remaining = cleanLine;
+    let modifierMatch = remaining.match(/^\[(.*?)\]/);
+    if (modifierMatch) {
+      modifiers = modifierMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(modifierMatch[0].length).trim();
+    }
+
+    let expectationValues = ["Skip"];
+    const expectationMatch = remaining.match(/\[(.*?)\]$/);
+    if (expectationMatch) {
+      expectationValues = expectationMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
+    }
+
+    const filename = remaining.trim();
+    if (filename) {
+      expectations.push({
+        filename,
+        expectations: expectationValues,
+        bugs: undefined,
+        modifiers: modifiers.length ? modifiers : undefined,
+        comment,
+      });
+    }
+  }
+
+  return expectations;
+}
+
+/**
+ * @param {string} testPath
+ * @returns {string[]}
+ */
+function getTestModifiers(testPath) {
+  const ext = extname(testPath);
+  const filename = basename(testPath, ext);
+  const modifiers = filename.split("-").filter(value => value !== "bun");
+
+  const os = getOs();
+  const arch = getArch();
+  modifiers.push(os, arch, `${os}-${arch}`);
+
+  const distro = getDistro();
+  if (distro) {
+    modifiers.push(distro, `${os}-${distro}`, `${os}-${arch}-${distro}`);
+    const distroVersion = getDistroVersion();
+    if (distroVersion) {
+      modifiers.push(
+        distroVersion,
+        `${distro}-${distroVersion}`,
+        `${os}-${distro}-${distroVersion}`,
+        `${os}-${arch}-${distro}-${distroVersion}`,
+      );
+    }
+  }
+
+  const abi = getAbi();
+  if (abi) {
+    modifiers.push(abi, `${os}-${abi}`, `${os}-${arch}-${abi}`);
+    const abiVersion = getAbiVersion();
+    if (abiVersion) {
+      modifiers.push(
+        abiVersion,
+        `${abi}-${abiVersion}`,
+        `${os}-${abi}-${abiVersion}`,
+        `${os}-${arch}-${abi}-${abiVersion}`,
+      );
+    }
+  }
+
+  return modifiers.map(value => value.toUpperCase());
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -240,14 +281,16 @@ async function runTests() {
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
-  isAsanBuild = basename(execPath).includes("asan");
-
   !isQuiet && console.log("Bun:", execPath);
+
+  const expectations = getTestExpectations();
+  const modifiers = getTestModifiers(execPath);
+  !isQuiet && console.log("Modifiers:", modifiers);
 
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
@@ -365,9 +408,6 @@ async function runTests() {
     for (const testPath of tests) {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-      if (isAsanBuild && skipAsanTests.has(`test/${testPath}`)) {
-        continue;
-      }
       if (isNodeTest(testPath)) {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
         const runWithBunTest =
@@ -756,7 +796,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
-
   const bunEnv = {
     ...process.env,
     PATH: path,
@@ -773,14 +812,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    // Used in Node.js tests.
-    TEST_TMPDIR: tmpdirPath,
+    ASAN_OPTIONS: "allow_user_segv_handler=1",
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
-
-  // Set ASAN-specific environment variables if using an ASAN build
-  if (isAsanBuild) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
-  }
 
   if (env) {
     Object.assign(bunEnv, env);
@@ -854,7 +888,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
-  const timeout = getTestTimeout(testPath, isAsanBuild);
+  const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
@@ -916,20 +950,16 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 
 /**
  * @param {string} testPath
- * @param {boolean} [isAsanBuild=false]
  * @returns {number}
  */
-function getTestTimeout(testPath, isAsanBuild = false) {
-  // ASAN builds require significantly more time
-  const asanMultiplier = isAsanBuild ? 2 : 1;
-
+function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
-    return integrationTimeout * asanMultiplier;
+    return integrationTimeout;
   }
   if (/napi/i.test(testPath)) {
-    return napiTimeout * asanMultiplier;
+    return napiTimeout;
   }
-  return testTimeout * asanMultiplier;
+  return testTimeout;
 }
 
 /**
@@ -1161,9 +1191,6 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
-/** Files with these extensions are not treated as test cases */
-const IGNORED_EXTENSIONS = new Set([".md"]);
-
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -1173,13 +1200,14 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
-      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
+      if (isHidden(filename)) {
         continue;
       }
-      if (entry.isFile() && isTest(filename)) {
-        yield filename;
+      if (entry.isFile()) {
+        if (isTest(filename)) {
+          yield filename;
+        }
       } else if (entry.isDirectory()) {
         yield* getFiles(cwd, filename);
       }
@@ -1315,9 +1343,11 @@ async function getVendorTests(cwd) {
 
 /**
  * @param {string} cwd
+ * @param {string[]} testModifiers
+ * @param {TestExpectation[]} testExpectations
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
+function getRelevantTests(cwd, testModifiers, testExpectations) {
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
@@ -1358,6 +1388,25 @@ function getRelevantTests(cwd) {
         }
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const skipExpectations = testExpectations
+    .filter(
+      ({ modifiers, expectations }) =>
+        !modifiers?.length || testModifiers.some(modifier => modifiers?.includes(modifier)),
+    )
+    .map(({ filename }) => filename.replace("test/", ""));
+  if (skipExpectations.length) {
+    const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
+    if (skippedTests.length) {
+      for (const testPath of skippedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      !isQuiet && console.log("Skipping tests:", skipExpectations, skippedTests.length, "/", availableTests.length);
     }
   }
 
@@ -1448,7 +1497,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
-  downloadLoop: for (let i = 0; i < 20; i++) {
+  downloadLoop: for (let i = 0; i < 10; i++) {
     const args = ["artifact", "download", "**", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
@@ -1457,14 +1506,17 @@ async function getExecPathFromBuildKite(target, buildId) {
     await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 5000 * 10,
+      timeout: 60000,
     });
 
-    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-        zipPath = join(releasePath, entry);
-        break downloadLoop;
-      }
+    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+      .filter(filename => /^bun.*\.zip$/i.test(filename))
+      .map(filename => join(releasePath, filename))
+      .sort((a, b) => b.includes("profile") - a.includes("profile"))
+      .at(0);
+
+    if (zipPath) {
+      break downloadLoop;
     }
 
     console.warn(`Waiting for ${target}.zip to be available...`);
@@ -1480,13 +1532,12 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    // Also match bun-asan for ASAN builds
-    if (/bun(?:-asan)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+    if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
-  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
@@ -1779,10 +1830,6 @@ function getExitCode(outcome) {
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
 function isAlwaysFailure(error) {
-  if (isAsanBuild) {
-    return true;
-  }
-
   error = ((error || "") + "").toLowerCase().trim();
   return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
 }

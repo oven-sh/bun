@@ -44,7 +44,7 @@ if(WIN32)
   )
 endif()
 
-if(ENABLE_ASAN OR (RELEASE AND ENABLE_ASAN_RELEASE))
+if(ENABLE_ASAN)
   register_compiler_flags(
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
@@ -259,7 +259,7 @@ register_compiler_flags(
 )
 
 # --- LTO ---
-if(ENABLE_LTO AND NOT ENABLE_ASAN_RELEASE)
+if(ENABLE_LTO)
   register_compiler_flags(
     DESCRIPTION "Enable link-time optimization (LTO)"
     -flto=full ${UNIX}

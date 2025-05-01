@@ -94,14 +94,16 @@ optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFA
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
-if(DEBUG AND APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ON)
+
+if(DEBUG AND APPLE AND ARCH STREQUAL "aarch64")
+  set(DEFAULT_ASAN ON)
 else()
-  optionx(ENABLE_ASAN_RELEASE BOOL "If ASAN support should be enabled in release builds" DEFAULT OFF)
-optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
+  set(DEFAULT_ASAN OFF)
 endif()
 
-if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN_RELEASE)
+optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)
@@ -109,11 +111,10 @@ endif()
 
 optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
-if (ENABLE_ASAN_RELEASE)
-  set(ENABLE_LTO OFF)
+if(ENABLE_ASAN AND ENABLE_LTO)
+  message(WARNING "ASAN and LTO are not supported together, disabling LTO")
+  setx(ENABLE_LTO OFF)
 endif()
-
-optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 
 if(USE_VALGRIND AND NOT USE_BASELINE)
   message(WARNING "If valgrind is enabled, baseline must also be enabled")
@@ -178,7 +179,3 @@ optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAUL
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
 
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-
-if (ENABLE_ASAN_RELEASE AND ENABLE_LTO)
-  message(FATAL_ERROR "ASAN release builds with LTO are not supported")
-endif()

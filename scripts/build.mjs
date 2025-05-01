@@ -45,18 +45,6 @@ async function build(args) {
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
   }
 
-  if (process.env.CXXFLAGS && process.env.ENABLE_ASAN_RELEASE === "ON" && process.env.ENABLE_LTO === "OFF") {
-    const flagsToRemove = [
-      "-flto=full",
-      "-fwhole-program-vtables",
-      "-fforce-emit-vtables",
-      // Add any other LTO-related flags if necessary
-    ];
-    const currentFlags = process.env.CXXFLAGS.split(/\s+/);
-    const filteredFlags = currentFlags.filter(flag => !flagsToRemove.includes(flag));
-    process.env.CXXFLAGS = filteredFlags.join(" ");
-  }
-
   if (isCI) {
     printEnvironment();
   }

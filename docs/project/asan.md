@@ -50,10 +50,10 @@ Or manually with CMake:
 cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
 
 # Release build with ASAN
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN_RELEASE=ON
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=ON
 
 # Release build with ASAN and assertions
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN_RELEASE=ON -DENABLE_ASSERTIONS=ON -DENABLE_LTO=OFF
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=ON -DENABLE_ASSERTIONS=ON
 ```
 
 ## Running with ASAN
@@ -70,22 +70,6 @@ ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:detect_odr_violation=0 ./build/bun-a
 ```
 
 > **Warning**: Enabling leak detection will generate excessive noise due to deliberately uncollected memory in WebKit and other components. It's recommended to keep leak detection disabled and focus on other memory errors like use-after-free, buffer overflows, etc.
-
-### Using ASAN Builds from Release Artifacts
-
-ASAN builds are included in release artifacts for debugging purposes. You can download them from the CI artifacts:
-
-```bash
-# Download the ASAN build for Linux x64
-wget https://github.com/oven-sh/bun/releases/download/latest/bun-linux-x64-asan.zip
-
-# Extract and use
-unzip bun-linux-x64-asan.zip
-cd bun-linux-x64-asan
-ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:detect_odr_violation=0 ./bun-asan --version
-```
-
-These builds are particularly useful for diagnosing memory issues in applications.
 
 ## Other Memory Error Types
 

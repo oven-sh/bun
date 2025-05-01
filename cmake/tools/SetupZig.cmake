@@ -24,7 +24,11 @@ set(ZIG_COMMIT "a207204ee57a061f2fb96c7bae0c491b609e73a5")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  if(ENABLE_ASAN)
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+  else()
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+  endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -38,10 +42,6 @@ endif()
 # Since Bun 1.1, Windows has been built using ReleaseSafe.
 # This is because it caught more crashes, but we can reconsider this in the future
 if(WIN32 AND DEFAULT_ZIG_OPTIMIZE STREQUAL "ReleaseFast")
-  set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
-endif()
-
-if (ENABLE_ASAN_RELEASE)
   set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
 endif()
 

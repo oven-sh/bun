@@ -6,7 +6,7 @@ process.on(
     if (err.message !== "oops") {
       throw err;
     }
-  }, 2),
+  }, 3),
 );
 
 function checkNextTick(expected) {
@@ -68,5 +68,39 @@ setImmediate(
   mustCall(() => {
     counter++;
     checkNextTick(7);
+  }),
+);
+
+setImmediate(
+  mustCall(() => {
+    counter++;
+    checkNextTick(8);
+    setImmediate(
+      mustCall(() => {
+        counter++;
+        checkNextTick(11);
+      }),
+    );
+  }),
+);
+
+setImmediate(
+  mustCall(() => {
+    counter++;
+    checkNextTick(9);
+    setImmediate(
+      mustCall(() => {
+        counter++;
+        checkNextTick(12);
+        throw new Error("oops");
+      }),
+    );
+  }),
+);
+
+setImmediate(
+  mustCall(() => {
+    counter++;
+    checkNextTick(10);
   }),
 );

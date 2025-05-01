@@ -750,8 +750,9 @@ pub const ImmediateObject = struct {
         return globalObject.throw("Immediate is not constructible", .{});
     }
 
-    pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine, exception_thrown: bool) bool {
-        return this.internals.runImmediateTask(vm, exception_thrown);
+    // returns true if an exception was thrown
+    pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine) bool {
+        return this.internals.runImmediateTask(vm);
     }
 
     pub fn toPrimitive(this: *ImmediateObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -853,21 +854,22 @@ pub const TimerObjectInternals = struct {
 
     extern "c" fn Bun__JSTimeout__call(globalObject: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue) bool;
 
-    pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine, exception_thrown: bool) bool {
+    // returns true if an exception was thrown
+    pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) bool {
         if (this.flags.has_cleared_timer or
             // unref'd setImmediate callbacks should only run if there are things keeping the event
             // loop alive other than setImmediates
             (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
         {
             this.deref();
-            return exception_thrown;
+            return false;
         }
 
         const timer = this.strong_this.get() orelse {
             if (Environment.isDebug) {
                 @panic("TimerObjectInternals.runImmediateTask: this_object is null");
             }
-            return exception_thrown;
+            return false;
         };
         const globalThis = vm.global;
         this.strong_this.deinit();
@@ -878,16 +880,16 @@ pub const TimerObjectInternals = struct {
         const callback = ImmediateObject.js.callbackGetCached(timer).?;
         const arguments = ImmediateObject.js.argumentsGetCached(timer).?;
         this.ref();
-        const threw_exception = this.run(globalThis, timer, callback, arguments, this.asyncID(), vm);
+        const exception_thrown = this.run(globalThis, timer, callback, arguments, this.asyncID(), vm);
         this.deref();
 
         if (this.eventLoopTimer().state == .FIRED) {
             this.deref();
         }
 
-        vm.eventLoop().exitMaybeDrainMicrotask(!exception_thrown and !threw_exception);
+        vm.eventLoop().exitMaybeDrainMicrotask(!exception_thrown);
 
-        return exception_thrown or threw_exception;
+        return exception_thrown;
     }
 
     pub fn asyncID(this: *const TimerObjectInternals) u64 {

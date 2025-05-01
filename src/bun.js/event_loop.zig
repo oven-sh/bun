@@ -1423,11 +1423,10 @@ pub const EventLoop = struct {
 
         var exception_thrown = false;
         for (to_run_now.items) |task| {
-            exception_thrown = task.runImmediateTask(virtual_machine, exception_thrown);
+            exception_thrown = task.runImmediateTask(virtual_machine);
         }
 
-        // if an exception was thrown, drain the pending microtasks from the remaining
-        // immediate tasks.
+        // make sure microtasks are drained if the last task had an exception
         if (exception_thrown) {
             this.maybeDrainMicrotasks();
         }

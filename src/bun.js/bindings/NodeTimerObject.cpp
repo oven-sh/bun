@@ -38,7 +38,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
             Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
-            return false;
+            return true;
         }
 
         MarkedArgumentBuffer args;
@@ -73,12 +73,12 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     return hadException;
 }
 
-// Returns false if an exception was thrown.
+// Returns true if an exception was thrown.
 extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
     if (UNLIKELY(vm.hasPendingTerminationException())) {
-        return false;
+        return true;
     }
 
     return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));

@@ -16,6 +16,7 @@ const {
   kHandle,
   getHeader,
   setHeader,
+  appendHeader,
   Headers,
   getRawKeys,
 } = require("internal/http");
@@ -205,13 +206,8 @@ const OutgoingMessagePrototype = {
     validateString(name, "name");
     validateHeaderValue(name, value);
     var headers = (this[headersSymbol] ??= new Headers());
-    if ($isJSArray(value)) {
-      for (let i = 0; i < value.length; i++) {
-        headers.append(name, value[i]);
-      }
-    } else {
-      headers.append(name, value);
-    }
+
+    appendHeader(headers, name, value);
     return this;
   },
 
@@ -269,14 +265,7 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
-    if ($isJSArray(value)) {
-      if (value.length > 0) setHeader(headers, name, value[0]);
-      for (let i = 1; i < value.length; i++) {
-        headers.append(name, value[i]);
-      }
-    } else {
-      setHeader(headers, name, value);
-    }
+    setHeader(headers, name, value);
     return this;
   },
   setHeaders(headers) {

@@ -1,6 +1,7 @@
 const {
   getHeader,
   setHeader,
+  appendHeader,
   Headers,
   assignHeaders: assignHeadersFast,
   setRequestTimeout,
@@ -12,7 +13,8 @@ const {
   setServerIdleTimeout,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
-  setHeader: (headers: Headers, name: string, value: string) => void;
+  setHeader: (headers: Headers, name: string, value: string | string[]) => void;
+  appendHeader: (headers: Headers, name: string, value: string | string[]) => void;
   Headers: (typeof globalThis)["Headers"];
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
   setRequestTimeout: (req: Request, timeout: number) => boolean;
@@ -421,6 +423,7 @@ export {
   runSymbol,
   serverSymbol,
   setHeader,
+  appendHeader,
   setIsNextIncomingMessageHTTPS,
   setRequestTimeout,
   setServerCustomOptions,

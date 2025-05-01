@@ -2361,39 +2361,111 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_THIS
     CHECK_PREPARED
 
+    // Ensure the statement has been executed at least once
+    if (!castedThis->hasExecuted) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement must be executed before accessing columnTypes"_s));
+        return { };
+    }
+
     int count = sqlite3_column_count(castedThis->stmt);
     JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
     
-    for (int i = 0; i < count; i++) {
-        JSC::JSValue typeValue;
-        
-        // Try to get declared column type first
-        const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
-        
+    // Helper function to process declared type and create normalized type string
+    auto processDeclaredType = [&vm](const char* declType) -> JSC::JSValue {
         if (declType != nullptr) {
-            // SQLite allows any type name in CREATE TABLE, but we'll normalize common ones
             String typeStr = String::fromUTF8(declType);
             String typeStrUpper = typeStr.convertToASCIIUppercase();
 
             if (typeStrUpper.contains("INT")) {
-                typeValue = JSC::jsNontrivialString(vm, "integer"_s);
+                return JSC::jsNontrivialString(vm, "integer"_s);
             } else if (typeStrUpper.contains("CHAR") || typeStrUpper.contains("CLOB") || typeStrUpper.contains("TEXT")) {
-                typeValue = JSC::jsNontrivialString(vm, "text"_s);
+                return JSC::jsNontrivialString(vm, "text"_s);
             } else if (typeStrUpper.contains("REAL") || typeStrUpper.contains("FLOA") || typeStrUpper.contains("DOUB")) {
-                typeValue = JSC::jsNontrivialString(vm, "float"_s);
+                return JSC::jsNontrivialString(vm, "float"_s);
             } else if (typeStrUpper.contains("BLOB")) {
-                typeValue = JSC::jsNontrivialString(vm, "blob"_s);
+                return JSC::jsNontrivialString(vm, "blob"_s);
             } else {
-                // Pass the type as-is for other types
-                typeValue = JSC::jsNontrivialString(vm, typeStr);
+                return JSC::jsNontrivialString(vm, typeStr);
             }
         } else {
-            // If no declared type (e.g., for expressions or results of functions),
-            // fallback to a generic type
-            typeValue = JSC::jsNontrivialString(vm, "any"_s);
+            // If no declared type (e.g., for expressions or results of functions)
+            return JSC::jsNontrivialString(vm, "any"_s);
         }
-        
-        array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+    };
+    
+    // We need to reset and step the statement to get fresh types,
+    // but only do this for read-only statements to avoid side effects
+    bool isReadOnly = sqlite3_stmt_readonly(castedThis->stmt) != 0;
+
+    if (isReadOnly) {
+        // Reset the statement (safe for read-only statements)
+        int resetStatus = sqlite3_reset(castedThis->stmt);
+        if (resetStatus != SQLITE_OK) {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
+            return { };
+        }
+
+        // Step once to get to the first row (safe for read-only statements)
+        int stepStatus = sqlite3_step(castedThis->stmt);
+
+        // If we got a row, get types from it
+        if (stepStatus == SQLITE_ROW) {
+            for (int i = 0; i < count; i++) {
+                JSC::JSValue typeValue;
+
+                // Get the actual column type from the current row
+                int columnType = sqlite3_column_type(castedThis->stmt, i);
+
+                switch (columnType) {
+                case SQLITE_INTEGER:
+                    typeValue = JSC::jsNontrivialString(vm, "integer"_s);
+                    break;
+                case SQLITE_FLOAT:
+                    typeValue = JSC::jsNontrivialString(vm, "float"_s);
+                    break;
+                case SQLITE3_TEXT:
+                    typeValue = JSC::jsNontrivialString(vm, "text"_s);
+                    break;
+                case SQLITE_BLOB:
+                    typeValue = JSC::jsNontrivialString(vm, "blob"_s);
+                    break;
+                case SQLITE_NULL: {
+                    // For NULL values, use declared type to maintain type consistency
+                    const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
+                    typeValue = declType ? processDeclaredType(declType) : JSC::jsNontrivialString(vm, "null"_s);
+                    break;
+                }
+                default:
+                    typeValue = JSC::jsNontrivialString(vm, "any"_s);
+                    break;
+                }
+
+                array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+            }
+        } else if (stepStatus == SQLITE_DONE) {
+            // No data rows to read, fall back to declared types
+            for (int i = 0; i < count; i++) {
+                // Try to get declared column type
+                const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
+                JSC::JSValue typeValue = processDeclaredType(declType);
+                array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+            }
+        } else {
+            // If there was an error stepping, throw it
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
+            sqlite3_reset(castedThis->stmt);
+            return { };
+        }
+
+        // Reset the statement back to its original state
+        sqlite3_reset(castedThis->stmt);
+    } else {
+        // For non-read-only statements, use declared types only to avoid side effects
+        for (int i = 0; i < count; i++) {
+            const char* declType = sqlite3_column_decltype(castedThis->stmt, i);
+            JSC::JSValue typeValue = processDeclaredType(declType);
+            array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+        }
     }
     
     return JSC::JSValue::encode(array);

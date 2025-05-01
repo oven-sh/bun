@@ -64,7 +64,7 @@ describe("SQLite Statement column types", () => {
     expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
   });
 
-  it("returns declared column types regardless of actual data values", () => {
+  it("reports actual column types based on data values", () => {
     const db = new Database(":memory:");
 
     db.run(`
@@ -82,8 +82,8 @@ describe("SQLite Statement column types", () => {
     // Execute the statement to get column types
     let row = stmt.get();
     
-    // The declared type of 'value' is ANY, so we should get 'ANY' regardless of content
-    expect(stmt.native.columnTypes).toEqual(['integer', 'ANY']);
+    // We should get the actual type of the value (integer)
+    expect(stmt.native.columnTypes).toEqual(['integer', 'integer']);
     
     // Update to a text value
     db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
@@ -92,12 +92,21 @@ describe("SQLite Statement column types", () => {
     stmt = db.prepare("SELECT * FROM dynamic_types");
     row = stmt.get();
     
-    // Even though the value is now text, the column type remains the same
-    // because we're reporting the declared type, not the actual data type
-    expect(stmt.native.columnTypes).toEqual(['integer', 'ANY']);
+    // We should get the actual type of the value (text)
+    expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
+
+    // Update to a float value
+    db.run(`UPDATE dynamic_types SET value = 3.14 WHERE id = 1`);
+
+    // Re-prepare to get fresh column type information
+    stmt = db.prepare("SELECT * FROM dynamic_types");
+    row = stmt.get();
+
+    // We should get the actual type of the value (float)
+    expect(stmt.native.columnTypes).toEqual(['integer', 'float']);
   });
 
-  it("reports 'any' for column types from expressions", () => {
+  it("reports actual types for columns from expressions", () => {
     // Create a database
     const db = new Database(":memory:");
 
@@ -115,8 +124,8 @@ describe("SQLite Statement column types", () => {
     // Check columns are correctly identified
     expect(stmt.native.columns).toEqual(['str_length', 'magic_number', 'greeting']);
     
-    // For expressions, we expect 'any' as the type since there's no declared type
-    expect(stmt.native.columnTypes).toEqual(['any', 'any', 'any']);
+    // For expressions, expect the actual data types
+    expect(stmt.native.columnTypes).toEqual(['integer', 'integer', 'text']);
   });
 
   it("handles multiple different expressions and functions", () => {
@@ -147,9 +156,9 @@ describe("SQLite Statement column types", () => {
       'timestamp'
     ]);
 
-    // All expression columns should be reported as 'any' type
+    // Expression columns should be reported with their actual types
     expect(stmt.native.columnTypes).toEqual([
-      'any', 'any', 'any', 'any', 'any', 'any', 'any'
+      'integer', 'float', 'text', 'blob', 'null', 'integer', 'text'
     ]);
 
     // Verify data types were correctly identified at runtime
@@ -160,5 +169,18 @@ describe("SQLite Statement column types", () => {
     expect(row.null_val).toBe(null);
     expect(typeof row.func_result).toBe('number');
     expect(typeof row.timestamp).toBe('string');
+  });
+
+  it("throws an error when accessing columnTypes before statement execution", () => {
+    const db = new Database(":memory:");
+    db.run(`CREATE TABLE test (id INTEGER, name TEXT)`);
+
+    // Prepare statement but don't execute it
+    const stmt = db.prepare("SELECT * FROM test");
+
+    // Accessing columnTypes before executing should throw
+    expect(() => {
+      stmt.native.columnTypes;
+    }).toThrow("Statement must be executed before accessing columnTypes");
   });
 });

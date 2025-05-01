@@ -65,7 +65,7 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = (internal) => {
+  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
     window.internal = internal;
   };
 

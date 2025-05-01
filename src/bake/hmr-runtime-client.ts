@@ -275,7 +275,7 @@ if (isStreamingConsoleLogFromBrowserToServer) {
       }
     }
 
-    ws.send(str);
+    ws.sendBuffered(str);
   }
 
   if (typeof originalLog === "function") {

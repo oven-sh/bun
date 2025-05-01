@@ -881,6 +881,7 @@ function registerSynthetic(id: Id, esmExports) {
   const module = new HMRModule(id, false);
   module.exports = esmExports;
   registry.set(id, module);
+  unloadedModuleRegistry[id] = true as any;
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {

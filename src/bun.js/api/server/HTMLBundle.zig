@@ -48,7 +48,7 @@ pub const HTMLBundleRoute = Route;
 /// html file on multiple endpoints.
 pub const Route = struct {
     /// One HTMLBundle.Route can be specified multiple times
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{});
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" });
     pub const ref = Route.RefCount.ref;
     pub const deref = Route.RefCount.deref;
 
@@ -73,8 +73,8 @@ pub const Route = struct {
         return cost;
     }
 
-    pub fn init(html_bundle: *HTMLBundle) *Route {
-        return bun.new(Route, .{
+    pub fn init(html_bundle: *HTMLBundle) RefPtr(Route) {
+        return .new(.{
             .bundle = .initRef(html_bundle),
             .pending_responses = .{},
             .ref_count = .init(),

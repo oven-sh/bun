@@ -8,7 +8,6 @@ import {
   setRefreshRuntime,
   emitEvent,
   fullReload,
-  onEvent,
 } from "./hmr-module";
 import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";

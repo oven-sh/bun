@@ -289,7 +289,7 @@ pub const RouteBundle = struct {
 
     pub const HTML = struct {
         /// DevServer increments the ref count of this bundle
-        html_bundle: *HTMLBundle.HTMLBundleRoute,
+        html_bundle: RefPtr(HTMLBundle.HTMLBundleRoute),
         bundled_file: IncrementalGraph(.client).FileIndex,
         /// Invalidated when the HTML file is modified, but not it's imports.
         /// The style tag is injected here.
@@ -1478,7 +1478,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
+            try entry_points.append(alloc, html.html_bundle.data.bundle.data.path, .{ .client = true });
         },
     }
 
@@ -1607,7 +1607,7 @@ const script_unref_payload = "<script>" ++
 
 fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, route_bundle: *RouteBundle, html: *RouteBundle.HTML) bun.OOM![]u8 {
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
-    assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
+    assert(html.html_bundle.data.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
     const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
@@ -1629,7 +1629,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     const before_head_end = bundled_html[0..script_injection_offset];
     const after_head_end = bundled_html[script_injection_offset..];
 
-    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.bundle.data.path), ".html");
+    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.data.bundle.data.path), ".html");
     // TODO: function for URL safe chars
     if (!bun.strings.isAllASCII(display_name)) display_name = "page";
 
@@ -1755,6 +1755,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
     }
 
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
+    // This is already done in Next.js. we have to port this to Zig so we can use.
     resp.writeStatus("501 Not Implemented");
     resp.end("TODO", false);
     _ = dev;
@@ -2827,7 +2828,7 @@ pub fn finalizeBundle(
             else
                 null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
+            .html => |html| dev.relativePath(html.html_bundle.data.bundle.data.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
                 const opaque_id = route.file_page.unwrap() orelse
@@ -3084,7 +3085,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
                 dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
-                    .html_bundle = html,
+                    .html_bundle = .initRef(html),
                     .bundled_file = incremental_graph_index,
                     .script_injection_offset = .none,
                     .cached_response = null,
@@ -6001,7 +6002,9 @@ pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.ti
     const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
-    return .{ .rearm = bun.timespec.msFromNow(1000) };
+    timer.state = .FIRED;
+    dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
+    return .disarm;
 }
 
 fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {
@@ -7767,7 +7770,12 @@ pub const SourceMapStore = struct {
             } else {
                 store.weak_refs.unget(&.{item}) catch
                     unreachable; // there is enough space since the last item was just removed.
-                return .{ .rearm = .{ .sec = item.expire + 1, .nsec = 0 } };
+                store.weak_ref_sweep_timer.state = .FIRED;
+                store.owner().vm.timer.update(
+                    &store.weak_ref_sweep_timer,
+                    &.{ .sec = item.expire + 1, .nsec = 0 },
+                );
+                return .disarm;
             }
         }
 
@@ -8331,3 +8339,5 @@ const VLQ = SourceMap.VLQ;
 
 const StringJoiner = bun.StringJoiner;
 const AllocationScope = bun.AllocationScope;
+
+const RefPtr = bun.ptr.RefPtr;

@@ -284,14 +284,8 @@ pub const All = struct {
 
         while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(&now, vm)) {
-                .disarm => {
-                    // TODO: t.state = .FIRED;
-                },
-                .rearm => |rearm| {
-                    // Prevent `update` from removing the timer while it's running.
-                    t.state = .FIRED;
-                    this.update(t, &rearm);
-                },
+                .disarm => {},
+                .rearm => {},
             }
         }
     }

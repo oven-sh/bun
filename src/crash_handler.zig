@@ -1882,6 +1882,8 @@ pub const WriteStackTraceLimits = struct {
     frame_count: usize = std.math.maxInt(usize),
     stop_at_jsc_llint: bool = false,
     skip_stdlib: bool = false,
+    skip_file_patterns: []const []const u8 = &.{},
+    skip_function_patterns: []const []const u8 = &.{},
 };
 
 /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
@@ -1927,7 +1929,18 @@ pub fn writeStackTrace(
                 }
             }
         }
-
+        for (limits.skip_file_patterns) |pattern| {
+            if (source.source_location) |sl| {
+                if (bun.strings.includes(sl.file_name, pattern)) {
+                    continue;
+                }
+            }
+        }
+        for (limits.skip_function_patterns) |pattern| {
+            if (bun.strings.includes(source.symbol_name, pattern)) {
+                continue;
+            }
+        }
         if (limits.stop_at_jsc_llint and bun.strings.includes(source.symbol_name, "_llint_")) {
             break;
         }

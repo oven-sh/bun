@@ -342,11 +342,11 @@ pub const SendHandle = struct {
             var iter = self.callback.arrayIterator(global);
             while (iter.next()) |item| {
                 if (item.isCallable()) {
-                    global.bunVM().eventLoop().runCallback(item, global, .null, &.{.null});
+                    item.callNextTick(global, .{.null});
                 }
             }
         } else if (self.callback.isCallable()) {
-            global.bunVM().eventLoop().runCallback(self.callback, global, .null, &.{.null});
+            self.callback.callNextTick(global, .{.null});
         }
         self.deinit();
     }

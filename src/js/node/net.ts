@@ -22,19 +22,23 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const {
-  SocketAddress,
-  addServerName,
-  upgradeDuplexToTLS,
-  isNamedPipeSocket,
-  normalizedArgsSymbol,
-  getBufferedAmount,
-} = require("internal/net");
+const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
+  "socket.zig",
+  "createNodeTLSBinding",
+);
+const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener, SocketHandler } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+
+const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
+const BlockList = $zig("node_net_binding.zig", "BlockList");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1675,17 +1679,6 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// TODO:
-class BlockList {
-  constructor() {}
-
-  addSubnet(_net, _prefix, _type) {}
-
-  check(_address, _type) {
-    return false;
-  }
-}
-
 export default {
   createServer,
   Server,
@@ -1697,10 +1690,10 @@ export default {
   Socket,
   _normalizeArgs: normalizeArgs,
 
-  getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
-  setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
-  getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
-  setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
+  getDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamily,
+  getDefaultAutoSelectFamilyAttemptTimeout,
+  setDefaultAutoSelectFamilyAttemptTimeout,
 
   BlockList,
   SocketAddress,

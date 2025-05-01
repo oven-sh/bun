@@ -400,7 +400,7 @@ check_package_manager() {
 		pm="brew"
 		;;
 	linux)
-		if [ -f "$(which apt)" ]; then
+		if [ -f "$(which apt-get)" ]; then
 			pm="apt"
 		elif [ -f "$(which dnf)" ]; then
 			pm="dnf"
@@ -549,7 +549,7 @@ check_ulimit() {
 package_manager() {
 	case "$pm" in
 	apt)
-		execute_sudo apt "$@"
+		execute_sudo apt-get "$@"
 		;;
 	dnf)
 		case "$distro" in
@@ -598,6 +598,7 @@ install_packages() {
 		package_manager install \
 			--yes \
 			--no-install-recommends \
+			--fix-missing \
 			"$@"
 		;;
 	dnf)
@@ -917,8 +918,8 @@ install_llvm() {
 	apk)
 		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
-			"llvm$(llvm_version)" \
-			"clang$(llvm_version)" \
+			"llvm$(llvm_version)-dev" \
+			"clang$(llvm_version)-dev" \
 			"scudo-malloc" \
 			"lld"
 		;;
@@ -994,6 +995,7 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
+	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
 install_ccache() {

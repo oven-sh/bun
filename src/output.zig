@@ -774,7 +774,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         ///   BUN_DEBUG_foo=1
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
-        pub fn log(comptime fmt: string, args: anytype) void {
+        pub fn log(comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void {
             if (!source_set) return;
             if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
                 return log(fmt ++ "\n", args);
@@ -828,7 +828,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
     };
 }
 
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) callconv(bun.callconv_inline) LogFunction {
     return Scoped(
         tag,
         disabled,

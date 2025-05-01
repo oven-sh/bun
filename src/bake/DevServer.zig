@@ -3058,14 +3058,15 @@ fn sendBuiltInNotFound(resp: anytype) void {
     resp.end(message, true);
 }
 
-fn printMemoryLine(dev: *DevServer) void {
+fn printMemoryLine(_: *DevServer) void {
     if (!debug.isVisible()) return;
-    Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
-        bun.fmt.size(dev.memoryCost(), .{}),
-        dev.allocation_scope.state.allocations.count(),
-        bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
-        bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
-    });
+    // FIXME: compilation error with asan build
+    // Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
+    //     bun.fmt.size(dev.memoryCost(), .{}),
+    //     dev.allocation_scope.state.allocations.count(),
+    //     bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
+    //     bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
+    // });
 }
 
 const FileKind = enum(u2) {

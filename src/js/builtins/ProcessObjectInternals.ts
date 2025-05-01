@@ -373,10 +373,12 @@ export function windowsEnv(
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+      return typeof p === "string" ? (internalEnv[p.toUpperCase()] ?? internalEnv[p]) : undefined;
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();
+      if (typeof p === "symbol") throw new TypeError("Cannot convert a symbol to a string");
+      if (typeof value === "symbol") throw new TypeError("Cannot convert a symbol to a string");
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
       if (!(k in internalEnv) && !envMapList.includes(p)) {
@@ -392,6 +394,7 @@ export function windowsEnv(
       return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
+      if (typeof p === "symbol") return true;
       const k = String(p).toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
@@ -401,6 +404,11 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
+      if (attributes.get) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' does not accept an accessor(getter/setter) descriptor`);
+      if (attributes.set) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' does not accept an accessor(getter/setter) descriptor`);
+      if (!attributes.writable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
+      if (!attributes.enumerable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
+      if (!attributes.configurable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       if (!(k in internalEnv) && !envMapList.includes(p)) {

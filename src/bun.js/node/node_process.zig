@@ -270,6 +270,7 @@ pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
 pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
     comptime bun.assert(bun.Environment.isWindows);
     if (k.tag == .Empty) return;
+    if (v.tag == .Empty) return;
     const wtf1 = k.value.WTFStringImpl;
     var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
     const allocator = fixed_stack_allocator.get();

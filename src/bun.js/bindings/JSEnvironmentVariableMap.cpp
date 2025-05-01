@@ -24,45 +24,6 @@ namespace Bun {
 
 using namespace WebCore;
 
-JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
-        return JSValue::encode(jsUndefined());
-
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
-
-    if (UNLIKELY(name.len == 0))
-        return JSValue::encode(jsUndefined());
-
-    if (!Bun__getEnvValue(globalObject, &name, &value)) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue result = jsString(vm, Zig::toStringCopy(value));
-    thisObject->putDirect(vm, propertyName, result, 0);
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto string = JSValue::decode(value).toString(globalObject);
-    if (UNLIKELY(!string))
-        return false;
-
-    object->putDirect(vm, propertyName, string, 0);
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -264,7 +225,6 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue arg2 = callFrame->uncheckedArgument(1);
-    ASSERT(arg2.isNull() || arg2.isString());
     if (arg2.isCell()) {
         WTF::String string2 = arg2.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, {});
@@ -340,11 +300,14 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
+#if OS(WINDOWS)
+    auto* object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+#else
     auto* object = JSEnvironmentVariableMap::create(vm, globalObject, JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype()));
+#endif
 
 #if OS(WINDOWS)
-    JSArray* keyArray
-        = constructEmptyArray(globalObject, nullptr, count);
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -394,8 +357,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 continue;
             }
         }
-
-        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

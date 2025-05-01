@@ -10,9 +10,6 @@ const validators = @import("./../util/validators.zig");
 const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
 const sockaddr = SocketAddress.sockaddr;
 
-//
-//
-
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
@@ -55,14 +52,6 @@ pub fn isBlockList(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     _ = globalThis;
     const value = callframe.argumentsAsArray(1)[0];
     return .jsBoolean(value.as(@This()) != null);
-}
-
-// [kInspect](depth, options)
-pub fn customInspect(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = this;
-    _ = globalThis;
-    _ = callframe;
-    @compileError("TODO");
 }
 
 pub fn addAddress(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

@@ -433,7 +433,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
     this->putDirect(vm, builtinNames(vm).inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${protoSymbolName(
       typeName,
       "customInspect",
-    )}, ImplementationVisibility::Private), PropertyAttribute::Builtin | 0);`;
+    )}, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
   }
   if (obj.finalize) {
     externs +=
@@ -2074,6 +2074,9 @@ const JavaScriptCoreBindings = struct {
     }
 
     if (customInspect) {
+      // TODO: perhaps exposing this on classes directly isn't the best API choice long term
+      // it would be better to make a different signature that accepts a writer, then a generated-only function that returns a js string
+      // the writer function can integrate with our native console.log implementation, the generated function can call the writer version and collect the result
       exports.set("customInspect", protoSymbolName(typeName, "customInspect"));
       output += `
       pub fn ${protoSymbolName(typeName, "customInspect")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {

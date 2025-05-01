@@ -696,7 +696,6 @@ pub fn deinit(dev: *DevServer) void {
         .deferred_request_pool = {},
         .emit_incremental_visualizer_events = {},
         .emit_memory_visualizer_events = {},
-        .emit_visualizer_events = {},
         .framework = {},
         .frontend_only = {},
         .generation = {},
@@ -706,6 +705,7 @@ pub fn deinit(dev: *DevServer) void {
         .server = {},
         .server_transpiler = {},
         .ssr_transpiler = {},
+        .relative_path_buf = {},
         .vm = {},
 
         // WebSockets should be deinitialized before other parts
@@ -865,7 +865,6 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .dump_dir = {},
         .emit_incremental_visualizer_events = {},
         .emit_memory_visualizer_events = {},
-        .emit_visualizer_events = {},
         .frontend_only = {},
         .generation = {},
         .graph_safety_lock = {},
@@ -875,7 +874,9 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .plugin_state = {},
         .relative_path_buf_lock = {},
         .server_register_update_callback = {},
+        .server_fetch_function_callback = {},
         .watcher_atomics = {},
+        .relative_path_buf = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -7763,7 +7764,7 @@ pub const SourceMapStore = struct {
             } else {
                 store.weak_refs.unget(&.{item}) catch
                     unreachable; // there is enough space since the last item was just removed.
-                return .{ .rearm = .{ .sec = item.expire, .nsec = 0 } };
+                return .{ .rearm = .{ .sec = item.expire + 1, .nsec = 0 } };
             }
         }
 

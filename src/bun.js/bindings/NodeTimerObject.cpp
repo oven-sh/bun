@@ -16,7 +16,7 @@
 namespace Bun {
 using namespace JSC;
 
-static void call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
+static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -38,7 +38,7 @@ static void call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
             Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
-            return;
+            return false;
         }
 
         MarkedArgumentBuffer args;
@@ -57,22 +57,28 @@ static void call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
+    bool hadException = false;
+
     if (UNLIKELY(scope.exception())) {
         auto* exception = scope.exception();
         scope.clearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        hadException = true;
     }
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
+
+    return hadException;
 }
 
-extern "C" void Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
+// Returns false if an exception was thrown.
+extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
     if (UNLIKELY(vm.hasPendingTerminationException())) {
-        return;
+        return false;
     }
 
     return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));

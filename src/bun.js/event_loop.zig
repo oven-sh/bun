@@ -902,6 +902,19 @@ pub const EventLoop = struct {
         this.entered_event_loop_count -= 1;
     }
 
+    pub fn exitMaybeDrainMicrotask(this: *EventLoop, allow_drain_microtask: bool) void {
+        const count = this.entered_event_loop_count;
+        log("exit() = {d}", .{count - 1});
+
+        defer this.debug.exit();
+
+        if (allow_drain_microtask and count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
+
+        this.entered_event_loop_count -= 1;
+    }
+
     pub inline fn getVmImpl(this: *EventLoop) *VirtualMachine {
         return this.virtual_machine;
     }
@@ -937,6 +950,13 @@ pub const EventLoop = struct {
 
     pub fn drainMicrotasks(this: *EventLoop) void {
         this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+    }
+
+    // should be called after exit()
+    pub fn maybeDrainMicrotasks(this: *EventLoop) void {
+        if (this.entered_event_loop_count == 0 and !this.virtual_machine.is_inside_deferred_task_queue) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
     }
 
     /// When you call a JavaScript function from outside the event loop task
@@ -1356,14 +1376,6 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, @typeName(TimeoutObject)) => {
-                    var any: *TimeoutObject = task.get(TimeoutObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
-                @field(Task.Tag, @typeName(ImmediateObject)) => {
-                    var any: *ImmediateObject = task.get(ImmediateObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
                 @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
@@ -1409,14 +1421,15 @@ pub const EventLoop = struct {
         this.immediate_tasks = this.next_immediate_tasks;
         this.next_immediate_tasks = .{};
 
-        if (to_run_now.items.len > 0) {
-            this.enter();
+        var exception_thrown = false;
+        for (to_run_now.items) |task| {
+            exception_thrown = task.runImmediateTask(virtual_machine, exception_thrown);
+        }
 
-            for (to_run_now.items) |task| {
-                task.runImmediateTask(virtual_machine);
-            }
-
-            this.exit();
+        // if an exception was thrown, drain the pending microtasks from the remaining
+        // immediate tasks.
+        if (exception_thrown) {
+            this.maybeDrainMicrotasks();
         }
 
         if (this.next_immediate_tasks.capacity > 0) {

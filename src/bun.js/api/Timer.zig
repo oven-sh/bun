@@ -615,10 +615,6 @@ pub const TimeoutObject = struct {
         return globalObject.throw("Timeout is not constructible", .{});
     }
 
-    pub fn runImmediateTask(this: *TimeoutObject, vm: *VirtualMachine) void {
-        this.internals.runImmediateTask(vm);
-    }
-
     pub fn toPrimitive(this: *TimeoutObject, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return this.internals.toPrimitive();
     }
@@ -754,8 +750,8 @@ pub const ImmediateObject = struct {
         return globalObject.throw("Immediate is not constructible", .{});
     }
 
-    pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine) void {
-        this.internals.runImmediateTask(vm);
+    pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine, exception_thrown: bool) bool {
+        return this.internals.runImmediateTask(vm, exception_thrown);
     }
 
     pub fn toPrimitive(this: *ImmediateObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -855,23 +851,23 @@ pub const TimerObjectInternals = struct {
         }
     }
 
-    extern "c" fn Bun__JSTimeout__call(globalObject: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue) void;
+    extern "c" fn Bun__JSTimeout__call(globalObject: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue) bool;
 
-    pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) void {
+    pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine, exception_thrown: bool) bool {
         if (this.flags.has_cleared_timer or
             // unref'd setImmediate callbacks should only run if there are things keeping the event
             // loop alive other than setImmediates
             (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
         {
             this.deref();
-            return;
+            return exception_thrown;
         }
 
         const timer = this.strong_this.get() orelse {
             if (Environment.isDebug) {
                 @panic("TimerObjectInternals.runImmediateTask: this_object is null");
             }
-            return;
+            return exception_thrown;
         };
         const globalThis = vm.global;
         this.strong_this.deinit();
@@ -879,19 +875,19 @@ pub const TimerObjectInternals = struct {
         this.setEnableKeepingEventLoopAlive(vm, false);
 
         vm.eventLoop().enter();
-        {
-            this.ref();
-            defer this.deref();
+        const callback = ImmediateObject.js.callbackGetCached(timer).?;
+        const arguments = ImmediateObject.js.argumentsGetCached(timer).?;
+        this.ref();
+        const threw_exception = this.run(globalThis, timer, callback, arguments, this.asyncID(), vm);
+        this.deref();
 
-            const callback = ImmediateObject.js.callbackGetCached(timer).?;
-            const arguments = ImmediateObject.js.argumentsGetCached(timer).?;
-            this.run(globalThis, timer, callback, arguments, this.asyncID(), vm);
-
-            if (this.eventLoopTimer().state == .FIRED) {
-                this.deref();
-            }
+        if (this.eventLoopTimer().state == .FIRED) {
+            this.deref();
         }
-        vm.eventLoop().exit();
+
+        vm.eventLoop().exitMaybeDrainMicrotask(!exception_thrown and !threw_exception);
+
+        return exception_thrown or threw_exception;
     }
 
     pub fn asyncID(this: *const TimerObjectInternals) u64 {
@@ -952,7 +948,7 @@ pub const TimerObjectInternals = struct {
             this.ref();
             defer this.deref();
 
-            this.run(globalThis, this_object, callback, arguments, ID.asyncID(async_id), vm);
+            _ = this.run(globalThis, this_object, callback, arguments, ID.asyncID(async_id), vm);
 
             switch (kind) {
                 .setTimeout, .setInterval => {
@@ -1035,7 +1031,7 @@ pub const TimerObjectInternals = struct {
         this.reschedule(timer, vm);
     }
 
-    pub fn run(this: *TimerObjectInternals, globalThis: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue, async_id: u64, vm: *JSC.VirtualMachine) void {
+    pub fn run(this: *TimerObjectInternals, globalThis: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue, async_id: u64, vm: *JSC.VirtualMachine) bool {
         if (vm.isInspectorEnabled()) {
             Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, async_id);
         }
@@ -1049,7 +1045,7 @@ pub const TimerObjectInternals = struct {
         // Bun__JSTimeout__call handles exceptions.
         this.flags.in_callback = true;
         defer this.flags.in_callback = false;
-        Bun__JSTimeout__call(globalThis, timer, callback, arguments);
+        return Bun__JSTimeout__call(globalThis, timer, callback, arguments);
     }
 
     pub fn init(

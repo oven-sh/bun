@@ -1,8 +1,16 @@
 # Documentation: http://trac.webkit.org/wiki/TestExpectations
 # Format: [modifier] test-name [[ expectations ]] [# comment]
 
-# Tests skipped due to timing issues
-[ ASAN ] test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
+# Tests that are broken
+test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
+test/integration/bun-types/bun-types.test.ts [ FAIL ] # @types/bun integration test > checks without lib.dom.d.ts
+test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
+test/cli/install/bun-run.test.ts [ FAIL ] # should pass arguments correctly in scripts
+test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
+test/regression/issue/17454/destructure_string.test.ts [ FAIL ] # destructure string does not become string
+
+# Tests that are flaky
+test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests skipped due to different log/line outputs
 [ ASAN ] test/js/web/console/console-log.test.ts [ SKIP ] # log line mismatch
@@ -20,8 +28,6 @@
 [ ASAN ] test/js/node/test/parallel/test-zlib-invalid-input-memory.js [ FAIL ]
 [ ASAN ] test/js/node/test/parallel/test-https-server-connections-checking-leak.js [ FAIL ]
 [ ASAN ] test/js/bun/sqlite/sqlite.test.js [ FAIL ] # can continue to use existing statements after database has been GC'd
-[ ASAN ] test/integration/bun-types/bun-types.test.ts [ FAIL ] # @types/bun integration test > checks without lib.dom.d.ts
-[ ASAN ] test/cli/create/create-jsx.test.ts [ FAIL ] # development: false > react spa (tailwind) > build
 [ ASAN ] test/bake/dev/stress.test.ts [ FLAKY ] # DEV:stress-1: crash #18910
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed

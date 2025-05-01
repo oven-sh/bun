@@ -357,6 +357,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 continue;
             }
         }
+
+        ZigString zname = toZigString(idName);
+        ZigString zvalue = { nullptr, 0 };
+        if (UNLIKELY(zname.len == 0)) continue;
+        if (!Bun__getEnvValue(globalObject, &zname, &zvalue)) continue;
+        object->putDirect(vm, identifier, jsString(vm, Zig::toStringCopy(zvalue)), 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

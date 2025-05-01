@@ -1585,6 +1585,11 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(createNodeVMGlobalObjectStructure(init.vm));
         });
+
+    globalObject->m_JSNodeVMModuleStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createNodeVMModuleStructure(init.vm, init.owner));
+        });
 }
 
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -1809,6 +1814,180 @@ static JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, JSC::S
     ASSERT(buffer);
 
     return JSValue::encode(buffer);
+}
+
+JSC_DECLARE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatus);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetNamespace);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetError);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleInstantiate);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleEvaluate);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleLink);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleSetExport);
+
+static const HashTableValue JSNodeVMModulePrototypeTableValues[] = {
+    { "identifier"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeVmModuleGetterIdentifier, nullptr } },
+    { "getStatus"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetStatus, 0 } },
+    { "getNamespace"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetNamespace, 0 } },
+    { "getError"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetError, 0 } },
+    { "instantiate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleInstantiate, 0 } },
+    { "evaluate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleEvaluate, 2 } },
+    { "getModuleRequests"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetModuleRequests, 0 } },
+    { "link"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleLink, 2 } },
+    { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateCachedData, 0 } },
+    { "setExport"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleSetExport, 2 } },
+};
+
+class JSNodeVMModulePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSNodeVMModulePrototype* create(VM& vm, Structure* structure)
+    {
+        JSNodeVMModulePrototype* prototype = new (NotNull, allocateCell<JSNodeVMModulePrototype>(vm)) JSNodeVMModulePrototype(vm, structure);
+        prototype->finishCreation(vm);
+        return prototype;
+    }
+
+    DECLARE_INFO;
+
+    static constexpr bool needsDestruction = false;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeVMModulePrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+private:
+    JSNodeVMModulePrototype(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(VM& vm)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+        reifyStaticProperties(vm, info(), JSNodeVMModulePrototypeTableValues, *this);
+        this->structure()->setMayBePrototype(true);
+    }
+};
+
+class JSNodeVMModule : public JSC::JSDestructibleObject {
+public:
+    enum class Status : uint8_t {
+        Unlinked,
+        Linking,
+        Linked,
+        Evaluating,
+        Evaluated,
+        Errored
+    };
+
+    using Base = JSC::JSDestructibleObject;
+    static JSNodeVMModule* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        auto* object = new (JSC::allocateCell<JSNodeVMModule>(vm)) JSNodeVMModule(vm, structure);
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static JSNodeVMModule* create(JSC::VM& vm, Zig::GlobalObject* globalObject)
+    {
+        auto* structure = globalObject->m_JSNodeVMModuleStructure.getInitializedOnMainThread(globalObject);
+        return create(vm, structure);
+    }
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSNodeVMModule*>(cell)->JSNodeVMModule::~JSNodeVMModule();
+    }
+
+    ~JSNodeVMModule()
+    {
+    }
+
+    JSNodeVMModule(JSC::VM& vm, JSC::Structure* structure)
+        : JSC::JSDestructibleObject(vm, structure)
+    {
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+
+        return WebCore::subspaceForImpl<JSNodeVMModule, UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSNodeVMModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNodeVMModule = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSNodeVMModule.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodeVMModule = std::forward<decltype(space)>(space); });
+    }
+
+    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), JSNodeVMModulePrototype::info());
+        auto* prototype = JSNodeVMModulePrototype::create(vm, structure);
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+
+    const WTF::String& identifier() const { return m_identifier; }
+    Status status() const { return m_status; }
+    void status(Status value) { m_status = value; }
+
+private:
+    WTF::String m_identifier;
+    Status m_status = Status::Unlinked;
+};
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(JSC::JSValue::decode(thisValue));
+    return JSValue::encode(JSC::jsString(globalObject->vm(), thisObject->identifier()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+
+    switch (thisObject->status()) {
+    case JSNodeVMModule::Status::Unlinked:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("unlinked"_s)));
+    case JSNodeVMModule::Status::Linking:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("linking"_s)));
+    case JSNodeVMModule::Status::Linked:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("linked"_s)));
+    case JSNodeVMModule::Status::Evaluating:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("evaluating"_s)));
+    case JSNodeVMModule::Status::Evaluated:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("evaluated"_s)));
+    case JSNodeVMModule::Status::Errored:
+        return JSValue::encode(JSC::jsString(globalObject->vm(), WTF::String("errored"_s)));
+    default:
+        return JSC::encodedJSUndefined();
+    }
+}
+
+const JSC::ClassInfo JSNodeVMModule::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeVMModule) };
+const JSC::ClassInfo JSNodeVMModulePrototype::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeVMModulePrototype) };
+
+JSC::Structure* createNodeVMModuleStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return JSNodeVMModule::createStructure(vm, globalObject);
 }
 
 } // namespace Bun

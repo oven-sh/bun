@@ -60,4 +60,6 @@ JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
 
+JSC::Structure* createNodeVMModuleStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+
 } // namespace Bun

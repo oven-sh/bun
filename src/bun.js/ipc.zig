@@ -342,11 +342,11 @@ pub const SendHandle = struct {
             var iter = self.callback.arrayIterator(global);
             while (iter.next()) |item| {
                 if (item.isCallable()) {
-                    item.callNextTick(global, .{.null});
+                    global.bunVM().eventLoop().runCallback(item, global, .null, &.{.null});
                 }
             }
         } else if (self.callback.isCallable()) {
-            self.callback.callNextTick(global, .{.null});
+            global.bunVM().eventLoop().runCallback(self.callback, global, .null, &.{.null});
         }
         self.deinit();
     }
@@ -385,6 +385,7 @@ pub const SendQueue = struct {
     owner: SendQueueOwner,
 
     close_next_tick: ?JSC.Task = null,
+    send_next_tick: ?JSC.Task = null,
     write_in_progress: bool = false,
     close_event_sent: bool = false,
 
@@ -428,6 +429,10 @@ pub const SendQueue = struct {
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if (self.close_next_tick) |close_next_tick_task| {
             const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+            managed.cancel();
+        }
+        if (self.send_next_tick) |send_next_tick_task| {
+            const managed: *bun.JSC.ManagedTask = send_next_tick_task.as(bun.JSC.ManagedTask);
             managed.cancel();
         }
     }
@@ -493,6 +498,14 @@ pub const SendQueue = struct {
         bun.assert(this.close_next_tick != null);
         this.close_next_tick = null;
         this.closeSocket(.normal);
+    }
+
+    fn _sendNextTickTask(this: *SendQueue) void {
+        log("SendQueue#_sendNextTickTask", .{});
+        bun.assert(this.send_next_tick != null);
+        this.send_next_tick = null;
+        log("IPC call continueSend() from sendNextTickTask", .{});
+        this.continueSend(this.getGlobalThis() orelse return, .new_message_appended);
     }
 
     fn _onAfterIPCClosed(this: *SendQueue) void {
@@ -696,7 +709,7 @@ pub const SendQueue = struct {
             first.data.cursor += @intCast(n);
             return;
         } else if (n == 0) {
-            bun.debugAssert(false);
+            // no bytes written; wait for writable
             return;
         } else {
             // error. close socket.
@@ -728,8 +741,11 @@ pub const SendQueue = struct {
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
         // log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
 
-        log("IPC call continueSend() from serializeAndSend", .{});
-        self.continueSend(global, .new_message_appended);
+        if (self.send_next_tick == null) {
+            log("IPC queue sendNextTickTask", .{});
+            self.send_next_tick = JSC.ManagedTask.New(SendQueue, _sendNextTickTask).init(self);
+            JSC.VirtualMachine.get().enqueueTask(self.send_next_tick.?);
+        }
 
         if (indicate_backoff) return .backoff;
         return .success;
@@ -803,6 +819,10 @@ pub const SendQueue = struct {
             defer write_req.destroy();
             break :blk write_req.owner orelse return; // orelse case if disconnected before the write completes
         };
+
+        const vm = JSC.VirtualMachine.get();
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
 
         this.windows.windows_write = null;
         if (this.getSocket()) |socket| socket.unref(); // write complete; unref

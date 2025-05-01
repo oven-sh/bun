@@ -245,6 +245,7 @@ if (true) {
   const originalError = console.error;
   console.log = function (...args: any[]) {
     originalLog(...args);
+    // TODO: Copy + paste WebKit's console.log implementation to create RemoteObjects etc.
     ws.send("l" + "l" + JSON.stringify(args));
   };
   console.error = function (...args: any[]) {

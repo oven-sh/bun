@@ -18,6 +18,8 @@ import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
 import { addMapping, SourceMapURL } from "./client/stack-trace";
 
+const consoleErrorWithoutInspector = console.error;
+
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
@@ -250,13 +252,12 @@ window.addEventListener("unhandledrejection", event => {
 //     },
 //   })
 //
+
 let isStreamingConsoleLogFromBrowserToServer = document.querySelector("meta[name='bun:echo-console-log']");
 if (isStreamingConsoleLogFromBrowserToServer) {
   // Ensure it only runs once, and avoid the extra noise in the HTML.
   isStreamingConsoleLogFromBrowserToServer.remove();
-
   const originalLog = console.log;
-  const originalError = console.error;
 
   function websocketInspect(logLevel: "l" | "e", values: any[]) {
     let str = "l" + logLevel;
@@ -285,9 +286,9 @@ if (isStreamingConsoleLogFromBrowserToServer) {
     };
   }
 
-  if (typeof originalError === "function") {
+  if (typeof consoleErrorWithoutInspector === "function") {
     console.error = function error(...args: any[]) {
-      originalError(...args);
+      consoleErrorWithoutInspector(...args);
       websocketInspect("e", args);
     };
   }
@@ -304,6 +305,8 @@ try {
 
   emitEvent("bun:ready", null);
 } catch (e) {
-  console.error(e);
+  // Use consoleErrorWithoutInspector to avoid double-reporting errors.
+  consoleErrorWithoutInspector(e);
+
   onRuntimeError(e, true, false);
 }

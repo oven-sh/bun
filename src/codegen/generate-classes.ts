@@ -580,9 +580,6 @@ class ${name} final : public JSC::InternalFunction {
             [](auto& spaces, auto&& space) { spaces.${subspaceFor("BunClass")}Constructor = std::forward<decltype(space)>(space); });
       }
 
-
-      void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype);
-
       // Must be defined for each specialization class.
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
       static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -662,7 +659,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* newTarget = asObject(callFrame->newTarget());
@@ -683,10 +680,12 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
-    if (UNLIKELY(!ptr || scope.exception())) {
+    if (UNLIKELY(scope.exception())) {
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
       return JSValue::encode(JSC::jsUndefined());
     }
 
+    ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
   ${
     obj.estimatedSize
@@ -698,11 +697,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     auto value = JSValue::encode(instance);
     RELEASE_AND_RETURN(scope, value);
-}
-
-void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
-{
-
 }
 
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
@@ -1801,7 +1795,7 @@ function generateZig(
   if (structuredClone) {
     exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
 
-    if (structuredClone === "transferable") {
+    if (typeof structuredClone === "object" && structuredClone.transferable) {
       exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
     }
 
@@ -2035,7 +2029,7 @@ const JavaScriptCoreBindings = struct {
       }
       `;
 
-      if (structuredClone === "transferable") {
+      if (typeof structuredClone === "object" && structuredClone.transferable) {
         exports.set("structuredClone_transferable", symbolName(typeName, "onStructuredCloneTransfer"));
         output += `
         pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(JSC.conv) void {
@@ -2294,6 +2288,25 @@ ${jsclasses
 }`;
 }
 
+function isTransferableCppImpl() {
+  return `
+bool WebCore::SerializedScriptValue::isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+  if (!value.isCell()) return true;
+  auto cell = value.asCell();
+${classes
+  .map(c => {
+    if (c.structuredClone == null) return "";
+    if (typeof c.structuredClone === "boolean") return "";
+    if (c.structuredClone.transferable) return "";
+    return `  if (JSC::jsDynamicCast<WebCore::JS${c.name}*>(cell)) return false;\n`;
+  })
+  .join("")}
+  return true;
+}
+`;
+}
+
 function initLazyClasses(initLaterFunctions) {
   return `
 
@@ -2358,7 +2371,7 @@ pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callc
 
 `;
 
-const classes = [];
+const classes: ClassDefinition[] = [];
 for (const file of files) {
   const result = require(path.resolve(file));
   if (!(result?.default?.length ?? 0)) continue;
@@ -2517,7 +2530,7 @@ fn log_zig_call(typename: []const u8, callframe: *JSC.CallFrame) callconv(bun.ca
   if (comptime Environment.enable_logs) {
     zig("<d>{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
   }
-} 
+}
 
 fn log_zig_get_internal_properties(typename: []const u8) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
@@ -2608,6 +2621,7 @@ if (!process.env.ONLY_ZIG) {
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
     jsInheritsCppImpl(),
+    isTransferableCppImpl(),
   ]);
 
   if (lutTextFile.length) {
@@ -2710,7 +2724,7 @@ function getPropertySignatureWithComment(
     commentLines.push(
       ` Look for a setter like this:
       * \`\`\`zig
-      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void 
+      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void
       * \`\`\``,
     );
     if (propDef.cache) {
@@ -2860,7 +2874,7 @@ export function generateBuiltinTypes(classes: ClassDefinition[]): string {
  * Type definitions for Bun's built-in classes implemented in Zig.
  * Do not edit this file directly.
  * @generated
- * 
+ *
  * This namespace does not exist at runtime!
  */
 declare namespace $ZigGeneratedClasses {

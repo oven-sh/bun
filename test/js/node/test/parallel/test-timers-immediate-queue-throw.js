@@ -46,7 +46,7 @@ for (let i = 0; i < QUEUE; i++)
   setImmediate(run, 0);
 setImmediate(() => {
   threw = true;
-  process.nextTick(() => assert.strictEqual(stage, 1));
+  process.nextTick(common.mustCall(() => assert.strictEqual(stage, 1)));
   throw new Error('setImmediate Err');
 });
 // d1.run(() => setImmediate(() => {

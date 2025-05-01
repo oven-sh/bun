@@ -142,21 +142,23 @@ pub fn check(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.Ca
                 if (os.compare(.gte) and oe.compare(.lte)) return .jsBoolean(true);
             },
             .subnet => |s| {
-                if (s.network.as_v4()) |a_l| if (address.as_v4()) |a_r| {
-                    const set_net = std.bit_set.IntegerBitSet(32){ .mask = @byteSwap(@bitReverse(a_l)) };
-                    const set_adr = std.bit_set.IntegerBitSet(32){ .mask = @byteSwap(@bitReverse(a_r)) };
-                    const intersection = set_net.xorWith(set_adr);
-                    const t = @ctz(intersection.mask);
-                    const h = t >= s.prefix;
-                    if (h) return .jsBoolean(true);
+                if (address.as_v4()) |ip_addr| if (s.network.as_v4()) |subnet_addr| {
+                    if (s.prefix == 32) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    const one: u32 = 1;
+                    const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(32 - s.prefix);
+                    const ip_net: u32 = @byteSwap(ip_addr) & mask_addr;
+                    const subnet_net: u32 = @byteSwap(subnet_addr) & mask_addr;
+                    if (ip_net == subnet_net) return .jsBoolean(true);
                 };
                 if (address.sin.family == std.posix.AF.INET6 and s.network.sin.family == std.posix.AF.INET6) {
-                    const set_net = std.bit_set.IntegerBitSet(128){ .mask = @byteSwap(@bitReverse(@as(u128, @bitCast(s.network.sin6.addr)))) };
-                    const set_adr = std.bit_set.IntegerBitSet(128){ .mask = @byteSwap(@bitReverse(@as(u128, @bitCast(address.sin6.addr)))) };
-                    const intersection = set_net.xorWith(set_adr);
-                    const t = @ctz(intersection.mask);
-                    const h = t >= s.prefix;
-                    if (h) return .jsBoolean(true);
+                    const ip_addr: u128 = @bitCast(address.sin6.addr);
+                    const subnet_addr: u128 = @bitCast(s.network.sin6.addr);
+                    if (s.prefix == 128) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
+                    const one: u128 = 1;
+                    const mask_addr = ((one << @intCast(s.prefix)) - 1) << @intCast(128 - s.prefix);
+                    const ip_net: u128 = @byteSwap(ip_addr) & mask_addr;
+                    const subnet_net: u128 = @byteSwap(subnet_addr) & mask_addr;
+                    if (ip_net == subnet_net) return .jsBoolean(true);
                 }
             },
         }

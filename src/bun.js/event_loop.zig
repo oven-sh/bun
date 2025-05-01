@@ -902,7 +902,7 @@ pub const EventLoop = struct {
         this.entered_event_loop_count -= 1;
     }
 
-    pub fn exitMaybeDrainMicrotask(this: *EventLoop, allow_drain_microtask: bool) void {
+    pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) void {
         const count = this.entered_event_loop_count;
         log("exit() = {d}", .{count - 1});
 

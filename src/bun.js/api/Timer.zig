@@ -887,7 +887,7 @@ pub const TimerObjectInternals = struct {
             this.deref();
         }
 
-        vm.eventLoop().exitMaybeDrainMicrotask(!exception_thrown);
+        vm.eventLoop().exitMaybeDrainMicrotasks(!exception_thrown);
 
         return exception_thrown;
     }

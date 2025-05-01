@@ -175,55 +175,49 @@ if (options["quiet"]) {
  */
 function getTestExpectations() {
   const expectationsPath = join(cwd, "test", "expectations.txt");
+  if (!existsSync(expectationsPath)) {
+    return [];
+  }
   const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
-  const bugPattern = /^((?:(?:webkit\.org\/b\/|github\.com\/)\d+|Bug\([^)]+\))\s*)+/;
-  const modifierPattern = /\[\s*([^\]]+)\s*\]/;
-  const expectationPattern = /\[\s*([^\]]+)\s*\]$/;
 
   /** @type {TestExpectation[]} */
   const expectations = [];
 
   for (const line of lines) {
-    let content = line.trim();
+    const content = line.trim();
     if (!content || content.startsWith("#")) {
       continue;
     }
 
     let comment;
-    const eol = content.indexOf("#");
-    if (eol !== -1) {
-      comment = content.substring(eol + 1).trim();
-      content = content.substring(0, eol).trim();
-    }
-
-    const bugsMatch = content.match(bugPattern);
-    const bugs = bugsMatch ? bugsMatch[0].trim().split(/\s+/) : [];
-
-    if (bugsMatch) {
-      content = content.substring(bugsMatch[0].length).trim();
+    const commentIndex = content.indexOf("#");
+    let cleanLine = content;
+    if (commentIndex !== -1) {
+      comment = content.substring(commentIndex + 1).trim();
+      cleanLine = content.substring(0, commentIndex).trim();
     }
 
     let modifiers = [];
-    const modifiersMatch = content.match(modifierPattern);
-    if (modifiersMatch) {
-      modifiers = modifiersMatch[1].trim().split(/\s+/);
-      content = content.substring(modifiersMatch[0].length).trim();
+    let remaining = cleanLine;
+    let modifierMatch = remaining.match(/^\[(.*?)\]/);
+    if (modifierMatch) {
+      modifiers = modifierMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(modifierMatch[0].length).trim();
     }
 
     let expectationValues = ["Skip"];
-    let filename = content.trim();
-
-    const expectationsMatch = content.match(expectationPattern);
-    if (expectationsMatch) {
-      expectationValues = expectationsMatch[1].trim().split(/\s+/);
-      filename = content.substring(0, content.length - expectationsMatch[0].length).trim();
+    const expectationMatch = remaining.match(/\[(.*?)\]$/);
+    if (expectationMatch) {
+      expectationValues = expectationMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
     }
 
+    const filename = remaining.trim();
     if (filename) {
       expectations.push({
         filename,
         expectations: expectationValues,
-        bugs: bugs.length ? bugs : undefined,
+        bugs: undefined,
         modifiers: modifiers.length ? modifiers : undefined,
         comment,
       });

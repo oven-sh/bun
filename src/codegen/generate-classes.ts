@@ -148,7 +148,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
     JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
     JSValue decoded = JSValue::decode(result);
@@ -1178,7 +1178,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -1403,7 +1403,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 }
 
 function domJITTypeCheckFields(proto, klass) {
-  var output = "#if BUN_DEBUG\n";
+  var output = "#if ASSERT_ENABLED\n";
   for (const name in proto) {
     const { DOMJIT, fn } = proto[name];
     if (!DOMJIT) continue;

@@ -184,7 +184,7 @@ public:
                         outCachedData = { span.begin(), span.end() };
                         isValidType = true;
                     }
-                } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(cachedDataOpt)) {
+                } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(cachedDataOpt); arrayBuffer && arrayBuffer->impl()) {
                     std::span<const uint8_t> span = arrayBuffer->impl()->span();
                     outCachedData = { span.begin(), span.end() };
                     isValidType = true;
@@ -224,7 +224,6 @@ public:
 class ScriptOptions : public BaseOptions {
 public:
     std::optional<int64_t> timeout = std::nullopt;
-    bool importModuleDynamically = false;
     bool produceCachedData = false;
     std::vector<uint8_t> cachedData;
 

@@ -6162,6 +6162,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            if (this.app) |app| app.clearRoutes();
             this.stopListening(abrupt);
             this.deinitIfWeCan();
         }

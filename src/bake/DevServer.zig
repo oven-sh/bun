@@ -31,6 +31,12 @@ pub const Options = struct {
 // made it easier to group related fields together, but one must remember those
 // structures still depend on the DevServer pointer.
 
+/// To validate the DevServer has not been collected, this can be checked.
+/// When freed, this is set to `undefined`. UAF here also trips ASAN.
+magic: if (Environment.isDebug)
+    enum(u128) { valid = 0x1ffd363f121f5c12 }
+else
+    enum { valid } = .valid,
 /// Used for all server-wide allocations. In debug, is is backed by a scope. Thread-safe.
 allocator: Allocator,
 /// All methods are no-op in release builds.
@@ -803,6 +809,11 @@ pub fn deinit(dev: *DevServer) void {
             },
             .enable_after_bundle => {},
         },
+
+        .magic = {
+            bun.debugAssert(dev.magic == .valid);
+            dev.magic = undefined;
+        },
     };
     dev.allocation_scope.deinit();
     bun.destroy(dev);
@@ -850,6 +861,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .generation = {},
         .graph_safety_lock = {},
         .has_pre_crash_handler = {},
+        .magic = {},
         .memory_visualizer_timer = {},
         .plugin_state = {},
         .relative_path_buf = {},
@@ -1204,6 +1216,7 @@ inline fn wrapGenericRequestHandler(
     const uses_any_response = if (fn_info.params[2].type) |t| t == AnyResponse else false;
     return struct {
         fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
+            assert(dev.magic == .valid);
             handler(dev, req, if (uses_any_response) AnyResponse.init(resp) else resp);
         }
     }.handle;
@@ -1256,6 +1269,7 @@ fn ensureRouteIsBundled(
     req: *Request,
     resp: AnyResponse,
 ) bun.OOM!void {
+    assert(dev.magic == .valid);
     assert(dev.server != null);
     sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
         .unqueued => {
@@ -5921,6 +5935,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
 
 pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) EventLoopTimer.Arm {
     const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
+    assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
     return .{ .rearm = bun.timespec.msFromNow(1000) };
 }
@@ -6698,6 +6713,7 @@ pub const HotReloadEvent = struct {
     }
 
     pub fn run(first: *HotReloadEvent) void {
+        assert(first.owner.magic == .valid);
         debug.log("HMR Task start", .{});
         defer debug.log("HMR Task end", .{});
 
@@ -6928,6 +6944,7 @@ const WatcherAtomics = struct {
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
+    assert(dev.magic == .valid);
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
@@ -7247,6 +7264,7 @@ pub const Assets = struct {
     }
 
     pub fn getHash(assets: *Assets, path: []const u8) ?u64 {
+        assert(assets.owner().magic == .valid);
         return if (assets.path_map.get(path)) |idx|
             assets.files.keys()[idx.get()]
         else
@@ -7265,6 +7283,7 @@ pub const Assets = struct {
         /// content hash of the asset
         content_hash: u64,
     ) !EntryIndex {
+        assert(assets.owner().magic == .valid);
         defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
         debug.log("replacePath {} {} - {s}/{s} ({s})", .{
@@ -7365,6 +7384,7 @@ pub const Assets = struct {
     }
 
     pub fn get(assets: *Assets, content_hash: u64) ?*StaticRoute {
+        assert(assets.owner().magic == .valid);
         assert(assets.files.count() == assets.refs.items.len);
         return assets.files.get(content_hash);
     }
@@ -7627,6 +7647,8 @@ pub const SourceMapStore = struct {
     pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventLoopTimer.Arm {
         mapLog("sweepWeakRefs", .{});
         const store: *SourceMapStore = @fieldParentPtr("weak_ref_sweep_timer", timer);
+        assert(store.owner().magic == .valid);
+
         const now: u64 = @max(now_ts.sec, 0);
 
         defer store.owner().emitMemoryVisualizerMessageIfNeeded();

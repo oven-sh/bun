@@ -383,6 +383,7 @@ pub const SendQueue = struct {
             is_server: bool = false,
             write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
             write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
+            write_len: usize = 0,
         },
         false => struct {},
     } = .{},
@@ -412,7 +413,6 @@ pub const SendQueue = struct {
 
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
-        self.keep_alive.disable();
         self.internal_msg_queue.deinit();
         self.incoming.deinitWithAllocator(bun.default_allocator);
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
@@ -438,14 +438,8 @@ pub const SendQueue = struct {
                     stream.readStop();
                     pipe.unref();
 
-                    // we don't own the fd, so we don't close it.
-                    // although 'deinit' will call closeWithoutReporting which doesn't check if the fd is owned
                     pipe.data = pipe;
-                    if (this.windows.is_server) {
-                        pipe.close(&_windowsOnClosed);
-                    } else {
-                        bun.default_allocator.destroy(pipe); // server will be destroyed by the process that created it
-                    }
+                    pipe.close(&_windowsOnClosed);
 
                     this._onAfterIPCClosed();
                 },
@@ -458,6 +452,7 @@ pub const SendQueue = struct {
             },
             else => {},
         }
+        this.keep_alive.disable();
         this.socket = .closed;
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
@@ -758,10 +753,30 @@ pub const SendQueue = struct {
                     // TODO: send fd on windows
                 }
                 const pipe: *uv.Pipe = socket;
-                this.windows.write_buffer = uv.uv_buf_t.init(data);
-                this.write_in_progress = true;
-                // if SendQueue is deinitialized while writing, the write request will be cancelled
+                // try to send using tryWrite
+                this.windows.write_len = @min(data.len, std.math.maxInt(i32));
+                const try_write_result = pipe.asStream().tryWrite(data[0..this.windows.write_len]);
+                const bytes_written: usize = if (try_write_result.asErr()) |try_write_err| blk: {
+                    if (try_write_err.getErrno() == .AGAIN) {
+                        break :blk 0;
+                    }
+                    this._onWriteComplete(-1);
+                    return;
+                } else blk: {
+                    break :blk try_write_result.asValue() orelse 0;
+                };
+                if (bytes_written >= this.windows.write_len) {
+                    // fully written
+                    this._onWriteComplete(@intCast(this.windows.write_len));
+                    return;
+                }
+                // partially written
+                const remaining_data = data[0..this.windows.write_len][bytes_written..];
+
+                this.windows.write_buffer = uv.uv_buf_t.init(remaining_data);
                 pipe.ref(); // ref on write
+                // if tryWrite sends nothing or a partial message, send the rest of the data using write()
+                // send the rest of the data, call _windowsOnWriteComplete when done
                 if (this.windows.write_req.write(pipe.asStream(), &this.windows.write_buffer, this, &_windowsOnWriteComplete).asErr()) |_| {
                     pipe.unref();
                     this._onWriteComplete(-1);
@@ -783,7 +798,7 @@ pub const SendQueue = struct {
         if (status.toError(.write)) |_| {
             this._onWriteComplete(-1);
         } else {
-            this._onWriteComplete(@bitCast(this.windows.write_buffer.len));
+            this._onWriteComplete(@intCast(this.windows.write_len));
         }
     }
     fn getGlobalThis(this: *SendQueue) ?*JSC.JSGlobalObject {

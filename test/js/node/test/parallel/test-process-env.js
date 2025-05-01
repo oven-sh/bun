@@ -107,7 +107,7 @@ if (common.isWindows) {
 
 // https://github.com/nodejs/node/issues/45380
 // BUN: TODO: on windows
-if (common.isWindows) {
+if (!common.isWindows) {
   const env = structuredClone(process.env);
   // deepEqual(), not deepStrictEqual(), because of different prototypes.
   // eslint-disable-next-line no-restricted-properties

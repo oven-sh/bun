@@ -567,12 +567,15 @@ function Server(options, secureConnectionListener): void {
         if (typeof options.ciphers !== "string") {
           throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
         }
-        const supported = getCiphers();
+
         const requested = options.ciphers.split(":");
-        const foundMatch = requested.some(r => supported.some(s => s.toLowerCase() === r.toLowerCase()));
-        if (!foundMatch) {
-          throw new Error("no cipher match");
+        for (const r of requested) {
+          if (!DEFAULT_CIPHERS_SET.has(r)) {
+            throw new Error("No cipher match");
+          }
         }
+
+        // TODO: Use the ciphers?
       }
     }
   };
@@ -619,8 +622,11 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
 
+const DEFAULT_CIPHERS_LIST = DEFAULT_CIPHERS.split(":");
+const DEFAULT_CIPHERS_SET = new Set([...DEFAULT_CIPHERS_LIST.map(c => c.toLowerCase()), ...DEFAULT_CIPHERS_LIST]);
+
 function normalizeConnectArgs(listArgs) {
-  const args = net._normalizeArgs(listArgs);
+  const args = (net as any)._normalizeArgs(listArgs);
   $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.

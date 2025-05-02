@@ -1973,7 +1973,7 @@ pub const DNSResolver = struct {
         }
 
         this.ref();
-        this.event_loop_timer.next = (now orelse &this.vm.now()).addMs(1000);
+        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
         this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;

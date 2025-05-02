@@ -96,7 +96,7 @@ pub const StatWatcherScheduler = struct {
         }
 
         // reschedule the timer
-        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(interval));
+        this.vm.timer.update(&this.event_loop_timer, &this.vm.msFromNow(interval));
     }
 
     /// Schedule a task to set the timer in the main thread

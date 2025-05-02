@@ -181,7 +181,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         var esimated_output_size: usize = 0;
 
-        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.timespec.getRoughTickCount().ns() else 0;
 
         {
             // Last 4 bytes of a gzip-compressed file are the uncompressed size.
@@ -232,7 +232,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (PackageManager.verbose_install) {
-            const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
+            const decompressing_ended_at: u64 = bun.timespec.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
             Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), std.fmt.fmtDuration(elapsed) });
         }
@@ -295,7 +295,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (PackageManager.verbose_install) {
-            const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+            const elapsed = bun.timespec.getRoughTickCount().ns() - time_started_for_verbose_logs;
             Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, std.fmt.fmtDuration(elapsed) });
             Output.flush();
         }

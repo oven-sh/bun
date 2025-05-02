@@ -65,13 +65,6 @@ pub const All = struct {
         };
     }
 
-    pub fn timerNow(vm: *VirtualMachine) timespec {
-        return if (Environment.isWindows)
-            .fromMs(uv.uv_now(vm.uvLoop()))
-        else
-            timespec.now();
-    }
-
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
@@ -222,7 +215,7 @@ pub const All = struct {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
-                const real_now = All.timerNow(vm);
+                const real_now = vm.now();
                 maybe_now = real_now;
                 break :now real_now;
             };
@@ -268,7 +261,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             if (!has_set_now.*) {
-                now.* = timerNow(vm);
+                now.* = vm.now();
                 has_set_now.* = true;
             }
             if (timer.next.greater(now)) {
@@ -925,7 +918,7 @@ pub const TimerObjectInternals = struct {
         if (kind != .setInterval) {
             this.strong_this.clearWithoutDeallocation();
         } else {
-            const now = All.timerNow(vm);
+            const now = vm.now();
             time_before_call = now.addMs(this.interval);
         }
         this_object.ensureStillAlive();
@@ -1154,7 +1147,7 @@ pub const TimerObjectInternals = struct {
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
         if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-        const now = All.timerNow(vm).addMs(this.interval);
+        const now = vm.now().addMs(this.interval);
         const was_active = this.eventLoopTimer().state == .ACTIVE;
         if (was_active) {
             vm.timer.remove(this.eventLoopTimer());
@@ -1512,7 +1505,6 @@ pub const internal_bindings = struct {
     pub fn timerClockMs(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         _ = callFrame;
         const vm = globalThis.bunVM();
-        const now = All.timerNow(vm);
-        return .jsNumberFromInt64(now.ms());
+        return .jsNumberFromInt64(vm.now().ms());
     }
 };

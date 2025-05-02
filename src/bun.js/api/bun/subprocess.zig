@@ -2501,7 +2501,7 @@ pub fn spawnMaybeSync(
     should_close_memfd = false;
 
     if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+        subprocess.event_loop_timer.next = jsc_vm.msFromNow(timeout_val);
         globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
         subprocess.setEventLoopTimerRefd(true);
     }

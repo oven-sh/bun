@@ -1390,8 +1390,10 @@ pub const PostgresSQLConnection = struct {
             return;
         }
 
-        this.timer.next = bun.timespec.msFromNow(@intCast(interval));
-        this.globalObject.bunVM().timer.insert(&this.timer);
+        const vm = this.globalObject.bunVM();
+
+        this.timer.next = vm.msFromNow(@intCast(interval));
+        vm.timer.insert(&this.timer);
     }
 
     pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1449,8 +1451,9 @@ pub const PostgresSQLConnection = struct {
         if (this.max_lifetime_interval_ms == 0) return;
         if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-        this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
-        this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
+        const vm = this.globalObject.bunVM();
+        this.max_lifetime_timer.next = vm.msFromNow(@intCast(this.max_lifetime_interval_ms));
+        vm.timer.insert(&this.max_lifetime_timer);
     }
 
     pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {

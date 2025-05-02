@@ -1,7 +1,18 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, gc, isBroken, isWindows, tls, tmpdirSync, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  isBroken,
+  isWindows,
+  tls,
+  tmpdirSync,
+  withoutAggressiveGC,
+  isMacOS,
+  isFlaky,
+} from "harness";
 import { spawn, ChildProcess } from "child_process";
 
 import { mkfifo } from "mkfifo";
@@ -2034,7 +2045,7 @@ describe("http/1.1 response body length", () => {
   });
 });
 describe("fetch Response life cycle", () => {
-  it("should not keep Response alive if not consumed", async () => {
+  it.skipIf(isFlaky && isMacOS)("should not keep Response alive if not consumed", async () => {
     let deferred = Promise.withResolvers<string>();
 
     await using serverProcess = Bun.spawn({

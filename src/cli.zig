@@ -77,7 +77,7 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
-pub const debug_flags = if (Environment.isDebug) struct {
+pub const debug_flags = if (Environment.show_crash_trace) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
     var print_breakpoints: []const []const u8 = &.{};
 
@@ -183,7 +183,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
+    const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -1280,7 +1280,7 @@ pub const Arguments = struct {
             }
         }
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
             debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }

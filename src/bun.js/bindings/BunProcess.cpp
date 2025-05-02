@@ -2019,7 +2019,21 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args);
     RETURN_IF_EXCEPTION(scope, {});
+<<<<<<< HEAD
     return result;
+=======
+
+    if (auto* exception = returnedException.get()) {
+#if ASSERT_ENABLED
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, result);
+>>>>>>> main
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -2088,6 +2102,19 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
         RETURN_IF_EXCEPTION(scope, {});
+<<<<<<< HEAD
+=======
+
+        if (auto* exception = returnedException.get()) {
+#if ASSERT_ENABLED
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+            scope.throwException(globalObject, exception->value());
+            returnedException.clear();
+            return {};
+        }
+
+>>>>>>> main
         return result;
     } else {
         return jsUndefined();

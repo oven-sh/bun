@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
-import { bunRun, runBunInstall, bunEnv } from "harness";
+import { bunRun, runBunInstall, bunEnv, isWindows, isBroken } from "harness";
 import { join } from "path";
-describe("next-auth", () => {
+describe.skipIf(isBroken && isWindows)("next-auth", () => {
   it("should be able to call server action multiple times using auth middleware #18977", async () => {
     await runBunInstall(bunEnv, join(import.meta.dir, "fixture"), {
       allowWarnings: true,

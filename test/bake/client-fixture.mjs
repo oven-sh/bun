@@ -28,6 +28,7 @@ let pendingReload = null;
 let pendingReloadTimer = null;
 let isUpdating = null;
 let objectURLRegistry = new Map();
+let internalAPIs;
 
 function reset() {
   if (isUpdating !== null) {
@@ -63,6 +64,10 @@ function createWindow(windowUrl) {
     width: 1024,
     height: 768,
   });
+
+  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+    window.internal = internal;
+  };
 
   window.fetch = async function (url, options) {
     if (typeof url === "string") {

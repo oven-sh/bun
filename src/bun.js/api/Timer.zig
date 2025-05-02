@@ -283,10 +283,7 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.fire(
-                &now,
-                vm,
-            )) {
+            switch (t.fire(&now, vm)) {
                 .disarm => {},
                 .rearm => {},
             }
@@ -1237,6 +1234,13 @@ pub const EventLoopTimer = struct {
     /// Internal heap fields.
     heap: heap.IntrusiveField(EventLoopTimer) = .{},
 
+    pub fn initPaused(tag: Tag) EventLoopTimer {
+        return .{
+            .next = .{},
+            .tag = tag,
+        };
+    }
+
     pub fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
         const sec_order = std.math.order(a.next.sec, b.next.sec);
         if (sec_order != .eq) return sec_order == .lt;
@@ -1285,6 +1289,8 @@ pub const EventLoopTimer = struct {
         ValkeyConnectionTimeout,
         ValkeyConnectionReconnect,
         SubprocessTimeout,
+        DevServerSweepSourceMaps,
+        DevServerMemoryVisualizerTick,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -1302,6 +1308,9 @@ pub const EventLoopTimer = struct {
                 .SubprocessTimeout => JSC.Subprocess,
                 .ValkeyConnectionReconnect => JSC.API.Valkey,
                 .ValkeyConnectionTimeout => JSC.API.Valkey,
+                .DevServerSweepSourceMaps,
+                .DevServerMemoryVisualizerTick,
+                => bun.bake.DevServer,
             };
         }
     } else enum {
@@ -1318,6 +1327,8 @@ pub const EventLoopTimer = struct {
         ValkeyConnectionTimeout,
         ValkeyConnectionReconnect,
         SubprocessTimeout,
+        DevServerSweepSourceMaps,
+        DevServerMemoryVisualizerTick,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -1334,6 +1345,9 @@ pub const EventLoopTimer = struct {
                 .ValkeyConnectionTimeout => JSC.API.Valkey,
                 .ValkeyConnectionReconnect => JSC.API.Valkey,
                 .SubprocessTimeout => JSC.Subprocess,
+                .DevServerSweepSourceMaps,
+                .DevServerMemoryVisualizerTick,
+                => bun.bake.DevServer,
             };
         }
     };
@@ -1393,6 +1407,8 @@ pub const EventLoopTimer = struct {
             .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
             .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
+            .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(this, now),
+            .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(this, now),
             inline else => |t| {
                 if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");

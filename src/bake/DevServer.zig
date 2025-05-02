@@ -10,6 +10,7 @@
 const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
+pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
 const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
@@ -30,6 +31,12 @@ pub const Options = struct {
 // made it easier to group related fields together, but one must remember those
 // structures still depend on the DevServer pointer.
 
+/// To validate the DevServer has not been collected, this can be checked.
+/// When freed, this is set to `undefined`. UAF here also trips ASAN.
+magic: if (Environment.isDebug)
+    enum(u128) { valid = 0x1ffd363f121f5c12 }
+else
+    enum { valid } = .valid,
 /// Used for all server-wide allocations. In debug, is is backed by a scope. Thread-safe.
 allocator: Allocator,
 /// All methods are no-op in release builds.
@@ -202,8 +209,12 @@ relative_path_buf: bun.PathBuffer,
 // Debugging
 
 dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
-/// Reference count to number of active sockets with the visualizer enabled.
-emit_visualizer_events: u32,
+/// Reference count to number of active sockets with the incremental_visualizer enabled.
+emit_incremental_visualizer_events: u32,
+/// Reference count to number of active sockets with the memory_visualizer enabled.
+emit_memory_visualizer_events: u32,
+memory_visualizer_timer: EventLoopTimer,
+
 has_pre_crash_handler: bool,
 /// Perfect incremental bundling implies that there are zero bugs in the
 /// code that bundles, watches, and rebuilds routes and client side code.
@@ -278,7 +289,7 @@ pub const RouteBundle = struct {
 
     pub const HTML = struct {
         /// DevServer increments the ref count of this bundle
-        html_bundle: *HTMLBundle.HTMLBundleRoute,
+        html_bundle: RefPtr(HTMLBundle.HTMLBundleRoute),
         bundled_file: IncrementalGraph(.client).FileIndex,
         /// Invalidated when the HTML file is modified, but not it's imports.
         /// The style tag is injected here.
@@ -346,13 +357,18 @@ pub const RouteBundle = struct {
         }
     }
 
-    pub fn invalidateClientBundle(self: *RouteBundle) void {
-        if (self.client_bundle) |bundle| {
+    pub fn sourceMapId(rb: *RouteBundle) SourceMapStore.Key {
+        return .init(@as(u64, rb.client_script_generation) << 32);
+    }
+
+    pub fn invalidateClientBundle(rb: *RouteBundle, dev: *DevServer) void {
+        if (rb.client_bundle) |bundle| {
+            dev.source_maps.unref(rb.sourceMapId());
             bundle.deref();
-            self.client_bundle = null;
+            rb.client_bundle = null;
         }
-        self.client_script_generation = std.crypto.random.int(u32);
-        switch (self.data) {
+        rb.client_script_generation = std.crypto.random.int(u32);
+        switch (rb.data) {
             .framework => |*fw| fw.cached_client_bundle_url.clearWithoutDeallocation(),
             .html => |*html| if (html.cached_response) |cached_response| {
                 cached_response.deref();
@@ -361,10 +377,10 @@ pub const RouteBundle = struct {
         }
     }
 
-    pub fn memoryCost(self: *const RouteBundle) usize {
+    pub fn memoryCost(rb: *const RouteBundle) usize {
         var cost: usize = @sizeOf(RouteBundle);
-        if (self.client_bundle) |bundle| cost += bundle.memoryCost();
-        switch (self.data) {
+        if (rb.client_bundle) |bundle| cost += bundle.memoryCost();
+        switch (rb.data) {
             .framework => {
                 // the JSC.Strong.Optional children do not support memoryCost. likely not needed
                 // .evaluate_failure is not owned
@@ -412,7 +428,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundler_options = options.bundler_options,
-        .emit_visualizer_events = 0,
+        .emit_incremental_visualizer_events = 0,
+        .emit_memory_visualizer_events = 0,
+        .memory_visualizer_timer = .initPaused(.DevServerMemoryVisualizerTick),
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
                 bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
@@ -676,19 +694,33 @@ pub fn deinit(dev: *DevServer) void {
         .configuration_hash_key = {},
         .debugger_id = {},
         .deferred_request_pool = {},
-        .emit_visualizer_events = {},
+        .emit_incremental_visualizer_events = {},
+        .emit_memory_visualizer_events = {},
         .framework = {},
         .frontend_only = {},
         .generation = {},
         .plugin_state = {},
-        .relative_path_buf = {},
         .relative_path_buf_lock = {},
         .root = {},
         .server = {},
         .server_transpiler = {},
         .ssr_transpiler = {},
+        .relative_path_buf = {},
         .vm = {},
 
+        // WebSockets should be deinitialized before other parts
+        .active_websocket_connections = {
+            var it = dev.active_websocket_connections.keyIterator();
+            while (it.next()) |item| {
+                const s: *HmrSocket = item.*;
+                if (s.underlying) |websocket|
+                    websocket.close();
+            }
+            dev.active_websocket_connections.deinit(allocator);
+        },
+
+        .memory_visualizer_timer = if (dev.memory_visualizer_timer.state == .ACTIVE)
+            dev.vm.timer.remove(&dev.memory_visualizer_timer),
         .graph_safety_lock = dev.graph_safety_lock.lock(),
         .bun_watcher = dev.bun_watcher.deinit(true),
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
@@ -761,22 +793,17 @@ pub fn deinit(dev: *DevServer) void {
         },
         .route_lookup = dev.route_lookup.deinit(allocator),
         .source_maps = {
-            for (dev.source_maps.entries.values()) |value| {
-                allocator.free(value.sourceContents());
-                allocator.free(value.file_paths);
-                value.response.deref();
+            for (dev.source_maps.entries.values()) |*value| {
+                bun.assert(value.ref_count > 0);
+                value.ref_count = 0;
+                value.deinit(dev);
             }
             dev.source_maps.entries.deinit(allocator);
+
+            if (dev.source_maps.weak_ref_sweep_timer.state == .ACTIVE)
+                dev.vm.timer.remove(&dev.source_maps.weak_ref_sweep_timer);
         },
-        .active_websocket_connections = {
-            var it = dev.active_websocket_connections.keyIterator();
-            while (it.next()) |item| {
-                const s: *HmrSocket = item.*;
-                if (s.underlying) |websocket|
-                    websocket.close();
-            }
-            dev.active_websocket_connections.deinit(allocator);
-        },
+
         .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
             event.dirs.deinit(dev.allocator);
             event.files.deinit(dev.allocator);
@@ -789,10 +816,24 @@ pub fn deinit(dev: *DevServer) void {
             },
             .enable_after_bundle => {},
         },
+
+        .magic = {
+            bun.debugAssert(dev.magic == .valid);
+            dev.magic = undefined;
+        },
     };
     dev.allocation_scope.deinit();
     bun.destroy(dev);
 }
+
+pub const MemoryCost = struct {
+    incremental_graph_client: usize,
+    incremental_graph_server: usize,
+    js_code: usize,
+    source_maps: usize,
+    assets: usize,
+    other: usize,
+};
 
 /// Returns an estimation for how many bytes DevServer is explicitly aware of.
 /// If this number stays constant but RSS grows, then there is a memory leak. If
@@ -803,8 +844,13 @@ pub fn deinit(dev: *DevServer) void {
 /// unlike the HTTP server, it controls a lot of objects that are frequently
 /// being added, removed, and changed (as the developer edits source files). It
 /// is exponentially easy to mess up memory management.
-pub fn memoryCost(dev: *DevServer) usize {
-    var cost: usize = @sizeOf(DevServer);
+pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
+    var other_bytes: usize = @sizeOf(DevServer);
+    var incremental_graph_client: usize = 0;
+    var incremental_graph_server: usize = 0;
+    var js_code: usize = 0;
+    var source_maps: usize = 0;
+    var assets: usize = 0;
     const discard = voidFieldTypeDiscardHelper;
     // See https://github.com/ziglang/zig/issues/21879
     _ = VoidFieldTypes(DevServer){
@@ -817,17 +863,20 @@ pub fn memoryCost(dev: *DevServer) usize {
         .debugger_id = {},
         .deferred_request_pool = {},
         .dump_dir = {},
-        .emit_visualizer_events = {},
+        .emit_incremental_visualizer_events = {},
+        .emit_memory_visualizer_events = {},
         .frontend_only = {},
         .generation = {},
         .graph_safety_lock = {},
         .has_pre_crash_handler = {},
+        .magic = {},
+        .memory_visualizer_timer = {},
         .plugin_state = {},
-        .relative_path_buf = {},
         .relative_path_buf_lock = {},
-        .server_fetch_function_callback = {},
         .server_register_update_callback = {},
+        .server_fetch_function_callback = {},
         .watcher_atomics = {},
+        .relative_path_buf = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -842,112 +891,134 @@ pub fn memoryCost(dev: *DevServer) usize {
 
         // to be counted.
         .root = {
-            cost += dev.root.len;
+            other_bytes += dev.root.len;
         },
         .router = {
-            cost += dev.router.memoryCost();
+            other_bytes += dev.router.memoryCost();
         },
         .route_bundles = for (dev.route_bundles.items) |*bundle| {
-            cost += bundle.memoryCost();
+            other_bytes += bundle.memoryCost();
         },
         .server_graph = {
-            cost += dev.server_graph.memoryCost();
+            const cost = dev.server_graph.memoryCostDetailed();
+            incremental_graph_server += cost.graph;
+            js_code += cost.code;
+            source_maps += cost.source_maps;
         },
         .client_graph = {
-            cost += dev.client_graph.memoryCost();
+            const cost = dev.client_graph.memoryCostDetailed();
+            incremental_graph_client += cost.graph;
+            js_code += cost.code;
+            source_maps += cost.source_maps;
         },
         .assets = {
-            cost += dev.assets.memoryCost();
+            assets += dev.assets.memoryCost();
         },
         .active_websocket_connections = {
-            cost += dev.active_websocket_connections.capacity() * @sizeOf(*HmrSocket);
+            other_bytes += dev.active_websocket_connections.capacity() * @sizeOf(*HmrSocket);
         },
         .source_maps = {
-            cost += memoryCostArrayHashMap(dev.source_maps.entries);
+            other_bytes += memoryCostArrayHashMap(dev.source_maps.entries);
             for (dev.source_maps.entries.values()) |entry| {
-                cost += entry.response.memoryCost();
-                cost += memoryCostSlice(entry.sourceContents());
-                cost += memoryCostSlice(entry.file_paths); // do not re-count contents
+                source_maps += entry.response.memoryCost();
+                source_maps += memoryCostSlice(entry.sourceContents());
+                source_maps += memoryCostSlice(entry.file_paths); // do not re-count contents
             }
         },
         .incremental_result = discard(VoidFieldTypes(IncrementalResult){
             .had_adjusted_edges = {},
             .client_components_added = {
-                cost += memoryCostArrayList(dev.incremental_result.client_components_added);
+                other_bytes += memoryCostArrayList(dev.incremental_result.client_components_added);
             },
             .framework_routes_affected = {
-                cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
+                other_bytes += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
             },
             .client_components_removed = {
-                cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
+                other_bytes += memoryCostArrayList(dev.incremental_result.client_components_removed);
             },
             .failures_removed = {
-                cost += memoryCostArrayList(dev.incremental_result.failures_removed);
+                other_bytes += memoryCostArrayList(dev.incremental_result.failures_removed);
             },
             .client_components_affected = {
-                cost += memoryCostArrayList(dev.incremental_result.client_components_affected);
+                other_bytes += memoryCostArrayList(dev.incremental_result.client_components_affected);
             },
             .failures_added = {
-                cost += memoryCostArrayList(dev.incremental_result.failures_added);
+                other_bytes += memoryCostArrayList(dev.incremental_result.failures_added);
             },
             .html_routes_soft_affected = {
-                cost += memoryCostArrayList(dev.incremental_result.html_routes_soft_affected);
+                other_bytes += memoryCostArrayList(dev.incremental_result.html_routes_soft_affected);
             },
             .html_routes_hard_affected = {
-                cost += memoryCostArrayList(dev.incremental_result.html_routes_hard_affected);
+                other_bytes += memoryCostArrayList(dev.incremental_result.html_routes_hard_affected);
             },
         }),
         .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |hack| {
-            cost += memoryCostArrayHashMap(hack);
+            other_bytes += memoryCostArrayHashMap(hack);
         },
         .directory_watchers = {
-            cost += memoryCostArrayList(dev.directory_watchers.dependencies);
-            cost += memoryCostArrayList(dev.directory_watchers.dependencies_free_list);
-            cost += memoryCostArrayHashMap(dev.directory_watchers.watches);
+            other_bytes += memoryCostArrayList(dev.directory_watchers.dependencies);
+            other_bytes += memoryCostArrayList(dev.directory_watchers.dependencies_free_list);
+            other_bytes += memoryCostArrayHashMap(dev.directory_watchers.watches);
             for (dev.directory_watchers.dependencies.items) |dep| {
-                cost += dep.specifier.len;
+                other_bytes += dep.specifier.len;
             }
             for (dev.directory_watchers.watches.keys()) |dir_name| {
-                cost += dir_name.len;
+                other_bytes += dir_name.len;
             }
         },
         .html_router = {
             // std does not provide a way to measure exact allocation size of HashMapUnmanaged
-            cost += dev.html_router.map.capacity() * (@sizeOf(*HTMLBundle.HTMLBundleRoute) + @sizeOf([]const u8));
+            other_bytes += dev.html_router.map.capacity() * (@sizeOf(*HTMLBundle.HTMLBundleRoute) + @sizeOf([]const u8));
             // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
         },
         .bundling_failures = {
-            cost += memoryCostSlice(dev.bundling_failures.keys());
+            other_bytes += memoryCostSlice(dev.bundling_failures.keys());
             for (dev.bundling_failures.keys()) |failure| {
-                cost += failure.data.len;
+                other_bytes += failure.data.len;
             }
         },
         // All entries are owned by the bundler arena, not DevServer, except for `requests`
         .current_bundle = if (dev.current_bundle) |bundle| {
             var r = bundle.requests.first;
             while (r) |request| : (r = request.next) {
-                cost += @sizeOf(DeferredRequest.Node);
+                other_bytes += @sizeOf(DeferredRequest.Node);
             }
         },
         .next_bundle = {
             var r = dev.next_bundle.requests.first;
             while (r) |request| : (r = request.next) {
-                cost += @sizeOf(DeferredRequest.Node);
+                other_bytes += @sizeOf(DeferredRequest.Node);
             }
-            cost += memoryCostArrayHashMap(dev.next_bundle.route_queue);
+            other_bytes += memoryCostArrayHashMap(dev.next_bundle.route_queue);
         },
         .route_lookup = {
-            cost += memoryCostArrayHashMap(dev.route_lookup);
+            other_bytes += memoryCostArrayHashMap(dev.route_lookup);
         },
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |batch| {
-                cost += memoryCostArrayHashMap(batch.entry_points.set);
+                other_bytes += memoryCostArrayHashMap(batch.entry_points.set);
             },
             .enable_after_bundle => {},
         },
     };
-    return cost;
+    return .{
+        .assets = assets,
+        .incremental_graph_client = incremental_graph_client,
+        .incremental_graph_server = incremental_graph_server,
+        .js_code = js_code,
+        .other = other_bytes,
+        .source_maps = source_maps,
+    };
+}
+
+pub fn memoryCost(dev: *DevServer) usize {
+    const cost = memoryCostDetailed(dev);
+    var acc: usize = 0;
+    inline for (@typeInfo(MemoryCost).@"struct".fields) |field| {
+        acc += @field(cost, field.name);
+    }
+    return acc;
 }
 
 fn memoryCostArrayList(slice: anytype) usize {
@@ -1008,6 +1079,7 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
     app.post(internal_prefix ++ "/report_error", *DevServer, dev, wrapGenericRequestHandler(ErrorReportRequest.run, is_ssl));
+    app.post(internal_prefix ++ "/unref", *DevServer, dev, wrapGenericRequestHandler(UnrefSourceMapRequest.run, is_ssl));
 
     app.any(internal_prefix, *DevServer, dev, wrapGenericRequestHandler(onNotFound, is_ssl));
 
@@ -1026,10 +1098,22 @@ pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
             wrapGenericRequestHandler(onIncrementalVisualizer, is_ssl),
         );
         app.get(
+            internal_prefix ++ "/memory_visualizer",
+            *DevServer,
+            dev,
+            wrapGenericRequestHandler(onMemoryVisualizer, is_ssl),
+        );
+        app.get(
             internal_prefix ++ "/iv",
             *DevServer,
             dev,
             redirectHandler(internal_prefix ++ "/incremental_visualizer", is_ssl),
+        );
+        app.get(
+            internal_prefix ++ "/mv",
+            *DevServer,
+            dev,
+            redirectHandler(internal_prefix ++ "/memory_visualizer", is_ssl),
         );
     }
 
@@ -1083,7 +1167,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
         return notFound(resp);
 
     if (is_map) {
-        const entry = dev.source_maps.entries.getPtr(id) orelse
+        const entry = dev.source_maps.entries.getPtr(.init(id)) orelse
             return notFound(resp);
         entry.response.onRequest(req, resp);
         return;
@@ -1140,6 +1224,7 @@ inline fn wrapGenericRequestHandler(
     const uses_any_response = if (fn_info.params[2].type) |t| t == AnyResponse else false;
     return struct {
         fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
+            assert(dev.magic == .valid);
             handler(dev, req, if (uses_any_response) AnyResponse.init(resp) else resp);
         }
     }.handle;
@@ -1173,6 +1258,18 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
     resp.end(code, false);
 }
 
+fn onMemoryVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
+    resp.corked(onMemoryVisualizerCorked, .{resp});
+}
+
+fn onMemoryVisualizerCorked(resp: anytype) void {
+    const code = if (Environment.codegen_embed)
+        @embedFile("memory_visualizer.html")
+    else
+        bun.runtimeEmbedFile(.src_eager, "bake/memory_visualizer.html");
+    resp.end(code, false);
+}
+
 fn ensureRouteIsBundled(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
@@ -1180,6 +1277,7 @@ fn ensureRouteIsBundled(
     req: *Request,
     resp: AnyResponse,
 ) bun.OOM!void {
+    assert(dev.magic == .valid);
     assert(dev.server != null);
     sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
         .unqueued => {
@@ -1231,8 +1329,6 @@ fn ensureRouteIsBundled(
                     },
                     .loaded => {},
                 }
-
-                // TODO(@heimskr): store the request?
 
                 // Prepare a bundle with just this route.
                 var sfa = std.heap.stackFallback(4096, dev.allocator);
@@ -1382,7 +1478,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             }
         },
         .html => |*html| {
-            try entry_points.append(alloc, html.html_bundle.bundle.data.path, .{ .client = true });
+            try entry_points.append(alloc, html.html_bundle.data.bundle.data.path, .{ .client = true });
         },
     }
 
@@ -1480,6 +1576,7 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .html);
     const html = &route_bundle.data.html;
+
     const blob = html.cached_response orelse generate: {
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
@@ -1495,9 +1592,22 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     blob.onWithMethod(method, resp);
 }
 
+/// This payload is used to unref the source map weak reference if the page
+/// starts loading but the JavaScript code is not reached. The event handler
+/// is replaced by the HMR runtime to one that handles things better.
+const script_unref_payload = "<script>" ++
+    "((a)=>{" ++
+    "document.addEventListener('visibilitychange'," ++
+    "globalThis[Symbol.for('bun:loadData')]=()=>" ++
+    "document.visibilityState==='hidden'&&" ++
+    "navigator.sendBeacon('/_bun/unref',a)" ++
+    ");" ++
+    "})(document.querySelector('[data-bun-dev-server-script]').src.slice(-11,-3))" ++
+    "</script>";
+
 fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, route_bundle: *RouteBundle, html: *RouteBundle.HTML) bun.OOM![]u8 {
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
-    assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
+    assert(html.html_bundle.data.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
     const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
@@ -1519,7 +1629,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     const before_head_end = bundled_html[0..script_injection_offset];
     const after_head_end = bundled_html[script_injection_offset..];
 
-    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.bundle.data.path), ".html");
+    var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.data.bundle.data.path), ".html");
     // TODO: function for URL safe chars
     if (!bun.strings.isAllASCII(display_name)) display_name = "page";
 
@@ -1539,10 +1649,11 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
 
     const payload_size = bundled_html.len +
         ("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/0000000000000000.css\">").len * css_ids.len +
-        "<script type=\"module\" crossorigin src=\"\"></script>".len +
+        "<script type=\"module\" crossorigin src=\"\" data-bun-dev-server-script></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
-        "-0000000000000000.js".len;
+        "-0000000000000000.js".len +
+        script_unref_payload.len;
 
     var array: std.ArrayListUnmanaged(u8) = try std.ArrayListUnmanaged(u8).initCapacity(dev.allocator, payload_size);
     errdefer array.deinit(dev.allocator);
@@ -1561,7 +1672,8 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     array.appendSliceAssumeCapacity("-");
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&@as(u32, route_bundle_index.get())), .lower));
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&route_bundle.client_script_generation), .lower));
-    array.appendSliceAssumeCapacity(".js\"></script>");
+    array.appendSliceAssumeCapacity(".js\" data-bun-dev-server-script></script>");
+    array.appendSliceAssumeCapacity(script_unref_payload);
 
     // DevServer used to put the script tag before the body end, but to match the regular bundler it does not do this.
     array.appendSliceAssumeCapacity(after_head_end);
@@ -1631,6 +1743,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         );
         break :generate route_bundle.client_bundle.?;
     };
+    dev.source_maps.addWeakRef(route_bundle.sourceMapId());
     blob.onWithMethod(method, resp);
 }
 
@@ -1642,6 +1755,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
     }
 
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
+    // This is already done in Next.js. we have to port this to Zig so we can use.
     resp.writeStatus("501 Not Implemented");
     resp.end("TODO", false);
     _ = dev;
@@ -1919,7 +2033,7 @@ fn indexFailures(dev: *DevServer) !void {
 /// contains all needed files for a route.
 fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u8 {
     assert(route_bundle.client_bundle == null);
-    assert(route_bundle.server_state == .loaded); // page is unfit to load
+    assert(route_bundle.server_state == .loaded); // page is unfit to trace/load
 
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -1953,11 +2067,17 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     };
 
     // Insert the source map
-    const script_id = @as(u64, route_bundle.client_script_generation) << 32;
-    if (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) |entry| {
-        var arena = std.heap.ArenaAllocator.init(sfa);
-        defer arena.deinit();
-        try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
+    const script_id = route_bundle.sourceMapId();
+    mapLog("inc {x}, 1 for generateClientBundle", .{script_id.get()});
+    switch (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) {
+        .uninitialized => |entry| {
+            errdefer dev.source_maps.unref(script_id);
+            gts.clearAndFree(sfa);
+            var arena = std.heap.ArenaAllocator.init(sfa);
+            defer arena.deinit();
+            try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
+        },
+        .shared => {},
     }
 
     const client_bundle = dev.client_graph.takeJSBundle(.{
@@ -2099,10 +2219,14 @@ pub fn finalizeBundle(
     bv2: *bun.bundle_v2.BundleV2,
     result: *const bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
+    assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
     defer {
-        bv2.deinit();
+        var heap = bv2.graph.heap;
+        bv2.deinitWithoutFreeingArena();
         dev.current_bundle = null;
+        dev.log.clearAndFree();
+        heap.deinit();
 
         dev.assets.reindexIfNeeded(dev.allocator) catch {
             // not fatal: the assets may be reindexed some time later.
@@ -2303,7 +2427,7 @@ pub fn finalizeBundle(
         if (html.cached_response) |blob| {
             blob.deref();
             html.cached_response = null;
-            route_bundle.invalidateClientBundle();
+            route_bundle.invalidateClientBundle(dev);
         }
         if (html.bundled_html_text) |slice| {
             dev.allocator.free(slice);
@@ -2492,7 +2616,7 @@ pub fn finalizeBundle(
         var it = route_bits_client.iterator(.{ .kind = .set });
         while (it.next()) |bundled_route_index| {
             const bundle = &dev.route_bundles.items[bundled_route_index];
-            bundle.invalidateClientBundle();
+            bundle.invalidateClientBundle(dev);
         }
     } else if (dev.incremental_result.html_routes_hard_affected.items.len > 0) {
         // When only HTML routes were affected, there may not be any client
@@ -2504,7 +2628,7 @@ pub fn finalizeBundle(
         var it = route_bits_client.iterator(.{ .kind = .set });
         while (it.next()) |bundled_route_index| {
             const bundle = &dev.route_bundles.items[bundled_route_index];
-            bundle.invalidateClientBundle();
+            bundle.invalidateClientBundle(dev);
         }
     }
 
@@ -2512,7 +2636,7 @@ pub fn finalizeBundle(
     // connections don't have to be told anything.
     if (dev.incremental_result.html_routes_soft_affected.items.len > 0) {
         for (dev.incremental_result.html_routes_soft_affected.items) |index| {
-            dev.routeBundlePtr(index).invalidateClientBundle();
+            dev.routeBundlePtr(index).invalidateClientBundle(dev);
             route_bits.set(index.get());
         }
         has_route_bits_set = true;
@@ -2576,7 +2700,7 @@ pub fn finalizeBundle(
 
             // Send the JS chunk
             if (dev.client_graph.current_chunk_len > 0) {
-                const hash = hash: {
+                const script_id = hash: {
                     var source_map_hash: bun.bundle_v2.ContentHasher.Hash = .init(0x4b12); // arbitrarily different seed than what .initial_response uses
                     const keys = dev.client_graph.bundled_files.keys();
                     for (dev.client_graph.current_chunk_parts.items) |part| {
@@ -2584,15 +2708,39 @@ pub fn finalizeBundle(
                         source_map_hash.update(dev.client_graph.source_maps.items[part.get()].vlq());
                     }
                     // Set the bottom bit. This ensures that the resource can never be confused for a route bundle.
-                    break :hash source_map_hash.final() | 1;
+                    break :hash SourceMapStore.Key.init(source_map_hash.final() | 1);
                 };
-                if (try dev.source_maps.putOrIncrementRefCount(hash, 1)) |entry| {
-                    try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator, entry);
+                var it = dev.active_websocket_connections.keyIterator();
+                var sockets: u32 = 0;
+                while (it.next()) |socket_ptr_ptr| {
+                    const socket: *HmrSocket = socket_ptr_ptr.*;
+                    if (socket.subscriptions.hot_update) {
+                        const entry = socket.referenced_source_maps.getOrPut(dev.allocator, script_id) catch bun.outOfMemory();
+                        if (!entry.found_existing) {
+                            sockets += 1;
+                        } else {
+                            // Source maps are hashed, so that creating an exact
+                            // copy of a previous source map will simply
+                            // reference the old one.
+                        }
+                        entry.value_ptr.* = {};
+                    }
                 }
+                mapLog("inc {x}, for {d} sockets", .{ script_id.get(), sockets });
+                const entry = switch (try dev.source_maps.putOrIncrementRefCount(script_id, sockets)) {
+                    .uninitialized => |entry| brk: {
+                        try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator, entry);
+                        break :brk entry;
+                    },
+                    .shared => |entry| entry,
+                };
+                const entry_size: u32 = @min(entry.response.memoryCost(), std.math.maxInt(u32));
+                try w.writeInt(u32, entry_size, .little);
+
                 // Build and send the source chunk
                 try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
                     .kind = .hmr_chunk,
-                    .script_id = hash,
+                    .script_id = script_id,
                 });
             }
         } else {
@@ -2680,7 +2828,7 @@ pub fn finalizeBundle(
             else
                 null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
-            .html => |html| dev.relativePath(html.html_bundle.bundle.data.path),
+            .html => |html| dev.relativePath(html.html_bundle.data.bundle.data.path),
             .framework => |fw| file_name: {
                 const route = dev.router.routePtr(fw.route_index);
                 const opaque_id = route.file_page.unwrap() orelse
@@ -2727,9 +2875,9 @@ pub fn finalizeBundle(
 }
 
 fn startNextBundleIfPresent(dev: *DevServer) void {
+    assert(dev.magic == .valid);
     // Clear the current bundle
     assert(dev.current_bundle == null);
-    dev.log.clearAndFree();
     dev.emitVisualizerMessageIfNeeded();
 
     // If there were pending requests, begin another bundle.
@@ -2937,7 +3085,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
                 dev.client_graph.source_maps.items[incremental_graph_index.get()].extra.empty.html_bundle_route_index = .init(bundle_index.get());
                 break :brk .{ .html = .{
-                    .html_bundle = html,
+                    .html_bundle = .initRef(html),
                     .bundled_file = incremental_graph_index,
                     .script_injection_offset = .none,
                     .cached_response = null,
@@ -3081,6 +3229,13 @@ const FileKind = enum(u2) {
     /// `code` is the URL where the CSS file is to be fetched from, ex.
     /// '/_bun/css/0000000000000000.css'
     css,
+
+    pub fn hasInlineJSCodeChunk(self: @This()) bool {
+        return switch (self) {
+            .js, .asset => true,
+            else => false,
+        };
+    }
 };
 
 /// The paradigm of Bake's incremental state is to store a separate list of files
@@ -3296,7 +3451,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn jsCode(file: @This()) []const u8 {
-                    assert(file.flags.kind == .js or file.flags.kind == .asset);
+                    assert(file.flags.kind.hasInlineJSCodeChunk());
                     return file.content.js_code_ptr[0..file.code_len];
                 }
 
@@ -3487,23 +3642,39 @@ pub fn IncrementalGraph(side: bake.Side) type {
             };
         }
 
+        const MemoryCost = struct {
+            graph: usize,
+            code: usize,
+            source_maps: usize,
+        };
         /// Does NOT count @sizeOf(@This())
-        pub fn memoryCost(g: *@This()) usize {
-            var cost: usize = 0;
-            cost += memoryCostArrayHashMap(g.bundled_files);
-            cost += g.stale_files.bytes().len;
-            cost += memoryCostArrayList(g.first_dep);
-            cost += memoryCostArrayList(g.first_import);
-            cost += memoryCostArrayList(g.edges);
-            cost += memoryCostArrayList(g.edges_free_list);
-            cost += memoryCostArrayList(g.current_chunk_parts);
-
+        pub fn memoryCostDetailed(g: *@This()) @This().MemoryCost {
+            var graph: usize = 0;
+            var code: usize = 0;
+            var source_maps: usize = 0;
+            graph += memoryCostArrayHashMap(g.bundled_files);
+            graph += g.stale_files.bytes().len;
+            graph += memoryCostArrayList(g.first_dep);
+            graph += memoryCostArrayList(g.first_import);
+            graph += memoryCostArrayList(g.edges);
+            graph += memoryCostArrayList(g.edges_free_list);
+            graph += memoryCostArrayList(g.current_chunk_parts);
             if (side == .client) {
-                cost += memoryCostArrayList(g.source_maps);
-                cost += memoryCostArrayList(g.current_css_files);
+                graph += memoryCostArrayList(g.source_maps);
+                graph += memoryCostArrayList(g.current_css_files);
+                for (g.bundled_files.values()) |*file| {
+                    if (file.flags.kind.hasInlineJSCodeChunk()) code += file.code_len;
+                }
+                for (g.source_maps.items) |*map| {
+                    source_maps += map.vlq_len;
+                    source_maps += map.quoted_contents_flags.len;
+                }
             }
-
-            return cost;
+            return .{
+                .graph = graph,
+                .code = code,
+                .source_maps = source_maps,
+            };
         }
 
         fn getFileIndex(g: *@This(), path: []const u8) ?FileIndex {
@@ -4668,7 +4839,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TakeJSBundleOptions = switch (side) {
             .client => struct {
                 kind: ChunkKind,
-                script_id: u64,
+                script_id: SourceMapStore.Key,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
             },
@@ -4732,9 +4903,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             try w.writeAll("null");
                         }
                         try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
-                        try w.writeAll(",\n  version: \"");
+                        try w.writeAll(",\n  generation: \"");
+                        const generation: u32 = @intCast(options.script_id.get() >> 32);
+                        try w.print("{s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation))});
+                        try w.writeAll("\",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
                         try w.writeAll("\"");
+
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
                             try bun.js_printer.writeJSONString(
@@ -5239,6 +5414,13 @@ const GraphTraceState = struct {
         if (b.bit_length < new_size) {
             try b.resize(allocator, new_size, false);
         }
+    }
+
+    fn clearAndFree(gts: *GraphTraceState, alloc: Allocator) void {
+        gts.client_bits.resize(alloc, 0, false) catch
+            unreachable; // freeing memory can not fail
+        gts.server_bits.resize(alloc, 0, false) catch
+            unreachable; // freeing memory can not fail
     }
 };
 
@@ -5800,9 +5982,11 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
         Output.warn("Could not dump bundle: {}", .{err});
     };
 }
+
 fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (!bun.FeatureFlags.bake_debugging_features) return;
-    if (dev.emit_visualizer_events == 0) return;
+    defer dev.emitMemoryVisualizerMessageIfNeeded();
+    if (dev.emit_incremental_visualizer_events == 0) return;
 
     var sfb = std.heap.stackFallback(65536, dev.allocator);
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
@@ -5810,7 +5994,94 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     defer payload.deinit();
 
     dev.writeVisualizerMessage(&payload) catch return; // visualizer does not get an update if it OOMs
-    dev.publish(.visualizer, payload.items, .binary);
+
+    dev.publish(.incremental_visualizer, payload.items, .binary);
+}
+
+pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) EventLoopTimer.Arm {
+    const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
+    assert(dev.magic == .valid);
+    dev.emitMemoryVisualizerMessage();
+    timer.state = .FIRED;
+    dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
+    return .disarm;
+}
+
+fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {
+    if (!bun.FeatureFlags.bake_debugging_features) return;
+    if (dev.emit_memory_visualizer_events == 0) return;
+    dev.emitMemoryVisualizerMessage();
+}
+
+fn emitMemoryVisualizerMessage(dev: *DevServer) void {
+    comptime assert(bun.FeatureFlags.bake_debugging_features);
+    bun.debugAssert(dev.emit_memory_visualizer_events > 0);
+
+    var sfb = std.heap.stackFallback(65536, dev.allocator);
+    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+        unreachable; // enough capacity on the stack
+    defer payload.deinit();
+    payload.appendAssumeCapacity(MessageId.memory_visualizer.char());
+    writeMemoryVisualizerMessage(dev, &payload) catch return; // drop packet
+    dev.publish(.memory_visualizer, payload.items, .binary);
+}
+
+fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
+    const w = payload.writer();
+    const Fields = extern struct {
+        incremental_graph_client: u32,
+        incremental_graph_server: u32,
+        js_code: u32,
+        source_maps: u32,
+        assets: u32,
+        other: u32,
+        devserver_tracked: u32,
+        process_used: u32,
+        system_used: u32,
+        system_total: u32,
+    };
+    const cost = dev.memoryCostDetailed();
+    const system_total = bun.api.node.os.totalmem();
+    try w.writeStruct(Fields{
+        .incremental_graph_client = @truncate(cost.incremental_graph_client),
+        .incremental_graph_server = @truncate(cost.incremental_graph_server),
+        .js_code = @truncate(cost.js_code),
+        .source_maps = @truncate(cost.source_maps),
+        .assets = @truncate(cost.assets),
+        .other = @truncate(cost.other),
+        .devserver_tracked = if (AllocationScope.enabled)
+            @truncate(dev.allocation_scope.state.total_memory_allocated)
+        else
+            0,
+        .process_used = @truncate(bun.sys.selfProcessMemoryUsage() orelse 0),
+        .system_used = @truncate(system_total -| bun.api.node.os.freemem()),
+        .system_total = @truncate(system_total),
+    });
+
+    // SourceMapStore is easy to leak refs in.
+    {
+        const keys = dev.source_maps.entries.keys();
+        const values = dev.source_maps.entries.values();
+        try w.writeInt(u32, @intCast(keys.len), .little);
+        for (keys, values) |key, value| {
+            bun.assert(value.ref_count > 0);
+            try w.writeAll(std.mem.asBytes(&key.get()));
+            try w.writeInt(u32, value.ref_count, .little);
+            if (dev.source_maps.locateWeakRef(key)) |entry| {
+                try w.writeInt(u32, entry.ref.count, .little);
+                // floats are easier to decode in JS
+                try w.writeAll(std.mem.asBytes(&@as(f64, @floatFromInt(entry.ref.expire))));
+            } else {
+                try w.writeInt(u32, 0, .little);
+            }
+            try w.writeInt(u32, @truncate(value.file_paths.len), .little);
+
+            var map_cost: usize = 0;
+            map_cost += value.response.memoryCost();
+            map_cost += memoryCostSlice(value.sourceContents());
+            try w.writeInt(u32, @truncate(map_cost), .little);
+        }
+    }
 }
 
 fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
@@ -5869,18 +6140,7 @@ pub fn onWebSocketUpgrade(
 ) void {
     assert(id == 0);
 
-    const dw = bun.create(dev.allocator, HmrSocket, .{
-        .dev = dev,
-        .is_from_localhost = if (res.getRemoteSocketInfo()) |addr|
-            if (addr.is_ipv6)
-                bun.strings.eqlComptime(addr.ip, "::1")
-            else
-                bun.strings.eqlComptime(addr.ip, "127.0.0.1")
-        else
-            false,
-        .subscriptions = .{},
-        .active_route = .none,
-    });
+    const dw = HmrSocket.new(dev, res);
     dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
     _ = res.upgrade(
         *HmrSocket,
@@ -5963,8 +6223,8 @@ pub const MessageId = enum(u8) {
     /// - `[n]u8`: UTF-8 Route pattern
     /// - `SerializedFailure`: The one error list for the request
     request_handler_error = 'h',
-    /// Payload for `incremental_visualizer.html`. This can be accessed via
-    /// `/_bun/incremental_visualizer`. This contains both graphs.
+    /// Payload for `incremental_visualizer.html`. Contains both graphs.
+    /// This can be accessed via `/_bun/incremental_visualizer`.
     ///
     /// - `u32`: Number of files in `client_graph`. For Each:
     ///   - `u32`: Length of name. If zero then no other fields are provided.
@@ -5983,6 +6243,20 @@ pub const MessageId = enum(u8) {
     ///   - `u32`: File index of the dependency file
     ///   - `u32`: File index of the imported file
     visualizer = 'v',
+    /// Payload for `memory_visualizer.html`.]
+    /// This can be accessed via `/_bun/memory_visualizer`.
+    ///
+    /// - u32: incremental_graph_client
+    /// - u32: incremental_graph_server
+    /// - u32: js_code
+    /// - u32: source_maps
+    /// - u32: assets
+    /// - u32: other
+    /// - u32: devserver_tracked
+    /// - u32: process_used
+    /// - u32: system_used
+    /// - u32: system_total
+    memory_visualizer = 'M',
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
@@ -5998,6 +6272,12 @@ pub const MessageId = enum(u8) {
 
 /// Avoid changing message ID values, as some of these are hard-coded in tests.
 pub const IncomingMessageId = enum(u8) {
+    /// Initialization packet.
+    /// - [8]u8: Source Map ID, from the client config. Encoded in HEX
+    ///
+    /// Responsibilities:
+    /// - Clear SourceMapStore's weak reference, move as a strong ref on HmrSocket.
+    init = 'i',
     /// Subscribe to an event channel. Payload is a sequence of chars available
     /// in HmrTopic.
     subscribe = 's',
@@ -6006,6 +6286,9 @@ pub const IncomingMessageId = enum(u8) {
     set_url = 'n',
     /// Tells the DevServer to batch events together.
     testing_batch_events = 'H',
+    /// Tells the DevServer to unref a source map.
+    /// - `u64`: SourceMapStore key
+    unref_source_map = 'u',
 
     /// Invalid data
     _,
@@ -6015,7 +6298,8 @@ const HmrTopic = enum(u8) {
     hot_update = 'h',
     errors = 'e',
     browser_error = 'E',
-    visualizer = 'v',
+    incremental_visualizer = 'v',
+    memory_visualizer = 'M',
     testing_watch_synchronization = 'r',
 
     /// Invalid data
@@ -6056,7 +6340,24 @@ const HmrSocket = struct {
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
+    referenced_source_maps: std.AutoHashMapUnmanaged(SourceMapStore.Key, void),
     inspector_connection_id: i32 = -1,
+
+    pub fn new(dev: *DevServer, res: anytype) *HmrSocket {
+        return bun.create(dev.allocator, HmrSocket, .{
+            .dev = dev,
+            .is_from_localhost = if (res.getRemoteSocketInfo()) |addr|
+                if (addr.is_ipv6)
+                    bun.strings.eqlComptime(addr.ip, "::1")
+                else
+                    bun.strings.eqlComptime(addr.ip, "127.0.0.1")
+            else
+                false,
+            .subscriptions = .{},
+            .active_route = .none,
+            .referenced_source_maps = .empty,
+        });
+    }
 
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         const send_status = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
@@ -6074,12 +6375,21 @@ const HmrSocket = struct {
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
         _ = opcode;
 
-        if (msg.len == 0) {
-            ws.close();
-            return;
-        }
+        if (msg.len == 0)
+            return ws.close();
 
         switch (@as(IncomingMessageId, @enumFromInt(msg[0]))) {
+            .init => {
+                if (msg.len != 9) return ws.close();
+                var generation: u32 = undefined;
+                _ = std.fmt.hexToBytes(std.mem.asBytes(&generation), msg[1..]) catch
+                    return ws.close();
+                const source_map_id = SourceMapStore.Key.init(@as(u64, generation) << 32);
+                if (s.dev.source_maps.removeOrUpgradeWeakRef(source_map_id, .upgrade)) {
+                    s.referenced_source_maps.put(s.dev.allocator, source_map_id, {}) catch
+                        bun.outOfMemory();
+                }
+            },
             .subscribe => {
                 var new_bits: HmrTopic.Bits = .{};
                 const topics = msg[1..];
@@ -6097,25 +6407,34 @@ const HmrSocket = struct {
                         _ = ws.subscribe(&.{@intFromEnum(field)});
 
                         // on-subscribe hooks
-                        switch (field) {
-                            .visualizer => {
-                                s.dev.emit_visualizer_events += 1;
+                        if (bun.FeatureFlags.bake_debugging_features) switch (field) {
+                            .incremental_visualizer => {
+                                s.dev.emit_incremental_visualizer_events += 1;
                                 s.dev.emitVisualizerMessageIfNeeded();
                             },
-                            else => {},
-                        }
-                    } else if (@field(new_bits, @tagName(field)) and !@field(s.subscriptions, @tagName(field))) {
-                        _ = ws.unsubscribe(&.{@intFromEnum(field)});
-
-                        // on-unsubscribe hooks
-                        switch (field) {
-                            .visualizer => {
-                                s.dev.emit_visualizer_events -= 1;
+                            .memory_visualizer => {
+                                s.dev.emit_memory_visualizer_events += 1;
+                                s.dev.emitMemoryVisualizerMessage();
+                                if (s.dev.emit_memory_visualizer_events == 1) {
+                                    bun.assert(s.dev.memory_visualizer_timer.state != .ACTIVE);
+                                    s.dev.vm.timer.update(
+                                        &s.dev.memory_visualizer_timer,
+                                        &bun.timespec.msFromNow(1000),
+                                    );
+                                }
                             },
                             else => {},
-                        }
+                        };
+                    } else if (@field(new_bits, @tagName(field)) and !@field(s.subscriptions, @tagName(field))) {
+                        _ = ws.unsubscribe(&.{@intFromEnum(field)});
                     }
                 }
+                onUnsubscribe(s, bun.bits.@"and"(
+                    HmrTopic.Bits,
+                    bun.bits.invert(HmrTopic.Bits, new_bits),
+                    s.subscriptions,
+                ));
+                s.subscriptions = new_bits;
             },
             .set_url => {
                 const pattern = msg[1..];
@@ -6181,7 +6500,33 @@ const HmrSocket = struct {
                     event.entry_points.deinit(s.dev.allocator);
                 },
             },
+            .unref_source_map => {
+                var fbs = std.io.fixedBufferStream(msg[1..]);
+                const r = fbs.reader();
+
+                const source_map_id = SourceMapStore.Key.init(r.readInt(u64, .little) catch
+                    return ws.close());
+                const kv = s.referenced_source_maps.fetchRemove(source_map_id) orelse {
+                    bun.Output.debugWarn("unref_source_map: no entry found: {x}\n", .{source_map_id.get()});
+                    return; // no entry may happen.
+                };
+                s.dev.source_maps.unref(kv.key);
+            },
             _ => ws.close(),
+        }
+    }
+
+    fn onUnsubscribe(s: *HmrSocket, field: HmrTopic.Bits) void {
+        if (bun.FeatureFlags.bake_debugging_features) {
+            if (field.incremental_visualizer) {
+                s.dev.emit_incremental_visualizer_events -= 1;
+            }
+            if (field.memory_visualizer) {
+                s.dev.emit_memory_visualizer_events -= 1;
+                if (s.dev.emit_incremental_visualizer_events == 0 and s.dev.memory_visualizer_timer.state == .ACTIVE) {
+                    s.dev.vm.timer.remove(&s.dev.memory_visualizer_timer);
+                }
+            }
         }
     }
 
@@ -6190,6 +6535,8 @@ const HmrSocket = struct {
         _ = exit_code;
         _ = message;
 
+        s.onUnsubscribe(s.subscriptions);
+
         if (s.inspector_connection_id > -1) {
             // Notify inspector about client disconnection
             if (s.dev.inspector()) |agent| {
@@ -6197,14 +6544,15 @@ const HmrSocket = struct {
             }
         }
 
-        if (s.subscriptions.visualizer) {
-            s.dev.emit_visualizer_events -= 1;
-        }
-
         if (s.active_route.unwrap()) |old| {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
         }
 
+        var it = s.referenced_source_maps.keyIterator();
+        while (it.next()) |key| {
+            s.dev.source_maps.unref(key.*);
+        }
+        s.referenced_source_maps.deinit(s.dev.allocator);
         bun.debugAssert(s.dev.active_websocket_connections.remove(s));
         s.dev.allocator.destroy(s);
     }
@@ -6227,14 +6575,14 @@ const c = struct {
 
     fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) !JSValue {
         const f = @extern(
-            *const fn (*JSC.JSGlobalObject, bun.String) callconv(.C) JSValue.MaybeException,
+            *const fn (*JSC.JSGlobalObject, bun.String) callconv(.c) JSValue.MaybeException,
             .{ .name = "BakeLoadServerHmrPatch" },
         );
         return f(global, code).unwrap();
     }
 
     fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {
-        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.C) JSValue.MaybeException, .{
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String, bool) callconv(.c) JSValue.MaybeException, .{
             .name = "BakeLoadInitialServerCode",
         });
         return f(global, code, separate_ssr_graph).unwrap();
@@ -6476,6 +6824,7 @@ pub const HotReloadEvent = struct {
     }
 
     pub fn run(first: *HotReloadEvent) void {
+        assert(first.owner.magic == .valid);
         debug.log("HMR Task start", .{});
         defer debug.log("HMR Task end", .{});
 
@@ -6706,6 +7055,7 @@ const WatcherAtomics = struct {
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
+    assert(dev.magic == .valid);
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
@@ -7025,6 +7375,7 @@ pub const Assets = struct {
     }
 
     pub fn getHash(assets: *Assets, path: []const u8) ?u64 {
+        assert(assets.owner().magic == .valid);
         return if (assets.path_map.get(path)) |idx|
             assets.files.keys()[idx.get()]
         else
@@ -7043,6 +7394,7 @@ pub const Assets = struct {
         /// content hash of the asset
         content_hash: u64,
     ) !EntryIndex {
+        assert(assets.owner().magic == .valid);
         defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
         debug.log("replacePath {} {} - {s}/{s} ({s})", .{
@@ -7143,6 +7495,7 @@ pub const Assets = struct {
     }
 
     pub fn get(assets: *Assets, content_hash: u64) ?*StaticRoute {
+        assert(assets.owner().magic == .valid);
         assert(assets.files.count() == assets.refs.items.len);
         return assets.files.get(content_hash);
     }
@@ -7166,17 +7519,36 @@ pub const Assets = struct {
 
 /// Storage for source maps on `/_bun/client/{id}.js.map`
 ///
-/// All source maps are referenced counted, so that when a bundle is unloaded,
-/// the unreachable source map URLs are revoked, and their memory freed.
+/// All source maps are referenced counted, so that when a websocket disconnects
+/// or a bundle is replaced, the unreachable source map URLs are revoked. Source
+/// maps that aren't reachable from IncrementalGraph can still be reached by
+/// a browser tab if it has a callback to a previously loaded chunk; so DevServer
+/// should be aware of it.
 pub const SourceMapStore = struct {
-    entries: AutoArrayHashMapUnmanaged(u64, Entry),
+    pub const Key = bun.GenericIndex(u64, .{ "Key of", SourceMapStore });
 
-    pub const empty: SourceMapStore = .{ .entries = .empty };
+    entries: AutoArrayHashMapUnmanaged(Key, Entry),
+    /// When a HTML bundle is loaded, it places a "weak reference" to the
+    /// script's source map. This reference is held until either:
+    /// - The script loads and moves the ref into "strongly held" by the HmrSocket
+    /// - The expiry time passes
+    /// - Too many different weak references exist
+    weak_refs: bun.LinearFifo(WeakRef, .{ .Static = weak_ref_entry_max }),
+    /// Shared
+    weak_ref_sweep_timer: EventLoopTimer,
+
+    pub const empty: SourceMapStore = .{
+        .entries = .empty,
+        .weak_ref_sweep_timer = .initPaused(.DevServerSweepSourceMaps),
+        .weak_refs = .init(),
+    };
+    const weak_ref_expiry_seconds = 10;
+    const weak_ref_entry_max = 16;
 
     pub const Entry = struct {
         /// Sum of:
-        /// - How many active pages could try to request this source map?
-        /// - For route bundle client scripts, 1 until invalidation.
+        /// - How many active sockets have code that could reference this source map?
+        /// - For route bundle client scripts, +1 until invalidation.
         ref_count: u32,
         /// Notes:
         /// - Bundler produces VLQ mappings, and there is not a well written
@@ -7190,6 +7562,13 @@ pub const SourceMapStore = struct {
         /// Since server-side error remapping is semi-rare, the parsed source
         /// maps are released as soon as the error is finished printing, with
         /// currently no re-use.
+        ///
+        /// TODO: design flaw. this just caches the entire source map in memory
+        /// route bundle source maps contain the ENTIRE project source code.
+        /// this wouldn't be so bad except for the fact that a second copy is
+        /// required in the. these are separate string slices. since source maps
+        /// are not accessed frequently, it probably makes sense to make this
+        /// StaticRoute lazily constructed / not constructed at all.
         response: *StaticRoute,
         /// Pointer into `response.blob` to where `mappings` is stored.
         mappings_data: bun.StringPointer,
@@ -7203,17 +7582,44 @@ pub const SourceMapStore = struct {
         // TODO: reduce the size of this slice
         source_contents: [*]bun.StringPointer,
 
-        pub fn sourceContents(self: @This()) []const bun.StringPointer {
-            return self.source_contents[0..self.file_paths.len];
+        pub fn sourceContents(entry: @This()) []const bun.StringPointer {
+            return entry.source_contents[0..entry.file_paths.len];
         }
 
         fn deinit(entry: *Entry, dev: *DevServer) void {
-            dev.allocator.free(entry.file_paths);
-            dev.allocator.free(entry.source_contents);
-
-            // should not have been removed or unreferenced.
-            assert(entry.ref_count > 0);
+            assert(entry.ref_count == 0);
             assert(entry.file_paths.ptr == entry.file_paths.ptr);
+
+            entry.response.deref();
+            dev.allocator.free(entry.file_paths);
+            dev.allocator.free(entry.sourceContents());
+        }
+    };
+
+    pub const WeakRef = struct {
+        /// This encoding only supports route bundle scripts, which do not
+        /// utilize the bottom 32 bits of their keys. This is because the bottom
+        /// 32 bits are used for the index of the route bundle. While those bits
+        /// are present in the JS file's key, it is not present in the source
+        /// map key. This allows this struct to be cleanly packed to 128 bits.
+        key_top_bits: u32,
+        /// When this ref expires, it must subtract this many from `refs`
+        count: u32,
+        /// Seconds since epoch. Every time `weak_refs` is incremented, this is
+        /// updated to the current time + 1 minute. When the timer expires, all
+        /// references are removed.
+        expire: i64,
+
+        pub fn key(ref: WeakRef) Key {
+            return .init(@as(u64, ref.key_top_bits) << 32);
+        }
+
+        pub fn init(k: Key, count: u32, expire: i64) WeakRef {
+            return .{
+                .key_top_bits = @intCast(k.get() >> 32),
+                .count = count,
+                .expire = expire,
+            };
         }
     };
 
@@ -7221,10 +7627,17 @@ pub const SourceMapStore = struct {
         return @alignCast(@fieldParentPtr("source_maps", store));
     }
 
-    /// If an *Entry is returned, caller must initialize it with the source map.
-    pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: u64, ref_count: u32) !?*Entry {
+    const PutOrIncrementRefCount = union(enum) {
+        /// If an *Entry is returned, caller must initialize some
+        /// fields with the source map data.
+        uninitialized: *Entry,
+        /// Already exists, ref count was incremented.
+        shared: *Entry,
+    };
+    pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: Key, ref_count: u32) !PutOrIncrementRefCount {
         const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
         if (!gop.found_existing) {
+            bun.debugAssert(ref_count > 0); // invalid state
             gop.value_ptr.* = .{
                 .ref_count = ref_count,
                 .source_contents = undefined,
@@ -7232,11 +7645,143 @@ pub const SourceMapStore = struct {
                 .mappings_data = undefined,
                 .file_paths = undefined,
             };
-            return gop.value_ptr;
+            return .{ .uninitialized = gop.value_ptr };
         } else {
+            bun.debugAssert(ref_count >= 0); // okay since ref_count is already 1
             gop.value_ptr.*.ref_count += ref_count;
-            return null;
+            return .{ .shared = gop.value_ptr };
         }
+    }
+
+    pub fn unref(store: *SourceMapStore, key: Key) void {
+        unrefCount(store, key, 1);
+    }
+
+    pub fn unrefCount(store: *SourceMapStore, key: Key, count: u32) void {
+        const index = store.entries.getIndex(key) orelse
+            return bun.debugAssert(false);
+        unrefAtIndex(store, index, count);
+    }
+
+    fn unrefAtIndex(store: *SourceMapStore, index: usize, count: u32) void {
+        const e = &store.entries.values()[index];
+        e.ref_count -= count;
+        if (bun.Environment.enable_logs) {
+            mapLog("dec {x}, {d} | {d} -> {d}", .{ store.entries.keys()[index].get(), count, e.ref_count + count, e.ref_count });
+        }
+        if (e.ref_count == 0) {
+            e.deinit(store.owner());
+            store.entries.swapRemoveAt(index);
+        }
+    }
+
+    fn addWeakRef(store: *SourceMapStore, key: Key) void {
+        // This function expects that `weak_ref_entry_max` is low.
+        const entry = store.entries.getPtr(key) orelse
+            return bun.debugAssert(false);
+        entry.ref_count += 1;
+
+        var new_weak_ref_count: u32 = 1;
+
+        for (0..store.weak_refs.count) |i| {
+            const ref = store.weak_refs.peekItem(i);
+            if (ref.key() == key) {
+                new_weak_ref_count += ref.count;
+                store.weak_refs.orderedRemoveItem(i);
+                break;
+            }
+        } else {
+            // If full, one must be expired to make room.
+            if (store.weak_refs.count >= weak_ref_entry_max) {
+                const first = store.weak_refs.readItem().?;
+                store.unrefCount(first.key(), first.count);
+                if (store.weak_ref_sweep_timer.state == .ACTIVE and
+                    store.weak_ref_sweep_timer.next.sec == first.expire)
+                    store.owner().vm.timer.remove(&store.weak_ref_sweep_timer);
+            }
+        }
+
+        const expire = bun.timespec.msFromNow(weak_ref_expiry_seconds * 1000);
+        store.weak_refs.writeItem(.init(
+            key,
+            new_weak_ref_count,
+            expire.sec,
+        )) catch
+            unreachable; // space has been cleared above
+
+        if (store.weak_ref_sweep_timer.state != .ACTIVE) {
+            mapLog("arming weak ref sweep timer", .{});
+            store.owner().vm.timer.update(&store.weak_ref_sweep_timer, &expire);
+        }
+        mapLog("addWeakRef {x}, ref_count: {d}", .{ key.get(), entry.ref_count });
+    }
+
+    /// Returns true if the ref count was incremented (meaning there was a source map to transfer)
+    fn removeOrUpgradeWeakRef(store: *SourceMapStore, key: Key, mode: enum(u1) {
+        /// Remove the weak ref entirely
+        remove = 0,
+        /// Convert the weak ref into a strong ref
+        upgrade = 1,
+    }) bool {
+        const entry = store.entries.getPtr(key) orelse
+            return false;
+        for (0..store.weak_refs.count) |i| {
+            const ref = store.weak_refs.peekItemMut(i);
+            if (ref.key() == key) {
+                ref.count -|= 1;
+                if (mode == .remove) {
+                    store.unref(key);
+                }
+                if (ref.count == 0) {
+                    store.weak_refs.orderedRemoveItem(i);
+                }
+                break;
+            }
+        } else {
+            entry.ref_count += @intFromEnum(mode);
+        }
+        mapLog("maybeUpgradeWeakRef {x}, ref_count: {d}", .{
+            key.get(),
+            entry.ref_count,
+        });
+        return true;
+    }
+
+    fn locateWeakRef(store: *SourceMapStore, key: Key) ?struct { index: usize, ref: WeakRef } {
+        for (0..store.weak_refs.count) |i| {
+            const ref = store.weak_refs.peekItem(i);
+            if (ref.key() == key) return .{ .index = i, .ref = ref };
+        }
+        return null;
+    }
+
+    pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventLoopTimer.Arm {
+        mapLog("sweepWeakRefs", .{});
+        const store: *SourceMapStore = @fieldParentPtr("weak_ref_sweep_timer", timer);
+        assert(store.owner().magic == .valid);
+
+        const now: u64 = @max(now_ts.sec, 0);
+
+        defer store.owner().emitMemoryVisualizerMessageIfNeeded();
+
+        while (store.weak_refs.readItem()) |item| {
+            if (item.expire <= now) {
+                store.unrefCount(item.key(), item.count);
+            } else {
+                store.weak_refs.unget(&.{item}) catch
+                    unreachable; // there is enough space since the last item was just removed.
+                store.weak_ref_sweep_timer.state = .FIRED;
+                store.owner().vm.timer.update(
+                    &store.weak_ref_sweep_timer,
+                    &.{ .sec = item.expire + 1, .nsec = 0 },
+                );
+                return .disarm;
+            }
+        }
+
+        store.weak_ref_sweep_timer.state = .CANCELLED;
+
+        return .disarm;
     }
 
     const GetResult = struct {
@@ -7252,7 +7797,7 @@ pub const SourceMapStore = struct {
         }
     };
 
-    pub fn getParsedSourceMap(store: *SourceMapStore, script_id: u64) ?GetResult {
+    pub fn getParsedSourceMap(store: *SourceMapStore, script_id: Key) ?GetResult {
         const index = store.entries.getIndex(script_id) orelse
             return null; // source map was collected.
         const entry = &store.entries.values()[index];
@@ -7269,11 +7814,6 @@ pub const SourceMapStore = struct {
                 return null;
             },
             .success => |psm| {
-                // TODO: consider storing mappings for, say, a minute. this
-                // means having a loop in client code would re-use the
-                // allocation. if this is deemed a bad idea, replace this
-                // comment with an explanation why.
-                // entry.parsed_mappings = psm.mappings;
                 return .{
                     .index = .init(@intCast(index)),
                     .mappings = psm.mappings,
@@ -7391,7 +7931,7 @@ const ErrorReportRequest = struct {
         // Where the u64 is a unique identifier pointing into sourcemaps.
         //
         // HMR chunks use this too, but currently do not host their JS code.
-        var parsed_source_maps: AutoArrayHashMapUnmanaged(u64, ?SourceMapStore.GetResult) = .empty;
+        var parsed_source_maps: AutoArrayHashMapUnmanaged(SourceMapStore.Key, ?SourceMapStore.GetResult) = .empty;
         try parsed_source_maps.ensureTotalCapacity(temp_alloc, 4);
         defer for (parsed_source_maps.values()) |*value| {
             if (value.*) |*v| v.deinit(ctx.dev);
@@ -7410,7 +7950,7 @@ const ErrorReportRequest = struct {
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);
             if (!gop.found_existing) {
                 const psm = ctx.dev.source_maps.getParsedSourceMap(id) orelse {
-                    Output.debugWarn("Failed to find mapping for {s}, {d}", .{ source_url, id });
+                    Output.debugWarn("Failed to find mapping for {s}, {d}", .{ source_url, id.get() });
                     gop.value_ptr.* = null;
                     continue;
                 };
@@ -7574,7 +8114,7 @@ const ErrorReportRequest = struct {
         should_finalize_self = true;
     }
 
-    fn parseId(source_url: []const u8, browser_url: []const u8) ?u64 {
+    fn parseId(source_url: []const u8, browser_url: []const u8) ?SourceMapStore.Key {
         if (!bun.strings.startsWith(source_url, browser_url))
             return null;
         const after_host = source_url[bun.strings.withoutTrailingSlash(browser_url).len..];
@@ -7590,8 +8130,8 @@ const ErrorReportRequest = struct {
         const hex = after_prefix[after_prefix.len - min_len ..][0 .. @sizeOf(u64) * 2];
         if (hex.len != @sizeOf(u64) * 2)
             return null;
-        return parseHexToInt(u64, hex) orelse
-            return null;
+        return .init(parseHexToInt(u64, hex) orelse
+            return null);
     }
 
     /// Instead of decoding the entire file, just decode the desired section.
@@ -7657,6 +8197,38 @@ const ErrorReportRequest = struct {
         }
 
         return result;
+    }
+};
+
+/// Problem statement documented on `script_unref_payload`
+/// Takes 8 bytes: The generation ID in hex.
+const UnrefSourceMapRequest = struct {
+    dev: *DevServer,
+    body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
+
+    fn run(dev: *DevServer, _: *Request, resp: anytype) void {
+        const ctx = bun.new(UnrefSourceMapRequest, .{
+            .dev = dev,
+            .body = .init(dev.allocator),
+        });
+        ctx.dev.server.?.onPendingRequest();
+        ctx.body.readBody(resp);
+    }
+
+    fn finalize(ctx: *UnrefSourceMapRequest) void {
+        ctx.dev.server.?.onStaticRequestComplete();
+        bun.destroy(ctx);
+    }
+
+    fn runWithBody(ctx: *UnrefSourceMapRequest, body: []const u8, r: AnyResponse) !void {
+        if (body.len != 8) return error.InvalidRequest;
+        var generation: u32 = undefined;
+        _ = std.fmt.hexToBytes(std.mem.asBytes(&generation), body) catch
+            return error.InvalidRequest;
+        const source_map_key = SourceMapStore.Key.init(@as(u64, generation) << 32);
+        _ = ctx.dev.source_maps.removeOrUpgradeWeakRef(source_map_key, .remove);
+        r.writeStatus("204 No Content");
+        r.end("", false);
     }
 };
 
@@ -7752,6 +8324,8 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const EventLoopHandle = JSC.EventLoopHandle;
 const HTMLBundle = JSC.API.HTMLBundle;
 const Plugin = JSC.API.JSBundler.Plugin;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
+const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
 
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 
@@ -7765,4 +8339,5 @@ const VLQ = SourceMap.VLQ;
 
 const StringJoiner = bun.StringJoiner;
 const AllocationScope = bun.AllocationScope;
-const BunFrontendDevServerAgent = JSC.Debugger.BunFrontendDevServerAgent;
+
+const RefPtr = bun.ptr.RefPtr;

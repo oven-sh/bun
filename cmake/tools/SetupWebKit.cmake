@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION e26b186170c48a40d872c05a5ba61821a3f31196)
+  set(WEBKIT_VERSION 53d4176ddc98ba721e50355826f58ec758766fa8)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -73,13 +73,13 @@ endif()
 
 if(DEBUG)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
-elseif(ENABLE_LTO AND NOT WIN32)
+elseif(ENABLE_LTO)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-lto")
 else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
 endif()
 
-if(ENABLE_ASAN)
+if(ENABLE_ASAN AND ((APPLE AND DEBUG AND ARCH STREQUAL "aarch64") OR (LINUX AND RELEASE)))
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 

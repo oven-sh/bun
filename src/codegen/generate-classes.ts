@@ -426,6 +426,15 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
         "onStructuredCloneDeserialize",
       )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
   }
+  if (obj.customInspect) {
+    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${protoSymbolName(typeName, "customInspect")}(JSC::JSGlobalObject*, JSC::CallFrame*);\n`;
+
+    specialSymbols += `
+    this->putDirect(vm, builtinNames(vm).inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${protoSymbolName(
+      typeName,
+      "customInspect",
+    )}, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
+  }
   if (obj.finalize) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "finalize")}(void*);` + "\n";
@@ -1778,6 +1787,7 @@ function generateZig(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
+    customInspect = false,
     getInternalProperties = false,
     callbacks = {},
   } = {} as ClassDefinition,
@@ -1795,11 +1805,15 @@ function generateZig(
   if (structuredClone) {
     exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
 
-    if (structuredClone === "transferable") {
+    if (typeof structuredClone === "object" && structuredClone.transferable) {
       exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
     }
 
     exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
+  }
+
+  if (customInspect) {
+    exports.set("customInspect", symbolName(typeName, "customInspect"));
   }
 
   proto = {
@@ -2029,7 +2043,7 @@ const JavaScriptCoreBindings = struct {
       }
       `;
 
-      if (structuredClone === "transferable") {
+      if (typeof structuredClone === "object" && structuredClone.transferable) {
         exports.set("structuredClone_transferable", symbolName(typeName, "onStructuredCloneTransfer"));
         output += `
         pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(JSC.conv) void {
@@ -2055,6 +2069,19 @@ const JavaScriptCoreBindings = struct {
         _ = ctx;
         _ = writeBytes;
         @compileLog("onStructuredCloneSerialize not implemented for ${typeName}");
+      }
+      `;
+    }
+
+    if (customInspect) {
+      // TODO: perhaps exposing this on classes directly isn't the best API choice long term
+      // it would be better to make a different signature that accepts a writer, then a generated-only function that returns a js string
+      // the writer function can integrate with our native console.log implementation, the generated function can call the writer version and collect the result
+      exports.set("customInspect", protoSymbolName(typeName, "customInspect"));
+      output += `
+      pub fn ${protoSymbolName(typeName, "customInspect")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        if (comptime Environment.enable_logs) JSC.markBinding(@src());
+        return @call(.always_inline, JSC.toJSHostValue, .{globalObject, @call(.always_inline, ${typeName}.customInspect, .{thisValue, globalObject, callFrame})});
       }
       `;
     }
@@ -2288,6 +2315,25 @@ ${jsclasses
 }`;
 }
 
+function isTransferableCppImpl() {
+  return `
+bool WebCore::SerializedScriptValue::isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+  if (!value.isCell()) return true;
+  auto cell = value.asCell();
+${classes
+  .map(c => {
+    if (c.structuredClone == null) return "";
+    if (typeof c.structuredClone === "boolean") return "";
+    if (c.structuredClone.transferable) return "";
+    return `  if (JSC::jsDynamicCast<WebCore::JS${c.name}*>(cell)) return false;\n`;
+  })
+  .join("")}
+  return true;
+}
+`;
+}
+
 function initLazyClasses(initLaterFunctions) {
   return `
 
@@ -2352,7 +2398,7 @@ pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callc
 
 `;
 
-const classes = [];
+const classes: ClassDefinition[] = [];
 for (const file of files) {
   const result = require(path.resolve(file));
   if (!(result?.default?.length ?? 0)) continue;
@@ -2511,7 +2557,7 @@ fn log_zig_call(typename: []const u8, callframe: *JSC.CallFrame) callconv(bun.ca
   if (comptime Environment.enable_logs) {
     zig("<d>{s}<d>({d} args)<r>", .{typename, callframe.arguments().len});
   }
-} 
+}
 
 fn log_zig_get_internal_properties(typename: []const u8) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
@@ -2602,6 +2648,7 @@ if (!process.env.ONLY_ZIG) {
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
     jsInheritsCppImpl(),
+    isTransferableCppImpl(),
   ]);
 
   if (lutTextFile.length) {
@@ -2704,7 +2751,7 @@ function getPropertySignatureWithComment(
     commentLines.push(
       ` Look for a setter like this:
       * \`\`\`zig
-      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void 
+      * fn ${propDef.accessor.setter}(this: *${classDef.name}, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void
       * \`\`\``,
     );
     if (propDef.cache) {
@@ -2854,7 +2901,7 @@ export function generateBuiltinTypes(classes: ClassDefinition[]): string {
  * Type definitions for Bun's built-in classes implemented in Zig.
  * Do not edit this file directly.
  * @generated
- * 
+ *
  * This namespace does not exist at runtime!
  */
 declare namespace $ZigGeneratedClasses {

@@ -120,7 +120,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             const now = vm.now();
-            const wait: timespec = if (timer.next.greater(&now))
+            const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
                 .{ .nsec = std.time.ns_per_ms, .sec = 0 };

@@ -706,5 +706,7 @@ export default {
   Server,
   TLSSocket,
   checkServerIdentity,
-  rootCertificates,
+  get rootCertificates() {
+    return rootCertificates;
+  },
 } as any as typeof import("node:tls");

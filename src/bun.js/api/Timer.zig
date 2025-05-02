@@ -119,13 +119,15 @@ pub const All = struct {
         }
 
         if (this.timers.peek()) |timer| {
-            const now: timespec = .fromMs(uv.uv_now(vm.uvLoop()));
+            const now = vm.now();
             const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
-                timespec{ .nsec = 0, .sec = 0 };
+                .{ .nsec = std.time.ns_per_ms, .sec = 0 };
 
-            this.uv_timer.start(wait.msUnsigned(), 0, &onUVTimer);
+            // minimum 1
+            // https://github.com/nodejs/node/blob/102d8cff66550777bec7b0a750ae2203007f3749/src/env.cc#L1532
+            this.uv_timer.start(@max(1, wait.msUnsigned()), 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();
@@ -918,8 +920,7 @@ pub const TimerObjectInternals = struct {
         if (kind != .setInterval) {
             this.strong_this.clearWithoutDeallocation();
         } else {
-            const now = vm.now();
-            time_before_call = now.addMs(this.interval);
+            time_before_call = vm.msFromNow(this.interval);
         }
         this_object.ensureStillAlive();
 

@@ -1829,9 +1829,15 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
-  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
+  return (
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("sigtrap") ||
+    error.includes("ERROR: AddressSanitizer")
+  );
 }
 
 /**

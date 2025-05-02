@@ -562,6 +562,19 @@ function Server(options, secureConnectionListener): void {
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
+
+      if (typeof options.ciphers !== "undefined") {
+        if (typeof options.ciphers !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
+        }
+        const supported = getCiphers();
+        const requested = options.ciphers.split(":");
+        const foundMatch = requested.some(r => supported.some(s => s.toLowerCase() === r.toLowerCase()));
+        if (!foundMatch) {
+          throw new Error("no cipher match");
+        }
+        this.ciphers = options.ciphers;
+      }
     }
   };
 

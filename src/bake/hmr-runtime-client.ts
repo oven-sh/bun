@@ -15,7 +15,7 @@ import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
-import { addMapping, SourceMapURL } from './client/stack-trace';
+import { addMapping, clearDisconnectedSourceMaps, configureSourceMapGCSize, getKnownSourceMaps, SourceMapURL } from './client/stack-trace';
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -59,7 +59,7 @@ async function performRouteReload() {
 const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const entry = scriptTags.get(id);
-  if (!entry) throw new Error("Unknown HMR script not found");
+  if (!entry) throw new Error("Unknown HMR script: " + id);
   const [script, size] = entry;
   scriptTags.delete(id);
   const url = script.src;
@@ -99,6 +99,12 @@ const handlers = {
 
     ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
     ws.send("n" + location.pathname); // IncomingMessageId.set_url
+
+    const fn = globalThis[Symbol.for('bun:loadData')];
+    if (fn) {
+      document.removeEventListener('visibilitychange', fn);
+      ws.send("i" + config.generation);
+    }
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
@@ -162,13 +168,14 @@ const handlers = {
     }
     // JavaScript modules
     if (reader.hasMoreData()) {
+      const sourceMapSize = reader.u32();
       const rest = reader.rest();
       const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
       DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
       const blob = new Blob([rest], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       const script = document.createElement('script');
-      scriptTags.set(sourceMapId, [script, rest.byteLength]);
+      scriptTags.set(sourceMapId, [script, sourceMapSize]);
       script.className = 'bun-hmr-script';
       script.src = url;
       script.onerror = onHmrLoadError;
@@ -239,6 +246,15 @@ window.addEventListener("unhandledrejection", event => {
     }
   }
 }
+
+// The following API may be altered at any point.
+// Thankfully, you can just call `import.meta.hot.on`
+let testingHook = globalThis[Symbol.for("bun testing api, may change at any time")];
+testingHook?.({
+  configureSourceMapGCSize,
+  clearDisconnectedSourceMaps,
+  getKnownSourceMaps,
+});
 
 try {
   const { refresh } = config;

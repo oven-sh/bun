@@ -479,13 +479,12 @@ pub const SendQueue = struct {
         }
         this.keep_alive.disable();
         this.socket = .closed;
+        this._onAfterIPCClosed();
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
         if (this.socket != .open) return;
         const pipe = this.socket.open;
-        this.keep_alive.disable();
-        this.socket = .closed;
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
@@ -802,7 +801,7 @@ pub const SendQueue = struct {
 
                 pipe.ref(); // ref on write
                 if (this.windows.windows_write.?.write_req.write(pipe.asStream(), &this.windows.windows_write.?.write_buffer, write_req, &_windowsOnWriteComplete).asErr()) |err| {
-                    _windowsOnWriteComplete(write_req, @intCast(-@as(c_int, err.errno)));
+                    _windowsOnWriteComplete(write_req, @enumFromInt(-@as(c_int, err.errno)));
                 }
                 // write request is queued. it will call _onWriteComplete when it completes.
             },
@@ -1216,8 +1215,7 @@ pub const IPCHandlers = struct {
         ) void {
             // uSockets has already freed the underlying socket
             log("NewSocketIPCHandler#onClose\n", .{});
-            send_queue.socket = .closed; // socket is freed now, so don't keep it around
-            send_queue._onAfterIPCClosed();
+            send_queue._socketClosed();
         }
 
         pub fn onData(

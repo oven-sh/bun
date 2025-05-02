@@ -5,8 +5,42 @@ import { Worker, isMainThread, workerData } from "worker_threads";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const actions = {
+  async ["Bun.connect"](port) {
+    await Bun.connect({
+      hostname: "localhost",
+      port,
+      socket: {
+        open() {},
+        error() {},
+        data() {},
+        drain() {},
+        close() {},
+      },
+    });
+  },
+  async ["Bun.listen"](port) {
+    const server = Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      socket: {
+        open() {},
+        error() {},
+        data() {},
+        drain() {},
+        close() {},
+      },
+    });
+  },
+  async ["fetch"](port) {
+    const resp = await fetch("http://localhost:" + port);
+    await resp.blob();
+  },
+};
+
 if (isMainThread) {
   let action = process.argv.at(-1);
+  if (actions[action!] === undefined) throw new Error("not found");
 
   const server = Bun.serve({
     port: 0,
@@ -49,40 +83,5 @@ if (isMainThread) {
 } else {
   Bun.gc(true);
   const { action, port } = workerData;
-
-  switch (action) {
-    case "Bun.connect": {
-      await Bun.connect({
-        hostname: "localhost",
-        port,
-        socket: {
-          open() {},
-          error() {},
-          data() {},
-          drain() {},
-          close() {},
-        },
-      });
-      break;
-    }
-    case "Bun.listen": {
-      const server = Bun.listen({
-        hostname: "localhost",
-        port: 0,
-        socket: {
-          open() {},
-          error() {},
-          data() {},
-          drain() {},
-          close() {},
-        },
-      });
-      break;
-    }
-    case "fetch": {
-      const resp = await fetch("http://localhost:" + port);
-      await resp.blob();
-      break;
-    }
-  }
+  await actions[action](port);
 }

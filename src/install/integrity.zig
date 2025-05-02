@@ -107,18 +107,17 @@ pub const Integrity = extern struct {
             return @intFromEnum(this) >= @intFromEnum(Tag.sha1) and @intFromEnum(this) <= @intFromEnum(Tag.sha512);
         }
 
-        pub fn parse(buf: []const u8) Tag {
-            const Matcher = strings.ExactSizeMatcher(8);
+        const Map = bun.ComptimeStringMap(Tag, .{
+            .{ "sha1", Tag.sha1 },
+            .{ "sha256", Tag.sha256 },
+            .{ "sha384", Tag.sha384 },
+            .{ "sha512", Tag.sha512 },
+        });
 
+        pub fn parse(buf: []const u8) Tag {
             const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
 
-            return switch (Matcher.match(buf[0..i])) {
-                Matcher.case("sha1") => Tag.sha1,
-                Matcher.case("sha256") => Tag.sha256,
-                Matcher.case("sha384") => Tag.sha384,
-                Matcher.case("sha512") => Tag.sha512,
-                else => .unknown,
-            };
+            return Map.get(buf[0..i]) orelse .unknown;
         }
 
         pub inline fn digestLen(this: Tag) usize {

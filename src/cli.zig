@@ -103,7 +103,6 @@ pub const debug_flags = if (Environment.show_crash_trace) struct {
     }
 } else @compileError("Do not access this namespace in a release build");
 
-const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
@@ -949,7 +948,6 @@ pub const Arguments = struct {
                 }
             }
 
-            const TargetMatcher = strings.ExactSizeMatcher(8);
             if (args.option("--target")) |_target| brk: {
                 if (comptime cmd == .BuildCommand) {
                     if (args.flag("--compile")) {
@@ -965,12 +963,18 @@ pub const Arguments = struct {
                     }
                 }
 
-                opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
-                    TargetMatcher.case("browser") => Api.Target.browser,
-                    TargetMatcher.case("node") => Api.Target.node,
-                    TargetMatcher.case("macro") => if (cmd == .BuildCommand) Api.Target.bun_macro else Api.Target.bun,
-                    TargetMatcher.case("bun") => Api.Target.bun,
-                    else => invalidTarget(&diag, _target),
+                const TargetMap = bun.ComptimeStringMap(Api.Target, .{
+                    .{ "browser", Api.Target.browser },
+                    .{ "node", Api.Target.node },
+                    .{ "macro", Api.Target.bun_macro },
+                    .{ "bun", Api.Target.bun },
+                });
+                opts.target = opts.target orelse blk: {
+                    const match = TargetMap.get(_target) orelse {
+                        break :blk invalidTarget(&diag, _target);
+                    };
+                    if (match == .bun_macro and cmd != .BuildCommand) break :blk .bun;
+                    break :blk match;
                 };
 
                 if (opts.target.? == .bun) {
@@ -1710,78 +1714,78 @@ pub const Command = struct {
         }
 
         const first_arg_name = next_arg;
-        const RootCommandMatcher = strings.ExactSizeMatcher(12);
 
-        return switch (RootCommandMatcher.match(first_arg_name)) {
-            RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
-            RootCommandMatcher.case("discord") => .DiscordCommand,
-            RootCommandMatcher.case("upgrade") => .UpgradeCommand,
-            RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
-            RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
-            RootCommandMatcher.case("link") => .LinkCommand,
-            RootCommandMatcher.case("unlink") => .UnlinkCommand,
-            RootCommandMatcher.case("x") => .BunxCommand,
-            RootCommandMatcher.case("repl") => .ReplCommand,
-
-            RootCommandMatcher.case("i"),
-            RootCommandMatcher.case("install"),
-            => brk: {
-                for (args_iter.buf) |arg| {
-                    if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
-                        break :brk .AddCommand;
-                    }
+        const match = command_map.get(first_arg_name) orelse .AutoCommand;
+        if (match == .InstallCommand) {
+            for (args_iter.buf) |arg| {
+                if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
+                    return .AddCommand;
                 }
-
-                break :brk .InstallCommand;
-            },
-            RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
-
-            RootCommandMatcher.case("test") => .TestCommand,
-
-            RootCommandMatcher.case("pm") => .PackageManagerCommand,
-
-            RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
-
-            RootCommandMatcher.case("update") => .UpdateCommand,
-            RootCommandMatcher.case("patch") => .PatchCommand,
-            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
-
-            RootCommandMatcher.case("r"),
-            RootCommandMatcher.case("remove"),
-            RootCommandMatcher.case("rm"),
-            RootCommandMatcher.case("uninstall"),
-            => .RemoveCommand,
-
-            RootCommandMatcher.case("run") => .RunCommand,
-            RootCommandMatcher.case("help") => .HelpCommand,
-
-            RootCommandMatcher.case("exec") => .ExecCommand,
-
-            RootCommandMatcher.case("outdated") => .OutdatedCommand,
-            RootCommandMatcher.case("publish") => .PublishCommand,
-
-            // These are reserved for future use by Bun, so that someone
-            // doing `bun deploy` to run a script doesn't accidentally break
-            // when we add our actual command
-            RootCommandMatcher.case("deploy") => .ReservedCommand,
-            RootCommandMatcher.case("cloud") => .ReservedCommand,
-            RootCommandMatcher.case("info") => .ReservedCommand,
-            RootCommandMatcher.case("config") => .ReservedCommand,
-            RootCommandMatcher.case("use") => .ReservedCommand,
-            RootCommandMatcher.case("auth") => .ReservedCommand,
-            RootCommandMatcher.case("login") => .ReservedCommand,
-            RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .ReservedCommand,
-            RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .ReservedCommand,
-
-            RootCommandMatcher.case("-e") => .AutoCommand,
-
-            else => .AutoCommand,
-        };
+            }
+        }
+        return .InstallCommand;
     }
+
+    const command_map = bun.ComptimeStringMap(Tag, .{
+        .{ "init", .InitCommand },
+        .{ "build", .BuildCommand },
+        .{ "discord", .DiscordCommand },
+        .{ "upgrade", .UpgradeCommand },
+        .{ "completions", .InstallCompletionsCommand },
+        .{ "getcompletes", .GetCompletionsCommand },
+        .{ "link", .LinkCommand },
+        .{ "unlink", .UnlinkCommand },
+        .{ "x", .BunxCommand },
+        .{ "repl", .ReplCommand },
+
+        .{ "i", .InstallCommand },
+        .{ "iinstall", .InstallCommand },
+
+        .{ "c", .CreateCommand },
+        .{ "create", .CreateCommand },
+
+        .{ "test", .TestCommand },
+
+        .{ "pm", .PackageManagerCommand },
+
+        .{ "add", .AddCommand },
+        .{ "a", .AddCommand },
+
+        .{ "update", .UpdateCommand },
+        .{ "patch", .PatchCommand },
+        .{ "patch-commit", .PatchCommitCommand },
+
+        .{ "r", .RemoveCommand },
+        .{ "remove", .RemoveCommand },
+        .{ "rm", .RemoveCommand },
+        .{ "uninstall", .RemoveCommand },
+
+        .{ "run", .RunCommand },
+        .{ "help", .HelpCommand },
+
+        .{ "exec", .ExecCommand },
+
+        .{ "outdated", .OutdatedCommand },
+        .{ "publish", .PublishCommand },
+
+        // These are reserved for future use by Bun, so that someone
+        // doing `bun deploy` to run a script doesn't accidentally break
+        // when we add our actual command
+        .{ "deploy", .ReservedCommand },
+        .{ "cloud", .ReservedCommand },
+        .{ "info", .ReservedCommand },
+        .{ "config", .ReservedCommand },
+        .{ "use", .ReservedCommand },
+        .{ "auth", .ReservedCommand },
+        .{ "login", .ReservedCommand },
+        .{ "logout", .ReservedCommand },
+        .{ "whoami", .ReservedCommand },
+        .{ "prune", .ReservedCommand },
+        .{ "list", .ReservedCommand },
+        .{ "why", .ReservedCommand },
+
+        .{ "-e", .AutoCommand },
+    });
 
     const default_completions_list = [_]string{
         "build",

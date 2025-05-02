@@ -630,6 +630,7 @@ pub const SendQueue = struct {
         if (this.queue.items.len == 0) return false; // nothing to send
         const first = &this.queue.items[0];
         if (first.data.cursor > 0) return true; // send in progress, waiting on writable
+        if (this.write_in_progress) return true; // send in progress (windows), waiting on writable
         return false; // error state.
     }
     pub fn updateRef(this: *SendQueue, global: *JSGlobalObject) void {
@@ -645,6 +646,7 @@ pub const SendQueue = struct {
     fn continueSend(this: *SendQueue, global: *JSC.JSGlobalObject, reason: ContinueSendReason) void {
         log("IPC continueSend: {s}", .{@tagName(reason)});
         this.debugLogMessageQueue();
+        defer this.updateRef(global);
 
         if (this.queue.items.len == 0) {
             return; // nothing to send

@@ -379,8 +379,9 @@ pub const All = struct {
         return countdown_int;
     }
 
-    // Bun.sleep
-    // a setTimeout that uses a promise instead of a callback
+    /// Bun.sleep
+    /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
+    /// slightly differently for historical reasons (see jsValueToCountdown)
     pub fn sleep(
         global: *JSGlobalObject,
         promise: JSValue,

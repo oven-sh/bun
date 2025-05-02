@@ -118,7 +118,7 @@ target_compile_options(c2str.exe PRIVATE -DC2STR)
 # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
 # the linked issue refers to very old kernels but this still happens to us on modern ones.
 # disabling ASLR to run the binary works around it
-set(C2STR_COMMAND c2str.exe include/tccdefs.h tccdefs_.h)
+set(C2STR_COMMAND $<TARGET_FILE:c2str.exe> include/tccdefs.h tccdefs_.h)
 if(LINUX AND (CMAKE_C_FLAGS MATCHES "-fsanitize"))
   set(C2STR_COMMAND setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${C2STR_COMMAND})
 endif()

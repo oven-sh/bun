@@ -20,6 +20,7 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
+    broadcast_console_log_from_browser_to_server: bool,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -227,6 +228,15 @@ has_pre_crash_handler: bool,
 /// DISABLED in releases, ENABLED in debug.
 /// Can be enabled with env var `BUN_ASSUME_PERFECT_INCREMENTAL=1`
 assume_perfect_incremental_bundling: bool = false,
+
+/// If true, console logs from the browser will be echoed to the server console.
+/// This works by overriding console.log & console.error in hmr-runtime-client.ts
+/// with a function that sends the message from the client to the server.
+///
+/// There are two usecases:
+/// - Echoing browser console logs to the server for debugging
+/// - WebKit Inspector remote debugging integration
+broadcast_console_log_from_browser_to_server: bool,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -466,7 +476,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
         .relative_path_buf_lock = .unlocked,
         .testing_batch_events = .disabled,
-
+        .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
@@ -816,6 +826,7 @@ pub fn deinit(dev: *DevServer) void {
             },
             .enable_after_bundle => {},
         },
+        .broadcast_console_log_from_browser_to_server = {},
 
         .magic = {
             bun.debugAssert(dev.magic == .valid);
@@ -888,7 +899,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .framework = {},
         .bundler_options = {},
         .allocation_scope = {},
-
+        .broadcast_console_log_from_browser_to_server = {},
         // to be counted.
         .root = {
             other_bytes += dev.root.len;
@@ -1580,6 +1591,7 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     const blob = html.cached_response orelse generate: {
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
+
         html.cached_response = StaticRoute.initFromAnyBlob(
             &.fromOwnedSlice(dev.allocator, payload),
             .{
@@ -1658,6 +1670,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     var array: std.ArrayListUnmanaged(u8) = try std.ArrayListUnmanaged(u8).initCapacity(dev.allocator, payload_size);
     errdefer array.deinit(dev.allocator);
     array.appendSliceAssumeCapacity(before_head_end);
+
     // Insert all link tags before "</head>"
     for (css_ids) |name| {
         array.appendSliceAssumeCapacity("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/");
@@ -2080,7 +2093,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         .shared => {},
     }
 
-    const client_bundle = dev.client_graph.takeJSBundle(.{
+    const client_bundle = dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = if (client_file) |index|
             dev.client_graph.bundled_files.keys()[index.get()]
@@ -2088,6 +2101,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
         .script_id = script_id,
+        .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
     });
 
     return client_bundle;
@@ -2434,7 +2448,6 @@ pub fn finalizeBundle(
         }
         dev.allocation_scope.assertOwned(compile_result.code);
         html.bundled_html_text = compile_result.code;
-
         html.script_injection_offset = .init(compile_result.script_injection_offset);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
@@ -2493,7 +2506,7 @@ pub fn finalizeBundle(
 
     // Load all new chunks into the server runtime.
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeJSBundle(.{ .kind = .hmr_chunk });
+        const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
         defer dev.allocator.free(server_bundle);
 
         const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
@@ -2738,9 +2751,10 @@ pub fn finalizeBundle(
                 try w.writeInt(u32, entry_size, .little);
 
                 // Build and send the source chunk
-                try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
+                try dev.client_graph.takeJSBundleToList(&hot_update_payload, &.{
                     .kind = .hmr_chunk,
                     .script_id = script_id,
+                    .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
                 });
             }
         } else {
@@ -4842,6 +4856,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 script_id: SourceMapStore.Key,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
+                console_log: bool,
             },
             .server => struct {
                 kind: ChunkKind,
@@ -4850,7 +4865,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         pub fn takeJSBundle(
             g: *@This(),
-            options: TakeJSBundleOptions,
+            options: *const TakeJSBundleOptions,
         ) ![]u8 {
             var chunk = std.ArrayList(u8).init(g.owner().allocator);
             try g.takeJSBundleToList(&chunk, options);
@@ -4861,7 +4876,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn takeJSBundleToList(
             g: *@This(),
             list: *std.ArrayList(u8),
-            options: TakeJSBundleOptions,
+            options: *const TakeJSBundleOptions,
         ) !void {
             const kind = options.kind;
             g.owner().graph_safety_lock.assertLocked();
@@ -4908,7 +4923,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.print("{s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation))});
                         try w.writeAll("\",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
-                        try w.writeAll("\"");
+
+                        if (options.console_log) {
+                            try w.writeAll("\",\n  console: true");
+                        } else {
+                            try w.writeAll("\",\n  console: false");
+                        }
 
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
@@ -6286,12 +6306,20 @@ pub const IncomingMessageId = enum(u8) {
     set_url = 'n',
     /// Tells the DevServer to batch events together.
     testing_batch_events = 'H',
+
+    /// Console log from the client
+    console_log = 'l',
     /// Tells the DevServer to unref a source map.
     /// - `u64`: SourceMapStore key
     unref_source_map = 'u',
 
     /// Invalid data
     _,
+};
+
+pub const ConsoleLogKind = enum(u8) {
+    log = 'l',
+    err = 'e',
 };
 
 const HmrTopic = enum(u8) {
@@ -6499,6 +6527,41 @@ const HmrSocket = struct {
 
                     event.entry_points.deinit(s.dev.allocator);
                 },
+            },
+            .console_log => {
+                if (msg.len < 2) {
+                    ws.close();
+                    return;
+                }
+
+                const kind: ConsoleLogKind = switch (msg[1]) {
+                    'l' => .log,
+                    'e' => .err,
+                    else => {
+                        ws.close();
+                        return;
+                    },
+                };
+
+                const data = msg[2..];
+
+                if (s.dev.inspector()) |agent| {
+                    var log_str = bun.String.init(data);
+                    defer log_str.deref();
+                    agent.notifyConsoleLog(s.dev.debugger_id, kind, &log_str);
+                }
+
+                if (s.dev.broadcast_console_log_from_browser_to_server) {
+                    switch (kind) {
+                        .log => {
+                            bun.Output.pretty("<r><d>[browser]<r> {s}<r>\n", .{data});
+                        },
+                        .err => {
+                            bun.Output.prettyError("<r><d>[browser]<r> {s}<r>\n", .{data});
+                        },
+                    }
+                    bun.Output.flush();
+                }
             },
             .unref_source_map => {
                 var fbs = std.io.fixedBufferStream(msg[1..]);
@@ -7207,6 +7270,16 @@ fn releaseRelativePathBuf(dev: *DevServer) void {
     if (bun.Environment.isDebug) {
         dev.relative_path_buf = undefined;
     }
+}
+
+/// Either of two conditions make this true:
+/// - The inspector is enabled
+/// - The user passed "console": true in serve({development: {console: true}}) options
+///
+/// Changing this value at runtime is unsupported. It's expected that the
+/// inspector domains are registered at initialization time.
+fn shouldReceiveConsoleLogFromBrowser(dev: *const DevServer) bool {
+    return dev.inspector() != null or dev.broadcast_console_log_from_browser_to_server;
 }
 
 fn dumpStateDueToCrash(dev: *DevServer) !void {

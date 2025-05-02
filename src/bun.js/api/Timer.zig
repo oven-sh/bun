@@ -1540,9 +1540,7 @@ pub const WTFTimer = struct {
         this.imminent.store(null, .seq_cst);
         this.runWithoutRemoving();
         return if (this.repeat)
-            // .{ .rearm = this.event_loop_timer.next }
-            // TODO: this seems neccecary, but before PR #19371 this return value was never observed
-            .disarm
+            .{ .rearm = this.event_loop_timer.next }
         else
             .disarm;
     }

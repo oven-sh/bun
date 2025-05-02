@@ -7785,7 +7785,7 @@ pub const SourceMapStore = struct {
     }
 
     const GetResult = struct {
-        index: bun.GenericIndex(u33, Entry),
+        index: bun.GenericIndex(u32, Entry),
         mappings: SourceMap.Mapping.List,
         file_paths: []const []const u8,
         source_contents: []const bun.StringPointer,

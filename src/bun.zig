@@ -3047,7 +3047,7 @@ pub const timespec = extern struct {
         return this.sec == other.sec and this.nsec == other.nsec;
     }
 
-    pub fn fromMs(milliseconds: i64) timespec {
+    pub fn fromMs(milliseconds: u64) timespec {
         return .{
             .sec = @intCast(milliseconds / 1000),
             .nsec = @intCast((milliseconds % 1000) * 1_000_000),

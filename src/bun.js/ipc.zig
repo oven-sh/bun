@@ -439,7 +439,7 @@ pub const SendQueue = struct {
     }
 
     fn closeSocket(this: *SendQueue, reason: enum { normal, failure }, from: enum { user, deinit }) void {
-        log("SendQueue#closeSocket", .{});
+        log("SendQueue#closeSocket {s}", .{@tagName(from)});
         switch (this.socket) {
             .open => |s| switch (Environment.isWindows) {
                 true => {
@@ -447,14 +447,16 @@ pub const SendQueue = struct {
                     const stream: *uv.uv_stream_t = pipe.asStream();
                     stream.readStop();
 
-                    this._onAfterIPCClosed();
-
                     if (this.windows.windows_write != null and from != .deinit) {
+                        log("SendQueue#closeSocket -> mark ready for close", .{});
                         // currently writing; wait for the write to complete
                         this.windows.try_close_after_write = true;
                     } else {
+                        log("SendQueue#closeSocket -> close now", .{});
                         this._windowsClose();
                     }
+
+                    this._onAfterIPCClosed();
                 },
                 false => {
                     s.close(switch (reason) {
@@ -470,6 +472,7 @@ pub const SendQueue = struct {
         }
     }
     fn _socketClosed(this: *SendQueue) void {
+        log("SendQueue#_socketClosed", .{});
         if (Environment.isWindows) {
             if (this.windows.windows_write) |windows_write| {
                 windows_write.owner = null; // so _windowsOnWriteComplete doesn't try to continue writing
@@ -480,6 +483,7 @@ pub const SendQueue = struct {
         this.socket = .closed;
     }
     fn _windowsClose(this: *SendQueue) void {
+        log("SendQueue#_windowsClose", .{});
         if (this.socket != .open) return;
         const pipe = this.socket.open;
         this.keep_alive.disable();
@@ -489,6 +493,7 @@ pub const SendQueue = struct {
         this._socketClosed();
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
+        log("SendQueue#_windowsOnClosed", .{});
         bun.default_allocator.destroy(windows);
     }
 
@@ -518,11 +523,6 @@ pub const SendQueue = struct {
         log("SendQueue#_onAfterIPCClosed", .{});
         if (this.close_event_sent) return;
         this.close_event_sent = true;
-        if (this.socket != .open) {
-            this.socket = .closed;
-            return;
-        }
-        this.socket = .closed;
         switch (this.owner) {
             inline else => |owner| {
                 owner.handleIPCClose();
@@ -686,7 +686,7 @@ pub const SendQueue = struct {
         }
         this.write_in_progress = false;
         const globalThis = this.getGlobalThis() orelse {
-            this.closeSocket(.failure, .deinit);
+            this.closeSocket(.failure, .user);
             return;
         };
         defer this.updateRef(globalThis);
@@ -719,7 +719,7 @@ pub const SendQueue = struct {
             return;
         } else {
             // error. close socket.
-            this.closeSocket(.failure, .deinit);
+            this.closeSocket(.failure, .user);
             return;
         }
     }
@@ -863,7 +863,7 @@ pub const SendQueue = struct {
 
         const readStartResult = stream.readStart(this, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead);
         if (readStartResult == .err) {
-            this.closeSocket(.failure, .deinit);
+            this.closeSocket(.failure, .user);
             return readStartResult;
         }
         return .{ .result = {} };
@@ -887,7 +887,7 @@ pub const SendQueue = struct {
         const stream = ipc_pipe.asStream();
 
         stream.readStart(this, IPCHandlers.WindowsNamedPipe.onReadAlloc, IPCHandlers.WindowsNamedPipe.onReadError, IPCHandlers.WindowsNamedPipe.onRead).unwrap() catch |err| {
-            this.closeSocket(.failure, .deinit);
+            this.closeSocket(.failure, .user);
             return err;
         };
     }
@@ -1121,7 +1121,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
     const globalThis = send_queue.getGlobalThis() orelse {
-        send_queue.closeSocket(.failure, .deinit);
+        send_queue.closeSocket(.failure, .user);
         return;
     };
 
@@ -1136,12 +1136,12 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     return;
                 },
                 error.InvalidFormat => {
-                    send_queue.closeSocket(.failure, .deinit);
+                    send_queue.closeSocket(.failure, .user);
                     return;
                 },
                 error.OutOfMemory => {
                     Output.printErrorln("IPC message is too long.", .{});
-                    send_queue.closeSocket(.failure, .deinit);
+                    send_queue.closeSocket(.failure, .user);
                     return;
                 },
             };
@@ -1169,12 +1169,12 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 return;
             },
             error.InvalidFormat => {
-                send_queue.closeSocket(.failure, .deinit);
+                send_queue.closeSocket(.failure, .user);
                 return;
             },
             error.OutOfMemory => {
                 Output.printErrorln("IPC message is too long.", .{});
-                send_queue.closeSocket(.failure, .deinit);
+                send_queue.closeSocket(.failure, .user);
                 return;
             },
         };
@@ -1280,7 +1280,7 @@ pub const IPCHandlers = struct {
         ) void {
             log("onConnectError", .{});
             // context has not been initialized
-            send_queue.closeSocket(.failure, .deinit);
+            send_queue.closeSocket(.failure, .user);
         }
 
         pub fn onEnd(
@@ -1288,7 +1288,7 @@ pub const IPCHandlers = struct {
             _: Socket,
         ) void {
             log("onEnd", .{});
-            send_queue.closeSocket(.failure, .deinit);
+            send_queue.closeSocket(.failure, .user);
         }
     };
 
@@ -1333,12 +1333,12 @@ pub const IPCHandlers = struct {
                         return;
                     },
                     error.InvalidFormat => {
-                        send_queue.closeSocket(.failure, .deinit);
+                        send_queue.closeSocket(.failure, .user);
                         return;
                     },
                     error.OutOfMemory => {
                         Output.printErrorln("IPC message is too long.", .{});
-                        send_queue.closeSocket(.failure, .deinit);
+                        send_queue.closeSocket(.failure, .user);
                         return;
                     },
                 };

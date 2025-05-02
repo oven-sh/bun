@@ -2045,6 +2045,22 @@ describe("http/1.1 response body length", () => {
   });
 });
 describe("fetch Response life cycle", () => {
+  // error: Malformed_HTTP_Response fetching "http://localhost:58888/". For more information, pass `verbose: true` in the second argument to fetch()
+  //   path: "http://localhost:58888/",
+  //  errno: 0,
+  //   code: "Malformed_HTTP_Response"
+  // 2054 |       stderr: "inherit",
+  // 2055 |       stdout: "inherit",
+  // 2056 |       stdin: "inherit",
+  // 2057 |       env: bunEnv,
+  // 2058 |     });
+  // 2059 |     expect(await clientProcess.exited).toBe(0);
+  //                                               ^
+  // error: expect(received).toBe(expected)
+  // Expected: 0
+  // Received: 1
+  //       at <anonymous> (/opt/homebrew/etc/buildkite-agent/builds/macOS-13-aarch64-1/bun/bun/test/js/web/fetch/fetch.test.ts:2059:40)
+  // ✗ fetch Response life cycle > should not keep Response alive if not consumed [205.17ms]
   it.skipIf(isFlaky && isMacOS)("should not keep Response alive if not consumed", async () => {
     let deferred = Promise.withResolvers<string>();
 

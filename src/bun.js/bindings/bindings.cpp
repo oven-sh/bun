@@ -133,7 +133,7 @@
 #include "wtf-bindings.h"
 
 #if OS(DARWIN)
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
@@ -2654,7 +2654,7 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
 
     JSC::JSLockHolder lock(vm);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 #endif
@@ -6431,7 +6431,7 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {
     return callFrame->describeFrame();

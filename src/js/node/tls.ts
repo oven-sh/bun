@@ -252,7 +252,7 @@ function SecureContext(options) {
 }
 
 function createSecureContext(options) {
-  return new SecureContext(options);
+  return SecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -573,7 +573,6 @@ function Server(options, secureConnectionListener): void {
         if (!foundMatch) {
           throw new Error("no cipher match");
         }
-        this.ciphers = options.ciphers;
       }
     }
   };

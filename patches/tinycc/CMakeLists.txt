@@ -120,7 +120,10 @@ target_compile_options(c2str.exe PRIVATE -DC2STR)
 # disabling ASLR to run the binary works around it
 set(C2STR_COMMAND $<TARGET_FILE:c2str.exe> include/tccdefs.h tccdefs_.h)
 if(LINUX AND (CMAKE_C_FLAGS MATCHES "-fsanitize"))
-  set(C2STR_COMMAND setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${C2STR_COMMAND})
+  # our CI builds run in a container where setarch isn't allowed to change the personality.
+  # but the ASan binaries seem to run fine there without ASLR disabled
+  # so, if the command fails with setarch, we try again without (|| ${C2STR_COMMAND}) as a fallback
+  set(C2STR_COMMAND setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${C2STR_COMMAND} || ${C2STR_COMMAND})
 endif()
 
 add_custom_command(

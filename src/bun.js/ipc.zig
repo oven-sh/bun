@@ -455,8 +455,6 @@ pub const SendQueue = struct {
                         log("SendQueue#closeSocket -> close now", .{});
                         this._windowsClose();
                     }
-
-                    this._onAfterIPCClosed();
                 },
                 false => {
                     s.close(switch (reason) {
@@ -491,6 +489,7 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
+        this._onAfterIPCClosed();
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
         log("SendQueue#_windowsOnClosed", .{});

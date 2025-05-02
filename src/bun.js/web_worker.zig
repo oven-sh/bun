@@ -525,6 +525,9 @@ pub const WebWorker = struct {
             vm.eventLoop().wakeup();
             // TODO(@190n) notifyNeedTermination
         }
+
+        // TODO(@190n) delete
+        this.setRefInternal(false);
     }
 
     /// This handles cleanup, emitting the "close" event, and deinit.

@@ -218,7 +218,7 @@ pub const AnyRoute = union(enum) {
     /// Bundle an HTML import
     /// import html from "./index.html";
     /// "/": html,
-    html: *HTMLBundle.Route,
+    html: bun.ptr.RefPtr(HTMLBundle.Route),
     /// Use file system routing.
     /// "/*": {
     ///   "dir": import.meta.resolve("./pages"),
@@ -229,7 +229,7 @@ pub const AnyRoute = union(enum) {
     pub fn memoryCost(this: AnyRoute) usize {
         return switch (this) {
             .static => |static_route| static_route.memoryCost(),
-            .html => |html_bundle_route| html_bundle_route.memoryCost(),
+            .html => |html_bundle_route| html_bundle_route.data.memoryCost(),
             .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
     }
@@ -268,11 +268,10 @@ pub const AnyRoute = union(enum) {
             const entry = try init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle);
             if (!entry.found_existing) {
                 entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
+                return .{ .html = entry.value_ptr.* };
             } else {
-                entry.value_ptr.*.ref();
+                return .{ .html = entry.value_ptr.dupeRef() };
             }
-
-            return .{ .html = entry.value_ptr.* };
         }
 
         if (argument.isObject()) {
@@ -321,7 +320,7 @@ pub const AnyRoute = union(enum) {
 
 pub const ServerInitContext = struct {
     arena: std.heap.ArenaAllocator,
-    dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, *HTMLBundle.Route),
+    dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
     js_string_allocations: bun.bake.StringRefList,
     framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
 };
@@ -6123,6 +6122,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // `this.memoryCost()` bytes.
                 if (this.dev_server) |dev| {
                     this.dev_server = null;
+                    if (this.app) |app| app.clearRoutes();
                     dev.deinit();
                 }
 
@@ -7070,9 +7070,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path);
                         },
                         .html => |html_bundle_route| {
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route, entry.path);
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path);
                             if (dev_server) |dev| {
-                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route) catch bun.outOfMemory();
+                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route.data) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },

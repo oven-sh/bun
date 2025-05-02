@@ -186,6 +186,47 @@ const handlers = {
     currentRouteIndex = reader.u32();
   },
   [MessageId.errors]: onServerErrorPayload,
+  [MessageId.screenshot]() {
+    // TODO: feature detect this, not all browsers support it?
+    // Use the MediaStream Image Capture API as described in the API documentation
+    navigator.mediaDevices
+      .getUserMedia({ video: true })
+      .then(mediaStream => {
+        // Get the video track from the stream
+        const track = mediaStream.getVideoTracks()[0];
+
+        // Create an ImageCapture object
+        const imageCapture = new ImageCapture(track);
+
+        // Take a photo
+        return imageCapture.takePhoto();
+      })
+      .then(blob => {
+        // Convert blob to base64 data URL
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      })
+      .then(dataUrl => {
+        // Send the screenshot data to the server
+        // Prefix with "S" for screenshot message type
+        ws.send("S" + dataUrl);
+
+        // Clean up - stop all video tracks
+        navigator.mediaDevices
+          .getUserMedia({ video: true })
+          .then(stream => {
+            stream.getTracks().forEach(track => track.stop());
+          })
+          .catch(err => console.error("Error stopping tracks:", err));
+      })
+      .catch(error => {
+        console.error("Failed to capture screenshot:", error);
+      });
+  },
 };
 const ws = initWebSocket(handlers, {
   onStatusChange(connected) {

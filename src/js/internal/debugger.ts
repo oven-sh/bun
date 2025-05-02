@@ -27,16 +27,16 @@ class SocketFramer {
   }
 
   send(socket: Socket<{ framer: SocketFramer; backend: Backend }>, data: string): void {
-    // We need to encode the data using TextEncoder because the string could contain
-    // multi-byte characters, which makes the length not actually data.length
-    const encoded = new TextEncoder().encode(data);
     if (!!$debug) {
       $debug("local:", data);
     }
 
-    socketFramerMessageLengthBuffer.writeUInt32BE(encoded.length, 0);
+    // Use this instead of data.length because multi-byte characters
+    const length = Buffer.byteLength(data, "utf-8");
+
+    socketFramerMessageLengthBuffer.writeUInt32BE(length, 0);
     socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(encoded);
+    socket.$write(data, "utf-8");
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {

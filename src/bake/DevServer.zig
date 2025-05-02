@@ -194,8 +194,9 @@ next_bundle: struct {
     requests: DeferredRequest.List,
 },
 deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_preallocated).Fallback,
+hmr_socket_id_counter: i32 = 0,
 /// UWS can handle closing the websocket connections themselves
-active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
+active_websocket_connections: std.AutoHashMapUnmanaged(HmrSocket.Id, *HmrSocket),
 
 relative_path_buf_lock: bun.DebugThreadLock,
 relative_path_buf: bun.PathBuffer,
@@ -440,7 +441,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             .reload_event = null,
             .requests = .{},
         },
-        .debugger_id = .init(0), // TODO paper clover:
+        .debugger_id = BunFrontendDevServerAgent.newDevServerID(),
         .assets = .{
             .path_map = .empty,
             .files = .empty,
@@ -668,6 +669,11 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
 
+    // If the web inspector is enabled, track it.
+    if (dev.inspector()) |agent| {
+        agent.dev_servers.put(bun.default_allocator, dev.debugger_id, dev) catch bun.outOfMemory();
+    }
+
     return dev;
 }
 
@@ -684,7 +690,6 @@ pub fn deinit(dev: *DevServer) void {
         .bundles_since_last_error = {},
         .client_transpiler = {},
         .configuration_hash_key = {},
-        .debugger_id = {},
         .deferred_request_pool = {},
         .emit_visualizer_events = {},
         .framework = {},
@@ -698,7 +703,14 @@ pub fn deinit(dev: *DevServer) void {
         .server_transpiler = {},
         .ssr_transpiler = {},
         .vm = {},
+        .hmr_socket_id_counter = {},
 
+        .debugger_id = {
+            if (dev.inspector()) |agent| {
+                const existed = agent.dev_servers.swapRemove(dev.debugger_id);
+                bun.debugAssert(existed);
+            }
+        },
         .graph_safety_lock = dev.graph_safety_lock.lock(),
         .bun_watcher = dev.bun_watcher.deinit(true),
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
@@ -779,7 +791,7 @@ pub fn deinit(dev: *DevServer) void {
             dev.source_maps.entries.deinit(allocator);
         },
         .active_websocket_connections = {
-            var it = dev.active_websocket_connections.keyIterator();
+            var it = dev.active_websocket_connections.valueIterator();
             while (it.next()) |item| {
                 const s: *HmrSocket = item.*;
                 if (s.underlying) |websocket|
@@ -839,6 +851,7 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_fetch_function_callback = {},
         .server_register_update_callback = {},
         .watcher_atomics = {},
+        .hmr_socket_id_counter = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -5888,7 +5901,10 @@ pub fn onWebSocketUpgrade(
 ) void {
     assert(id == 0);
 
+    const hmr_socket_id = HmrSocket.Id.init(dev.hmr_socket_id_counter);
+    dev.hmr_socket_id_counter += 1;
     const dw = bun.create(dev.allocator, HmrSocket, .{
+        .id = hmr_socket_id,
         .dev = dev,
         .is_from_localhost = if (res.getRemoteSocketInfo()) |addr|
             if (addr.is_ipv6)
@@ -5900,7 +5916,7 @@ pub fn onWebSocketUpgrade(
         .subscriptions = .{},
         .active_route = .none,
     });
-    dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
+    dev.active_websocket_connections.put(dev.allocator, hmr_socket_id, dw) catch bun.outOfMemory();
     _ = res.upgrade(
         *HmrSocket,
         dw,
@@ -6009,6 +6025,9 @@ pub const MessageId = enum(u8) {
     /// acknowledged by the watcher but intentionally took no action.
     /// - `u8`: See bake-harness.ts WatchSynchronization enum.
     testing_watch_synchronization = 'r',
+    /// Tell the client to take a screenshot of the current page and send it over.
+    /// - `u32`: Unique ID for the inspector request to associate it with a response.
+    screenshot = 's',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -6027,6 +6046,11 @@ pub const IncomingMessageId = enum(u8) {
     testing_batch_events = 'H',
     /// Console log from the client
     console_log = 'l',
+
+    /// Response of a screenshot request.
+    /// - `u32`: Unique ID to associate it with the request.
+    /// - `[]u8`: (Rest of the data) The screenshot encoded in base64
+    screenshot = 'S',
 
     /// Invalid data
     _,
@@ -6073,7 +6097,8 @@ const HmrTopic = enum(u8) {
     } });
 };
 
-const HmrSocket = struct {
+pub const HmrSocket = struct {
+    pub const Id = bun.GenericIndex(i32, HmrSocket);
     dev: *DevServer,
     underlying: ?AnyWebSocket = null,
     subscriptions: HmrTopic.Bits,
@@ -6082,7 +6107,7 @@ const HmrSocket = struct {
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     active_route: RouteBundle.Index.Optional,
-    inspector_connection_id: i32 = -1,
+    id: Id,
 
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         const send_status = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
@@ -6091,10 +6116,20 @@ const HmrSocket = struct {
         if (send_status != .dropped) {
             // Notify inspector about client connection
             if (s.dev.inspector()) |agent| {
-                s.inspector_connection_id = agent.nextConnectionID();
-                agent.notifyClientConnected(s.dev.debugger_id, s.inspector_connection_id);
+                agent.notifyClientConnected(s.dev.debugger_id, s.id.get());
             }
         }
+    }
+
+    pub fn requestScreenshot(s: *HmrSocket, unique_id: u32) bool {
+        if (s.underlying) |ws| {
+            var payload: [1 + 4]u8 = undefined;
+            payload[0] = MessageId.screenshot.char();
+            std.mem.writeInt(u32, payload[1..], unique_id, std.builtin.Endian.big);
+            _ = ws.send(payload[0..], .binary, false, true);
+            return true;
+        }
+        return false;
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -6147,16 +6182,14 @@ const HmrSocket = struct {
                 const pattern = msg[1..];
                 const maybe_rbi = s.dev.routeToBundleIndexSlow(pattern);
                 if (s.dev.inspector()) |agent| {
-                    if (s.inspector_connection_id > -1) {
-                        var pattern_str = bun.String.init(pattern);
-                        defer pattern_str.deref();
-                        agent.notifyClientNavigated(
-                            s.dev.debugger_id,
-                            s.inspector_connection_id,
-                            &pattern_str,
-                            maybe_rbi,
-                        );
-                    }
+                    var pattern_str = bun.String.init(pattern);
+                    defer pattern_str.deref();
+                    agent.notifyClientNavigated(
+                        s.dev.debugger_id,
+                        s.id.get(),
+                        &pattern_str,
+                        maybe_rbi,
+                    );
                 }
                 const rbi = maybe_rbi orelse return;
                 if (s.active_route.unwrap()) |old| {
@@ -6242,6 +6275,21 @@ const HmrSocket = struct {
                     bun.Output.flush();
                 }
             },
+            .screenshot => {
+                if (s.dev.inspector()) |agent| {
+                    var payload = msg[1..];
+                    // We need at least 4 bytes for the unique ID and then the bytes for the base64 image
+                    if (payload.len <= 4) {
+                        ws.close();
+                        return;
+                    }
+                    const unique_id = std.mem.readInt(u32, payload[0..4], std.builtin.Endian.big);
+                    payload = payload[4..];
+                    var screenshot_str = bun.String.init(payload);
+                    defer screenshot_str.deref();
+                    agent.notifyScreenshot(unique_id, &screenshot_str);
+                }
+            },
             _ => ws.close(),
         }
     }
@@ -6251,11 +6299,9 @@ const HmrSocket = struct {
         _ = exit_code;
         _ = message;
 
-        if (s.inspector_connection_id > -1) {
-            // Notify inspector about client disconnection
-            if (s.dev.inspector()) |agent| {
-                agent.notifyClientDisconnected(s.dev.debugger_id, s.inspector_connection_id);
-            }
+        // Notify inspector about client disconnection
+        if (s.dev.inspector()) |agent| {
+            agent.notifyClientDisconnected(s.dev.debugger_id, s.id.get());
         }
 
         if (s.subscriptions.visualizer) {
@@ -6266,7 +6312,8 @@ const HmrSocket = struct {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
         }
 
-        bun.debugAssert(s.dev.active_websocket_connections.remove(s));
+        const was_present_in_map = s.dev.active_websocket_connections.remove(s.id);
+        bun.debugAssert(was_present_in_map);
         s.dev.allocator.destroy(s);
     }
 };

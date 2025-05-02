@@ -3299,7 +3299,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         _,
         const Index = @This();
         comptime {
-            _ = uid;
+            _ = uid; // Capture `uid` to ensure a unique type.
         }
 
         /// Prefer this over @enumFromInt to assert the int is in range

@@ -16,6 +16,7 @@
 namespace Inspector {
 
 extern "C" void Bun__InspectorBunFrontendDevServerAgent__setEnabled(Inspector::InspectorBunFrontendDevServerAgent*);
+extern "C" int Bun__InspectorBunFrontendDevServerAgent__screenshot(Inspector::InspectorBunFrontendDevServerAgent*, int serverId, int connectionId, int uniqueId);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
 
@@ -58,6 +59,27 @@ Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::disable()
 
     m_enabled = false;
     Bun__InspectorBunFrontendDevServerAgent__setEnabled(nullptr);
+    return {};
+}
+
+void InspectorBunFrontendDevServerAgent::notifyScreenshot(int uniqueId, const String& payload)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->screenshotted(uniqueId, payload);
+}
+
+Protocol::ErrorStringOr<void> InspectorBunFrontendDevServerAgent::screenshot(int serverId, int connectionId, int uniqueId)
+{
+    int result = Bun__InspectorBunFrontendDevServerAgent__screenshot(this, serverId, connectionId, uniqueId);
+    if (result < 0) {
+        if (result == -1) return makeUnexpected("Failed to find dev server"_s);
+        if (result == -2) return makeUnexpected("Failed to find connection"_s);
+        if (result == -3) return makeUnexpected("Debugger not active"_s);
+        if (result == -4) return makeUnexpected("No websocket connection"_s);
+        return makeUnexpected("Failed for unknown reason"_s);
+    }
     return {};
 }
 
@@ -190,6 +212,11 @@ void InspectorBunFrontendDevServerAgent__notifyGraphUpdate(InspectorBunFrontendD
 void InspectorBunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, BunString* data)
 {
     agent->consoleLog(devServerId, kind, data->toWTFString());
+}
+
+void InspectorBunFrontendDevServerAgent__notifyScreenshot(InspectorBunFrontendDevServerAgent* agent, int uniqueId, BunString* payload)
+{
+    agent->notifyScreenshot(uniqueId, payload->toWTFString());
 }
 }
 

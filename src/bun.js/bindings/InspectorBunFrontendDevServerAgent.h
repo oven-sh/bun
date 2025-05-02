@@ -31,6 +31,7 @@ public:
     // BunFrontendDevServerBackendDispatcherHandler
     virtual Protocol::ErrorStringOr<void> enable() final;
     virtual Protocol::ErrorStringOr<void> disable() final;
+    virtual Protocol::ErrorStringOr<void> screenshot(int serverId, int connectionId, int uniqueId) final;
 
     // Public API for events
     void clientConnected(int devServerId, int connectionId);
@@ -42,6 +43,7 @@ public:
     void clientErrorReported(int devServerId, const String& clientErrorPayloadBase64);
     void graphUpdate(int devServerId, const String& visualizerPayloadBase64);
     void consoleLog(int devServerId, char kind, const String& data);
+    void notifyScreenshot(int uniqueId, const String& payload);
 
 private:
     // JSC::JSGlobalObject& m_globalobject;

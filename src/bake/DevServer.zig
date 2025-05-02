@@ -225,7 +225,7 @@ assume_perfect_incremental_bundling: bool = false,
 /// There are two usecases:
 /// - Echoing browser console logs to the server for debugging
 /// - WebKit Inspector remote debugging integration
-broadcast_console_log_from_browser_to_server: bool = false,
+broadcast_console_log_from_browser_to_server: bool,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.

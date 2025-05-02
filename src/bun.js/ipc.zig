@@ -720,7 +720,7 @@ pub const SendQueue = struct {
             return;
         } else {
             // error. close socket.
-            this.closeSocket(.failure, .user);
+            this.closeSocket(.failure, .deinit);
             return;
         }
     }

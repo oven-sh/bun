@@ -685,7 +685,7 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        task.started_at = bun.timespec.now();
+        task.started_at = vm.now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
             if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {

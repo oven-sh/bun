@@ -855,7 +855,7 @@ pub const TimerObjectInternals = struct {
 
     extern "c" fn Bun__JSTimeout__call(globalObject: *JSC.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue) bool;
 
-    // returns true if an exception was thrown
+    /// returns true if an exception was thrown
     pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) bool {
         if (this.flags.has_cleared_timer or
             // unref'd setImmediate callbacks should only run if there are things keeping the event

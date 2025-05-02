@@ -1723,7 +1723,7 @@ pub const Command = struct {
                 }
             }
         }
-        return .InstallCommand;
+        return match;
     }
 
     const command_map = bun.ComptimeStringMap(Tag, .{

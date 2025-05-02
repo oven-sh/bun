@@ -126,8 +126,8 @@ pub const TestRunner = struct {
     }
 
     pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
+        const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
-        const then = vm.msFromNow(@intCast(milliseconds));
 
         this.event_loop_timer.tag = .TestRunner;
         if (this.event_loop_timer.state == .ACTIVE) {
@@ -1568,8 +1568,7 @@ pub const TestRunnerTask = struct {
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, test_id_for_debugger: u32, describe: *DescribeScope) void {
-        const vm = globalThis.bunVM();
-        const elapsed = vm.sinceNow(&this.started_at);
+        const elapsed = this.started_at.sinceNow();
         switch (result.forceTODO(test_.tag == .todo)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
@@ -1642,7 +1641,7 @@ pub const TestRunnerTask = struct {
         }
 
         if (test_id_for_debugger > 0) {
-            if (vm.debugger) |*debugger| {
+            if (globalThis.bunVM().debugger) |*debugger| {
                 if (debugger.test_reporter_agent.isEnabled()) {
                     debugger.test_reporter_agent.reportTestEnd(@intCast(test_id_for_debugger), switch (result) {
                         .pass => .pass,

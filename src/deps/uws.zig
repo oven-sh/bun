@@ -508,7 +508,7 @@ pub const UpgradedDuplex = struct {
         }
 
         // reschedule the timer
-        this.event_loop_timer.next = this.vm.msFromNow(ms);
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
         this.vm.timer.insert(&this.event_loop_timer);
     }
     pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {
@@ -1083,7 +1083,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         }
 
         // reschedule the timer
-        this.event_loop_timer.next = this.vm.msFromNow(ms);
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
         this.vm.timer.insert(&this.event_loop_timer);
     }
     pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {

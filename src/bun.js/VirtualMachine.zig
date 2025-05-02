@@ -618,26 +618,6 @@ pub inline fn rareData(this: *VirtualMachine) *JSC.RareData {
     };
 }
 
-pub fn now(this: *VirtualMachine) bun.timespec {
-    if (Environment.isWindows) {
-        return .fromMs(bun.windows.libuv.uv_now(this.uvLoop()));
-    }
-
-    return bun.timespec.now();
-}
-
-pub fn msFromNow(this: *VirtualMachine, interval: i64) bun.timespec {
-    if (Environment.isWindows) {
-        return this.now().addMs(interval);
-    }
-
-    return bun.timespec.msFromNow(interval);
-}
-
-pub fn sinceNow(this: *VirtualMachine, start: *const bun.timespec) u64 {
-    return this.now().duration(start).ns();
-}
-
 pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
     return this.event_loop;
 }

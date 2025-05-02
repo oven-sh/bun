@@ -1,14 +1,49 @@
 // Hardcoded module "node:vm"
 const { throwNotImplemented } = require("internal/shared");
-const { validateObject, validateString } = require("internal/validators");
+const {
+  validateObject,
+  validateString,
+  validateUint32,
+  validateBoolean,
+  validateInt32,
+  validateBuffer,
+  validateFunction,
+} = require("internal/validators");
+const { SafePromiseAll } = require("internal/primordials");
+
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
 const ObjectFreeze = Object.freeze;
 const ObjectDefineProperty = Object.defineProperty;
+const ArrayPrototypeMap = Array.prototype.map;
+const PromisePrototypeThen = Promise.prototype.then;
+const PromiseResolve = Promise.resolve;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
+const kNative = Symbol("kNative");
+const kContext = Symbol("kContext");
+const kLink = Symbol("kLink");
+const kDependencySpecifiers = Symbol("kDependencySpecifiers");
+const kNoError = Symbol("kNoError");
 
-const { createContext, isContext, Script, runInNewContext, runInThisContext, compileFunction } = vm;
+const kEmptyObject = Object.freeze(Object.create(null));
+
+const {
+  Script,
+  Module: ModuleNative,
+  createContext,
+  isContext,
+  runInNewContext,
+  runInThisContext,
+  compileFunction,
+  isModuleNamespaceObject,
+  kUnlinked,
+  kLinked,
+  kEvaluated,
+  kErrored,
+} = vm;
 
 function runInContext(code, context, options) {
   return new Script(code, options).runInContext(context);
@@ -31,7 +66,7 @@ class Module {
       throw new TypeError("Module is not a constructor");
     }
 
-    const { context } = options;
+    const { context, sourceText, syntheticExportNames, syntheticEvaluationSteps } = options;
 
     if (context !== undefined) {
       validateObject(context, "context");
@@ -59,12 +94,220 @@ class Module {
         configurable: true,
       });
     }
+
+    let registry = { __proto__: null };
+    if (sourceText !== undefined) {
+      this[kNative] = new ModuleNative(
+        identifier,
+        context,
+        sourceText,
+        options.lineOffset,
+        options.columnOffset,
+        options.cachedData,
+      );
+      registry = {
+        __proto__: null,
+        initializeImportMeta: options.initializeImportMeta,
+        importModuleDynamically: options.importModuleDynamically
+          ? importModuleDynamicallyWrap(options.importModuleDynamically)
+          : undefined,
+      };
+      // This will take precedence over the referrer as the object being
+      // passed into the callbacks.
+      registry.callbackReferrer = this;
+      // const { registerModule } = require("internal/modules/esm/utils");
+      // registerModule(this[kNative], registry);
+    } else {
+      $assert(syntheticEvaluationSteps);
+      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps);
+    }
+
+    this[kContext] = context;
+  }
+
+  get identifier() {
+    return this[kNative].identifier;
+  }
+
+  get context() {
+    return this[kContext];
+  }
+
+  get status() {
+    return this[kNative].getStatus();
+  }
+
+  get namespace() {
+    if (this[kNative].getStatusCode() < kLinked) {
+      throw $ERR_VM_MODULE_STATUS("must not be unlinked or linking");
+    }
+
+    return this[kNative].getNamespace();
+  }
+
+  get error() {
+    if (this[kNative].getStatusCode() !== kErrored) {
+      throw $ERR_VM_MODULE_STATUS("must be errored");
+    }
+
+    return this[kNative].getError();
+  }
+
+  async link(linker) {
+    if (this[kNative].getStatusCode() === kLinked) {
+      throw $ERR_VM_MODULE_ALREADY_LINKED();
+    }
+
+    if (this[kNative].getStatusCode() !== kUnlinked) {
+      throw $ERR_VM_MODULE_STATUS("must be unlinked");
+    }
+
+    await this[kLink](linker);
+    this[kNative].instantiate();
+  }
+
+  async evaluate(options = kEmptyObject) {
+    validateObject(options, "options");
+
+    let timeout = options.timeout;
+    if (timeout === undefined) {
+      timeout = -1;
+    } else {
+      validateUint32(timeout, "options.timeout", true);
+    }
+    const { breakOnSigint = false } = options;
+    validateBoolean(breakOnSigint, "options.breakOnSigint");
+    const status = this[kNative].getStatus();
+    if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
+      throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
+    }
+    await this[kNative].evaluate(timeout, breakOnSigint);
   }
 }
 
-class SourceTextModule {
-  constructor() {
-    throwNotImplemented("node:vm.SourceTextModule");
+class SourceTextModule extends Module {
+  #error: any = kNoError;
+  #statusOverride: any;
+
+  constructor(sourceText, options = kEmptyObject) {
+    validateString(sourceText, "sourceText");
+    validateObject(options, "options");
+
+    const {
+      lineOffset = 0,
+      columnOffset = 0,
+      initializeImportMeta,
+      importModuleDynamically,
+      context,
+      identifier,
+      cachedData,
+    } = options;
+
+    validateInt32(lineOffset, "options.lineOffset");
+    validateInt32(columnOffset, "options.columnOffset");
+
+    if (initializeImportMeta !== undefined) {
+      validateFunction(initializeImportMeta, "options.initializeImportMeta");
+    }
+
+    if (importModuleDynamically !== undefined) {
+      validateFunction(importModuleDynamically, "options.importModuleDynamically");
+    }
+
+    if (cachedData !== undefined) {
+      validateBuffer(cachedData, "options.cachedData");
+    }
+
+    super({
+      sourceText,
+      context,
+      identifier,
+      lineOffset,
+      columnOffset,
+      cachedData,
+      initializeImportMeta,
+      importModuleDynamically,
+    });
+
+    this[kDependencySpecifiers] = undefined;
+  }
+
+  async [kLink](linker) {
+    this.#statusOverride = "linking";
+
+    const moduleRequests = this[kNative].getModuleRequests();
+    // Iterates the module requests and links with the linker.
+    // Specifiers should be aligned with the moduleRequests array in order.
+    const specifiers = Array(moduleRequests.length);
+    const modulePromises = Array(moduleRequests.length);
+    // Iterates with index to avoid calling into userspace with `Symbol.iterator`.
+    for (let idx = 0; idx < moduleRequests.length; idx++) {
+      const { specifier, attributes } = moduleRequests[idx];
+
+      const linkerResult = linker(specifier, this, {
+        attributes,
+        assert: attributes,
+      });
+      const modulePromise = PromisePrototypeThen.$call(PromiseResolve.$call(linkerResult), async mod => {
+        if (!isModule(mod)) {
+          throw $ERR_VM_MODULE_NOT_MODULE();
+        }
+        if (mod.context !== this.context) {
+          throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
+        }
+        if (mod.status === "errored") {
+          throw $ERR_VM_MODULE_LINK_FAILURE(`request for '${specifier}' resolved to an errored mod`, mod.error);
+        }
+        if (mod.status === "unlinked") {
+          await mod[kLink](linker);
+        }
+        return mod[kNative];
+      });
+      modulePromises[idx] = modulePromise;
+      specifiers[idx] = specifier;
+    }
+
+    try {
+      const modules = await SafePromiseAll(modulePromises);
+      this[kNative].link(specifiers, modules);
+    } catch (e) {
+      this.#error = e;
+      throw e;
+    } finally {
+      this.#statusOverride = undefined;
+    }
+  }
+
+  get dependencySpecifiers() {
+    this[kDependencySpecifiers] ??= ObjectFreeze(
+      ArrayPrototypeMap.$call(this[kNative].getModuleRequests(), request => request.specifier),
+    );
+    return this[kDependencySpecifiers];
+  }
+
+  get status() {
+    if (this.#error !== kNoError) {
+      return "errored";
+    }
+    if (this.#statusOverride) {
+      return this.#statusOverride;
+    }
+    return super.status;
+  }
+
+  get error() {
+    if (this.#error !== kNoError) {
+      return this.#error;
+    }
+    return super.error;
+  }
+
+  createCachedData() {
+    const { status } = this;
+    if (status === "evaluating" || status === "evaluated" || status === "errored") {
+      throw $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA();
+    }
+    return this[kNative].createCachedData();
   }
 }
 
@@ -79,6 +322,27 @@ const constants = {
   USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol("vm_dynamic_import_main_context_default"),
   DONT_CONTEXTIFY: Symbol("vm_context_no_contextify"),
 };
+
+function isModule(object) {
+  return typeof object === "object" && object !== null && ObjectPrototypeHasOwnProperty.$call(object, kNative);
+}
+
+function importModuleDynamicallyWrap(importModuleDynamically) {
+  const importModuleDynamicallyWrapper = async (...args) => {
+    const m = await ReflectApply(importModuleDynamically, this, args);
+    if (isModuleNamespaceObject(m)) {
+      return m;
+    }
+    if (!isModule(m)) {
+      throw $ERR_VM_MODULE_NOT_MODULE();
+    }
+    if (m.status === "errored") {
+      throw m.error;
+    }
+    return m.namespace;
+  };
+  return importModuleDynamicallyWrapper;
+}
 
 export default {
   createContext,

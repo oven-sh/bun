@@ -242,8 +242,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_USE_AFTER_CLOSE", Error],
-  ["ERR_VM_MODULE_CACHED_DATA_REJECTED", Error],
-  ["ERR_VM_MODULE_LINK_FAILURE", Error],
   ["ERR_WASI_NOT_STARTED", Error],
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
@@ -275,5 +273,12 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
   ["HPE_INTERNAL", Error],
+  ["ERR_VM_MODULE_STATUS", Error],
+  ["ERR_VM_MODULE_ALREADY_LINKED", Error],
+  ["ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA", Error],
+  ["ERR_VM_MODULE_NOT_MODULE", Error],
+  ["ERR_VM_MODULE_DIFFERENT_CONTEXT", Error],
+  ["ERR_VM_MODULE_LINK_FAILURE", Error],
+  ["ERR_VM_MODULE_CACHED_DATA_REJECTED", Error],
 ];
 export default errors;

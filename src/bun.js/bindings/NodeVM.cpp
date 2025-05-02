@@ -1540,31 +1540,6 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto* obj = constructEmptyObject(globalObject);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
-        defaultGlobalObject(globalObject)->NodeVMScript(), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
-    return obj;
-}
-
 void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     globalObject->m_NodeVMScriptClassStructure.initLater(
@@ -1816,6 +1791,7 @@ static JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, JSC::S
 }
 
 JSC_DECLARE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatus);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetNamespace);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetError);
@@ -1829,6 +1805,7 @@ JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleSetExport);
 static const HashTableValue JSNodeVMModulePrototypeTableValues[] = {
     { "identifier"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeVmModuleGetterIdentifier, nullptr } },
     { "getStatus"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetStatus, 0 } },
+    { "getStatusString"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetStatus, 0 } },
     { "getNamespace"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetNamespace, 0 } },
     { "getError"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleGetError, 0 } },
     { "instantiate"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleInstantiate, 0 } },
@@ -1947,16 +1924,25 @@ public:
     const WTF::String& identifier() const { return m_identifier; }
     Status status() const { return m_status; }
     void status(Status value) { m_status = value; }
+    JSObject* namespace_() const { return m_namespace.get(); }
+    void namespace_(VM& vm, JSObject* value) { m_namespace.set(vm, this, value); }
 
 private:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
+    mutable WriteBarrier<JSObject> m_namespace;
 };
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* thisObject = jsCast<JSNodeVMModule*>(JSC::JSValue::decode(thisValue));
     return JSValue::encode(JSC::jsString(globalObject->vm(), thisObject->identifier()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1981,12 +1967,134 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalO
     }
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject->namespace_());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<JSNodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(thisObject);
+}
+
+template<typename Visitor>
+void JSNodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSNodeVMModule* vmModule = jsCast<JSNodeVMModule*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(vmModule, info());
+    Base::visitChildren(vmModule, visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSNodeVMModule);
+
 const JSC::ClassInfo JSNodeVMModule::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeVMModule) };
 const JSC::ClassInfo JSNodeVMModulePrototype::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeVMModulePrototype) };
 
 JSC::Structure* createNodeVMModuleStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSNodeVMModule::createStructure(vm, globalObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    return JSValue::encode(JSC::jsBoolean(false)); // TODO(@heimskr): implement
+
+    // JSValue argument = callFrame->argument(0);
+    // if (!argument.isObject()) {
+    //     return JSValue::encode(JSC::jsBoolean(false));
+    // }
+
+    // JSObject* object = asObject(argument);
+}
+
+JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* obj = constructEmptyObject(globalObject);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
+        defaultGlobalObject(globalObject)->NodeVMScript(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Module"_s)),
+        defaultGlobalObject(globalObject)->NodeVMModule(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Unlinked)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinking"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Linking)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kLinked"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Linked)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluating"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Evaluating)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kEvaluated"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Evaluated)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
+        JSC::jsNumber(static_cast<uint32_t>(JSNodeVMModule::Status::Errored)), 0);
+    return obj;
 }
 
 } // namespace Bun

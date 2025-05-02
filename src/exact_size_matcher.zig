@@ -19,13 +19,8 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             switch (str.len) {
                 1...max_bytes - 1 => {
                     var tmp: [max_bytes]u8 = undefined;
-                    if (comptime bun.trait.isSlice(@TypeOf(str))) {
-                        @memcpy(tmp[0..str.len], str);
-                        @memset(tmp[str.len..], 0);
-                    } else {
-                        @memcpy(tmp[0..str.len], str);
-                        @memset(tmp[str.len..], 0);
-                    }
+                    @memcpy(tmp[0..str.len], str);
+                    @memset(tmp[str.len..], 0);
 
                     return std.mem.readInt(T, &tmp, .little);
                 },

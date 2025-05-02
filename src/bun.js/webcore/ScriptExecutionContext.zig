@@ -7,7 +7,7 @@ pub const Identifier = enum(bun.c.WebCore__ScriptExecutionContextIdentifier) {
 
     /// Returns null if the context referred to by `self` no longer exists
     pub fn globalObject(self: Identifier) ?*bun.jsc.JSGlobalObject {
-        return @ptrCast(bun.c.ScriptExecutionContextIdentifier__getGlobalObject(@intFromEnum(self)));
+        return bun.c.ScriptExecutionContextIdentifier__getGlobalObject(@intFromEnum(self));
     }
 
     /// Returns null if the context referred to by `self` no longer exists

@@ -847,8 +847,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
-        const c_global: *bun.c.JSC__JSGlobalObject = @ptrCast(global);
-        return @enumFromInt(bun.c.ScriptExecutionContextIdentifier__forGlobalObject(c_global));
+        return @enumFromInt(bun.c.ScriptExecutionContextIdentifier__forGlobalObject(global));
     }
 
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };

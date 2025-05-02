@@ -1,12 +1,23 @@
-// translate-c is unable to translate the unsuffixed windows functions
-// like `SetCurrentDirectory` since they are defined with an odd macro
-// that translate-c doesn't handle.
-//
-//     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
-//
-// In these cases, it's better to just reference the underlying function
-// directly: SetCurrentDirectoryW. To make the error better, a post
-// processing step is applied to the translate-c file.
+//! translate-c is unable to translate the unsuffixed windows functions
+//! like `SetCurrentDirectory` since they are defined with an odd macro
+//! that translate-c doesn't handle.
+//!
+//!     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
+//!
+//! In these cases, it's better to just reference the underlying function
+//! directly: SetCurrentDirectoryW. To make the error better, a post
+//! processing step is applied to the translate-c file.
+//!
+//! Additionally, this step makes it so that decls like NTSTATUS and
+//! HANDLE point to the standard library structures.
+//!
+//! This is also used on all platforms to rewrite some `opaque` types.
+//! In most cases, we want to define our own `opaque` so that we can
+//! use it as a namespace that provides decls. Normally the translate-c
+//! output will include its own `opaque` types, which would require a
+//! `@ptrCast` to and from the type we define. Instead, we replace these
+//! types with their equivalents imported from Bun.
+
 const std = @import("std");
 const mem = std.mem;
 
@@ -14,6 +25,7 @@ const symbol_replacements = std.StaticStringMap([]const u8).initComptime(&.{
     &.{ "NTSTATUS", "@import(\"std\").os.windows.NTSTATUS" },
     &.{ "HANDLE", "@import(\"std\").os.windows.HANDLE" },
     &.{ "PHANDLE", "*HANDLE" },
+    &.{ "JSC__JSGlobalObject", "@import(\"bun\").jsc.JSGlobalObject" },
 });
 
 pub fn main() !void {

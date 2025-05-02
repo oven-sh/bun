@@ -36,6 +36,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSExtensions;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
@@ -64,7 +65,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodeVMModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;

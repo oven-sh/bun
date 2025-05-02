@@ -36,6 +36,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSExtensions;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
@@ -61,7 +62,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSNodeVMModule;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;

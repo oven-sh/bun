@@ -597,7 +597,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeVMModuleStructure)                              \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \

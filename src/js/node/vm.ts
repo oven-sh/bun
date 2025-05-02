@@ -19,7 +19,6 @@ const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseResolve = Promise.resolve;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const ReflectApply = Reflect.apply;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
 const kNative = Symbol("kNative");
@@ -329,7 +328,7 @@ function isModule(object) {
 
 function importModuleDynamicallyWrap(importModuleDynamically) {
   const importModuleDynamicallyWrapper = async (...args) => {
-    const m = await ReflectApply(importModuleDynamically, this, args);
+    const m: any = importModuleDynamically.$apply(this, args);
     if (isModuleNamespaceObject(m)) {
       return m;
     }

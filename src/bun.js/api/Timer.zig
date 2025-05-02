@@ -293,12 +293,6 @@ pub const All = struct {
         }
     }
 
-    const SetRequest = union(Kind) {
-        setTimeout: u31,
-        setInterval: u31,
-        setImmediate,
-    };
-
     const TimeoutWarning = enum {
         TimeoutOverflowWarning,
         TimeoutNegativeWarning,
@@ -664,18 +658,6 @@ pub const TimeoutObject = struct {
 
     pub fn set_idleTimeout(_: *TimeoutObject, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) void {
         TimeoutObject.js.idleTimeoutSetCached(thisValue, globalThis, value);
-
-        // if (value.isNumber()) {
-        //     const num = try value.toNumber(globalThis);
-
-        //     // cancel if the value is exactly -1
-        //     // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L612-L625
-        //     this.internals.flags.should_reschedule_interval = num != -1;
-        // } else {
-        //     this.internals.flags.should_reschedule_interval = true;
-        // }
-
-        // this.internals.interval = try globalThis.bunVM().timer.jsValueToCountdown(globalThis, value, .one_ms, false);
     }
 
     pub fn get_repeat(_: *TimeoutObject, thisValue: JSValue, _: *JSGlobalObject) JSValue {
@@ -751,7 +733,7 @@ pub const ImmediateObject = struct {
         return globalObject.throw("Immediate is not constructible", .{});
     }
 
-    // returns true if an exception was thrown
+    /// returns true if an exception was thrown
     pub fn runImmediateTask(this: *ImmediateObject, vm: *VirtualMachine) bool {
         return this.internals.runImmediateTask(vm);
     }
@@ -795,7 +777,7 @@ pub const TimerObjectInternals = struct {
     strong_this: JSC.Strong.Optional = .empty,
     flags: Flags = .{},
 
-    const Flags = packed struct(u33) {
+    const Flags = packed struct(u32) {
         /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
         /// epoch is incremented and the new epoch is set on the timer. For timers created by
         /// JavaScript, the epoch is used to break ties between timers scheduled for the same
@@ -818,10 +800,6 @@ pub const TimerObjectInternals = struct {
         /// Set to `true` only during execution of the JavaScript function so that `_destroyed` can be
         /// false during the callback, even though the `state` will be `FIRED`.
         in_callback: bool = false,
-
-        // is set `false` when `_idleTimeout` is set to -1
-        // https://github.com/nodejs/node/blob/4cd8e1914a503ece778d642e748020e675cf1060/lib/internal/timers.js#L612-L626
-        should_reschedule_interval: bool = true,
     };
 
     fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
@@ -994,7 +972,7 @@ pub const TimerObjectInternals = struct {
                     if (kind == .setTimeout and !repeat.isNull()) {
                         if (idle_timeout.getNumber()) |num| {
                             if (num != -1) {
-                                this.toInterval(globalThis, this_object, repeat);
+                                this.convertToInterval(globalThis, this_object, repeat);
                                 break :is_timer_done false;
                             }
                         }
@@ -1019,7 +997,7 @@ pub const TimerObjectInternals = struct {
         return .disarm;
     }
 
-    fn toInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer: JSValue, repeat: JSValue) void {
+    fn convertToInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer: JSValue, repeat: JSValue) void {
         bun.debugAssert(this.flags.kind == .setTimeout);
 
         const vm = global.bunVM();

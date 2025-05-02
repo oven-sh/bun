@@ -21,26 +21,7 @@ imminent: *std.atomic.Value(?*WTFTimer),
 repeat: bool,
 lock: bun.Mutex = .{},
 
-pub const new = bun.TrivialNew(WTFTimer);
-
-pub fn init(run_loop_timer: *RunLoopTimer, js_vm: *VirtualMachine) *WTFTimer {
-    const this = WTFTimer.new(.{
-        .vm = js_vm,
-        .imminent = &js_vm.eventLoop().imminent_gc_timer,
-        .event_loop_timer = .{
-            .next = .{
-                .sec = std.math.maxInt(i64),
-                .nsec = 0,
-            },
-            .tag = .WTFTimer,
-            .state = .CANCELLED,
-        },
-        .run_loop_timer = run_loop_timer,
-        .repeat = false,
-    });
-
-    return this;
-}
+const new = bun.TrivialNew(WTFTimer);
 
 pub export fn WTFTimer__runIfImminent(vm: *VirtualMachine) void {
     vm.eventLoop().runImminentGCTimer();
@@ -107,7 +88,24 @@ export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
         return null;
     }
 
-    return init(run_loop_timer, VirtualMachine.get());
+    const vm = VirtualMachine.get();
+
+    const this = WTFTimer.new(.{
+        .vm = vm,
+        .imminent = &vm.eventLoop().imminent_gc_timer,
+        .event_loop_timer = .{
+            .next = .{
+                .sec = std.math.maxInt(i64),
+                .nsec = 0,
+            },
+            .tag = .WTFTimer,
+            .state = .CANCELLED,
+        },
+        .run_loop_timer = run_loop_timer,
+        .repeat = false,
+    });
+
+    return this;
 }
 
 export fn WTFTimer__update(this: *WTFTimer, seconds: f64, repeat: bool) void {

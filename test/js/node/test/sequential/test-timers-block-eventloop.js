@@ -3,7 +3,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { sleepSync: sleep } = require('bun');
+const sleep = typeof Bun === 'object' ? Bun.sleepSync : require('internal/util').sleep;
 
 let called = false;
 const t1 = setInterval(() => {

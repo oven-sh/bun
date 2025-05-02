@@ -87,7 +87,7 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
     };
     if (Environment.allow_assert and Environment.is_canary) {
-        bun.assert((normal == .zero) == globalThis.hasException());
+        debugExceptionAssertion(globalThis, normal, toJSHostValue);
     }
     return normal;
 }

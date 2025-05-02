@@ -676,14 +676,6 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearInterval(JSC::JSGlobalObject* arg0
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearTimeout(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 ZIG_DECL int32_t Bun__Timer__getNextID();
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setInterval(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
-namespace Bun {
-enum class CountdownOverflowBehavior : uint8_t {
-  // If the countdown overflows the range of int32_t, use a countdown of 1ms instead. Behavior of `setTimeout` and friends.
-  OneMs,
-  // If the countdown overflows the range of int32_t, clamp to the nearest value within the range. Behavior of `Bun.sleep`.
-  Clamp,
-};
-} // namespace Bun
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__sleep(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue promise, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);

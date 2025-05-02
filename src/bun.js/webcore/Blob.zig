@@ -2919,8 +2919,6 @@ pub fn setName(
     jsThis: JSC.JSValue,
     globalThis: *JSC.JSGlobalObject,
     value: JSValue,
-
-    // TODO: support JSError for getters/setters
 ) JSError!void {
     // by default we don't have a name so lets allow it to be set undefined
     if (value.isEmptyOrUndefinedOrNull()) {

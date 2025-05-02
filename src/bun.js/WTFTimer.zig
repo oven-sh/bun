@@ -50,7 +50,7 @@ pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     }
 
     const modf = std.math.modf(seconds);
-    var interval: timespec = if (Environment.isWindows) .fromMs(uv.uv_now(this.vm.uvLoop())) else timespec.now();
+    var interval = if (Environment.isWindows) .fromMs(uv.uv_now(this.vm.uvLoop())) else timespec.now();
     interval.sec += @intFromFloat(modf.ipart);
     interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
     if (interval.nsec >= std.time.ns_per_s) {

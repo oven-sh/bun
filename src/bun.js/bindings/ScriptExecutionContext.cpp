@@ -392,3 +392,15 @@ void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionCont
 }
 
 }
+
+WebCore::ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
+}
+
+JSC__JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(WebCore__ScriptExecutionContextIdentifier id)
+{
+    auto* context = WebCore::ScriptExecutionContext::getScriptExecutionContext(id);
+    if (context) return context->globalObject();
+    return nullptr;
+}

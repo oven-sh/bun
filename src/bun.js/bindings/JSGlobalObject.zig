@@ -846,6 +846,11 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
     }
 
+    pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
+        const c_global: *bun.c.JSC__JSGlobalObject = @ptrCast(global);
+        return @enumFromInt(bun.c.ScriptExecutionContextIdentifier__forGlobalObject(c_global));
+    }
+
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {

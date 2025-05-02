@@ -3466,7 +3466,7 @@ pub const BundleV2 = struct {
                         graph.input_files.items(.loader)[source.index.get()],
                         parse_result.watcher_data.dir_fd,
                         null,
-                        false,
+                        bun.Environment.isWindows,
                     );
                 }
             }

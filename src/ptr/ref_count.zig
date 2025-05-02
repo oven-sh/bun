@@ -98,7 +98,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             if (enable_debug) {
                 counter.debug.assertValid();
             }
-            if (comptime bun.Environment.enable_logs) {
+            if (bun.Environment.enable_logs and scope.isVisible()) {
                 scope.log("0x{x}   ref {d} -> {d}:", .{
                     @intFromPtr(self),
                     counter.active_counts,
@@ -118,7 +118,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             if (enable_debug) {
                 counter.debug.assertValid(); // Likely double deref.
             }
-            if (comptime bun.Environment.enable_logs) {
+            if (bun.Environment.enable_logs and scope.isVisible()) {
                 scope.log("0x{x} deref {d} -> {d}:", .{
                     @intFromPtr(self),
                     counter.active_counts,

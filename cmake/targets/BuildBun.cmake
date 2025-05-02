@@ -1219,19 +1219,18 @@ if(NOT BUN_CPP_ONLY)
   # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
   # the linked issue refers to very old kernels but this still happens to us on modern ones.
   # disabling ASLR to run the binary works around it
+  set(TEST_BUN_COMMAND_BASE
+    env BUN_DEBUG_QUIET_LOGS=1
+    ${BUILD_PATH}/${bunExe} --revision)
+  set(TEST_BUN_COMMAND_ENV_WRAP
+    ${CMAKE_COMMAND} -E env BUN_DEBUG_QUIET_LOGS=1)
   if (LINUX AND ENABLE_ASAN)
     set(TEST_BUN_COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R
-      ${BUILD_PATH}/${bunExe}
-      --revision)
+      ${TEST_BUN_COMMAND_ENV_WRAP} setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R ${TEST_BUN_COMMAND_BASE}
+      || ${TEST_BUN_COMMAND_ENV_WRAP} ${TEST_BUN_COMMAND_BASE})
   else()
     set(TEST_BUN_COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bunExe}
-      --revision)
+      ${TEST_BUN_COMMAND_ENV_WRAP} ${TEST_BUN_COMMAND_BASE})
   endif()
 
   register_command(

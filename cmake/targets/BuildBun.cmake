@@ -1,8 +1,7 @@
 if(DEBUG)
   set(bun bun-debug)
-# elseif(ENABLE_SMOL)
-#   set(bun bun-smol-profile)
-#   set(bunStrip bun-smol)
+elseif(ENABLE_ASAN)
+  set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
   set(bun bun-valgrind)
 elseif(ENABLE_ASSERTIONS)
@@ -599,6 +598,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -888,7 +888,7 @@ if(NOT WIN32)
       )
     endif()
 
-    if (ENABLE_ASAN)
+    if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
       )
@@ -931,6 +931,15 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
+    
+    if(ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
   endif()
 else()
   target_compile_options(${bun} PUBLIC
@@ -1014,6 +1023,10 @@ if(LINUX)
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
+    # enable string tail merging
+    -Wl,-O2
+    # make debug info faster to load
+    -Wl,--gdb-index
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
@@ -1268,7 +1281,10 @@ if(NOT BUN_CPP_ONLY)
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
-    string(REPLACE bun ${bunTriplet} bunPath ${bun})
+    if(ENABLE_ASAN)
+      set(bunTriplet ${bunTriplet}-asan)
+    endif()
+    set(bunPath ${bunTriplet})
     set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)

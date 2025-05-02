@@ -5,7 +5,7 @@
  
      handle = container_of(heap_node, uv_timer_t, heap_node);
 -    if (handle->timeout > loop->time)
-+    if (handle->timeout >= loop->time)
++    if (handle->timeout > loop->time)
        break;
  
      uv_timer_stop(handle);

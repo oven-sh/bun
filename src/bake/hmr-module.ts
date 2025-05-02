@@ -14,7 +14,9 @@ import {
   __name,
   __using,
 } from "../runtime.bun";
-import { derefMapping, type SourceMapURL } from "./client/stack-trace";
+// This import is different based on client vs server side.
+// On the server, remapping is done automatically.
+import { type SourceMapURL, derefMapping } from "#stack-trace";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
 const registry = new Map<Id, HMRModule>();
@@ -814,6 +816,10 @@ export function emitEvent(event: HMREvent, data: any) {
   }
 }
 
+export function onEvent(event: HMREvent, cb) {
+  (eventHandlers[event] ??= [])!.push(cb);
+}
+
 function throwNotFound(id: Id, isUserDynamic: boolean) {
   if (isUserDynamic) {
     throw new Error(
@@ -875,6 +881,7 @@ function registerSynthetic(id: Id, esmExports) {
   const module = new HMRModule(id, false);
   module.exports = esmExports;
   registry.set(id, module);
+  unloadedModuleRegistry[id] = true as any;
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {
@@ -951,13 +958,3 @@ if (side === "client") {
     onServerSideReload: cb => (onServerSideReload = cb),
   });
 }
-
-// The following API may be altered at any point.
-// Thankfully, you can just call `import.meta.hot.on`
-let testingHook = globalThis["bun do not use this outside of internal testing or else i'll cry"];
-testingHook?.({
-  onEvent(event: HMREvent, cb) {
-    eventHandlers[event] ??= [];
-    eventHandlers[event]!.push(cb);
-  },
-});

@@ -1881,6 +1881,9 @@ pub const SourceAtAddress = struct {
 pub const WriteStackTraceLimits = struct {
     frame_count: usize = std.math.maxInt(usize),
     stop_at_jsc_llint: bool = false,
+    skip_stdlib: bool = false,
+    skip_file_patterns: []const []const u8 = &.{},
+    skip_function_patterns: []const []const u8 = &.{},
 };
 
 /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
@@ -1919,6 +1922,25 @@ pub fn writeStackTrace(
             continue;
         };
 
+        if (limits.skip_stdlib) {
+            if (source.source_location) |sl| {
+                if (bun.strings.includes(sl.file_name, "lib/std")) {
+                    continue;
+                }
+            }
+        }
+        for (limits.skip_file_patterns) |pattern| {
+            if (source.source_location) |sl| {
+                if (bun.strings.includes(sl.file_name, pattern)) {
+                    continue;
+                }
+            }
+        }
+        for (limits.skip_function_patterns) |pattern| {
+            if (bun.strings.includes(source.symbol_name, pattern)) {
+                continue;
+            }
+        }
         if (limits.stop_at_jsc_llint and bun.strings.includes(source.symbol_name, "_llint_")) {
             break;
         }
@@ -2110,7 +2132,12 @@ fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, so
     };
     const before = line_without_newline[0..left];
     const highlight = line_without_newline[left..right];
-    const after = line_without_newline[right..];
+    var after_before_comment = line_without_newline[right..];
+    var comment: []const u8 = "";
+    if (bun.strings.indexOf(after_before_comment, "//")) |pos| {
+        comment = after_before_comment[pos..];
+        after_before_comment = after_before_comment[0..pos];
+    }
     try tty_config.setColor(out_stream, .red);
     try tty_config.setColor(out_stream, .dim);
     try out_stream.writeAll(before);
@@ -2118,7 +2145,12 @@ fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, so
     try tty_config.setColor(out_stream, .red);
     try out_stream.writeAll(highlight);
     try tty_config.setColor(out_stream, .dim);
-    try out_stream.writeAll(after);
+    try out_stream.writeAll(after_before_comment);
+    if (comment.len > 0) {
+        try tty_config.setColor(out_stream, .reset);
+        try tty_config.setColor(out_stream, .bright_cyan);
+        try out_stream.writeAll(comment);
+    }
     try tty_config.setColor(out_stream, .reset);
     try out_stream.writeByte('\n');
 }

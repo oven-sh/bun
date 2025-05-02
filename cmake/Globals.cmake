@@ -190,7 +190,7 @@ endfunction()
 #   Check if a version satisfies a version range
 # Arguments:
 #   version  string - The version to check (e.g. "1.2.3")
-#   range    string - The range to check against (e.g. ">=1.2.3")
+#   range    string - The range to check against (e.g. ">=1.2.3" or "~1.2.3")
 #   variable string - The variable to store the result in
 function(satisfies_range version range variable)
   if(range STREQUAL "ignore")
@@ -204,14 +204,26 @@ function(satisfies_range version range variable)
   if(NOT match)
     return()
   endif()
-  set(version ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3})
+  set(version_major ${CMAKE_MATCH_1})
+  set(version_minor ${CMAKE_MATCH_2})
+  set(version_patch ${CMAKE_MATCH_3})
+  set(version ${version_major}.${version_minor}.${version_patch})
 
-  string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${range}")
+  string(REGEX MATCH "(~|>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${range}")
   if(NOT match)
     return()
   endif()
   set(comparator ${CMAKE_MATCH_1})
-  set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
+  set(range_major ${CMAKE_MATCH_2})
+  set(range_minor ${CMAKE_MATCH_3})
+  set(range_patch ${CMAKE_MATCH_4})
+  set(range ${range_major}.${range_minor}.${range_patch})
+
+  # If tilde comparator, check only if the major and minor versions match
+  if(comparator STREQUAL "~")
+    set(comparator "=")
+    set(version ${version_major}.${version_minor}.${range_patch})
+  endif()
 
   if(comparator STREQUAL ">=")
     set(comparator VERSION_GREATER_EQUAL)

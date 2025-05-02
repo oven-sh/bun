@@ -399,7 +399,6 @@ function getBuildEnv(target, options) {
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: isMusl ? "musl" : undefined,
-    CMAKE_TLS_VERIFY: "0",
   };
 }
 
@@ -472,7 +471,10 @@ function getBuildZigStep(platform, options) {
     agents: getZigAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
+    env: {
+      ...getBuildEnv(platform, options),
+      ENABLE_LLVM: "OFF",
+    },
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     timeout_in_minutes: 35,
   };

@@ -1210,6 +1210,30 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
+  # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run
+  # when spawned by cmake (they run fine from a shell!)
+  # otherwise they crash with:
+  # ==856230==Shadow memory range interleaves with an existing memory mapping. ASan cannot proceed correctly. ABORTING.
+  # ==856230==ASan shadow was supposed to be located in the [0x00007fff7000-0x10007fff7fff] range.
+  # ==856230==This might be related to ELF_ET_DYN_BASE change in Linux 4.12.
+  # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
+  # the linked issue refers to very old kernels but this still happens to us on modern ones.
+  # disabling ASLR to run the binary works around it
+  if (LINUX AND ENABLE_ASAN)
+    set(TEST_BUN_COMMAND
+      ${CMAKE_COMMAND}
+      -E env BUN_DEBUG_QUIET_LOGS=1
+      setarch ${CMAKE_HOST_SYSTEM_PROCESSOR} -R
+      ${BUILD_PATH}/${bunExe}
+      --revision)
+  else()
+    set(TEST_BUN_COMMAND
+      ${CMAKE_COMMAND}
+      -E env BUN_DEBUG_QUIET_LOGS=1
+      ${BUILD_PATH}/${bunExe}
+      --revision)
+  endif()
+
   register_command(
     TARGET
       ${bun}
@@ -1218,10 +1242,7 @@ if(NOT BUN_CPP_ONLY)
     COMMENT
       "Testing ${bun}"
     COMMAND
-      ${CMAKE_COMMAND}
-      -E env BUN_DEBUG_QUIET_LOGS=1
-      ${BUILD_PATH}/${bunExe}
-        --revision
+      ${TEST_BUN_COMMAND}
     CWD
       ${BUILD_PATH}
   )

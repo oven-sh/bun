@@ -483,6 +483,11 @@ async function connectToUnixServer(
 
         socket.data.framer.onData(socket, bytes);
       },
+
+      // Ensure we always drain the socket.
+      // This is necessary due to socket.$write usage.
+      drain: _socket => {},
+
       close: socket => {
         if (socket.data) {
           const { backend, framer } = socket.data;

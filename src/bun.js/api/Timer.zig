@@ -65,6 +65,13 @@ pub const All = struct {
         };
     }
 
+    pub fn timerNow(vm: *VirtualMachine) timespec {
+        return if (Environment.isWindows)
+            .fromMs(uv.uv_now(vm.uvLoop()))
+        else
+            timespec.now();
+    }
+
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
@@ -119,8 +126,7 @@ pub const All = struct {
         }
 
         if (this.timers.peek()) |timer| {
-            uv.uv_update_time(vm.uvLoop());
-            const now = timespec.now();
+            const now: timespec = .fromMs(uv.uv_now(vm.uvLoop()));
             const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
@@ -216,7 +222,7 @@ pub const All = struct {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
-                const real_now = timespec.now();
+                const real_now = All.timerNow(vm);
                 maybe_now = real_now;
                 break :now real_now;
             };
@@ -256,13 +262,13 @@ pub const All = struct {
     // And when we do call it, we want to be sure we only call it once.
     // and we do NOT want to hold the lock while the timer is running it's code.
     // This function has to be thread-safe.
-    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
+    fn next(this: *All, vm: *VirtualMachine, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
         this.lock.lock();
         defer this.lock.unlock();
 
         if (this.timers.peek()) |timer| {
             if (!has_set_now.*) {
-                now.* = timespec.now();
+                now.* = timerNow(vm);
                 has_set_now.* = true;
             }
             if (timer.next.greater(now)) {
@@ -282,7 +288,7 @@ pub const All = struct {
         // Split into a separate variable to avoid increasing the size of the timespec type.
         var has_set_now: bool = false;
 
-        while (this.next(&has_set_now, &now)) |t| {
+        while (this.next(vm, &has_set_now, &now)) |t| {
             switch (t.fire(
                 &now,
                 vm,
@@ -919,7 +925,8 @@ pub const TimerObjectInternals = struct {
         if (kind != .setInterval) {
             this.strong_this.clearWithoutDeallocation();
         } else {
-            time_before_call = timespec.msFromNow(this.interval);
+            const now = All.timerNow(vm);
+            time_before_call = now.addMs(this.interval);
         }
         this_object.ensureStillAlive();
 
@@ -1147,7 +1154,7 @@ pub const TimerObjectInternals = struct {
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
         if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-        const now = timespec.msFromNow(this.interval);
+        const now = All.timerNow(vm).addMs(this.interval);
         const was_active = this.eventLoopTimer().state == .ACTIVE;
         if (was_active) {
             vm.timer.remove(this.eventLoopTimer());
@@ -1503,9 +1510,9 @@ pub const internal_bindings = struct {
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
     pub fn timerClockMs(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        _ = globalThis;
         _ = callFrame;
-        const now = timespec.now().ms();
-        return .jsNumberFromInt64(now);
+        const vm = globalThis.bunVM();
+        const now = All.timerNow(vm);
+        return .jsNumberFromInt64(now.ms());
     }
 };

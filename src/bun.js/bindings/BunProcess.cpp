@@ -2088,19 +2088,6 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
         RETURN_IF_EXCEPTION(scope, {});
-<<<<<<< HEAD
-=======
-
-        if (auto* exception = returnedException.get()) {
-#if ASSERT_ENABLED
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-#endif
-            scope.throwException(globalObject, exception->value());
-            returnedException.clear();
-            return {};
-        }
-
->>>>>>> main
         return result;
     } else {
         return jsUndefined();

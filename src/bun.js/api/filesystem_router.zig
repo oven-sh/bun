@@ -136,7 +136,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
             origin_str.deinit();
             arena.deinit();
@@ -154,7 +154,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
         if (try argument.get(globalThis, "origin")) |origin| {
@@ -170,7 +170,7 @@ pub const FileSystemRouter = struct {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         }
 
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;
@@ -253,7 +253,7 @@ pub const FileSystemRouter = struct {
         bustDirCache(this, globalThis);
 
         const root_dir_info = vm.transpiler.resolver.readDirInfo(this.router.config.dir) catch {
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -268,7 +268,7 @@ pub const FileSystemRouter = struct {
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             arena.deinit();
             globalThis.allocator().destroy(arena);
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
         this.arena.deinit();

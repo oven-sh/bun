@@ -713,7 +713,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const allocator = bun.default_allocator;
 
     if ((transpiler_options.log.warnings + transpiler_options.log.errors) > 0) {
-        return globalThis.throwValue(transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
+        return globalThis.throwValue(try transpiler_options.log.toJS(globalThis, allocator, "Failed to create transpiler"));
     }
 
     var log = try allocator.create(logger.Log);
@@ -725,7 +725,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
         JSC.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(log.toJS(globalThis, allocator, "Failed to create transpiler"));
+            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to create transpiler"));
         }
 
         return globalThis.throwError(err, "Error creating transpiler");
@@ -735,7 +735,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     transpiler.options.env.behavior = .disable;
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(log.toJS(globalThis, allocator, "Failed to load define"));
+            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to load define"));
         }
         return globalThis.throwError(err, "Failed to load define");
     };
@@ -864,14 +864,14 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
 
     var parse_result = getParseResult(this, arena.allocator(), code, loader, Transpiler.MacroJSValueType.zero) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-            return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
+            return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         }
 
         return globalThis.throw("Failed to parse", .{});
     };
 
     if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-        return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
+        return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
     }
 
     const exports_label = JSC.ZigString.static("exports");
@@ -1016,14 +1016,14 @@ pub fn transformSync(
         js_ctx_value,
     ) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-            return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
+            return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         }
 
         return globalThis.throw("Failed to parse code", .{});
     };
 
     if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
-        return globalThis.throwValue(this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
+        return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
     }
 
     var buffer_writer = this.buffer_writer orelse brk: {
@@ -1173,7 +1173,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
     ) catch |err| {
         defer this.scan_pass_result.reset();
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
+            return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
         }
 
         return globalThis.throwError(err, "Failed to scan imports");
@@ -1182,7 +1182,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
     defer this.scan_pass_result.reset();
 
     if ((log.warnings + log.errors) > 0) {
-        return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
+        return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
     }
 
     const named_imports_value = namedImportsToJS(

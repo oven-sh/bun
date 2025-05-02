@@ -1,7 +1,7 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 const {
   validateFunction,
   validateArray,

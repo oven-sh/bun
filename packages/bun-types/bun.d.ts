@@ -6733,9 +6733,9 @@ declare module "bun" {
    * - {@link NullSubprocess} (ignore, ignore, ignore)
    */
   interface Subprocess<
-    In extends SpawnOptions.Writable,
-    Out extends SpawnOptions.Readable,
-    Err extends SpawnOptions.Readable,
+    In extends SpawnOptions.Writable = SpawnOptions.Writable,
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
@@ -6846,7 +6846,10 @@ declare module "bun" {
    * - {@link ReadableSyncSubprocess} (pipe, pipe)
    * - {@link NullSyncSubprocess} (ignore, ignore)
    */
-  interface SyncSubprocess<Out extends SpawnOptions.Readable, Err extends SpawnOptions.Readable> {
+  interface SyncSubprocess<
+    Out extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+  > {
     stdout: SpawnOptions.ReadableToSyncIO<Out>;
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;

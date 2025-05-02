@@ -247,12 +247,13 @@ var InternalSecureContext = class SecureContext {
   }
 };
 
-function SecureContext(options) {
-  return new InternalSecureContext(options);
+function SecureContext(options): void {
+  if (!(this instanceof SecureContext)) return new SecureContext(options);
+  InternalSecureContext.$call(this, options);
 }
 
 function createSecureContext(options) {
-  return SecureContext(options);
+  return new SecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic

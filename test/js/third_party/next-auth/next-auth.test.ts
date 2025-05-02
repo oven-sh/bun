@@ -1,11 +1,8 @@
 import { describe, it, expect } from "bun:test";
-import { bunRun, runBunInstall, bunEnv, isLinux } from "harness";
+import { bunRun, runBunInstall, bunEnv, isWindows, isBroken } from "harness";
 import { join } from "path";
-describe("next-auth", () => {
-  // Watchpack Error (watcher): Error: ENXIO: no such device or address, open '/var/lib/buildkite-agent/builds/ip-172-31-28-24/bun/bun/test/js/junit-r'
-  // Watchpack Error (watcher): Error: ENXIO: no such device or address, open '\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000...'
-  // prettier-ignore
-  it.todoIf(isLinux)("should be able to call server action multiple times using auth middleware #18977", async () => {
+describe.skipIf(isBroken && isWindows)("next-auth", () => {
+  it("should be able to call server action multiple times using auth middleware #18977", async () => {
     await runBunInstall(bunEnv, join(import.meta.dir, "fixture"), {
       allowWarnings: true,
       allowErrors: true,

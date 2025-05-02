@@ -244,6 +244,7 @@ enum SerializationTag {
     // bun types start at 254 and decrease with each addition
     Bun__X509CertificateTag = 253,
     Bun__KeyObjectTag = 252,
+    Bun__nodenet_BlockList = 251,
 
     ErrorTag = 255
 };

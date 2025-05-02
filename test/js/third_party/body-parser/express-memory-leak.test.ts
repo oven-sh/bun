@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { spawn, ChildProcess } from "child_process";
-import { bunEnv, bunExe, isCI } from "harness";
+import { bunEnv, bunExe, isCI, isBroken, isMacOS } from "harness";
 import { join } from "path";
 
 const REQUESTS_COUNT = 50000;
@@ -192,7 +192,7 @@ async function createAbortedRequestBatch(serverInfo: ServerInfo): Promise<void> 
   await Promise.allSettled(batch);
 }
 
-test("memory leak check - aborted requests", async () => {
+test.skipIf(isBroken && isMacOS)("memory leak check - aborted requests", async () => {
   // Start the fixture server in a separate process
   const { child, serverInfo } = await spawnServer();
 

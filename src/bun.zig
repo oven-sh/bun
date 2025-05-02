@@ -2885,7 +2885,7 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 
     if (!cheap_value_only_plz) {
-        unreachable;
+        unreachable; // ASSERTION FAILURE
     }
 }
 
@@ -2912,7 +2912,8 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
     }
 
     if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailure();
     }
 }
@@ -2962,7 +2963,8 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
     }
 
     if (!value) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailureAtLocation(src);
     }
 }
@@ -2990,7 +2992,8 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) unreachable;
+    if (!condition)
+        unreachable; // ASSERTION FAILURE
 }
 
 pub const dns = @import("./dns.zig");
@@ -3365,7 +3368,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f);
+                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 

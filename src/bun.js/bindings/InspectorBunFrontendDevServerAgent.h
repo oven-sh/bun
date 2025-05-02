@@ -41,6 +41,7 @@ public:
     void clientNavigated(int devServerId, int connectionId, const String& url, std::optional<int> routeBundleId);
     void clientErrorReported(int devServerId, const String& clientErrorPayloadBase64);
     void graphUpdate(int devServerId, const String& visualizerPayloadBase64);
+    void consoleLog(int devServerId, char kind, const String& data);
 
 private:
     // JSC::JSGlobalObject& m_globalobject;
@@ -59,6 +60,7 @@ void BunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServer
 void BunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFrontendDevServerAgent* agent, int connectionId, const BunString* url, int routeBundleId);
 void BunFrontendDevServerAgent__notifyClientErrorReported(InspectorBunFrontendDevServerAgent* agent, const BunString* clientErrorPayloadBase64);
 void BunFrontendDevServerAgent__notifyGraphUpdate(InspectorBunFrontendDevServerAgent* agent, const BunString* visualizerPayloadBase64);
+void BunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, const BunString* data);
 }
 
 } // namespace Inspector

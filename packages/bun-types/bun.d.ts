@@ -3258,6 +3258,12 @@ declare module "bun" {
            *
            */
           hmr?: boolean;
+
+          /**
+           * Enable console log streaming from browser to server
+           * @default false
+           */
+          console?: boolean;
         };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;

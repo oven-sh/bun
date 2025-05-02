@@ -5906,9 +5906,6 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
-
         return switch (Syscall.utimens(
             args.path.sliceZ(&this.sync_error_buf),
             args.atime,

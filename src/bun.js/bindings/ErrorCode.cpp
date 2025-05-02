@@ -1594,7 +1594,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     JSC::JSValue codeValue = callFrame->argument(0);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (!codeValue.isNumber()) {
         JSC::throwTypeError(globalObject, scope, "First argument to $ERR_ must be a number"_s);
         return {};
@@ -1603,7 +1603,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     int code = codeValue.toInt32(globalObject);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (code > Bun::NODE_ERROR_COUNT - 1 || code < 0) {
         JSC::throwTypeError(globalObject, scope, "Invalid error code. Use $ERR_* constants"_s);
         return {};

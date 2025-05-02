@@ -443,10 +443,6 @@ pub const StatWatcher = struct {
         ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
-    pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {
-        timer.ext(StatWatcher).?.restat();
-    }
-
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 

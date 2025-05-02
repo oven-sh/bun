@@ -800,7 +800,7 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 30;
+  return 40;
 }
 
 /**
@@ -1192,7 +1192,7 @@ async function main() {
     tags,
     cpuCount: parseInt(args["cpu-count"]) || undefined,
     memoryGb: parseInt(args["memory-gb"]) || undefined,
-    diskSizeGb: parseInt(args["disk-size-gb"]) || undefined,
+    diskSizeGb: parseInt(args["disk-size-gb"]) || void 0,
     preemptible: !!args["preemptible"] || !!args["spot"],
     detached: !!args["detached"],
     bootstrap: args["no-bootstrap"] !== true,

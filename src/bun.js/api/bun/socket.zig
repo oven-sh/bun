@@ -1561,7 +1561,11 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onWritable(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onWritable", .{});
+            log("onWritable detached={s}, native_callback_writable={s} sanity={s}", .{
+                if (this.socket.isDetached()) "true" else "false",
+                if (this.native_callback.onWritable()) "true" else "false",
+                if (this.handlers.onWritable == .zero) "true" else "false",
+            });
             if (this.socket.isDetached()) return;
             if (this.native_callback.onWritable()) return;
             const handlers = this.handlers;
@@ -1575,6 +1579,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
             this.internalFlush();
+            log("onWritable buffered_data_for_node_net {d}", .{this.buffered_data_for_node_net.len});
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
 

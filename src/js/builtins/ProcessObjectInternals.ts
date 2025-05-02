@@ -359,45 +359,68 @@ export function windowsEnv(
   //
   // it throws "Cannot convert a Symbol value to a string"
 
+  // maps uppercase->original case
+  const keyStore = new Map<string, string>();
+  for (const key in internalEnv) {
+    keyStore.set(key.toUpperCase(), key);
+  }
+  for (const key of ['hasOwnProperty','isPrototypeOf','propertyIsEnumerable','toLocaleString','toString','valueOf']) {
+    const k = key.toUpperCase();
+    if (!keyStore.has(k)) keyStore.set(k, key);
+  }
+
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
     for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+      o[k] = internalEnv[keyStore.get(k.toUpperCase())!];
     }
     return o;
   };
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? (internalEnv[p.toUpperCase()] ?? internalEnv[p]) : undefined;
+      if (typeof p !== "string") return undefined;
+      const k = p.toUpperCase();
+      if (!keyStore.has(k)) return undefined;
+      return internalEnv[keyStore.get(k)!];
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();
       if (typeof p === "symbol") throw new TypeError("Cannot convert a symbol to a string");
       if (typeof value === "symbol") throw new TypeError("Cannot convert a symbol to a string");
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      if (p.length === 0) return true;
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      if (keyStore.has(k)) {
+        p = keyStore.get(k)!;
+      } else {
+        keyStore.set(k, p);
+      }
+      if (!envMapList.includes(p)) {
         envMapList.push(p);
       }
-      if (internalEnv[k] !== value) {
-        editWindowsEnvVar(k, value);
-        internalEnv[k] = value;
+      if (internalEnv[p] !== value) {
+        editWindowsEnvVar(p, value);
+        internalEnv[p] = value;
       }
       return true;
     },
     has(_, p) {
-      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
+      return typeof p !== "symbol" ? keyStore.has(String(p).toUpperCase()) : false;
     },
     deleteProperty(_, p) {
       if (typeof p === "symbol") return true;
       const k = String(p).toUpperCase();
-      const i = envMapList.findIndex(x => x.toUpperCase() === k);
+      if (keyStore.has(k)) {
+        p = keyStore.get(k)!;
+        keyStore.delete(k);
+      }
+      const i = envMapList.findIndex(x => x === p);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
-      editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      editWindowsEnvVar(p, null);
+      return typeof p !== "symbol" ? delete internalEnv[p] : false;
     },
     defineProperty(_, p, attributes) {
       if (attributes.get) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' does not accept an accessor(getter/setter) descriptor`);
@@ -407,14 +430,22 @@ export function windowsEnv(
       if (!attributes.configurable) throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(`'process.env' only accepts a configurable, writable, and enumerable data descriptor`);
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      if (keyStore.has(k)) {
+        p = keyStore.get(k)!;
+      } else {
+        keyStore.set(k, p);
+      }
+      if (!envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      editWindowsEnvVar(p, attributes.value);
+      return $Object.$defineProperty(internalEnv, p, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
-      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
+      if (typeof p !== "string") return undefined;
+      const k = keyStore.get(p.toUpperCase());
+      if (!k) return undefined;
+      return Reflect.getOwnPropertyDescriptor(target, k);
     },
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us

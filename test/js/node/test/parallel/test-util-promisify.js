@@ -80,6 +80,9 @@ const stat = promisify(fs.stat);
   );
 }
 
+// This test is commented out because Bun does not support getting the
+// internal customPromisifyArgs symbol.
+
 // {
 //   const firstValue = 5;
 //   const secondValue = 17;

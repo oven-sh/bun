@@ -430,7 +430,8 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
-		package_manager update -y
+		# package_manager update -y
+		sudo apt update -y || cat /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_*_InRelease
 		;;
 	apk)
 		package_manager update

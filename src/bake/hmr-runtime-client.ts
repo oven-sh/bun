@@ -100,8 +100,8 @@ const handlers = {
       return;
     }
 
-    ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
-    ws.send("n" + location.pathname); // IncomingMessageId.set_url
+    ws.sendBuffered("she"); // IncomingMessageId.subscribe with hot_update and errors
+    ws.sendBuffered("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
@@ -209,7 +209,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
   const truePushState = History.prototype.pushState;
   History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
     truePushState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    ws.sendBuffered("n" + location.pathname);
   };
   const trueReplaceState = History.prototype.replaceState;
   History.prototype.replaceState = function replaceState(
@@ -219,7 +219,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
     url?: string | null,
   ) {
     trueReplaceState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    ws.sendBuffered("n" + location.pathname);
   };
 }
 
@@ -231,7 +231,7 @@ window.addEventListener("unhandledrejection", event => {
 });
 
 {
-  let reloadError: any = sessionStorage.getItem("bun:hmr:message");
+  let reloadError: any = sessionStorage?.getItem?.("bun:hmr:message");
   if (reloadError) {
     sessionStorage.removeItem("bun:hmr:message");
     reloadError = JSON.parse(reloadError);
@@ -253,10 +253,8 @@ window.addEventListener("unhandledrejection", event => {
 //   })
 //
 
-let isStreamingConsoleLogFromBrowserToServer = document.querySelector("meta[name='bun:echo-console-log']");
-if (isStreamingConsoleLogFromBrowserToServer) {
+if (config.console) {
   // Ensure it only runs once, and avoid the extra noise in the HTML.
-  isStreamingConsoleLogFromBrowserToServer.remove();
   const originalLog = console.log;
 
   function websocketInspect(logLevel: "l" | "e", values: any[]) {

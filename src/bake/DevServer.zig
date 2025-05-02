@@ -1554,18 +1554,11 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
         "<script type=\"module\" crossorigin src=\"\"></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
-        "-0000000000000000.js".len +
-        if (dev.shouldReceiveConsoleLogFromBrowser()) "<meta name=\"bun:echo-console-log\" content=\"1\">".len else 0;
+        "-0000000000000000.js".len;
 
     var array: std.ArrayListUnmanaged(u8) = try std.ArrayListUnmanaged(u8).initCapacity(dev.allocator, payload_size);
     errdefer array.deinit(dev.allocator);
     array.appendSliceAssumeCapacity(before_head_end);
-
-    // Mark the meta tag if console log streaming is enabled
-    // This will get removed from the HTML before the client-side code executes.
-    if (dev.shouldReceiveConsoleLogFromBrowser()) {
-        array.appendSliceAssumeCapacity("<meta name=\"bun:echo-console-log\" content=\"1\">");
-    }
 
     // Insert all link tags before "</head>"
     for (css_ids) |name| {
@@ -1980,7 +1973,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
     }
 
-    const client_bundle = dev.client_graph.takeJSBundle(.{
+    const client_bundle = dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = if (client_file) |index|
             dev.client_graph.bundled_files.keys()[index.get()]
@@ -1988,6 +1981,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
         .script_id = script_id,
+        .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
     });
 
     return client_bundle;
@@ -2388,7 +2382,7 @@ pub fn finalizeBundle(
 
     // Load all new chunks into the server runtime.
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeJSBundle(.{ .kind = .hmr_chunk });
+        const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
         defer dev.allocator.free(server_bundle);
 
         const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
@@ -2609,9 +2603,10 @@ pub fn finalizeBundle(
                     try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator, entry);
                 }
                 // Build and send the source chunk
-                try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
+                try dev.client_graph.takeJSBundleToList(&hot_update_payload, &.{
                     .kind = .hmr_chunk,
                     .script_id = hash,
+                    .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
                 });
             }
         } else {
@@ -4690,6 +4685,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 script_id: u64,
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
+                console_log: bool,
             },
             .server => struct {
                 kind: ChunkKind,
@@ -4698,7 +4694,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         pub fn takeJSBundle(
             g: *@This(),
-            options: TakeJSBundleOptions,
+            options: *const TakeJSBundleOptions,
         ) ![]u8 {
             var chunk = std.ArrayList(u8).init(g.owner().allocator);
             try g.takeJSBundleToList(&chunk, options);
@@ -4709,7 +4705,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn takeJSBundleToList(
             g: *@This(),
             list: *std.ArrayList(u8),
-            options: TakeJSBundleOptions,
+            options: *const TakeJSBundleOptions,
         ) !void {
             const kind = options.kind;
             g.owner().graph_safety_lock.assertLocked();
@@ -4753,7 +4749,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
                         try w.writeAll(",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
-                        try w.writeAll("\"");
+
+                        if (options.console_log) {
+                            try w.writeAll("\",\n  console: true");
+                        } else {
+                            try w.writeAll("\",\n  console: false");
+                        }
+
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
                             try bun.js_printer.writeJSONString(
@@ -6233,10 +6235,10 @@ const HmrSocket = struct {
                 if (s.dev.broadcast_console_log_from_browser_to_server) {
                     switch (kind) {
                         .log => {
-                            bun.Output.print("{s}\n", .{data});
+                            bun.Output.pretty("<r><d>[browser]<r> {s}<r>\n", .{data});
                         },
                         .err => {
-                            bun.Output.printError("{s}\n", .{data});
+                            bun.Output.prettyError("<r><d>[browser]<r> {s}<r>\n", .{data});
                         },
                     }
                     bun.Output.flush();
@@ -6923,6 +6925,9 @@ fn releaseRelativePathBuf(dev: *DevServer) void {
 /// Either of two conditions make this true:
 /// - The inspector is enabled
 /// - The user passed "console": true in serve({development: {console: true}}) options
+///
+/// Changing this value at runtime is unsupported. It's expected that the
+/// inspector domains are registered at initialization time.
 fn shouldReceiveConsoleLogFromBrowser(dev: *const DevServer) bool {
     return dev.inspector() != null or dev.broadcast_console_log_from_browser_to_server;
 }

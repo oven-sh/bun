@@ -46,7 +46,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/test/parallel/test-http2-connect-options.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-statusmessage.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-http2-compat-serverresponse-end.js [ CRASH ]
-[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-linux-parallel-remove.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-utimes.js [ CRASH ]
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
 [ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
@@ -60,6 +59,14 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/install/bun-repl.test.ts [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-intl.js [ CRASH ]
 [ ASAN ] test/js/node/v8/v8-date-parser.test.js [ CRASH ]
+[ ASAN ] test/cli/hot/hot.test.ts [ CRASH ]
+[ ASAN ] test/js/node/watch/fs.watch.test.ts [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-update-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-linux-parallel-remove.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-update-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
+[ ASAN ] test/cli/hot/watch.test.ts [ CRASH ]
 [ ASAN ] test/js/bun/resolve/load-same-js-file-a-lot.test.ts [ CRASH ]
 [ ASAN ] test/js/third_party/es-module-lexer/es-module-lexer.test.ts [ CRASH ]
 [ ASAN ] test/bundler/esbuild/default.test.ts [ CRASH ]
@@ -67,6 +74,16 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/bundler/bundler_loader.test.ts [ CRASH ] # bun/wasm-is-copied-to-outdir
 [ ASAN ] test/bundler/bundler_npm.test.ts [ CRASH ]
 [ ASAN ] test/bake/dev/sourcemap.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/hot.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/bundle.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/esm.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/css.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/html.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/react-spa.test.ts [ CRASH ]
+[ ASAN ] test/bake/dev/ecosystem.test.ts [ CRASH ]
+
+# Tests failed due to ASAN: SEGV on unknown address
+[ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
 
 # Tests failed due to ASAN: heap-use-after-free
 [ ASAN ] test/js/first_party/ws/ws.test.ts [ CRASH ]
@@ -88,6 +105,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
 [ ASAN ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ]
+[ ASAN ] test/cli/inspect/BunFrontendDevServer.test.ts [ TIMEOUT ]
 
 # Tests failed due to memory leaks
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
@@ -99,4 +117,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/http2/node-http2.test.js [ LEAK ] # should not leak memory
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
-

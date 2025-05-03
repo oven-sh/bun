@@ -2463,6 +2463,7 @@ pub const Arguments = struct {
             var buffer: ?StringOrBuffer = null;
             errdefer if (buffer) |*b| b.deinit();
 
+            const allow_string_object = false;
             parse: {
                 var current = arguments.next() orelse break :parse;
                 if (buffer_value.isString()) {
@@ -2476,16 +2477,9 @@ pub const Arguments = struct {
                     if (current.isString()) {
                         encoding = try Encoding.assert(current, ctx, encoding);
                         try bun.validators.validateEncoding(ctx, buffer_value, encoding, "encoding");
-                        // re-encode
                         arguments.eat();
                     }
-
-                    const allow_string_object = false;
-                    buffer = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, buffer_value, encoding, arguments.will_be_async, allow_string_object) orelse {
-                        return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
-                    };
                 } else {
-                    const allow_string_object = false;
                     buffer = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, buffer_value, encoding, arguments.will_be_async, allow_string_object) orelse {
                         return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
                     };
@@ -2528,8 +2522,9 @@ pub const Arguments = struct {
                 }
             }
             if (buffer == null) {
-                // unreachable
-                return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                buffer = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, buffer_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+                    return ctx.ERR(.INVALID_ARG_TYPE, "The \"buffer\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
+                };
             }
 
             return Write{

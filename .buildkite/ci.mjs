@@ -956,6 +956,16 @@ async function getPipelineOptions() {
   const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
+  // No need to run the asan builds when not building a PR.
+  if (!canary) {
+    for (const platform of buildPlatforms) {
+      if (platform.profile === "asan") {
+        const key = getTargetKey(platform);
+        buildPlatformsMap.delete(key);
+      }
+    }
+  }
+
   if (isManual) {
     const { fields } = getOptionsStep();
     const keys = fields?.map(({ key }) => key) ?? [];
@@ -1081,9 +1091,15 @@ async function getPipeline(options = {}) {
     }
   }
 
+  const includeASAN = !isMainBranch();
+
   if (!buildId) {
+    const relevantBuildPlatforms = includeASAN
+      ? buildPlatforms
+      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
     steps.push(
-      ...buildPlatforms.map(target => {
+      ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
 
         return getStepWithDependsOn(
@@ -1115,7 +1131,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    steps.push(getBenchmarkStep(buildPlatforms));
+    // TODO: fix the broken benchmark step
+    // steps.push(getBenchmarkStep(buildPlatforms));
   }
 
   /** @type {Map<string, GroupStep>} */

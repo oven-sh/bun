@@ -326,23 +326,8 @@ pub const ServerInitContext = struct {
 };
 
 const UserRouteBuilder = struct {
-    route: RouteDeclaration,
+    route: ServerConfig.RouteDeclaration,
     callback: JSC.Strong.Optional = .empty,
-
-    // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-    pub const RouteDeclaration = struct {
-        path: [:0]const u8 = "",
-        method: union(enum) {
-            any: void,
-            specific: HTTP.Method,
-        } = .any,
-
-        pub fn deinit(this: *RouteDeclaration) void {
-            if (this.path.len > 0) {
-                bun.default_allocator.free(this.path);
-            }
-        }
-    };
 
     pub fn deinit(this: *UserRouteBuilder) void {
         this.route.deinit();
@@ -440,6 +425,21 @@ pub const ServerConfig = struct {
         return cost;
     }
 
+    // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
+    pub const RouteDeclaration = struct {
+        path: [:0]const u8 = "",
+        method: union(enum) {
+            any: void,
+            specific: HTTP.Method,
+        } = .any,
+
+        pub fn deinit(this: *RouteDeclaration) void {
+            if (this.path.len > 0) {
+                bun.default_allocator.free(this.path);
+            }
+        }
+    };
+
     // TODO: rename to StaticRoute.Entry
     pub const StaticRouteEntry = struct {
         path: []const u8,
@@ -462,7 +462,9 @@ pub const ServerConfig = struct {
 
         pub fn deinit(this: *StaticRouteEntry) void {
             bun.default_allocator.free(this.path);
+            this.path = "";
             this.route.deref();
+            this.* = undefined;
         }
 
         pub fn isLessThan(_: void, this: StaticRouteEntry, other: StaticRouteEntry) bool {
@@ -5208,6 +5210,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         on_clienterror: JSC.Strong.Optional = .empty,
 
+        inspector_server_id: JSC.Debugger.DebuggerId = .init(0),
+
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false);
@@ -5217,10 +5221,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = timeout;
 
-        const UserRoute = struct {
+        pub const UserRoute = struct {
             id: u32,
             server: *ThisServer,
-            route: UserRouteBuilder.RouteDeclaration,
+            route: ServerConfig.RouteDeclaration,
 
             pub fn deinit(this: *UserRoute) void {
                 this.route.deinit();
@@ -5669,6 +5673,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     this.config.websocket = ws.*;
                 } // we don't remove it
             }
+
+            // These get re-applied when we set the static routes again.
+            if (this.dev_server) |dev_server| {
+                // Prevent a use-after-free in the hash table keys.
+                dev_server.html_router.map.deinit(bun.default_allocator);
+                dev_server.html_router.fallback = null;
+                dev_server.html_router.map = .{};
+            }
+
             var static_routes = this.config.static_routes;
             this.config.static_routes = .init(bun.default_allocator);
             for (static_routes.items) |*route| {
@@ -5699,6 +5712,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (new_config.had_routes_object) {
                 if (this.js_value.get()) |server_js_value| {
                     js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                }
+            }
+
+            if (this.inspector_server_id.toOptional().unwrap() != null) {
+                if (this.vm.debugger) |*debugger| {
+                    debugger.http_server_agent.notifyServerRoutesUpdated(
+                        AnyServer.from(this),
+                    ) catch bun.outOfMemory();
                 }
             }
         }
@@ -5952,7 +5973,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+        pub fn getURLAsString(this: *const ThisServer) bun.OOM!bun.String {
             const fmt = switch (this.config.address) {
                 .unix => |unix| brk: {
                     if (unix.len > 1 and unix[0] == 0) {
@@ -5981,12 +6002,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 },
             };
 
-            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch bun.outOfMemory();
+            const buf = try std.fmt.allocPrint(default_allocator, "{any}", .{fmt});
             defer default_allocator.free(buf);
 
-            var value = bun.String.createUTF8(buf);
-            defer value.deref();
-            return value.toJSDOMURL(globalThis);
+            return bun.String.createUTF8(buf);
+        }
+
+        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) bun.OOM!JSC.JSValue {
+            var url = try this.getURLAsString();
+            defer url.deref();
+
+            return url.toJSDOMURL(globalThis);
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
@@ -6147,6 +6173,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (!ssl_enabled)
                 this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
+            this.notifyInspectorServerStopped();
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
@@ -6194,8 +6222,26 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.vm.enqueueTask(JSC.Task.init(task));
         }
 
+        fn notifyInspectorServerStopped(this: *ThisServer) void {
+            if (this.inspector_server_id.toOptional().unwrap() != null) {
+                @branchHint(.unlikely);
+                if (this.vm.debugger) |*debugger| {
+                    @branchHint(.unlikely);
+                    debugger.http_server_agent.notifyServerStopped(
+                        AnyServer.from(this),
+                    );
+                    this.inspector_server_id = .init(0);
+                }
+            }
+        }
+
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
+
+            // This should've already been handled in stopListening
+            // However, when the JS VM terminates, it hypothetically might not call stopListening
+            this.notifyInspectorServerStopped();
+
             this.cached_hostname.deref();
             this.all_closed_promise.deinit();
             for (this.user_routes.items) |*user_route| {
@@ -7417,6 +7463,81 @@ pub const AnyServer = struct {
         DebugHTTPServer,
         DebugHTTPSServer,
     });
+
+    pub const AnyUserRouteList = union(enum) {
+        HTTPServer: []const HTTPServer.UserRoute,
+        HTTPSServer: []const HTTPSServer.UserRoute,
+        DebugHTTPServer: []const DebugHTTPServer.UserRoute,
+        DebugHTTPSServer: []const DebugHTTPSServer.UserRoute,
+    };
+
+    pub fn userRoutes(this: AnyServer) AnyUserRouteList {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => .{ .HTTPServer = this.ptr.as(HTTPServer).user_routes.items },
+            Ptr.case(HTTPSServer) => .{ .HTTPSServer = this.ptr.as(HTTPSServer).user_routes.items },
+            Ptr.case(DebugHTTPServer) => .{ .DebugHTTPServer = this.ptr.as(DebugHTTPServer).user_routes.items },
+            Ptr.case(DebugHTTPSServer) => .{ .DebugHTTPSServer = this.ptr.as(DebugHTTPSServer).user_routes.items },
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+
+    pub fn getURLAsString(this: AnyServer) bun.OOM!bun.String {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).getURLAsString(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).getURLAsString(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).getURLAsString(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).getURLAsString(),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+    pub fn vm(this: AnyServer) *JSC.VirtualMachine {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).vm,
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).vm,
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).vm,
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).vm,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+    pub fn setInspectorServerID(this: AnyServer, id: JSC.Debugger.DebuggerId) void {
+        switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => {
+                this.ptr.as(HTTPServer).inspector_server_id = id;
+                if (this.ptr.as(HTTPServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(HTTPSServer) => {
+                this.ptr.as(HTTPSServer).inspector_server_id = id;
+                if (this.ptr.as(HTTPSServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(DebugHTTPServer) => {
+                this.ptr.as(DebugHTTPServer).inspector_server_id = id;
+                if (this.ptr.as(DebugHTTPServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            Ptr.case(DebugHTTPSServer) => {
+                this.ptr.as(DebugHTTPSServer).inspector_server_id = id;
+                if (this.ptr.as(DebugHTTPSServer).dev_server) |dev_server| {
+                    dev_server.inspector_server_id = id;
+                }
+            },
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        }
+    }
+
+    pub fn inspectorServerID(this: AnyServer) JSC.Debugger.DebuggerId {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).inspector_server_id,
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).inspector_server_id,
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).inspector_server_id,
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).inspector_server_id,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
 
     pub fn plugins(this: AnyServer) ?*ServePlugins {
         return switch (this.ptr.tag()) {

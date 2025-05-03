@@ -115,6 +115,14 @@ it("Bun.resolveSync", () => {
   expect(Bun.resolveSync("./resolve-test.js", import.meta.dir)).toBe(import.meta.path);
 });
 
+it("dynamic import of file: URL with 4 slashes doesn't trigger ASAN", async () => {
+  expect(await import(`file://` + `//a.js`).catch(e => e)).toBeInstanceOf(BuildMessage);
+});
+
+it("require of file: URL with 4 slashes doesn't trigger ASAN", async () => {
+  expect(() => import.meta.require(`file://` + `//a.js`)).toBeInstanceOf(BuildMessage);
+});
+
 it("self-referencing imports works", async () => {
   const baz = import.meta.resolveSync("package-json-exports/baz");
   const namespace = import.meta.resolveSync("package-json-exports/references-baz");

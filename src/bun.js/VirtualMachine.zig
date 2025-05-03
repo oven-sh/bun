@@ -147,6 +147,7 @@ module_loader: ModuleLoader = .{},
 gc_controller: JSC.GarbageCollectionController = .{},
 worker: ?*webcore.WebWorker = null,
 ipc: ?IPCInstanceUnion = null,
+hot_reload_counter: u32 = 0,
 
 debugger: ?JSC.Debugger = null,
 has_started_debugger: bool = false,
@@ -596,6 +597,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     }
 
     this.global.reload();
+    this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 

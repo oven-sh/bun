@@ -35,8 +35,7 @@ fn deinit(this: *HTMLBundle) void {
 }
 
 pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
-    var str = bun.String.createUTF8(this.path);
-    return str.transferToJS(globalObject);
+    return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
 /// Deprecated: use Route instead.

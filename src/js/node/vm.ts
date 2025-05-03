@@ -247,7 +247,7 @@ class SourceTextModule extends Module {
         attributes,
         assert: attributes,
       });
-      const modulePromise = PromisePrototypeThen.$call(PromiseResolve.$call(linkerResult), async mod => {
+      const modulePromise = PromisePrototypeThen.$call(PromiseResolve(linkerResult), async mod => {
         if (!isModule(mod)) {
           throw $ERR_VM_MODULE_NOT_MODULE();
         }

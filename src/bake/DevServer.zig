@@ -3678,7 +3678,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     g.owner().allocator.free(file.jsCode());
                     switch (file.sourceMap()) {
                         .ref => |ptr| {
-                            ptr.deref(g.owner());
+                            ptr.derefWithContext(g.owner());
                             file.setSourceMap(.blank_empty);
                         },
                         .empty => {},

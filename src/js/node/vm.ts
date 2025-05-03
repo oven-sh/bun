@@ -1,4 +1,5 @@
 // Hardcoded module "node:vm"
+const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
 const { throwNotImplemented } = require("internal/shared");
 const {
   validateObject,
@@ -8,8 +9,9 @@ const {
   validateInt32,
   validateBuffer,
   validateFunction,
+  validateInternalField,
 } = require("internal/validators");
-const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
+const util = require("node:util");
 
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
@@ -19,6 +21,10 @@ const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = Promise.prototype.then;
 const PromiseResolve = Promise.resolve;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const SymbolToStringTag = Symbol.toStringTag;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
 const kNative = Symbol("kNative");
@@ -182,6 +188,26 @@ class Module {
     }
     await this[kNative].evaluate(timeout, breakOnSigint);
   }
+
+  [util.inspect.custom](depth, options) {
+    validateInternalField(this, kNative, "Module");
+    if (typeof depth === "number" && depth < 0) return this;
+
+    const constructor = getConstructorOf(this) || Module;
+    const o = { __proto__: { constructor } };
+    o.status = this.status;
+    o.identifier = this.identifier;
+    o.context = this.context;
+
+    ObjectSetPrototypeOf(o, ObjectGetPrototypeOf(this));
+    ObjectDefineProperty(o, SymbolToStringTag, {
+      __proto__: null,
+      value: constructor.name,
+      configurable: true,
+    });
+
+    return util.inspect(o, { ...options, customInspect: false });
+  }
 }
 
 class SourceTextModule extends Module {
@@ -341,6 +367,17 @@ function importModuleDynamicallyWrap(importModuleDynamically) {
     return m.namespace;
   };
   return importModuleDynamicallyWrapper;
+}
+
+function getConstructorOf(obj) {
+  while (obj) {
+    const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
+    if (descriptor !== undefined && typeof descriptor.value === "function" && descriptor.value.name !== "") {
+      return descriptor.value;
+    }
+
+    obj = ObjectGetPrototypeOf(obj);
+  }
 }
 
 export default {

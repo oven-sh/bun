@@ -115,9 +115,11 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
             counter.active_counts += 1;
         }
 
-        pub const deref = if (options.destructor_ctx != null) derefWithContext else derefWithoutContext;
+        pub fn deref(self: *T) void {
+            derefWithContext(self, {});
+        }
 
-        fn derefWithContext(self: *T, ctx: (options.destructor_ctx orelse void)) void {
+        pub fn derefWithContext(self: *T, ctx: (options.destructor_ctx orelse void)) void {
             const counter = getCounter(self);
             if (enable_debug) {
                 counter.debug.assertValid(); // Likely double deref.
@@ -145,10 +147,6 @@ pub fn RefCount(T: type, field_name: []const u8, destructor_untyped: anytype, op
                     destructor(self);
                 }
             }
-        }
-
-        fn derefWithoutContext(self: *T) void {
-            derefWithContext(self, {});
         }
 
         pub fn dupeRef(self: anytype) RefPtr(@TypeOf(self)) {
@@ -330,15 +328,24 @@ pub fn RefPtr(T: type) type {
             return uncheckedAndUnsafeInit(raw_ptr, @returnAddress());
         }
 
-        /// Decrement the reference count, and destroy the object if the count is 0.
-        pub const deref = if (options.destructor_ctx != null) derefWithContext else derefWithoutContext;
+        // NOTE: would be nice to use an if for deref.
+        //
+        // pub const deref = if (options.destructor_ctx == null) derefWithoutContext else derefWithContext;
+        //
+        // but ZLS doesn't realize it is function so the semantic tokens look bad.
 
-        fn derefWithContext(self: *const @This(), ctx: (options.destructor_ctx orelse void)) void {
+        /// Decrement the reference count, and destroy the object if the count is 0.
+        pub fn deref(self: *const @This()) void {
+            derefWithContext(self, {});
+        }
+
+        ///  Decrement the reference count, and destroy the object if the count is 0.
+        pub fn derefWithContext(self: *const @This(), ctx: (options.destructor_ctx orelse void)) void {
             if (enable_debug) {
                 self.data.ref_count.debug.release(self.debug, @returnAddress());
             }
             if (comptime options.destructor_ctx != null) {
-                RefCountMixin.deref(self.data, ctx);
+                RefCountMixin.derefWithContext(self.data, ctx);
             } else {
                 RefCountMixin.deref(self.data);
             }
@@ -348,10 +355,6 @@ pub fn RefPtr(T: type) type {
                 // an object with a heap pointer in the read only segment
                 @constCast(self).data = undefined;
             }
-        }
-
-        fn derefWithoutContext(self: *const @This()) void {
-            derefWithContext(self, {});
         }
 
         pub fn dupeRef(ref: @This()) @This() {

@@ -1187,6 +1187,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             .server = dev.server,
             .mime_type = &.json,
         });
+        defer response.deref();
         response.onRequest(req, resp);
         return;
     }
@@ -3351,7 +3352,7 @@ pub const PackedMap = struct {
 
         pub fn deref(map: *const @This(), dev: *DevServer) void {
             switch (map.*) {
-                .ref => |ptr| ptr.deref(dev),
+                .ref => |ptr| ptr.derefWithContext(dev),
                 .empty => {},
             }
         }
@@ -3603,9 +3604,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
+                    const d = std.debug;
                     if (!Environment.isDebug) {
-                        bun.releaseAssert(@sizeOf(@This()) == @sizeOf(u64) * 2);
-                        bun.releaseAssert(@alignOf(@This()) == @alignOf([*]u8));
+                        d.assert(@sizeOf(@This()) == @sizeOf(u64) * 3);
+                        d.assert(@alignOf(@This()) == @alignOf([*]u8));
                     }
                 }
 
@@ -3631,13 +3633,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     };
                 }
 
-                fn initUnknown(flags: Flags) @This() {
+                fn initUnknown(flags: Flags, empty_map: PackedMap.RefOrEmpty.Empty) @This() {
                     assert(flags.source_map_state == .empty);
                     return .{
                         .content = .{ .unknown = .unknown }, // unused
                         .code_len = 0, // unused
                         .flags = flags,
-                        .source_map = .blank_empty,
+                        .source_map = .{ .empty = empty_map },
                     };
                 }
 
@@ -3892,22 +3894,23 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             dev.allocation_scope.assertOwned(js.code);
 
                             // Insert new source map or patch existing empty source map.
-                            const source_map: PackedMap.RefOrEmpty = if (js.source_map) |source_map| brk: {
-                                bun.debugAssert(!flags.is_html_route); // suspect behind #17956
-                                if (source_map.chunk.buffer.len() > 0) {
-                                    dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
-                                    dev.allocation_scope.assertOwned(source_map.escaped_source);
-                                    flags.source_map_state = .ref;
-                                    break :brk .{ .ref = PackedMap.newNonEmpty(
-                                        source_map.chunk,
-                                        source_map.escaped_source,
-                                    ) };
+                            const source_map: PackedMap.RefOrEmpty = brk: {
+                                if (js.source_map) |source_map| {
+                                    bun.debugAssert(!flags.is_html_route); // suspect behind #17956
+                                    if (source_map.chunk.buffer.len() > 0) {
+                                        dev.allocation_scope.assertOwned(source_map.chunk.buffer.list.items);
+                                        dev.allocation_scope.assertOwned(source_map.escaped_source);
+                                        flags.source_map_state = .ref;
+                                        break :brk .{ .ref = PackedMap.newNonEmpty(
+                                            source_map.chunk,
+                                            source_map.escaped_source,
+                                        ) };
+                                    }
+                                    var take = source_map.chunk.buffer;
+                                    take.deinit();
+                                    dev.allocator.free(source_map.escaped_source);
                                 }
-                                var take = source_map.chunk.buffer;
-                                take.deinit();
-                                dev.allocator.free(source_map.escaped_source);
-                                break :brk .blank_empty;
-                            } else brk: {
+
                                 // Must precompute this. Otherwise, source maps
                                 // won't have the info needed to concatenate VLQ
                                 // mappings.
@@ -4584,6 +4587,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .source_map_state = .empty,
                         .kind = .unknown,
                     };
+                    var source_map = PackedMap.RefOrEmpty.blank_empty.empty;
                     if (gop.found_existing) {
                         g.freeFileContent(gop.key_ptr.*, gop.value_ptr, .unref_css);
 
@@ -4592,8 +4596,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
                         flags.is_css_root = gop.value_ptr.flags.is_css_root;
+                        source_map = gop.value_ptr.source_map.empty;
                     }
-                    gop.value_ptr.* = File.initUnknown(flags);
+                    gop.value_ptr.* = File.initUnknown(flags, source_map);
                 },
                 .server => {
                     if (!gop.found_existing) {
@@ -4635,7 +4640,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_css_root = false,
                         .source_map_state = .empty,
                         .kind = kind,
-                    }),
+                    }, PackedMap.RefOrEmpty.blank_empty.empty),
                     .server => .{
                         .is_rsc = false,
                         .is_ssr = false,
@@ -4742,14 +4747,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .kind = .unknown,
                         .source_map_state = .empty,
                     };
+                    var source_map = PackedMap.RefOrEmpty.blank_empty.empty;
                     if (found_existing) {
                         g.freeFileContent(gop.key_ptr.*, gop.value_ptr, .unref_css);
                         flags.is_html_route = gop.value_ptr.flags.is_html_route;
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
                         flags.is_css_root = gop.value_ptr.flags.is_css_root;
+                        source_map = gop.value_ptr.source_map.empty;
                     }
-                    gop.value_ptr.* = File.initUnknown(flags);
+                    gop.value_ptr.* = File.initUnknown(flags, source_map);
                 },
                 .server => {
                     if (!gop.found_existing) {
@@ -7667,7 +7674,7 @@ pub const SourceMapStore = struct {
                 .files = {
                     for (entry.files.items(.tags), entry.files.items(.data)) |tag, data| {
                         switch (tag) {
-                            .ref => data.ref.deref(dev),
+                            .ref => data.ref.derefWithContext(dev),
                             .empty => {},
                         }
                     }

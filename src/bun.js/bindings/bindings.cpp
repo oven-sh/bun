@@ -2530,7 +2530,7 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC__VM* vm)
+extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
     if (vm->watchdog()) {
@@ -2540,7 +2540,7 @@ extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC__VM* vm)
     return false;
 }
 
-size_t JSC__VM__heapSize(JSC__VM* arg0)
+size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
 }

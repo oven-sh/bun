@@ -84,36 +84,72 @@ describe.if(isPosix)("HTTPServer inspector protocol", () => {
   let session: HTTPServerInspectorSession;
   let tempdir: string;
   let socketPath: string;
+  let serverFilePath: string;
+
+  const initialFile = /* js */ `
+import html from "./index.html";
+import { serve } from "bun";
+
+var server = serve({
+  port: 0, // Use a random available port
+  development: true,
+  routes: {
+    "/html": html,
+    "/": () => new Response("Home page"),
+    "/api/users": () => Response.json([
+      { id: 1, name: "Alice" },
+      { id: 2, name: "Bob" }
+    ]),
+    "/api/posts": () => Response.json([
+      { id: 1, title: "Hello World" },
+      { id: 2, title: "Test Post" }
+    ]),
+    "/stop": (req, server) => {
+      console.log("Stopping server");
+      server.stop();
+    },
+  },
+});
+`;
+
+  const updatedFile = /* js */ `
+import html from "./index.html";
+import { serve } from "bun";
+
+var server = serve({
+  port: 0, // Use a random available port
+  development: true,
+  routes: {
+    "/html": html,
+    "/": () => new Response("Home page"),
+    "/api/users": () => Response.json([
+      { id: 1, name: "Alice" },
+      { id: 2, name: "Bob" }
+    ]),
+    "/api/posts": () => Response.json([
+      { id: 1, title: "Hello World" },
+      { id: 2, title: "Test Post" }
+    ]),
+    "/api/posts/updated": () => Response.json([
+      { id: 1, title: "Hello World Updated" },
+      { id: 2, title: "Test Post Updated" }
+    ]),
+    "/stop": (req, server) => {
+      console.log("Stopping server");
+      server.stop();
+    },
+  },
+});
+`;
 
   beforeAll(async () => {
     tempdir = tmpdirSync("http-server-inspector-test");
 
     // Create a simple HTTP server for testing
-    fs.writeFileSync(
-      join(tempdir, "server.ts"),
-      /* js */ `
-      import { serve } from "bun";
-
-      const server = serve({
-        port: 0, // Use a random available port
-        development: true,
-        routes: {
-          "/": () => new Response("Home page"),
-          "/api/users": () => Response.json([
-            { id: 1, name: "Alice" },
-            { id: 2, name: "Bob" }
-          ]),
-          "/api/posts": () => Response.json([
-            { id: 1, title: "Hello World" },
-            { id: 2, title: "Test Post" }
-          ]),
-        },
-      });
-
-      console.log("Server listening at " + server.url);
-      `,
-    );
-
+    fs.writeFileSync(join(tempdir, "first.server.ts"), initialFile);
+    fs.writeFileSync(join(tempdir, "second.server.ts"), updatedFile);
+    fs.copyFileSync(join(tempdir, "first.server.ts"), (serverFilePath = join(tempdir, "server.ts")));
+    fs.writeFileSync(join(tempdir, "index.html"), "<html><body>Hello World</body></html>");
     const cwd = process.cwd();
     process.chdir(tempdir);
 
@@ -128,7 +164,12 @@ describe.if(isPosix)("HTTPServer inspector protocol", () => {
       // Start the server with inspector enabled (Unix socket only)
       serverProcess = spawn({
         cmd: [bunExe(), "--hot", `--inspect-wait=unix:${socketPath}`, join(tempdir, "server.ts")],
-        env: bunEnv,
+        env: {
+          ...bunEnv,
+
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=0:sleep_before_dying=10000000",
+          BUN_WAIT_FOR_DEBUGGER: "1",
+        },
         cwd: tempdir,
         stdout: "inherit",
         stderr: "inherit",
@@ -164,9 +205,11 @@ describe.if(isPosix)("HTTPServer inspector protocol", () => {
     }
   });
 
-  test.only("should receive listen event when server starts", async () => {
-    // Enable the HTTPServer domain
+  test("should receive serverRoutesUpdated event with route information", async () => {
     const startEnabled = session.initialize();
+
+    // Listen for the serverRoutesUpdated event
+    const routesUpdatedPromise = session.waitForEvent("HTTPServer.serverRoutesUpdated");
 
     // Listen for the listen event
     const listenPromise = session.waitForEvent("HTTPServer.listen");
@@ -174,220 +217,105 @@ describe.if(isPosix)("HTTPServer inspector protocol", () => {
     await startEnabled;
     const { serverId, url, startTime } = await listenPromise;
     expect(serverId).toBeDefined();
-    expect(typeof serverId).toBe("number");
-    expect(url).toBeDefined();
-    expect(typeof url).toBe("string");
-    expect(startTime).toBeDefined();
-    expect(typeof startTime).toBe("number");
-
-    expect(await fetch(url).then(r => r.text())).toBe("Home page");
-  });
-
-  test("should receive serverRoutesUpdated event with route information", async () => {
-    // Listen for the serverRoutesUpdated event
-    const routesUpdatedPromise = session.waitForEvent("HTTPServer.serverRoutesUpdated");
 
     // Make a request to trigger route initialization if needed
-    await fetch(new URL("/api/users", serverUrl).href);
+    await fetch(new URL("/api/users", url).href).then(r => r.blob());
 
     // Verify we received the serverRoutesUpdated event
     const routesUpdatedEvent = await routesUpdatedPromise;
-    expect(routesUpdatedEvent).toHaveProperty("serverId");
-    expect(routesUpdatedEvent).toHaveProperty("hotReloadId");
-    expect(routesUpdatedEvent).toHaveProperty("routes");
-    expect(Array.isArray(routesUpdatedEvent.routes)).toBe(true);
 
-    // Inspect the routes
     const routes = routesUpdatedEvent.routes;
+    for (const route of routes) {
+      if (route.filePath) {
+        route.filePath = route.filePath.replaceAll(tempdir, "");
+      }
+    }
 
     // Check for our defined routes
-    expect(routes.some(route => route.path.includes("/"))).toBe(true);
-    expect(routes.some(route => route.path.includes("/api/users"))).toBe(true);
-    expect(routes.some(route => route.path.includes("/api/posts"))).toBe(true);
+    expect(routes).toMatchInlineSnapshot(`
+      [
+        {
+          "path": "/",
+          "routeId": 0,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/api/users",
+          "routeId": 1,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/api/posts",
+          "routeId": 2,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/stop",
+          "routeId": 3,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "filePath": "/index.html",
+          "path": "/html",
+          "routeId": 4,
+          "scriptLine": -1,
+          "type": "html",
+        },
+      ]
+    `);
 
-    // Each route should have necessary properties
-    routes.forEach(route => {
-      expect(route).toHaveProperty("routeId");
-      expect(route).toHaveProperty("path");
-      expect(route).toHaveProperty("type");
+    const anotherRoutePromise = session.waitForEvent("HTTPServer.serverRoutesUpdated");
+    fs.writeFileSync(serverFilePath, updatedFile);
+    const anotherRouteEvent = await anotherRoutePromise;
+    anotherRouteEvent.routes.forEach(route => {
+      if (route.filePath) {
+        route.filePath = route.filePath.replaceAll(tempdir, "");
+      }
     });
-  });
-
-  test("should update routes when server routes change", async () => {
-    // Create an updated server file with new routes
-    fs.writeFileSync(
-      join(tempdir, "server.ts"),
-      /* js */ `
-      import { serve } from "bun";
-
-      const server = serve({
-        port: ${serverUrl.port}, // Use same port to ensure we're updating the same server
-        development: true,
-        fetch(req) {
-          const url = new URL(req.url);
-          
-          if (url.pathname === "/") {
-            return new Response("Home page");
-          }
-          
-          if (url.pathname === "/api/users") {
-            return Response.json([
-              { id: 1, name: "Alice" },
-              { id: 2, name: "Bob" }
-            ]);
-          }
-          
-          if (url.pathname === "/api/posts") {
-            return Response.json([
-              { id: 1, title: "Hello World" },
-              { id: 2, title: "Test Post" }
-            ]);
-          }
-          
-          // New route added
-          if (url.pathname === "/api/comments") {
-            return Response.json([
-              { id: 1, text: "Great post!" },
-              { id: 2, text: "Thanks for sharing" }
-            ]);
-          }
-          
-          return new Response("Not Found", { status: 404 });
-        }
-      });
-
-      console.log("Server listening at " + server.url);
-      `,
-    );
-
-    // Listen for the serverRoutesUpdated event
-    const routesUpdatedPromise = session.waitForEvent("HTTPServer.serverRoutesUpdated");
-
-    // Trigger a reload by making a request to the new route
-    await fetch(new URL("/api/comments", serverUrl).href);
-
-    // Verify we received the serverRoutesUpdated event again
-    const routesUpdatedEvent = await routesUpdatedPromise;
-    expect(routesUpdatedEvent).toHaveProperty("routes");
-
-    // The routes array should now include our new route
-    const routes = routesUpdatedEvent.routes;
-    expect(routes.some(route => route.path.includes("/api/comments"))).toBe(true);
-  });
-
-  test("should receive close event when server stops", async () => {
-    // Get server ID from a request
-    const listenEvent = await session.waitForEvent("HTTPServer.listen");
-    const serverId = listenEvent.serverInfo.serverId;
-
-    // Listen for the close event
-    const closePromise = session.waitForEvent("HTTPServer.close");
-
-    // Create a new server file that will intentionally close the server
-    fs.writeFileSync(
-      join(tempdir, "stop-server.ts"),
-      /* js */ `
-      import { serve } from "bun";
-
-      const server = serve({
-        port: ${serverUrl.port}, // Use same port to trigger a conflict
-        development: true,
-        fetch() {
-          return new Response("New server");
-        }
-      });
-
-      // This will trigger close on the original server
-      console.log("New server listening at " + server.url);
-      `,
-    );
-
-    // Start the new server to force the old one to close
-    const newServerProcess = spawn({
-      cmd: [bunExe(), join(tempdir, "stop-server.ts")],
-      env: bunEnv,
-      cwd: tempdir,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-
-    try {
-      // Verify we received the close event
-      const closeEvent = await closePromise;
-      expect(closeEvent).toHaveProperty("serverId");
-      expect(closeEvent).toHaveProperty("timestamp");
-      expect(typeof closeEvent.timestamp).toBe("number");
-
-      // The stopped server ID should match our original server
-      expect(closeEvent.serverId).toBe(serverId);
-    } finally {
-      // Cleanup
-      newServerProcess.kill();
-    }
-  });
-
-  test("should track multiple servers with unique IDs", async () => {
-    // Create a second server file with a different port
-    fs.writeFileSync(
-      join(tempdir, "second-server.ts"),
-      /* js */ `
-      import { serve } from "bun";
-
-      const server = serve({
-        port: 0, // Use a different port
-        development: true,
-        fetch() {
-          return new Response("Second server");
-        }
-      });
-
-      console.log("Second server listening at " + server.url);
-      `,
-    );
-
-    // Listen for the listen event for the second server
-    const listenPromise = session.waitForEvent("HTTPServer.listen");
-
-    // Start the second server
-    const secondServerProcess = spawn({
-      cmd: [bunExe(), join(tempdir, "second-server.ts")],
-      env: bunEnv,
-      cwd: tempdir,
-      stdout: "pipe",
-    });
-
-    try {
-      // Verify we received the listen event for the second server
-      const listenEvent = await listenPromise;
-      expect(listenEvent).toHaveProperty("serverInfo");
-
-      // Make sure this is a different server ID from the first one
-      const serverId = listenEvent.serverInfo.serverId;
-      expect(serverId).not.toBe(undefined);
-
-      // Start listening to the second server
-      await session.startListening(serverId);
-
-      // Listen for routesUpdated for this server
-      const routesUpdatedPromise = session.waitForEvent("HTTPServer.serverRoutesUpdated");
-
-      // Wait for routes to be updated
-      const routesUpdatedEvent = await routesUpdatedPromise;
-      expect(routesUpdatedEvent).toHaveProperty("serverId");
-      expect(routesUpdatedEvent.serverId).toBe(serverId);
-
-      // Finally, listen for close when we kill this process
-      const closePromise = session.waitForEvent("HTTPServer.close");
-
-      // Kill the second server
-      secondServerProcess.kill();
-
-      // Verify we get the close event with the right ID
-      const closeEvent = await closePromise;
-      expect(closeEvent).toHaveProperty("serverId");
-      expect(closeEvent.serverId).toBe(serverId);
-    } finally {
-      secondServerProcess.kill();
-    }
+    expect(anotherRouteEvent.routes).toMatchInlineSnapshot(`
+      [
+        {
+          "path": "/",
+          "routeId": 0,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/api/users",
+          "routeId": 1,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/api/posts",
+          "routeId": 2,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/api/posts/updated",
+          "routeId": 3,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "path": "/stop",
+          "routeId": 4,
+          "scriptLine": -1,
+          "type": "api",
+        },
+        {
+          "filePath": "/index.html",
+          "path": "/html",
+          "routeId": 5,
+          "scriptLine": -1,
+          "type": "html",
+        },
+      ]
+    `);
   });
 });

@@ -462,7 +462,9 @@ pub const ServerConfig = struct {
 
         pub fn deinit(this: *StaticRouteEntry) void {
             bun.default_allocator.free(this.path);
+            this.path = "";
             this.route.deref();
+            this.* = undefined;
         }
 
         pub fn isLessThan(_: void, this: StaticRouteEntry, other: StaticRouteEntry) bool {
@@ -5671,6 +5673,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     this.config.websocket = ws.*;
                 } // we don't remove it
             }
+
+            // These get re-applied when we set the static routes again.
+            if (this.dev_server) |dev_server| {
+                // Prevent a use-after-free in the hash table keys.
+                dev_server.html_router.map.deinit(bun.default_allocator);
+                dev_server.html_router.fallback = null;
+                dev_server.html_router.map = .{};
+            }
+
             var static_routes = this.config.static_routes;
             this.config.static_routes = .init(bun.default_allocator);
             for (static_routes.items) |*route| {

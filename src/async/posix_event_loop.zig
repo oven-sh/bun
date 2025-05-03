@@ -22,7 +22,8 @@ pub const KeepAlive = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *KeepAlive) void {
-        this.unref(JSC.VirtualMachine.get());
+        if (this.status == .active)
+            this.unref(JSC.VirtualMachine.get());
         this.status = .done;
     }
 

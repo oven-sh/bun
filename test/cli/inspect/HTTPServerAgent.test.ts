@@ -317,11 +317,11 @@ var server = serve({
         },
       ]
     `);
-  });
 
     const stopEventPromise = session.waitForEvent("HTTPServer.close");
     await fetch(new URL("/stop", url).href);
 
     const stopEvent = await stopEventPromise;
     expect(stopEvent).toMatchInlineSnapshot();
+  });
 });

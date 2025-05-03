@@ -1017,15 +1017,6 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     }
     var internal_command: ?IPCCommand = null;
     if (message == .data) handle_message: {
-        // TODO: get property 'cmd' from the message, read as a string
-        // to skip this property lookup (and simplify the code significantly)
-        // we could make three new message types:
-        // - data_with_handle
-        // - ack
-        // - nack
-        // This would make the IPC not interoperable with node
-        // - advanced ipc already is completely different in bun. bun uses
-        // - json ipc is the same as node in bun
         const msg_data = message.data;
         if (msg_data.isObject()) {
             const cmd = msg_data.fastGet(globalThis, .cmd) orelse {

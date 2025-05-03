@@ -32,6 +32,7 @@ public:
     void finishCreation(JSC::VM&);
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
+    JSC::JSObject* contextifiedObject() const { return m_sandbox.get(); }
     void clearContextifiedObject();
 
     // Override property access to delegate to contextified object

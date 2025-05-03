@@ -1916,10 +1916,14 @@ public:
     JSObject* namespace_() const { return m_namespace.get(); }
     void namespace_(VM& vm, JSObject* value) { m_namespace.set(vm, this, value); }
 
+    const WTF::Vector<NodeVMModuleRequest>& moduleRequests() const { return m_moduleRequests; }
+    void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
     mutable WriteBarrier<JSObject> m_namespace;
+    WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier)
         : Base(vm, structure)
@@ -2005,8 +2009,10 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     JSValue contextValue = args.at(1);
-    if (!contextValue.isObject()) {
-        // TODO(@heimskr): if undefined, use current execution context
+    if (contextValue.isUndefined()) {
+        // TODO(@heimskr): should this be `globalObject->globalThis()` instead?
+        contextValue = globalObject;
+    } else if (!contextValue.isObject()) {
         throwArgumentTypeError(*globalObject, scope, 1, "context"_s, "Module"_s, "Module"_s, "object"_s);
         return nullptr;
     }
@@ -2108,8 +2114,16 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSC::encodedJSUndefined();
+    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    const WTF::Vector<NodeVMModuleRequest>& requests = thisObject->moduleRequests();
+
+    JSArray* array = constructEmptyArray(globalObject, nullptr, requests.size());
+
+    for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
+        array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+    }
+
+    return JSValue::encode(array);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

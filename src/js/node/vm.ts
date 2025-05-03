@@ -9,7 +9,7 @@ const {
   validateBuffer,
   validateFunction,
 } = require("internal/validators");
-const { SafePromiseAll } = require("internal/primordials");
+const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
 
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
@@ -267,7 +267,7 @@ class SourceTextModule extends Module {
     }
 
     try {
-      const modules = await SafePromiseAll(modulePromises);
+      const modules = await SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, modules);
     } catch (e) {
       this.#error = e;
@@ -279,7 +279,7 @@ class SourceTextModule extends Module {
 
   get dependencySpecifiers() {
     this[kDependencySpecifiers] ??= ObjectFreeze(
-      ArrayPrototypeMap.$call(this[kNative].getModuleRequests(), request => request.specifier),
+      ArrayPrototypeMap.$call(this[kNative].getModuleRequests(), request => request[0]),
     );
     return this[kDependencySpecifiers];
   }

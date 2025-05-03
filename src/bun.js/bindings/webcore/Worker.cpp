@@ -371,23 +371,20 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
-    Locker lock(this->m_pendingTasksMutex);
+    auto tasks = [&]() {
+        Locker lock(this->m_pendingTasksMutex);
+        return std::exchange(this->m_pendingTasks, {});
+    }();
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
-        auto tasks = std::exchange(this->m_pendingTasks, {});
-        lock.unlockEarly();
         for (auto& task : tasks) {
             task(*thisContext);
         }
     } else {
-        auto tasks = std::exchange(this->m_pendingTasks, {});
-        lock.unlockEarly();
-
         thisContext->postTask([tasks = WTFMove(tasks)](auto& ctx) mutable {
             for (auto& task : tasks) {
                 task(ctx);
             }
-            tasks.clear();
         });
     }
 }

@@ -439,7 +439,7 @@ struct us_listen_socket_t *us_socket_context_listen_fd(int ssl, struct us_socket
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
     ls->s.flags.low_prio_state = 0;
-        ls->s.flags.is_paused = 0;
+    ls->s.flags.is_paused = 0;
 
     ls->s.next = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);

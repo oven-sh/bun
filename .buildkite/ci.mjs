@@ -1091,9 +1091,15 @@ async function getPipeline(options = {}) {
     }
   }
 
+  const includeASAN = !isMainBranch();
+
   if (!buildId) {
+    const relevantBuildPlatforms = includeASAN
+      ? buildPlatforms
+      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
     steps.push(
-      ...buildPlatforms.map(target => {
+      ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
 
         return getStepWithDependsOn(

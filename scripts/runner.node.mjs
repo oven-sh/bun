@@ -1836,7 +1836,7 @@ function isAlwaysFailure(error) {
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
-    error.includes("ERROR: AddressSanitizer")
+    error.includes("error: addresssanitizer")
   );
 }
 

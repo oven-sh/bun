@@ -3325,7 +3325,7 @@ pub const IPCInstance = struct {
     pub const new = bun.TrivialNew(@This());
     pub const deinit = bun.TrivialDeinit(@This());
 
-    globalThis: ?*JSGlobalObject,
+    globalThis: *JSGlobalObject,
     context: if (Environment.isPosix) *uws.SocketContext else void,
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
@@ -3341,7 +3341,7 @@ pub const IPCInstance = struct {
 
     pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage, handle: JSValue) void {
         JSC.markBinding(@src());
-        const globalThis = this.globalThis orelse return;
+        const globalThis = this.globalThis;
         const event_loop = JSC.VirtualMachine.get().eventLoop();
 
         switch (message) {

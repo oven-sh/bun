@@ -685,10 +685,7 @@ pub const SendQueue = struct {
             return;
         }
         this.write_in_progress = false;
-        const globalThis = this.getGlobalThis() orelse {
-            this.closeSocket(.failure, .user);
-            return;
-        };
+        const globalThis = this.getGlobalThis();
         defer this.updateRef(globalThis);
         const first = &this.queue.items[0];
         const to_send = first.data.list.items[first.data.cursor..];
@@ -838,7 +835,7 @@ pub const SendQueue = struct {
             this.closeSocket(.normal, .user);
         }
     }
-    fn getGlobalThis(this: *SendQueue) ?*JSC.JSGlobalObject {
+    fn getGlobalThis(this: *SendQueue) *JSC.JSGlobalObject {
         return switch (this.owner) {
             inline else => |owner| owner.globalThis,
         };
@@ -1119,10 +1116,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
-    const globalThis = send_queue.getGlobalThis() orelse {
-        send_queue.closeSocket(.failure, .user);
-        return;
-    };
+    const globalThis = send_queue.getGlobalThis();
 
     // Decode the message with just the temporary buffer, and if that
     // fails (not enough bytes) then we allocate to .ipc_buffer
@@ -1223,7 +1217,7 @@ pub const IPCHandlers = struct {
             _: Socket,
             all_data: []const u8,
         ) void {
-            const globalThis = send_queue.getGlobalThis() orelse return;
+            const globalThis = send_queue.getGlobalThis();
             const loop = globalThis.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();
@@ -1248,7 +1242,7 @@ pub const IPCHandlers = struct {
         ) void {
             log("onWritable", .{});
 
-            const globalThis = send_queue.getGlobalThis() orelse return;
+            const globalThis = send_queue.getGlobalThis();
             const loop = globalThis.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();
@@ -1309,10 +1303,7 @@ pub const IPCHandlers = struct {
 
         fn onRead(send_queue: *SendQueue, buffer: []const u8) void {
             log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
-            const globalThis = send_queue.getGlobalThis() orelse {
-                send_queue.closeSocketNextTick(true);
-                return;
-            };
+            const globalThis = send_queue.getGlobalThis();
             const loop = globalThis.bunVM().eventLoop();
             loop.enter();
             defer loop.exit();

@@ -532,17 +532,20 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
     if (callback) {
       const writeChunk = self._pendingData;
       if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
       } else {
+        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
       }
-      self[kBytesWritten] = socket.bytesWritten;
+    } else {
     }
   },
   end(socket) {
     $debug("Bun.Socket end");
     const { self, that } = socket.data;
+    if (self[kended]) return;
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
@@ -552,10 +555,9 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
     $debug("Bun.Socket close");
     let { self, that } = socket.data;
     if (!that) that = SocketHandle[kAttach](socket, self);
+    that[ksocket] = null;
     if (self[kclosed]) return;
     self[kclosed] = true;
-    that[ksocket] = null;
-    if (self[kended]) return;
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
@@ -1362,6 +1364,7 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
+  socket.shutdown();
   process.nextTick(endNT, socket, callback);
 };
 
@@ -1662,7 +1665,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   const success = writeGeneric(socket, chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
-    callback(null);
+    callback();
   } else if (this[kwriteCallback]) {
     callback(new Error("overlapping _write()"));
   } else {
@@ -1974,7 +1977,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     self[kConnectOptions] = options;
     self.prependListener("end", onConnectEnd);
   }
-  self._undestroy();
+  // self._undestroy();
   //TLS
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
@@ -2115,7 +2118,7 @@ function internalConnectMultiple(context, canceled?) {
     self[kConnectOptions] = context.options;
     self.prependListener("end", onConnectEnd);
   }
-  self._undestroy();
+  // self._undestroy();
   //TLS
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);

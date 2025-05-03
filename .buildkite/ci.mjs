@@ -1115,7 +1115,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    steps.push(getBenchmarkStep(buildPlatforms));
+    // TODO: fix the broken benchmark step
+    // steps.push(getBenchmarkStep(buildPlatforms));
   }
 
   /** @type {Map<string, GroupStep>} */

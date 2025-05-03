@@ -8023,7 +8023,9 @@ const ErrorReportRequest = struct {
         // HMR chunks use this too, but currently do not host their JS code.
         var parsed_source_maps: AutoArrayHashMapUnmanaged(SourceMapStore.Key, ?SourceMapStore.GetResult) = .empty;
         try parsed_source_maps.ensureTotalCapacity(temp_alloc, 4);
-        defer {} // contents stored in arenas
+        defer for (parsed_source_maps.values()) |*value| {
+            if (value.*) |*v| v.deinit(temp_alloc);
+        };
 
         var runtime_lines: ?[5][]const u8 = null;
         var first_line_of_interest: usize = 0;

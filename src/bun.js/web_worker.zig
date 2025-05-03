@@ -407,7 +407,6 @@ pub const WebWorker = struct {
         assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
         vm.preload = this.preloads;
-        WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         // resolve entrypoint
         var resolve_error = bun.String.empty;
         defer resolve_error.deref();
@@ -453,6 +452,7 @@ pub const WebWorker = struct {
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});
+        WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
         this.setStatus(.running);
 

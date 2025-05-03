@@ -144,8 +144,7 @@ const advanced = struct {
     }
 
     pub fn serialize(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = value.serialize(global, true) orelse return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -162,8 +161,7 @@ const advanced = struct {
     }
 
     pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
-        const serialized = value.serialize(global) orelse
-            return IPCSerializationError.SerializationFailed;
+        const serialized = value.serialize(global, true) orelse return IPCSerializationError.SerializationFailed;
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);

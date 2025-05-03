@@ -266,6 +266,17 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
+
+#if ASAN_ENABLED && OS(LINUX)
+    {
+        JSC::Options::AllowUnfinalizedAccessScope scope;
+
+        // ASAN interferes with JSC's signal handlers
+        JSC::Options::useWasmFaultSignalHandler() = false;
+        JSC::Options::useWasmFastMemory() = false;
+    }
+#endif
+
     JSC::initialize();
     {
 
@@ -1531,8 +1542,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1998,7 +2008,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (scope.exception()) {
         Bun__reportError(&lexicalGlobalObject, JSValue::encode(scope.exception()));
     }
@@ -4054,7 +4064,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     BunString moduleNameZ;
 
     String moduleName = moduleNameValue->value(globalObject);
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     auto startRefCount = moduleName.impl()->refCount();
 #endif
     if (moduleName.startsWith("file://"_s)) {

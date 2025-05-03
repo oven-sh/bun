@@ -5911,6 +5911,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
 }
 
 pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) EventLoopTimer.Arm {
+    if (!bun.FeatureFlags.bake_debugging_features) return .disarm;
     const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();

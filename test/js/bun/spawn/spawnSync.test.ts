@@ -25,6 +25,7 @@ describe("spawnSync", () => {
         stdout: ioOption,
         stderr: ioOption,
         timeout: 0,
+        maxBuffer: 0,
       });
       const end = performance.now();
       expect(end - start).toBeLessThan(1000);

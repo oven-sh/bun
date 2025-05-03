@@ -3455,9 +3455,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// are stored so the watcher can quickly query and invalidate them.
         /// Key slices are owned by `dev.allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
-        // /// Source maps are stored out-of-line to make `File` objects smaller,
-        // /// as file information is accessed much more frequently than source maps.
-        // source_maps: if (side == .client) ArrayListUnmanaged(PackedMap) else void,
         /// Track bools for files which are "stale", meaning they should be
         /// re-bundled before being used. Resizing this is usually deferred
         /// until after a bundle, since resizing the bit-set requires an
@@ -3911,9 +3908,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                     dev.allocator.free(source_map.escaped_source);
                                 }
 
-                                // Must precompute this. Otherwise, source maps
-                                // won't have the info needed to concatenate VLQ
-                                // mappings.
+                                // Must precompute this. Otherwise, source maps won't have
+                                // the info needed to concatenate VLQ mappings.
                                 const count: u32 = @intCast(bun.strings.countChar(js.code, '\n'));
                                 break :brk .{ .empty = .{
                                     .line_count = .init(count),

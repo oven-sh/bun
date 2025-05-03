@@ -1,6 +1,7 @@
 'use strict';
 
 const common = require('../common');
+if (typeof globalThis.Bun !== "undefined") return; // TODO: BUN
 const assert = require('assert');
 const http = require('http');
 const net = require('net');

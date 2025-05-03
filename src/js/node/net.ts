@@ -611,11 +611,25 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
       callback(error);
     }
     self.emit("error", error);
+
+    if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   timeout(socket) {
     $debug("Bun.Socket timeout");
     const { self, that } = socket.data;
     self.emit("timeout", self);
+  },
+  connectError(socket, error) {
+    $debug("Bun.Socket connectError");
+    let { self, that, req } = socket.data;
+    $debug(self.fmtState(), socket.listener);
+    if (!that) that = SocketHandle[kAttach](socket, self);
+    self._handle = that;
+    socket[owner_symbol] = self;
+    that[ksocket] = socket;
+    that[kpromise] = null;
+    req!.oncomplete(error.errno, self._handle, req, true, true);
+    socket.data.req = undefined;
   },
 };
 
@@ -661,13 +675,9 @@ class SocketHandle {
       that.#socket = sock;
       that.#promise = null;
     });
-    if ($isPromiseRejected(this.#promise)) {
-      $debug("Bun.Socket rejected");
-      throw Bun.peek(this.#promise).errno;
-    }
     this.#promise.catch(reason => {
-      $debug("Bun.Socket catch");
-      if (!self.destroyed) destroyNT(self, reason);
+      // eat this so there's no unhandledRejection
+      // we already catch this in connectError and error
     });
     return 0;
   }
@@ -730,6 +740,10 @@ class SocketHandle {
     $debug("SocketHandle.close");
     this.#socket?.close();
     if (typeof cb === "function") setImmediate(cb);
+  }
+  shutdown() {
+    $debug("SocketHandle.shutdown");
+    return this.#socket?.shutdown(...arguments);
   }
   reset(cb) {
     $debug("SocketHandle.reset");

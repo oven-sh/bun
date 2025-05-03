@@ -902,7 +902,7 @@ fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.J
         return .false;
     }
     if (from == .process) {
-        const target = JSC.JSFunction.create(globalObject, "", emitProcessErrorEvent, 1, .{});
+        const target = JSC.JSFunction.create(globalObject, bun.String.empty, emitProcessErrorEvent, 1, .{});
         target.callNextTick(globalObject, .{ex});
         return .false;
     }

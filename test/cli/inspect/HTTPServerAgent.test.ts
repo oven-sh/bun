@@ -107,6 +107,7 @@ var server = serve({
     "/stop": (req, server) => {
       console.log("Stopping server");
       server.stop();
+      return new Response("Stopping server");
     },
   },
 });
@@ -322,6 +323,14 @@ var server = serve({
     await fetch(new URL("/stop", url).href);
 
     const stopEvent = await stopEventPromise;
-    expect(stopEvent).toMatchInlineSnapshot();
+    stopEvent.timestamp = 123456;
+    expect(stopEvent).toMatchInlineSnapshot(`
+      {
+        "serverId": 1,
+        "timestamp": 123456,
+      }
+    `);
+    console.log({ tempdir });
+    expect(serverId).toBe(stopEvent.serverId);
   });
 });

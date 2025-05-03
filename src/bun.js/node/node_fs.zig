@@ -5951,11 +5951,7 @@ pub const NodeFS = struct {
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
         return switch (args.createFSWatcher()) {
             .result => |result| .{ .result = result.js_this },
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .syscall = err.syscall,
-                .path = if (err.path.len > 0) args.path.slice() else "",
-            } },
+            .err => |err| .{ .err = err },
         };
     }
 

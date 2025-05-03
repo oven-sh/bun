@@ -628,7 +628,7 @@ pub const FSWatcher = struct {
 
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
+            this.poll_ref.disable();
         }
 
         if (this.signal) |signal| {

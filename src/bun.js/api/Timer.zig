@@ -126,7 +126,11 @@ pub const All = struct {
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
-            this.uv_timer.start(@max(1, wait.msUnsigned()), 0, &onUVTimer);
+            // minimum 1ms
+            // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
+            const wait_ms = @max(1, wait.msUnsigned());
+
+            this.uv_timer.start(wait_ms, 0, &onUVTimer);
 
             if (this.active_timer_count > 0) {
                 this.uv_timer.ref();

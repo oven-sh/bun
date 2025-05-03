@@ -15,14 +15,14 @@ pub fn notifyServerStarted(this: *HTTPServerAgent, instance: JSC.API.AnyServer) 
     if (this.agent) |agent| {
         this.next_server_id = .init(this.next_server_id.get() + 1);
         instance.setInspectorServerID(this.next_server_id);
-        var url = instance.getURLAsString();
+        var url = instance.getURLAsString() catch bun.outOfMemory();
         defer url.deref();
 
         agent.notifyServerStarted(
             this.next_server_id,
             @intCast(instance.vm().hot_reload_counter),
             &url,
-            @floatFromInt(std.time.milliTimestamp()),
+            @floatFromInt(bun.timespec.now().ms()),
             instance.ptr.ptr(),
         );
     }
@@ -80,7 +80,7 @@ pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: JSC.API.A
                 .param_names = null,
                 .param_names_len = 0,
                 .file_path = switch (route.route) {
-                    .html => |html| bun.String.init(html.bundle.data.path),
+                    .html => |html| bun.String.init(html.data.bundle.data.path),
                     else => .empty,
                 },
             });

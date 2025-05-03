@@ -6437,7 +6437,7 @@ const HmrSocket = struct {
                 if (s.dev.inspector()) |agent| {
                     var log_str = bun.String.init(data);
                     defer log_str.deref();
-                    agent.notifyConsoleLog(s.dev.debugger_id, kind, &log_str);
+                    agent.notifyConsoleLog(s.dev.inspector_server_id, kind, &log_str);
                 }
 
                 if (s.dev.broadcast_console_log_from_browser_to_server) {

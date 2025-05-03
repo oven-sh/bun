@@ -7470,7 +7470,7 @@ pub const AnyServer = struct {
         };
     }
 
-    pub fn getURLAsString(this: AnyServer) bun.String {
+    pub fn getURLAsString(this: AnyServer) bun.OOM!bun.String {
         return switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).getURLAsString(),
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).getURLAsString(),

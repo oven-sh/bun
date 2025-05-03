@@ -4098,10 +4098,12 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
         Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
 
+        // If resolution failed, make sure it becomes a pending exception
         if (UNLIKELY(!resolved.success && !scope.exception())) {
             throwException(scope, resolved.result.err, globalObject);
         }
 
+        // And convert that pending exception into a rejected promise.
         if (UNLIKELY(scope.exception())) {
             auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
             moduleNameZ.deref();

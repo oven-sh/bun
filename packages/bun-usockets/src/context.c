@@ -416,41 +416,6 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_listen_socket_t *us_socket_context_listen_fd(int ssl, struct us_socket_context_t *context, int fd, int options, int socket_ext_size, int* error) {
-#ifndef LIBUS_NO_SSL
-    if (ssl) {
-        // return us_internal_ssl_socket_context_listen((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, error);
-    }
-#endif
-
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = fd;
-
-    if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
-        return 0;
-    }
-
-    struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_listen_socket_t));
-    us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, context->loop, LIBUS_SOCKET_READABLE);
-
-    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
-
-    ls->s.context = context;
-    ls->s.timeout = 255;
-    ls->s.long_timeout = 255;
-    ls->s.flags.low_prio_state = 0;
-    ls->s.flags.is_paused = 0;
-
-    ls->s.next = 0;
-    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-    us_internal_socket_context_link_listen_socket(context, ls);
-
-    ls->socket_ext_size = socket_ext_size;
-
-    return ls;
-}
-
-
 struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {

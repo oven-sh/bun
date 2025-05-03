@@ -30,16 +30,15 @@ const server = serve({
   },
 
   development:
-    process.env.NODE_ENV !== "production"
-      ? {
+    process.env.NODE_ENV === "production"
+      ? false
+      : {
           // Enable browser hot reloading in development
           hmr: true,
 
           // Echo console logs from the browser to the server
           console: true,
-        }
-      : // Disable dev server in production
-        false,
+        },
 });
 
 console.log(`🚀 Server running at ${server.url}`);

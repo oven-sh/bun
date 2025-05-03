@@ -2332,10 +2332,11 @@ function parseLevel(level) {
  * @returns {Annotation}
  */
 export function parseAnnotation(options, context) {
+  const cwd = (context?.["cwd"] || process.cwd()).replace(/\\/g, "/");
   const source = options["source"];
   const level = parseLevel(options["level"]);
   const title = options["title"] || (source ? `${source} ${level}` : level);
-  const filename = options["filename"];
+  const path = options["filename"]?.replace(/\\/g, "/");
   const line = parseInt(options["line"]) || undefined;
   const column = parseInt(options["column"]) || undefined;
   const content = options["content"];
@@ -2352,6 +2353,13 @@ export function parseAnnotation(options, context) {
     }
     lastLine = line.trim();
     relevantLines.push(line);
+  }
+
+  let filename;
+  if (path?.startsWith(cwd)) {
+    filename = path.slice(cwd.length + 1);
+  } else {
+    filename = path;
   }
 
   return {
@@ -2894,6 +2902,7 @@ const emojiMap = {
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
   debug: ["🐞", "bug"],
+  asan: ["🐛", "bug"],
   assert: ["🔍", "mag"],
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],

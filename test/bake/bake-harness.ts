@@ -524,9 +524,11 @@ export class Dev extends EventEmitter {
 
   async gracefulExit() {
     await this.fetch("/_dev_server_test_set");
-    this.devProcess.send({ type: "graceful-exit" });
+    const hasAlreadyExited = this.devProcess.exitCode !== null || this.devProcess.signalCode !== null;
+    if (!hasAlreadyExited) {
+      this.devProcess.send({ type: "graceful-exit" });
+    }
     await Promise.race([
-      //
       this.devProcess.exited,
       new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
@@ -1683,6 +1685,7 @@ function testImpl<T extends DevServerTest>(
           BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

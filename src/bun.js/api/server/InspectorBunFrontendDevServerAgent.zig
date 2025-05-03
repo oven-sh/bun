@@ -13,6 +13,7 @@ const InspectorBunFrontendDevServerAgentHandle = opaque {
         extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, connectionId: i32, url: *bun.String, routeBundleId: i32) void;
         extern "c" fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, clientErrorPayloadBase64: *bun.String) void;
         extern "c" fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, visualizerPayloadBase64: *bun.String) void;
+        extern "c" fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(agent: *InspectorBunFrontendDevServerAgentHandle, devServerId: i32, kind: u8, data: *bun.String) void;
     };
     const notifyClientConnected = c.InspectorBunFrontendDevServerAgent__notifyClientConnected;
     const notifyClientDisconnected = c.InspectorBunFrontendDevServerAgent__notifyClientDisconnected;
@@ -22,6 +23,7 @@ const InspectorBunFrontendDevServerAgentHandle = opaque {
     const notifyClientNavigated = c.InspectorBunFrontendDevServerAgent__notifyClientNavigated;
     const notifyClientErrorReported = c.InspectorBunFrontendDevServerAgent__notifyClientErrorReported;
     const notifyGraphUpdate = c.InspectorBunFrontendDevServerAgent__notifyGraphUpdate;
+    const notifyConsoleLog = c.InspectorBunFrontendDevServerAgent__notifyConsoleLog;
 };
 
 pub const BunFrontendDevServerAgent = struct {
@@ -98,6 +100,12 @@ pub const BunFrontendDevServerAgent = struct {
     pub fn notifyGraphUpdate(this: *const BunFrontendDevServerAgent, devServerId: DebuggerId, visualizerPayloadBase64: *bun.String) void {
         if (this.handle) |handle| {
             handle.notifyGraphUpdate(devServerId.get(), visualizerPayloadBase64);
+        }
+    }
+
+    pub fn notifyConsoleLog(this: BunFrontendDevServerAgent, devServerId: DevServer.DebuggerId, kind: bun.bake.DevServer.ConsoleLogKind, data: *bun.String) void {
+        if (this.handle) |handle| {
+            handle.notifyConsoleLog(devServerId.get(), @intFromEnum(kind), data);
         }
     }
 

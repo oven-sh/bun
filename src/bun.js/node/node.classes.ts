@@ -180,13 +180,18 @@ export default [
         setter: "set_idleTimeout",
         this: true,
       },
+      _repeat: {
+        getter: "get_repeat",
+        setter: "set_repeat",
+        this: true,
+      },
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback", "idleTimeout"],
+    values: ["arguments", "callback", "idleTimeout", "repeat"],
   }),
   define({
     name: "Immediate",

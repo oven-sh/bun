@@ -475,6 +475,43 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     ws.close();
   });
 
+  test("should notify on consoleLog events", async () => {
+    await fetch(serverUrl.href).then(r => r.blob());
+
+    // Connect a client to trigger connection events
+    const ws = await createHMRClient();
+
+    // Wait for clientConnected event to get the connectionId
+    const connectedEvent = await session.waitForEvent("BunFrontendDevServer.clientConnected");
+
+    // Listen for consoleLog event
+    const consoleLogPromise = session.waitForEvent("BunFrontendDevServer.consoleLog");
+
+    // Send a console log message from the client
+    // 'l' is the message type for console.log (see ConsoleLogKind enum in DevServer.zig)
+    ws.send("ll" + "Hello from client test");
+
+    // Verify we received the consoleLog event
+    const consoleLogEvent = await consoleLogPromise;
+    expect(consoleLogEvent).toHaveProperty("kind");
+    expect(consoleLogEvent.kind).toBe("l".charCodeAt(0));
+    expect(consoleLogEvent).toHaveProperty("message");
+    expect(consoleLogEvent.message).toBe("Hello from client test");
+
+    // Test error log
+    const consoleErrorPromise = session.waitForEvent("BunFrontendDevServer.consoleLog");
+    ws.send("le" + "Error from client test");
+
+    const consoleErrorEvent = await consoleErrorPromise;
+    expect(consoleErrorEvent).toHaveProperty("kind");
+    expect(consoleErrorEvent.kind).toBe("e".charCodeAt(0));
+    expect(consoleErrorEvent).toHaveProperty("message");
+    expect(consoleErrorEvent.message).toBe("Error from client test");
+
+    // Clean up
+    ws.close();
+  });
+
   test.todo("should notify on clientErrorReported events", async () => {
     // fs.writeFileSync(join(tempdir, "main.ts"), errorReportingScript);
 

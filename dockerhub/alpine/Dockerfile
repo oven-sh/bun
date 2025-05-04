@@ -60,8 +60,7 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN mkdir -p /usr/local/bun-node-fallback-bin && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
 ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 
-# Temporarily use the `build`-stage /tmp folder to access the glibc APKs:
-RUN --mount=type=bind,from=build,source=/tmp,target=/tmp \
+RUN \
     addgroup -g 1000 bun \
     && adduser -u 1000 -G bun -s /bin/sh -D bun \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \

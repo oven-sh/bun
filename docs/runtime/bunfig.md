@@ -144,6 +144,15 @@ Same as the top-level `smol` field, but only applies to `bun test`.
 smol = true
 ```
 
+### `test.timeout`
+
+A default timeout for each test in milliseconds. Default `5000`. Use `--timeout` to override.
+
+```toml
+[test]
+timeout = 15000
+```
+
 ### `test.coverage`
 
 Enables coverage reporting. Default `false`. Use `--coverage` to override.

@@ -701,49 +701,61 @@ declare module "bun" {
      */
     export interface CSVParserOptions {
       /**
-       * Whether the CSV has a header row.
-       * If true, returns an array of objects. If false, returns an array of arrays.
+       * Specifies whether the first line of the CSV file contains column headers.
+       * When enabled, these headers define property keys for each value in a row, creating structured objects instead of simple arrays.
        * @default true
        */
       header?: boolean;
       /**
-       * The delimiter character to use.
+       * A string that separates columns in each row.
        * @default ','
        */
       delimiter?: string;
       /**
-       * Whether to allow comments in the CSV.
+       * Instructs the parser to ignore lines representing comments in a CSV file.
        * @default true
        */
       comments?: boolean;
       /**
-       * The character used to denote comments.
+       * Defines which character(s) identify comment lines in a CSV file.
+       * By default, this is set to `#` and consumes the entire line.
        * @default '#'
        */
       commentChar?: string;
       /**
-       * Whether to trim whitespace from fields.
+       * Removes leading and trailing whitespace from field names and data values.
        * @default false
        */
-      trim_whitespace?: boolean;
+      trimWhitespace?: boolean;
       /**
-       * Whether to enable dynamic typing for fields.
+       * Automatically converts string values to appropriate JavaScript types (numbers, booleans) during parsing.
+       * This eliminates the need for manual type conversion after parsing is complete.
        * @default false
        */
-      dynamic_typing?: boolean;
+      dynamicTyping?: boolean;
       /**
-       * The character used to quote fields.
+       * Character used to enclose fields containing special characters (like delimiters or newlines).
+       * Allows text containing delimiters to be properly parsed without breaking the row structure.
        * @default '"'
        */
       quote?: string;
       /**
-       * Number of rows to parse, if not specified all rows will be parsed.
+       * Parses only the specified number of rows.
+       * Useful for quickly analyzing file structure, validating headers, or showing sample data before processing the entire file.
        * @default undefined
        */
       preview?: number;
+      /**
+       * Skips empty lines when parsing.
+       * @default false
+       */
+      skipEmptyLines?: boolean;
     }
 
-    export interface CSVParserMetadata<T> {
+    export interface CSVParserResult<T> {
+      /**
+       * The parsed content of the CSV file.
+       */
       data: T[];
       /**
        * The number of rows parsed.
@@ -756,13 +768,16 @@ declare module "bun" {
       /**
        * The number of errors encountered during parsing.
        */
-      errors: number;
+      errors: {
+        row: number;
+        text: string;
+      }[];
       /**
        * The comments encountered during parsing.
        * This is only available if `comments` is set to true.
        */
       comments: {
-        line: number;
+        row: number;
         text: string;
       }[];
     }
@@ -780,8 +795,8 @@ declare module "bun" {
       input: string,
       options?: CSVParserOptions,
     ): CSVParserOptions extends { has_header: false }
-      ? CSVParserMetadata<string[]>
-      : CSVParserMetadata<Record<string, string>>;
+      ? CSVParserResult<string[]>
+      : CSVParserResult<Record<string, string>>;
   }
 
   /**
@@ -950,13 +965,6 @@ declare module "bun" {
       createPath?: boolean;
     },
   ): Promise<number>;
-
-  interface SystemError extends Error {
-    errno?: number | undefined;
-    code?: string | undefined;
-    path?: string | undefined;
-    syscall?: string | undefined;
-  }
 
   /**
    * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
@@ -2639,8 +2647,7 @@ declare module "bun" {
    *
    * @category Bundler
    *
-   * @example
-   * Basic usage - Bundle a single entrypoint and check results
+   * @example Basic usage - Bundle a single entrypoint and check results
    *```ts
    * const result = await Bun.build({
    *   entrypoints: ['./src/index.tsx'],

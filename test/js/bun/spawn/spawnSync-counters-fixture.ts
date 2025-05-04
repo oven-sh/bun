@@ -4,7 +4,7 @@ import { getCounters } from "bun:internal-for-testing";
 const before = getCounters();
 const result = spawnSync({
   cmd: ["sleep", "0.00001"],
-  stdout: "inherit",
+  stdout: "pipe",
   stderr: "inherit",
   stdin: "inherit",
 });

@@ -34,18 +34,14 @@ pub fn parse(
     if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull() and arguments[1].isObject()) {
         const options = arguments[1];
 
-        // Use 'try' to propagate potential errors from .get()
         const header_value = try options.get(globalThis, "header");
-        // Check if header_value is non-null before accessing methods
         if (header_value) |hv| {
             if (hv.isBoolean()) {
                 parser_options.header = hv.asBoolean();
             }
         }
 
-        // Use 'try' to propagate potential errors from .get()
         const delimiter_value = try options.get(globalThis, "delimiter");
-        // Check if delimiter_value is non-null before accessing methods
         if (delimiter_value) |dv| {
             if (dv.isString()) {
                 const dv_ = try dv.toSlice(globalThis, default_allocator);
@@ -59,15 +55,46 @@ pub fn parse(
             }
         }
 
-        if (try options.get(globalThis, "trim_whitespace")) |trim_value| {
+        if (try options.get(globalThis, "commentChar")) |comment_char_value| {
+            if (comment_char_value.isString()) {
+                const comment_char_value_ = try comment_char_value.toSlice(globalThis, default_allocator);
+                parser_options.comment_char = comment_char_value_.slice();
+            }
+        }
+
+        if (try options.get(globalThis, "trimWhitespace")) |trim_value| {
             if (trim_value.isBoolean()) {
                 parser_options.trim_whitespace = trim_value.asBoolean();
             }
         }
 
-        if (try options.get(globalThis, "dynamic_typing")) |typing_value| {
+        if (try options.get(globalThis, "dynamicTyping")) |typing_value| {
             if (typing_value.isBoolean()) {
                 parser_options.dynamic_typing = typing_value.asBoolean();
+            }
+        }
+
+        if (try options.get(globalThis, "quote")) |quote_value| {
+            if (quote_value.isString()) {
+                const quote_value_ = try quote_value.toSlice(globalThis, default_allocator);
+                parser_options.quote = quote_value_.slice();
+            }
+        }
+
+        if (try options.get(globalThis, "preview")) |preview_value| {
+            if (preview_value.isNumber()) {
+                const value = preview_value.asNumber();
+                if (value > 0) {
+                    parser_options.preview = @intFromFloat(value);
+                } else {
+                    return globalThis.throwInvalidArguments("Preview value must be greater than 0", .{});
+                }
+            }
+        }
+
+        if (try options.get(globalThis, "skipEmptyLines")) |skip_value| {
+            if (skip_value.isBoolean()) {
+                parser_options.skip_empty_lines = skip_value.asBoolean();
             }
         }
     }

@@ -48,11 +48,20 @@ pub const CSVParserOptions = struct {
     header: bool = true,
     delimiter: []const u8 = ",",
     comments: bool = true,
-    commentChar: []const u8 = "#",
+    comment_char: []const u8 = "#",
     trim_whitespace: bool = false,
     dynamic_typing: bool = false,
     quote: []const u8 = "\"",
     preview: ?usize = null,
+    skip_empty_lines: bool = false,
+};
+
+const CSVParseResult = struct {
+    data_array: Expr,
+    rows: usize,
+    columns: usize,
+    comments: Expr,
+    errors: Expr,
 };
 
 pub const CSV = struct {
@@ -64,9 +73,8 @@ pub const CSV = struct {
     line_number: usize,
     options: CSVParserOptions,
     iterator: strings.CodepointIterator,
-    // Track errors for metadata
-    errors: usize = 0,
-    comments_array: Expr,
+
+    result: CSVParseResult,
 
     pub fn init(allocator: std.mem.Allocator, source: logger.Source, log: *logger.Log, opts: CSVParserOptions) CSV {
         return CSV{
@@ -78,7 +86,13 @@ pub const CSV = struct {
             .line_number = 1,
             .options = opts,
             .iterator = strings.CodepointIterator.init(source.contents),
-            .comments_array = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+            .result = CSVParseResult{
+                .data_array = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+                .rows = 0,
+                .columns = 0,
+                .errors = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+                .comments = Expr.init(E.Array, E.Array{}, .{ .start = 0 }),
+            },
         };
     }
 
@@ -92,8 +106,62 @@ pub const CSV = struct {
     }
 
     pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, _: bool, opts: CSVParserOptions) !Expr {
-        var parser = CSV.init(allocator, source_.*, log, opts);
-        return try parser.runParser();
+        // we don't consider header a record if it's a header
+        var _preview = opts.preview;
+        if (_preview != null and opts.header) {
+            _preview.? += 1;
+        }
+
+        var p = CSV.init(allocator, source_.*, log, .{
+            .header = opts.header,
+            .delimiter = opts.delimiter,
+            .comments = opts.comments,
+            .comment_char = opts.comment_char,
+            .trim_whitespace = opts.trim_whitespace,
+            .dynamic_typing = opts.dynamic_typing,
+            .quote = opts.quote,
+            .skip_empty_lines = opts.skip_empty_lines,
+            // overrides:
+            .preview = _preview,
+        });
+
+        if (source_.contents.len != 0) {
+            try p.runParser();
+        }
+
+        var return_value = Expr.init(E.Object, E.Object{}, .{ .start = 0 });
+
+        const loc = logger.Loc{ .start = 0 };
+
+        // Set data property in the result object
+        try return_value.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "data" }, loc),
+            .value = p.result.data_array,
+        });
+
+        // Set metadata fields according to CSVParserMetadata interface
+        try return_value.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "rows" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.rows)) }, loc),
+        });
+
+        try return_value.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "columns" }, loc),
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.result.columns)) }, loc),
+        });
+
+        try return_value.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "errors" }, loc),
+            .value = p.result.errors,
+        });
+
+        // Add comments array
+        try return_value.data.e_object.properties.push(p.allocator, .{
+            .key = p.e(E.String{ .data = "comments" }, loc),
+            .value = p.result.comments,
+        });
+
+        return return_value;
     }
 
     fn peekCodepoint(p: *CSV) ?u21 {
@@ -150,6 +218,35 @@ pub const CSV = struct {
         return false;
     }
 
+    fn consumeQuote(p: *CSV) bool {
+        const quote = p.options.quote;
+
+        // If we don't have enough characters left to match the quote, it can't match
+        if (p.index + quote.len > p.contents.len) {
+            return false;
+        }
+
+        // Check if the next characters match the quote
+        if (std.mem.eql(u8, p.contents[p.index .. p.index + quote.len], quote)) {
+            p.index += quote.len;
+            return true;
+        }
+
+        return false;
+    }
+
+    fn checkQuote(p: *CSV) bool {
+        const quote = p.options.quote;
+
+        // If we don't have enough characters left to match the quote, it can't match
+        if (p.index + quote.len > p.contents.len) {
+            return false;
+        }
+
+        // Check if the next characters match the quote, but don't consume
+        return std.mem.eql(u8, p.contents[p.index .. p.index + quote.len], quote);
+    }
+
     fn consumeDelimiter(p: *CSV) bool {
         const delimiter = p.options.delimiter;
 
@@ -165,6 +262,18 @@ pub const CSV = struct {
         }
 
         return false;
+    }
+
+    fn checkDelimiter(p: *CSV) bool {
+        const delimiter = p.options.delimiter;
+
+        // If we don't have enough characters left to match the delimiter, it can't match
+        if (p.index + delimiter.len > p.contents.len) {
+            return false;
+        }
+
+        // Check if the next characters match the delimiter
+        return std.mem.eql(u8, p.contents[p.index .. p.index + delimiter.len], delimiter);
     }
 
     fn isLineBreakChar(c: u21) bool {
@@ -227,28 +336,36 @@ pub const CSV = struct {
         var field = std.ArrayList(u8).init(p.allocator);
         errdefer field.deinit();
 
+        const quote = p.options.quote;
+
         // Check if field is quoted
-        const is_quoted = p.consumeCodepoint('"');
+        const is_quoted = p.consumeQuote();
 
         if (is_quoted) {
             // Parse quoted field
             while (true) {
-                const c = p.nextCodepoint() orelse {
-                    // Unexpected end of file inside quoted field
-                    try p.log.addErrorFmt(&p.source, logger.Loc{ .start = @intCast(start_index) }, p.allocator, "Unexpected end of file inside quoted field", .{});
-                    return error.UnexpectedEndOfFile;
-                };
+                // Check for quote character sequence
+                if (p.checkQuote()) {
+                    // Consume the quote first
+                    _ = p.consumeQuote();
 
-                if (c == '"') {
-                    // Check if it's an escaped quote (two double quotes in a row)
-                    if (p.consumeCodepoint('"')) {
-                        // For quote character, just append the ASCII value
-                        try field.append('"');
+                    // Check if it's an escaped quote (two quote sequences in a row)
+                    if (p.checkQuote()) {
+                        _ = p.consumeQuote(); // Consume the second quote
+                        try field.appendSlice(quote);
                     } else {
                         // End of quoted field
                         break;
                     }
                 } else {
+                    // Get the next character
+                    const c = p.nextCodepoint() orelse {
+                        // Unexpected end of file inside quoted field
+                        try p.log.addErrorFmt(&p.source, logger.Loc{ .start = @intCast(start_index) }, p.allocator, "Unexpected end of file inside quoted field", .{});
+                        return error.UnexpectedEndOfFile;
+                    };
+
+                    // In quoted fields, we can have linebreaks according to the grammar
                     // Encode the Unicode codepoint to UTF-8 and append it
                     var buf: [4]u8 = undefined;
                     const len = strings.encodeWTF8RuneT(&buf, u21, c);
@@ -256,6 +373,12 @@ pub const CSV = struct {
                 }
             }
         } else {
+            // For non-quoted fields, track if we've seen non-whitespace content
+            var has_content = false;
+
+            // Keep track of trailing whitespace for trimming if needed
+            var last_non_whitespace_index = field.items.len;
+
             // Parse non-quoted field
             while (true) {
                 const c = p.peekCodepoint() orelse break;
@@ -271,14 +394,50 @@ pub const CSV = struct {
                     }
                 }
 
-                // Accept any character in non-quoted fields except separators and line endings
+                // Check for comment character (comments can appear anywhere in the line)
+                if (p.options.comments and p.isCommentLine()) {
+                    break;
+                }
+
+                // Accept any character in non-escaped fields except separators and line endings
                 _ = p.nextCodepoint();
 
+                // Determine if we should append the character or skip it for trimming
+                const should_append = !p.options.trim_whitespace or !isUnicodeWhitespace(c) or has_content;
+
+                // If this is leading whitespace and we're trimming, skip it
+                if (p.options.trim_whitespace and isUnicodeWhitespace(c) and !has_content) {
+                    continue;
+                }
+
+                // Mark that we've seen non-whitespace content
+                if (!isUnicodeWhitespace(c)) {
+                    has_content = true;
+                    last_non_whitespace_index = field.items.len;
+                }
+
                 // Encode the Unicode codepoint to UTF-8 and append it
-                var buf: [4]u8 = undefined;
-                const len = strings.encodeWTF8RuneT(&buf, u21, c);
-                try field.appendSlice(buf[0..len]);
+                if (should_append) {
+                    var buf: [4]u8 = undefined;
+                    const len = strings.encodeWTF8RuneT(&buf, u21, c);
+                    try field.appendSlice(buf[0..len]);
+
+                    // Update last non-whitespace position if this isn't whitespace
+                    if (!isUnicodeWhitespace(c)) {
+                        last_non_whitespace_index = field.items.len;
+                    }
+                }
             }
+
+            // Trim trailing whitespace if option is enabled
+            if (p.options.trim_whitespace and field.items.len > 0) {
+                field.shrinkRetainingCapacity(last_non_whitespace_index);
+            }
+        }
+
+        // Consume any whitespace between the end of the field and the delimiter
+        while (!p.checkDelimiter() and !p.isEndOfLine() and !p.isCommentLine()) {
+            _ = p.nextCodepoint();
         }
 
         return field.toOwnedSlice();
@@ -318,85 +477,95 @@ pub const CSV = struct {
         fields.deinit();
     }
 
-    fn runParser(p: *CSV) anyerror!Expr {
-        const loc = logger.Loc{ .start = 0 };
-
-        // Create root object for results following CSVParserMetadata interface
-        var result_object = p.e(E.Object{}, loc);
-
-        // Create data array for the results
-        var data_array = p.e(E.Array{}, loc);
-
-        // Track columns count for metadata
-        var columns_count: usize = 0;
-
-        // Process any initial comments
-        while (p.isCommentLine()) {
-            const comment_text = try p.parseCommentLine();
-            defer p.allocator.free(comment_text);
-
-            try p.addCommentToArray(comment_text);
-
-            // Skip CRLF after comment
-            _ = p.consumeEndOfLine();
+    fn isEmptyRecord(record: std.ArrayList([]const u8)) bool {
+        if (record.items.len == 0) {
+            return true;
         }
 
-        if (p.options.header) {
-            // Parse header
-            const header_loc = logger.Loc{ .start = @intCast(p.index) };
-            var header = try p.parseRecord();
-            errdefer p.cleanupFields(&header);
+        for (record.items) |field| {
+            if (field.len > 0) {
+                return false;
+            }
+        }
 
-            // Check if we have a valid header
-            if (header.items.len == 0) {
-                try p.log.addErrorFmt(&p.source, header_loc, p.allocator, "Empty header line", .{});
-                return error.MalformedLine;
+        return true;
+    }
+
+    fn runParser(p: *CSV) anyerror!void {
+        var all_records = std.ArrayList(std.ArrayList([]const u8)).init(p.allocator);
+        errdefer {
+            for (all_records.items) |*record| {
+                p.cleanupFields(record);
+            }
+            all_records.deinit();
+        }
+
+        // First read all rows
+        var records_processed: usize = 0;
+        while (p.index < p.contents.len) {
+            var record = try p.parseRecord();
+            errdefer p.cleanupFields(&record);
+
+            // Check if this is a comment line
+            if (p.isCommentLine()) {
+                const comment_text = try p.parseCommentLine();
+                errdefer p.allocator.free(comment_text);
+
+                try p.addCommentToArray(comment_text);
+
+                // Skip CRLF after comment
+                _ = p.consumeEndOfLine();
+                continue;
             }
 
-            // Set columns count based on header
-            columns_count = header.items.len;
+            // Skip CRLF between records
+            if (!p.consumeEndOfLine()) {
+                break;
+            }
 
-            // Skip CRLF after header
-            _ = p.consumeEndOfLine();
+            if (p.options.skip_empty_lines and isEmptyRecord(record)) {
+                continue;
+            }
 
-            // Process data records
-            while (p.index < p.contents.len) {
-                const record_loc = logger.Loc{ .start = @intCast(p.index) };
-                var record = try p.parseRecord();
-                errdefer p.cleanupFields(&record);
+            // Update columns count if this record has more columns
+            if (record.items.len > p.result.columns) {
+                p.result.columns = record.items.len;
+            }
 
-                // Skip empty lines
-                if (record.items.len == 0) {
-                    _ = p.consumeEndOfLine();
-                    continue;
-                }
+            try all_records.append(record);
+            records_processed += 1;
 
-                // Check if this is a comment line
-                if (p.isCommentLine()) {
-                    const comment_text = try p.parseCommentLine();
-                    defer p.allocator.free(comment_text);
+            if (p.options.preview != null and records_processed >= p.options.preview.?) {
+                break;
+            }
+        }
 
-                    try p.addCommentToArray(comment_text);
+        // Prepare the output format depending on the header option
+        if (all_records.items.len > 0 and p.options.header) {
+            // First row is the header
+            var header = all_records.orderedRemove(0);
+            errdefer p.cleanupFields(&header);
 
-                    // Skip CRLF after comment
-                    _ = p.consumeEndOfLine();
-                    continue;
-                }
-
-                // Check for record size consistency
-                // TODO: if record size smaller than header size, fill with empty fields
-                if (record.items.len != header.items.len) {
-                    try p.log.addErrorFmt(&p.source, record_loc, p.allocator, "Record on line {d} has {d} fields, but header has {d} fields", .{ p.line_number, record.items.len, header.items.len });
-                    return error.MalformedLine;
-                }
+            // Process remaining rows as objects with the header keys
+            for (all_records.items, 0..) |record, idx| {
+                const record_loc = logger.Loc{ .start = 0 };
 
                 // Create an object for this row
                 var row_object = p.e(E.Object{}, record_loc);
 
-                // Add each field to the object
-                for (header.items, record.items) |key, value| {
-                    const key_expr = p.e(E.String{ .data = key }, loc);
-                    const value_expr = p.e(E.String{ .data = value }, loc);
+                // Add each field to the object, using empty string as fallback if record is shorter than header
+                for (0..header.items.len) |i| {
+                    const key = header.items[i];
+                    const key_expr = p.e(E.String{ .data = key }, .{ .start = @intCast(idx) });
+
+                    var value_expr: Expr = undefined;
+                    if (i < record.items.len) {
+                        // We have a value for this header
+                        value_expr = p.e(E.String{ .data = record.items[i] }, .{ .start = @intCast(idx) });
+                    } else {
+                        // No value, use empty string as fallback
+                        value_expr = p.e(E.String{ .data = "" }, .{ .start = @intCast(idx) });
+                    }
 
                     try row_object.data.e_object.properties.push(p.allocator, .{
                         .key = key_expr,
@@ -404,90 +573,32 @@ pub const CSV = struct {
                     });
                 }
 
-                // Add the row object to the data array
-                try data_array.data.e_array.push(p.allocator, row_object);
-
-                // Skip CRLF between records
-                if (!p.consumeEndOfLine()) {
-                    break; // Last record may not have CRLF
-                }
+                try p.result.data_array.data.e_array.push(p.allocator, row_object);
             }
         } else {
-            // No header: treat all rows as arrays
-            while (p.index < p.contents.len) {
-                const record_loc = logger.Loc{ .start = @intCast(p.index) };
-                var record = try p.parseRecord();
-                errdefer p.cleanupFields(&record);
-
-                // Skip empty lines
-                if (record.items.len == 0) {
-                    _ = p.consumeEndOfLine();
-                    continue;
-                }
-
-                // Check if this is a comment line
-                if (p.isCommentLine()) {
-                    const comment_text = try p.parseCommentLine();
-                    defer p.allocator.free(comment_text);
-
-                    try p.addCommentToArray(comment_text);
-
-                    // Skip CRLF after comment
-                    _ = p.consumeEndOfLine();
-                    continue;
-                }
-
-                // Update columns count if this record has more columns
-                if (record.items.len > columns_count) {
-                    columns_count = record.items.len;
-                }
+            // Process all rows as arrays (no header conversion)
+            for (all_records.items, 0..) |record, idx| {
+                const record_loc = logger.Loc{ .start = 0 };
 
                 // Create an array for this row
                 var row_array = p.e(E.Array{}, record_loc);
 
                 for (record.items) |value| {
-                    const value_expr = p.e(E.String{ .data = value }, loc);
+                    var value_expr: Expr = undefined;
+
+                    if (p.options.trim_whitespace) {
+                        value_expr = p.e(E.String{ .data = strings.trim(value, " \t\n\r") }, .{ .start = @intCast(idx) });
+                    } else {
+                        value_expr = p.e(E.String{ .data = value }, .{ .start = @intCast(idx) });
+                    }
                     try row_array.data.e_array.push(p.allocator, value_expr);
                 }
 
-                try data_array.data.e_array.push(p.allocator, row_array);
-
-                // Skip CRLF between records
-                if (!p.consumeEndOfLine()) {
-                    break;
-                }
+                try p.result.data_array.data.e_array.push(p.allocator, row_array);
             }
         }
 
-        // Set data property in the result object
-        try result_object.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "data" }, loc),
-            .value = data_array,
-        });
-
-        // Set metadata fields according to CSVParserMetadata interface
-        try result_object.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "rows" }, loc),
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
-        });
-
-        try result_object.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "columns" }, loc),
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(columns_count)) }, loc),
-        });
-
-        try result_object.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "errors" }, loc),
-            .value = p.e(E.Number{ .value = 0 }, loc),
-        });
-
-        // Add comments array
-        try result_object.data.e_object.properties.push(p.allocator, .{
-            .key = p.e(E.String{ .data = "comments" }, loc),
-            .value = p.comments_array,
-        });
-
-        return result_object;
+        p.result.rows = all_records.items.len;
     }
 
     fn isCommentLine(p: *CSV) bool {
@@ -496,24 +607,24 @@ pub const CSV = struct {
             return false;
         }
 
-        const commentChar = p.options.commentChar;
+        const comment_char = p.options.comment_char;
 
         // If we don't have enough characters left to match the comment char, it can't match
-        if (p.index + commentChar.len > p.contents.len) {
+        if (p.index + comment_char.len > p.contents.len) {
             return false;
         }
 
         // Check if the next characters match the comment char
-        return std.mem.eql(u8, p.contents[p.index .. p.index + commentChar.len], commentChar);
+        return std.mem.eql(u8, p.contents[p.index .. p.index + comment_char.len], comment_char);
     }
 
     fn parseCommentLine(p: *CSV) ![]const u8 {
-        const commentChar = p.options.commentChar;
+        const comment_char = p.options.comment_char;
         var comment = std.ArrayList(u8).init(p.allocator);
         errdefer comment.deinit();
 
         // Skip the comment character
-        p.index += commentChar.len;
+        p.index += comment_char.len;
 
         // Read until end of line
         while (true) {
@@ -542,14 +653,34 @@ pub const CSV = struct {
 
         try comment_obj.data.e_object.properties.push(p.allocator, .{
             .key = p.e(E.String{ .data = "line" }, loc),
-            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number)) }, loc),
+            // TODO: figure out why the line number is off by one
+            .value = p.e(E.Number{ .value = @as(f64, @floatFromInt(p.line_number - 1)) }, loc),
         });
 
         try comment_obj.data.e_object.properties.push(p.allocator, .{
             .key = p.e(E.String{ .data = "text" }, loc),
-            .value = p.e(E.String{ .data = comment_text }, loc),
+            .value = p.e(E.String{ .data = strings.trim(comment_text, " \t\n\r") }, loc),
         });
 
-        try p.comments_array.data.e_array.push(p.allocator, comment_obj);
+        try p.result.comments.data.e_array.push(p.allocator, comment_obj);
     }
 };
+
+fn isUnicodeWhitespace(cp: u21) bool {
+    // List includes ASCII and common Unicode whitespace code points
+    return cp == 0x0009 // Tab
+    or cp == 0x000A // Line Feed
+    or cp == 0x000B // Vertical Tab
+    or cp == 0x000C // Form Feed
+    or cp == 0x000D // Carriage Return
+    or cp == 0x0020 // Space
+    or cp == 0x0085 // Next Line
+    or cp == 0x00A0 // No-Break Space
+    or cp == 0x1680 // Ogham Space Mark
+    or (cp >= 0x2000 and cp <= 0x200A) // En Quad to Hair Space
+    or cp == 0x2028 // Line Separator
+    or cp == 0x2029 // Paragraph Separator
+    or cp == 0x202F // Narrow No-Break Space
+    or cp == 0x205F // Medium Mathematical Space
+    or cp == 0x3000; // Ideographic Space
+}

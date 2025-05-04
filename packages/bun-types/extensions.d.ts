@@ -25,21 +25,21 @@ declare module "*.html" {
 }
 
 declare module "*.csv" {
-  var contents: Record<string, string>[];
+  var contents: import("bun").CSV.CSVParserResult<Record<string, string>>;
   export = contents;
 }
 
 declare module "*.csv?no_header" {
-  var contents: string[][];
+  var contents: import("bun").CSV.CSVParserResult<string[][]>;
   export = contents;
 }
 
 declare module "*.tsv" {
-  var contents: Record<string, string>[];
+  var contents: import("bun").CSV.CSVParserResult<Record<string, string>>;
   export = contents;
 }
 
 declare module "*.tsv?no_header" {
-  var contents: string[][];
+  var contents: import("bun").CSV.CSVParserResult<string[][]>;
   export = contents;
 }

@@ -3,7 +3,7 @@ name: Build a frontend using Vite and Bun
 ---
 
 {% callout %}
-Vite works with Bun, but many projects skip the extra dependency and use [HTML imports](/docs/bundler/html) instead.
+You can use Vite with Bun, but many projects get faster builds & drop hundreds of dependencies by switching to [HTML imports](/docs/bundler/html).
 {% /callout %}
 
 ---

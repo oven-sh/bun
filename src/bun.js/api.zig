@@ -7,6 +7,7 @@ pub const Subprocess = @import("api/bun/subprocess.zig");
 pub const HashObject = @import("api/HashObject.zig");
 pub const UnsafeObject = @import("api/UnsafeObject.zig");
 pub const TOMLObject = @import("api/TOMLObject.zig");
+pub const CSVObject = @import("api/CSVObject.zig");
 pub const Timer = @import("api/Timer.zig");
 pub const FFIObject = @import("api/FFIObject.zig");
 pub const AnyRequestContext = @import("api/server.zig").AnyRequestContext;

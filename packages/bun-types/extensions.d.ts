@@ -23,3 +23,23 @@ declare module "*.html" {
   var contents: any;
   export = contents;
 }
+
+declare module "*.csv" {
+  var contents: Record<string, string>[];
+  export = contents;
+}
+
+declare module "*.csv?no_header" {
+  var contents: string[][];
+  export = contents;
+}
+
+declare module "*.tsv" {
+  var contents: Record<string, string>[];
+  export = contents;
+}
+
+declare module "*.tsv?no_header" {
+  var contents: string[][];
+  export = contents;
+}

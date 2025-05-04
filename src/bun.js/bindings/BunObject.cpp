@@ -714,6 +714,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512                                         BunObject_getter_wrap_SHA512                                        DontDelete|PropertyCallback
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
+    CSV                                            BunObject_getter_wrap_CSV                                           DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback

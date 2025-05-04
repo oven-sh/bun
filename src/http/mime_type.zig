@@ -102,6 +102,8 @@ pub const wasm = MimeType.initComptime(
     "application/wasm",
     .wasm,
 );
+pub const csv = MimeType.initComptime("text/csv;charset=utf-8", .text);
+pub const tsv = MimeType.initComptime("text/tab-separated-values;charset=utf-8", .text);
 fn initComptime(comptime str: string, t: Category) MimeType {
     return MimeType{
         .value = str,

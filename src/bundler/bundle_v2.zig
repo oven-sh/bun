@@ -101,6 +101,7 @@ const URL = @import("../url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
+const CSV = @import("../csv/csv_parser.zig").CSV;
 const EntryPoints = bun.transpiler.EntryPoints;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
@@ -4305,6 +4306,50 @@ pub const ParseTask = struct {
                     temp_log.msgs.clearAndFree();
                 }
                 const root = try TOML.parse(&source, &temp_log, allocator, false);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+            },
+            .csv => {
+                const trace = bun.perf.trace("Bundler.ParseCSV");
+                defer trace.end();
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                    temp_log.msgs.clearAndFree();
+                }
+                const root = try CSV.parse(&source, &temp_log, allocator, false, .{ .header = true, .delimiter = "," });
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+            },
+            .csv_no_header => {
+                const trace = bun.perf.trace("Bundler.ParseCSVNoHeader");
+                defer trace.end();
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                    temp_log.msgs.clearAndFree();
+                }
+                const root = try CSV.parse(&source, &temp_log, allocator, false, .{ .header = false, .delimiter = "," });
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+            },
+            .tsv => {
+                const trace = bun.perf.trace("Bundler.ParseTSV");
+                defer trace.end();
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                    temp_log.msgs.clearAndFree();
+                }
+                const root = try CSV.parse(&source, &temp_log, allocator, false, .{ .header = true, .delimiter = "\t" });
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+            },
+            .tsv_no_header => {
+                const trace = bun.perf.trace("Bundler.ParseTSVNoHeader");
+                defer trace.end();
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                    temp_log.msgs.clearAndFree();
+                }
+                const root = try CSV.parse(&source, &temp_log, allocator, false, .{ .header = false, .delimiter = "\t" });
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
             },
             .text => {
@@ -9483,7 +9528,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch bun.outOfMemory();
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh, .csv, .csv_no_header, .tsv, .tsv_no_header => {},
                     }
                 }
             }

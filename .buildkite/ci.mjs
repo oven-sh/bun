@@ -641,7 +641,7 @@ function getBenchmarkStep() {
     agents: {
       queue: "build-image",
     },
-    depends_on: `${getTargetKey(platform)}-build-bun`,
+    depends_on: `linux-x64-build-bun`,
     command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }

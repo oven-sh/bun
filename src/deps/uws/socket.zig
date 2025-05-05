@@ -161,7 +161,7 @@ pub const Socket = opaque {
     }
 
     pub fn getFd(this: *Socket) bun.FD {
-        return .fromUV(us_socket_get_fd(this));
+        return .fromNative(us_socket_get_fd(this));
     }
 
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;

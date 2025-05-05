@@ -320,39 +320,94 @@ pub const Handle = struct {
         self.js.unprotect();
     }
 };
+pub const CallbackList = union(enum) {
+    ack_nack,
+    none,
+    /// js callable
+    callback: JSC.JSValue,
+    /// js array
+    callback_array: JSC.JSValue,
+
+    /// protects the callback
+    pub fn init(callback: JSC.JSValue) @This() {
+        if (callback.isCallable()) {
+            callback.protect();
+            return .{ .callback = callback };
+        }
+        return .none;
+    }
+
+    /// protects the callback
+    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) void {
+        switch (self.*) {
+            .ack_nack => unreachable,
+            .none => {
+                callback.protect();
+                self.* = .{ .callback = callback };
+            },
+            .callback => {
+                const prev = self.callback;
+                const arr = JSC.JSValue.createEmptyArray(global, 2);
+                arr.protect();
+                arr.putIndex(global, 0, prev); // add the old callback to the array
+                arr.putIndex(global, 1, callback); // add the new callback to the array
+                prev.unprotect(); // owned by the array now
+                self.* = .{ .callback_array = arr };
+            },
+            .callback_array => |arr| {
+                arr.push(global, callback);
+            },
+        }
+    }
+    fn callNextTick(self: *@This(), global: *JSC.JSGlobalObject) void {
+        switch (self.*) {
+            .ack_nack => {},
+            .none => {},
+            .callback => {
+                self.callback.callNextTick(global, .{.null});
+                self.callback.unprotect();
+                self.* = .none;
+            },
+            .callback_array => {
+                var iter = self.callback_array.arrayIterator(global);
+                while (iter.next()) |item| {
+                    item.callNextTick(global, .{.null});
+                }
+                self.callback_array.unprotect();
+                self.* = .none;
+            },
+        }
+    }
+    pub fn deinit(self: *@This()) void {
+        switch (self.*) {
+            .ack_nack => {},
+            .none => {},
+            .callback => self.callback.unprotect(),
+            .callback_array => self.callback_array.unprotect(),
+        }
+        self.* = .none;
+    }
+};
 pub const SendHandle = struct {
     // when a message has a handle, make sure it has a new SendHandle - so that if we retry sending it,
     // we only retry sending the message with the handle, not the original message.
     data: bun.io.StreamBuffer = .{},
     /// keep sending the handle until data is drained (assume it hasn't sent until data is fully drained)
     handle: ?Handle,
-    /// if zero, this indicates that the message is an ack/nack. these can send even if there is a handle waiting_for_ack.
-    /// if undefined or null, this indicates that the message does not have a callback.
-    callback: JSC.JSValue,
+    callbacks: CallbackList,
 
     pub fn isAckNack(self: *SendHandle) bool {
-        return self.callback == .zero;
+        return self.callbacks == .ack_nack;
     }
 
     /// Call the callback and deinit
     pub fn complete(self: *SendHandle, global: *JSC.JSGlobalObject) void {
-        if (self.callback.isEmptyOrUndefinedOrNull()) return;
-
-        if (self.callback.isArray()) {
-            var iter = self.callback.arrayIterator(global);
-            while (iter.next()) |item| {
-                if (item.isCallable()) {
-                    item.callNextTick(global, .{.null});
-                }
-            }
-        } else if (self.callback.isCallable()) {
-            self.callback.callNextTick(global, .{.null});
-        }
+        self.callbacks.callNextTick(global);
         self.deinit();
     }
     pub fn deinit(self: *SendHandle) void {
         self.data.deinit();
-        self.callback.unprotect();
+        self.callbacks.deinit();
         if (self.handle) |*handle| {
             handle.deinit();
         }
@@ -538,25 +593,8 @@ pub const SendQueue = struct {
         if (handle == null and self.queue.items.len > 0) {
             const last = &self.queue.items[self.queue.items.len - 1];
             if (last.handle == null and !last.isAckNack() and !(self.queue.items.len == 1 and self.write_in_progress)) {
-                if (callback.isFunction()) {
-                    // must append the callback to the end of the array if it exists
-                    if (last.callback.isUndefinedOrNull()) {
-                        // no previous callback; set it directly
-                        callback.protect(); // callback is now owned by the queue
-                        last.callback = callback;
-                    } else if (last.callback.isArray()) {
-                        // previous callback was already array; append to array
-                        last.callback.push(global, callback); // no need to protect because the callback is in the protect()ed array
-                    } else if (last.callback.isFunction()) {
-                        // previous callback was a function; convert it to an array. protect the array and unprotect the old callback. don't protect the new callback.
-                        // the array is owned by the queue and will be unprotected on deinit.
-                        const arr = JSC.JSValue.createEmptyArray(global, 2);
-                        arr.protect(); // owned by the queue
-                        arr.putIndex(global, 0, last.callback); // add the old callback to the array
-                        arr.putIndex(global, 1, callback); // add the new callback to the array
-                        last.callback.unprotect(); // owned by the array now
-                        last.callback = arr;
-                    }
+                if (callback.isCallable()) {
+                    last.callbacks.push(callback, global);
                 }
                 // caller can append now
                 return last;
@@ -564,8 +602,7 @@ pub const SendQueue = struct {
         }
 
         // fallback case: append a new message to the queue
-        callback.protect(); // now it is owned by the queue and will be unprotected on deinit.
-        self.queue.append(.{ .handle = handle, .callback = callback }) catch bun.outOfMemory();
+        self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }) catch bun.outOfMemory();
         return &self.queue.items[self.queue.items.len - 1];
     }
     /// returned pointer is invalidated if the queue is modified
@@ -727,7 +764,7 @@ pub const SendQueue = struct {
         bun.debugAssert(this.waiting_for_ack == null);
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            this.queue.append(.{ .handle = null, .callback = .null }) catch bun.outOfMemory();
+            this.queue.append(.{ .handle = null, .callbacks = .none }) catch bun.outOfMemory();
             this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
             log("IPC call continueSend() from version packet", .{});
             this.continueSend(global, .new_message_appended);
@@ -897,7 +934,7 @@ fn emitProcessErrorEvent(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame)
 }
 const FromEnum = enum { subprocess_exited, subprocess, process };
 fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.JSValue, from: FromEnum) bun.JSError!JSC.JSValue {
-    if (callback.isFunction()) {
+    if (callback.isCallable()) {
         callback.callNextTick(globalObject, .{ex});
         return .false;
     }
@@ -912,11 +949,11 @@ fn doSendErr(globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, ex: JSC.J
 pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, from: FromEnum) bun.JSError!JSValue {
     var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
-    if (handle.isFunction()) {
+    if (handle.isCallable()) {
         callback = handle;
         handle = .undefined;
         options_ = .undefined;
-    } else if (options_.isFunction()) {
+    } else if (options_.isCallable()) {
         callback = options_;
         options_ = .undefined;
     } else if (!options_.isUndefined()) {
@@ -1047,7 +1084,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 const ack = send_queue.incoming_fd != null;
 
                 const packet = if (ack) getAckPacket(send_queue.mode) else getNackPacket(send_queue.mode);
-                var handle = SendHandle{ .data = .{}, .handle = null, .callback = .zero };
+                var handle = SendHandle{ .data = .{}, .handle = null, .callbacks = .ack_nack };
                 handle.data.write(packet) catch bun.outOfMemory();
 
                 // Insert at appropriate position in send queue

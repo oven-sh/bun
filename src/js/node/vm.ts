@@ -293,8 +293,8 @@ class SourceTextModule extends Module {
     }
 
     try {
-      const modules = await SafePromiseAllReturnArrayLike(modulePromises);
-      this[kNative].link(specifiers, modules);
+      const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
+      this[kNative].link(specifiers, moduleNatives);
     } catch (e) {
       this.#error = e;
       throw e;

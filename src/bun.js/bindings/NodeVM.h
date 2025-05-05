@@ -14,6 +14,23 @@
 
 namespace Bun {
 
+class NodeVMGlobalObject;
+
+namespace NodeVM {
+
+RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source);
+bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
+String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
+JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
+NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
+bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+/// For vm.compileFunction we need to return an anonymous function expression
+///
+/// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
+JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
+
+} // namespace NodeVM
+
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
@@ -60,5 +77,34 @@ JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInThisContext);
+
+class BaseVMOptions {
+public:
+    String filename;
+    OrdinalNumber lineOffset = OrdinalNumber::fromZeroBasedInt(0);
+    OrdinalNumber columnOffset = OrdinalNumber::fromZeroBasedInt(0);
+    bool failed = false;
+
+    BaseVMOptions() = default;
+    BaseVMOptions(String filename);
+    BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset);
+
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
+    bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData);
+    bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData);
+    bool validateTimeout(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, std::optional<int64_t>& outTimeout);
+};
+
+class CompileFunctionOptions : public BaseVMOptions {
+public:
+    WTF::Vector<uint8_t> cachedData;
+    JSGlobalObject* parsingContext = nullptr;
+    JSValue contextExtensions;
+    bool produceCachedData = false;
+
+    using BaseVMOptions::BaseVMOptions;
+
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
+};
 
 } // namespace Bun

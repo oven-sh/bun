@@ -381,6 +381,11 @@ static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     scope.throwException(globalObject, createSystemError(globalObject, message, syscall, err));
 }
 
+static void throwUVError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, int err, ASCIILiteral syscall, const char* message = nullptr)
+{
+    scope.throwException(globalObject, createUVError(globalObject, err, syscall, message));
+}
+
 template<typename WebCoreType, typename OutType>
 OutType* WebCoreCast(JSC::EncodedJSValue JSValue0)
 {

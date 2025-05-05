@@ -247,9 +247,8 @@ var InternalSecureContext = class SecureContext {
   }
 };
 
-function SecureContext(options): void {
-  if (!(this instanceof SecureContext)) return new SecureContext(options);
-  InternalSecureContext.$call(this, options);
+function SecureContext(options) {
+  return new InternalSecureContext(options) as unknown as void;
 }
 
 function createSecureContext(options) {

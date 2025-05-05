@@ -2929,8 +2929,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     }
 #else
     uv_rusage_t rusage;
-    if (uv_getrusage(&rusage) != 0) {
-        throwSystemError(throwScope, globalObject, "Failed to get resource usage"_s, "uv_getrusage"_s, errno);
+    int err = uv_getrusage(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "Failed to get resource usage"_s, "uv_getrusage"_s, err);
         return {};
     }
 #endif
@@ -2971,8 +2972,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     }
 #else
     uv_rusage_t rusage;
-    if (uv_getrusage(&rusage) != 0) {
-        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, errno);
+    int err = uv_getrusage(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
         return {};
     }
 #endif

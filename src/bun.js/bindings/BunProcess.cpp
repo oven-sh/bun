@@ -3721,6 +3721,18 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 
 /* Source for Process.lut.h
 @begin processObjectTable
+  _debugEnd                        Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _fatalException                  Process_stubEmptyFunction                           Function 1
+  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
+  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
+  _kill                            Process_functionReallyKill                          Function 2
+  _linkedBinding                   Process_stubEmptyFunction                           Function 0
+  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
+  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
+  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
+  _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
   arch                             constructArch                                       PropertyCallback
@@ -3730,8 +3742,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
-  chdir                            Process_functionChdir                               Function 1
   channel                          constructProcessChannel                             PropertyCallback
+  chdir                            Process_functionChdir                               Function 1
   config                           constructProcessConfigObject                        PropertyCallback
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
@@ -3748,6 +3760,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
@@ -3764,12 +3777,12 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
-  resourceUsage                    Process_functionResourceUsage                       Function 0
   report                           constructProcessReportObject                        PropertyCallback
+  resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
+  send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
-  send                             constructProcessSend                                PropertyCallback
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
@@ -3780,19 +3793,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback
-  _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
-  _fatalException                  Process_stubEmptyFunction                           Function 1
-  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
-  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
-  _linkedBinding                   Process_stubEmptyFunction                           Function 0
-  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                           Function 0
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
-  _tickCallback                    Process_stubEmptyFunction                           Function 0
-  _kill                            Process_functionReallyKill                          Function 2
-  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

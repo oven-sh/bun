@@ -2156,9 +2156,15 @@ pub fn spawnMaybeSync(
                 }
             }
 
-            if (try args.get(globalThis, "timeout")) |val| {
-                if (val.isNumber() and val.isFinite()) {
-                    timeout = @max(val.coerce(i32, globalThis), 1);
+            if (try args.get(globalThis, "timeout")) |timeout_value| brk: {
+                if (timeout_value != .null) {
+                    if (timeout_value.isNumber() and std.math.isPositiveInf(timeout_value.asNumber())) {
+                        break :brk;
+                    }
+
+                    const timeout_int = try globalThis.validateIntegerRange(timeout_value, u64, 0, .{ .min = 0, .field_name = "timeout" });
+                    if (timeout_int > 0)
+                        timeout = @intCast(@as(u31, @truncate(timeout_int)));
                 }
             }
 
@@ -2168,7 +2174,10 @@ pub fn spawnMaybeSync(
 
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
-                    maxBuffer = val.coerce(i64, globalThis);
+                    const value = val.coerce(i64, globalThis);
+                    if (value > 0) {
+                        maxBuffer = value;
+                    }
                 }
             }
         } else {
@@ -2185,7 +2194,9 @@ pub fn spawnMaybeSync(
 
     inline for (0..stdio.len) |fd_index| {
         if (stdio[fd_index].canUseMemfd(is_sync, fd_index > 0 and maxBuffer != null)) {
-            stdio[fd_index].useMemfd(fd_index);
+            if (stdio[fd_index].useMemfd(fd_index)) {
+                jsc_vm.counters.mark(.spawn_memfd);
+            }
         }
     }
     var should_close_memfd = Environment.isLinux;
@@ -2257,6 +2268,32 @@ pub fn spawnMaybeSync(
         }
     }
 
+    // If the whole thread is supposed to do absolutely nothing while waiting,
+    // we can block the thread which reduces CPU usage.
+    //
+    // That means:
+    // - No maximum buffer
+    // - No timeout
+    // - No abort signal
+    // - No stdin, stdout, stderr pipes
+    // - No extra fds
+    // - No auto killer (for tests)
+    // - No execution time limit (for tests)
+    // - No IPC
+    // - No inspector (since they might want to press pause or step)
+    const can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (comptime Environment.isPosix and is_sync) and
+        abort_signal == null and
+        timeout == null and
+        maxBuffer == null and
+        !stdio[0].isPiped() and
+        !stdio[1].isPiped() and
+        !stdio[2].isPiped() and
+        extra_fds.items.len == 0 and
+        !jsc_vm.auto_killer.enabled and
+        !jsc_vm.jsc.hasExecutionTimeLimit() and
+        !jsc_vm.isInspectorEnabled() and
+        !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
+
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -2274,6 +2311,7 @@ pub fn spawnMaybeSync(
         },
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
+        .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -2521,22 +2559,31 @@ pub fn spawnMaybeSync(
         return out;
     }
 
-    if (comptime is_sync) {
-        switch (subprocess.process.watchOrReap()) {
-            .result => {
-                // Once everything is set up, we can add the abort listener
-                // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-                // Therefore, we must do this at the very end.
-                if (abort_signal) |signal| {
-                    signal.pendingActivityRef();
-                    subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
-                    abort_signal = null;
-                }
-            },
-            .err => {
-                subprocess.process.wait(true);
-            },
-        }
+    comptime bun.assert(is_sync);
+
+    if (can_block_entire_thread_to_reduce_cpu_usage_in_fast_path) {
+        jsc_vm.counters.mark(.spawnSync_blocking);
+        const debug_timer = Output.DebugTimer.start();
+        subprocess.process.wait(true);
+        log("spawnSync fast path took {}", .{debug_timer});
+
+        // watchOrReap will handle the already exited case for us.
+    }
+
+    switch (subprocess.process.watchOrReap()) {
+        .result => {
+            // Once everything is set up, we can add the abort listener
+            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+            // Therefore, we must do this at the very end.
+            if (abort_signal) |signal| {
+                signal.pendingActivityRef();
+                subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                abort_signal = null;
+            }
+        },
+        .err => {
+            subprocess.process.wait(true);
+        },
     }
 
     if (!subprocess.process.hasExited()) {

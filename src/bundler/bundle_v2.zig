@@ -2085,7 +2085,9 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },
@@ -2150,7 +2152,9 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },

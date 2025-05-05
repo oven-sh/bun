@@ -618,7 +618,7 @@ pub const QueryStringMap = struct {
     pub fn initWithScanner(
         allocator: std.mem.Allocator,
         _scanner: CombinedScanner,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
         var scanner = _scanner;
 
@@ -727,7 +727,7 @@ pub const QueryStringMap = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         query_string: string,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
 
         var scanner = Scanner.init(query_string);

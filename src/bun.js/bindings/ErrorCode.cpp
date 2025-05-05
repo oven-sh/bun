@@ -1384,6 +1384,24 @@ JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope& scope, JSC::JSGlobalObject* 
     return {};
 }
 
+JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const String& part, const String& input, int position)
+{
+    WTF::StringBuilder builder;
+    builder.append("The MIME syntax for a "_s);
+    builder.append(part);
+    builder.append(" in "_s);
+    builder.append(input);
+
+    builder.append(" is invalid"_s);
+    if (position != -1) {
+        builder.append(" at "_s);
+        builder.append(String::number(position));
+    }
+
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_MIME_SYNTAX, builder.toString()));
+    return {};
+}
+
 EncodedJSValue CLOSED_MESSAGE_PORT(ThrowScope& scope, JSGlobalObject* globalObject)
 {
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CLOSED_MESSAGE_PORT, "Cannot send data on closed MessagePort"_s));
@@ -1566,7 +1584,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     JSC::JSValue codeValue = callFrame->argument(0);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (!codeValue.isNumber()) {
         JSC::throwTypeError(globalObject, scope, "First argument to $ERR_ must be a number"_s);
         return {};
@@ -1575,7 +1593,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     int code = codeValue.toInt32(globalObject);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (code > Bun::NODE_ERROR_COUNT - 1 || code < 0) {
         JSC::throwTypeError(globalObject, scope, "Invalid error code. Use $ERR_* constants"_s);
         return {};
@@ -1604,6 +1622,19 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         builder.append("Invalid IP address: "_s);
         builder.append(param);
         return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, builder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_MIME_SYNTAX: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg2 = callFrame->argument(3);
+        auto str2 = arg2.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return ERR::INVALID_MIME_SYNTAX(scope, globalObject, str0, str1, str2);
     }
 
     case Bun::ErrorCode::ERR_INVALID_ADDRESS_FAMILY: {

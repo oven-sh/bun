@@ -18,6 +18,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   unlink,
   unlinkSync,
@@ -786,13 +787,21 @@ async function spawnSafe(options) {
   };
 }
 
+let _combinedPath = "";
+function getCombinedPath(execPath) {
+  if (!_combinedPath) {
+    _combinedPath = addPath(realpathSync(dirname(execPath)), process.env.PATH);
+  }
+  return _combinedPath;
+}
+
 /**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
-  const path = addPath(dirname(execPath), process.env.PATH);
+  const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
@@ -812,9 +821,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    ASAN_OPTIONS: "allow_user_segv_handler=1",
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
+
+  if (path.basename(execPath).includes("asan")) {
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
+  }
+
+  if (isWindows && bunEnv.Path) {
+    delete bunEnv.Path;
+  }
 
   if (env) {
     Object.assign(bunEnv, env);

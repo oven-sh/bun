@@ -471,7 +471,7 @@ public:
         if constexpr (SSL) {
             httpContext = (HttpContext *) us_create_bun_ssl_socket_context((us_loop_t *) loop, sizeof(HttpContextData<SSL>), options, &err);
         } else {
-            httpContext = (HttpContext *) us_create_bun_nossl_socket_context((us_loop_t *) loop, sizeof(HttpContextData<SSL>), 0);
+            httpContext = (HttpContext *) us_create_bun_nossl_socket_context((us_loop_t *) loop, sizeof(HttpContextData<SSL>));
         }
 
         if (!httpContext) {

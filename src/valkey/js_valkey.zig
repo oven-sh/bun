@@ -534,7 +534,7 @@ pub const JSValkeyClient = struct {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
-                        const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient), 0).?;
+                        const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
                         vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;

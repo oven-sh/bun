@@ -313,6 +313,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
+                        s->flags.is_ipc = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -393,7 +394,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     int length;
                     #if !defined(_WIN32)
-                    if(s->context->is_ipc) {
+                    if(s->flags.is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
                         char cmsg_buf[CMSG_SPACE(sizeof(int))];

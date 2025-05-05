@@ -284,10 +284,10 @@ struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *l
     /* This function will call us, again, with SSL = false and a bigger ext_size */
     return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
 #endif
-    return us_create_bun_nossl_socket_context(loop, context_ext_size, 0);
+    return us_create_bun_nossl_socket_context(loop, context_ext_size);
 }
 
-struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size, int is_ipc) {
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size) {
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
@@ -295,7 +295,6 @@ struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t 
     context->loop = loop;
     context->is_low_prio = default_is_low_prio_handler;
     context->ref_count = 1;
-    context->is_ipc = is_ipc;
 
     us_internal_loop_link(loop, context);
 
@@ -372,8 +371,8 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
     ls->s.flags.low_prio_state = 0;
-        ls->s.flags.is_paused = 0;
-
+    ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
@@ -408,6 +407,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.flags.low_prio_state = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
     us_internal_socket_context_link_listen_socket(context, ls);
 
@@ -438,6 +438,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.low_prio_state = 0;
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
+    socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
     
 
@@ -564,6 +565,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->flags.low_prio_state = 0;
         s->flags.allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         s->flags.is_paused = 0;
+        s->flags.is_ipc = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(s->context, s);
 
@@ -740,6 +742,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.low_prio_state = 0;
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
+    connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);

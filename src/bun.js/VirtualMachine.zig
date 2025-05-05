@@ -3404,7 +3404,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize), 1).?;
+            const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize)).?;
             IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
 
             var instance = IPCInstance.new(.{
@@ -3417,7 +3417,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data, null) orelse {
+            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});

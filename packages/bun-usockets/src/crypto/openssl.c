@@ -1537,8 +1537,7 @@ us_internal_bun_create_ssl_socket_context(
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
           loop,
-          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          0);
+          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size);
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;

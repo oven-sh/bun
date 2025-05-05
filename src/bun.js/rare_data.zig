@@ -435,7 +435,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    const ctx = uws.us_create_bun_nossl_socket_context(vm.event_loop_handle.?, @sizeOf(usize), 1).?;
+    const ctx = uws.us_create_bun_nossl_socket_context(vm.event_loop_handle.?, @sizeOf(usize)).?;
     IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;

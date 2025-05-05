@@ -1953,7 +1953,7 @@ pub const PostgresSQLConnection = struct {
             defer hostname.deinit();
 
             const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), 0).?;
+                const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection)).?;
                 uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                 vm.rareData().postgresql_context.tcp = ctx_;
                 break :brk ctx_;

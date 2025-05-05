@@ -2362,6 +2362,7 @@ pub fn spawnMaybeSync(
                 jsc_vm.rareData().spawnIPCContext(jsc_vm),
                 @sizeOf(*IPC.SendQueue),
                 posix_ipc_fd.cast(),
+                1,
             )) |socket| {
                 subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);

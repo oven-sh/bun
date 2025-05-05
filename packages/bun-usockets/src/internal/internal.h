@@ -170,6 +170,8 @@ struct us_socket_flags {
     bool allow_half_open: 1; 
     /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2 = was in low-prio queue in this iteration */
     unsigned char low_prio_state: 2; 
+    /* If true, the socket should be read using readmsg to support receiving file descriptors */
+    bool is_ipc: 1;
 
 } __attribute__((packed));
 
@@ -297,7 +299,6 @@ struct us_socket_context_t {
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
-  int is_ipc;
   
 };
 

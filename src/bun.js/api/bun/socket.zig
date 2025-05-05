@@ -696,7 +696,7 @@ pub const Listener = struct {
         var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = switch (ssl_enabled) {
             true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
-            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize), 0),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
         } orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
@@ -1211,7 +1211,7 @@ pub const Listener = struct {
         var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = switch (ssl_enabled) {
             true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
-            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize), 0),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
         } orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
@@ -1474,7 +1474,7 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
+                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },
             }

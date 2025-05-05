@@ -284,7 +284,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
         return 0;
     }
 
-    return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+    return us_socket_from_fd(ctx, socket_ext_size, fds[0], 0);
 #endif
 }
 
@@ -302,7 +302,7 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
+struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
 #else
@@ -321,6 +321,8 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
+    s->flags.is_ipc = 0;
+    s->flags.is_ipc = ipc;
     s->connect_state = NULL;
 
     /* We always use nodelay */

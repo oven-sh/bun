@@ -19,7 +19,7 @@ describe("next-auth", () => {
       },
     });
 
-    await runBunInstall(bunEnv, testDir);
+    await runBunInstall(bunEnv, testDir, { savesLockfile: false });
 
     const result = bunRun(join(testDir, "server.js"), {
       AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",

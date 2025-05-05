@@ -139,8 +139,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     JSValue nodeWorkerObject {};
-    if (JSValue::strictEqual(lexicalGlobalObject, callFrame->argument(2), globalObject->nodeWorkerObjectSymbol())) {
-        nodeWorkerObject = callFrame->argument(3);
+    if (callFrame->argumentCount() == 3) {
+        nodeWorkerObject = callFrame->argument(2);
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 

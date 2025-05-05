@@ -7,7 +7,16 @@ const EventEmitter = require("node:events");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const { validateObject, validateBoolean } = require("internal/validators");
 
-const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
+const {
+  MessageChannel,
+  BroadcastChannel,
+  Worker: WebWorker,
+} = globalThis as typeof globalThis & {
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
+};
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -15,13 +24,11 @@ const {
   0: _workerData,
   1: _threadId,
   2: _receiveMessageOnPort,
-  3: kNodeWorkerObject,
-  4: environmentData,
+  3: environmentData,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
   (port: unknown) => unknown,
-  symbol,
   Map<unknown, unknown>,
 ];
 
@@ -250,16 +257,7 @@ class Worker extends EventEmitter {
       }
     }
     try {
-      // The native WebWorker constructor fires the 'worker' event on the process when the worker is
-      // successfully created. For worker_threads, we want to fire that event with the
-      // worker_threads object instead of the Web Worker object.
-      //
-      // This is implemented by accepting two extra arguments in the native constructor: a symbol to
-      // prove we are the real worker_threads constructor, and if so, the worker_threads object as
-      // the last parameter.
-      this.#worker = new (WebWorker as new (
-        ...args: [...ConstructorParameters<typeof WebWorker>, nodeWorkerObjectSymbol: symbol, nodeWorker: Worker]
-      ) => WebWorker)(filename, options as Bun.WorkerOptions, kNodeWorkerObject, this);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);

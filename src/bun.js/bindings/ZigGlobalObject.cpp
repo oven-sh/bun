@@ -3374,10 +3374,6 @@ void GlobalObject::finishCreation(VM& vm)
     m_BoundEmitFunctionStructure.initLater([](const LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::BoundEmitFunction::createStructure(init.vm, init.owner));
     });
-    m_nodeWorkerObjectSymbol.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-        // This should not be visible to user code
-        init.set(Symbol::createWithDescription(init.vm, "node worker object symbol"_s));
-    });
 
     configureNodeVM(vm, this);
 

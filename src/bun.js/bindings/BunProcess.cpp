@@ -2834,6 +2834,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_execArgv);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
+    thisObject->m_resourceUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
@@ -2859,6 +2860,30 @@ static Structure* constructCPUUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* g
         offset);
     return structure;
 }
+
+static Structure* constructResourceUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 16);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "userCPUTime"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "systemCPUTime"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "maxRSS"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "sharedMemorySize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "unsharedDataSize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "unsharedStackSize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "minorPageFault"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "majorPageFault"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "swappedOut"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "fsRead"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "fsWrite"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ipcSent"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ipcReceived"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "signalsCount"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "voluntaryContextSwitches"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "involuntaryContextSwitches"_s), 0, offset);
+    return structure;
+}
+
 static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
@@ -2891,6 +2916,49 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+#if !OS(WINDOWS)
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get resource usage"_s, "getrusage"_s, errno);
+        return {};
+    }
+#else
+    uv_rusage_t rusage;
+    if (uv_getrusage(&rusage) != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get resource usage"_s, "uv_getrusage"_s, errno);
+        return {};
+    }
+#endif
+    Process* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    Structure* resourceUsageStructure = process->resourceUsageStructure();
+    JSObject* result = JSC::constructEmptyObject(vm, resourceUsageStructure);
+
+    result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
+    result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+    result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
+    result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
+    result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));
+    result->putDirectOffset(vm, 6, jsNumber(rusage.ru_minflt));
+    result->putDirectOffset(vm, 7, jsNumber(rusage.ru_majflt));
+    result->putDirectOffset(vm, 8, jsNumber(rusage.ru_nswap));
+    result->putDirectOffset(vm, 9, jsNumber(rusage.ru_inblock));
+    result->putDirectOffset(vm, 10, jsNumber(rusage.ru_oublock));
+    result->putDirectOffset(vm, 11, jsNumber(rusage.ru_msgsnd));
+    result->putDirectOffset(vm, 12, jsNumber(rusage.ru_msgrcv));
+    result->putDirectOffset(vm, 13, jsNumber(rusage.ru_nsignals));
+    result->putDirectOffset(vm, 14, jsNumber(rusage.ru_nvcsw));
+    result->putDirectOffset(vm, 15, jsNumber(rusage.ru_nivcsw));
+
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2913,10 +2981,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 
     Structure* cpuUsageStructure = process->cpuUsageStructure();
 
-    constexpr double MICROS_PER_SEC = 1000000.0;
-
-    double user = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
@@ -3698,6 +3764,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
+  resourceUsage                    Process_functionResourceUsage                       Function 0
   report                           constructProcessReportObject                        PropertyCallback
   revision                         constructRevision                                   PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
@@ -3756,6 +3823,10 @@ void Process::finishCreation(JSC::VM& vm)
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
+    });
+
+    m_resourceUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
+        init.set(constructResourceUsageStructure(init.vm, init.owner->globalObject()));
     });
 
     m_memoryUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {

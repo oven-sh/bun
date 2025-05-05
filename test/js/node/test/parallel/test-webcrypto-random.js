@@ -11,8 +11,10 @@ const { crypto } = globalThis;
 
 [
   undefined, null, '', 1, {}, [],
-  new Float32Array(1),
-  new Float64Array(1),
+
+  // These types are allowed in Bun
+  // new Float32Array(1),
+  // new Float64Array(1),
   // new DataView(new ArrayBuffer(1)),
 ].forEach((i) => {
   assert.throws(
@@ -36,6 +38,10 @@ const intTypedConstructors = [
   Uint8ClampedArray,
   BigInt64Array,
   BigUint64Array,
+
+  Float16Array,
+  Float32Array,
+  Float64Array,
 ];
 
 for (const ctor of intTypedConstructors) {
@@ -62,7 +68,7 @@ for (const ctor of intTypedConstructors) {
     // Ignore if error here.
   }
 
-  // we allow more than 65536 bytes
+  // Bun allows more than 65536 bytes
 
   // if (kData !== undefined) {
   //   assert.throws(

@@ -58,13 +58,6 @@ pub fn getRandomValues(
         return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
     };
 
-    switch (array_buffer.typed_array_type) {
-        .Float16Array, .Float32Array, .Float64Array, .DataView => {
-            return globalThis.throwDOMException(.TypeMismatchError, "The data argument must be an integer-type TypedArray", .{});
-        },
-        else => {},
-    }
-
     const slice = array_buffer.byteSlice();
 
     randomData(globalThis, slice.ptr, slice.len);

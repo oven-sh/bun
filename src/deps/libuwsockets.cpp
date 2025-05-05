@@ -1784,7 +1784,7 @@ __attribute__((callback (corker, ctx)))
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
-  int us_socket_get_fd(us_socket_r s) {
+  LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
     return us_poll_fd(&s->p);
   }
 

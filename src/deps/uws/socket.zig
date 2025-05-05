@@ -196,5 +196,9 @@ pub const Socket = opaque {
     extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 
     extern fn us_socket_sendfile_needs_more(socket: *Socket) void;
-    extern fn us_socket_get_fd(s: ?*Socket) i32;
+    extern fn us_socket_get_fd(s: ?*Socket) LIBUS_SOCKET_DESCRIPTOR;
+    const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
+        true => *const anyopaque,
+        false => i32,
+    };
 };

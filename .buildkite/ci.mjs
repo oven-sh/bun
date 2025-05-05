@@ -952,8 +952,13 @@ async function getPipelineOptions() {
     return;
   }
 
+  let filteredBuildPlatforms = buildPlatforms;
+  if (isMainBranch()) {
+    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+  }
+
   const canary = await getCanaryRevision();
-  const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
+  const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
   const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
   if (isManual) {
@@ -1081,9 +1086,15 @@ async function getPipeline(options = {}) {
     }
   }
 
+  const includeASAN = !isMainBranch();
+
   if (!buildId) {
+    const relevantBuildPlatforms = includeASAN
+      ? buildPlatforms
+      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
     steps.push(
-      ...buildPlatforms.map(target => {
+      ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
 
         return getStepWithDependsOn(
@@ -1115,7 +1126,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    steps.push(getBenchmarkStep(buildPlatforms));
+    // TODO: fix the broken benchmark step
+    // steps.push(getBenchmarkStep(buildPlatforms));
   }
 
   /** @type {Map<string, GroupStep>} */

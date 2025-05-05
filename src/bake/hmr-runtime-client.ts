@@ -1,21 +1,30 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import './debug';
+import { editCssArray, editCssContent } from "./client/css-reloader";
+import { DataViewReader } from "./client/data-view";
+import { inspect } from "./client/inspect";
+import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
 import {
-  loadModuleAsync,
-  replaceModules,
-  onServerSideReload,
-  setRefreshRuntime,
+  addMapping,
+  clearDisconnectedSourceMaps,
+  configureSourceMapGCSize,
+  getKnownSourceMaps,
+  SourceMapURL,
+} from "./client/stack-trace";
+import { initWebSocket } from "./client/websocket";
+import "./debug";
+import { MessageId } from "./generated";
+import {
   emitEvent,
   fullReload,
+  loadModuleAsync,
+  onServerSideReload,
+  replaceModules,
+  setRefreshRuntime,
 } from "./hmr-module";
-import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
-import { DataViewReader } from "./client/data-view";
-import { initWebSocket } from "./client/websocket";
-import { MessageId } from "./generated";
-import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
-import { addMapping, clearDisconnectedSourceMaps, configureSourceMapGCSize, getKnownSourceMaps, SourceMapURL } from './client/stack-trace';
+
+const consoleErrorWithoutInspector = console.error;
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -75,7 +84,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
     console.error(e);
     fullReload();
   });
-}
+};
 
 let isFirstRun = true;
 const handlers = {
@@ -97,12 +106,12 @@ const handlers = {
       return;
     }
 
-    ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
-    ws.send("n" + location.pathname); // IncomingMessageId.set_url
+    ws.sendBuffered("she"); // IncomingMessageId.subscribe with hot_update and errors
+    ws.sendBuffered("n" + location.pathname); // IncomingMessageId.set_url
 
-    const fn = globalThis[Symbol.for('bun:loadData')];
+    const fn = globalThis[Symbol.for("bun:loadData")];
     if (fn) {
-      document.removeEventListener('visibilitychange', fn);
+      document.removeEventListener("visibilitychange", fn);
       ws.send("i" + config.generation);
     }
   },
@@ -170,13 +179,13 @@ const handlers = {
     if (reader.hasMoreData()) {
       const sourceMapSize = reader.u32();
       const rest = reader.rest();
-      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16))
+      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
       DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
-      const blob = new Blob([rest], { type: 'application/javascript' });
+      const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
-      const script = document.createElement('script');
+      const script = document.createElement("script");
       scriptTags.set(sourceMapId, [script, sourceMapSize]);
-      script.className = 'bun-hmr-script';
+      script.className = "bun-hmr-script";
       script.src = url;
       script.onerror = onHmrLoadError;
       document.head.appendChild(script);
@@ -203,7 +212,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
   } else if (error) {
     console.error(error);
   } else {
-    console.error('Failed to load HMR script', event);
+    console.error("Failed to load HMR script", event);
   }
   fullReload();
 }
@@ -213,7 +222,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
   const truePushState = History.prototype.pushState;
   History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
     truePushState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    ws.sendBuffered("n" + location.pathname);
   };
   const trueReplaceState = History.prototype.replaceState;
   History.prototype.replaceState = function replaceState(
@@ -223,7 +232,7 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
     url?: string | null,
   ) {
     trueReplaceState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    ws.sendBuffered("n" + location.pathname);
   };
 }
 
@@ -235,7 +244,7 @@ window.addEventListener("unhandledrejection", event => {
 });
 
 {
-  let reloadError: any = sessionStorage.getItem("bun:hmr:message");
+  let reloadError: any = sessionStorage?.getItem?.("bun:hmr:message");
   if (reloadError) {
     sessionStorage.removeItem("bun:hmr:message");
     reloadError = JSON.parse(reloadError);
@@ -244,6 +253,55 @@ window.addEventListener("unhandledrejection", event => {
     } else {
       console.error(reloadError.message);
     }
+  }
+}
+
+// This implements streaming console.log and console.error from the browser to the server.
+//
+//   Bun.serve({
+//     development: {
+//       console: true,
+//       ^^^^^^^^^^^^^^^^
+//     },
+//   })
+//
+
+if (config.console) {
+  // Ensure it only runs once, and avoid the extra noise in the HTML.
+  const originalLog = console.log;
+
+  function websocketInspect(logLevel: "l" | "e", values: any[]) {
+    let str = "l" + logLevel;
+    let first = true;
+    for (const value of values) {
+      if (first) {
+        first = false;
+      } else {
+        str += " ";
+      }
+
+      if (typeof value === "string") {
+        str += value;
+      } else {
+        str += inspect(value);
+      }
+    }
+
+    ws.sendBuffered(str);
+  }
+
+  if (typeof originalLog === "function") {
+    console.log = function log(...args: any[]) {
+      originalLog(...args);
+      websocketInspect("l", args);
+    };
+  }
+
+  if (typeof consoleErrorWithoutInspector === "function") {
+    console.error = function error(...args: any[]) {
+      consoleErrorWithoutInspector(...args);
+      websocketInspect("e", args);
+    };
   }
 }
 
@@ -267,6 +325,8 @@ try {
 
   emitEvent("bun:ready", null);
 } catch (e) {
-  console.error(e);
+  // Use consoleErrorWithoutInspector to avoid double-reporting errors.
+  consoleErrorWithoutInspector(e);
+
   onRuntimeError(e, true, false);
 }

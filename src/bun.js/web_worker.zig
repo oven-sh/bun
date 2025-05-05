@@ -161,7 +161,7 @@ pub const WebWorker = struct {
         }
 
         var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global) catch {
+            const out = (logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point") catch bun.outOfMemory()).toBunString(parent.global) catch {
                 error_message.* = bun.String.static("unexpected exception");
                 return null;
             };
@@ -334,7 +334,7 @@ pub const WebWorker = struct {
         JSC.markBinding(@src());
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
-        const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
+        const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker") catch bun.outOfMemory();
         const str = err.toBunString(vm.global) catch @panic("unexpected exception");
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);

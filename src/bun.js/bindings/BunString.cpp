@@ -758,3 +758,16 @@ extern "C" void JSC__JSValue__putBunString(
     Identifier id = Identifier::fromString(vm, str);
     target->putDirect(vm, id, value, 0);
 }
+
+bool BunString::isEmpty() const
+{
+    switch (this->tag) {
+    case BunStringTag::WTFStringImpl:
+        return impl.wtf->isEmpty();
+    case BunStringTag::ZigString:
+    case BunStringTag::StaticZigString:
+        return impl.zig.len == 0;
+    default:
+        return true;
+    }
+}

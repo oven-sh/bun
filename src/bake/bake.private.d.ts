@@ -24,9 +24,13 @@ interface Config {
    * the framework entry point, as well as every client component.
    */
   roots: FileIndex[];
+  /**
+   * If true, the client will receive console logs from the server.
+   */
+  console: boolean;
 }
 
-/** 
+/**
  * Set globally in debug builds.
  * Removed using --drop=ASSERT in releases.
  */

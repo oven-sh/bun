@@ -203,8 +203,11 @@ pub const HotMap = struct {
 
     pub fn remove(this: *HotMap, key: []const u8) void {
         const entry = this._map.getEntry(key) orelse return;
-        bun.default_allocator.free(entry.key_ptr.*);
+        const key_to_free = entry.key_ptr.*;
+        const is_same_slice = key_to_free.ptr == key.ptr and key_to_free.len == key.len;
         _ = this._map.orderedRemove(key);
+        bun.debugAssert(!is_same_slice);
+        bun.default_allocator.free(key_to_free);
     }
 };
 

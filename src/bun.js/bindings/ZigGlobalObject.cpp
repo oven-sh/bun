@@ -4045,11 +4045,13 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::Identifier resolvedIdentifier;
 
+    auto moduleName = moduleNameValue->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        auto keyString = moduleNameValue->value(globalObject);
-        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(keyString, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
-            auto resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
+        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier,
                 JSC::jsUndefined(), parameters, JSC::jsUndefined());
@@ -4061,48 +4063,65 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         }
     }
 
-    auto sourceURL = sourceOrigin.url();
-    ErrorableString resolved;
-    BunString moduleNameZ;
+    {
+        ErrorableString resolved;
+        memset(&resolved, 0, sizeof(resolved));
 
-    String moduleName = moduleNameValue->value(globalObject);
-#if ASSERT_ENABLED
-    auto startRefCount = moduleName.impl()->refCount();
-#endif
-    if (moduleName.startsWith("file://"_s)) {
-        auto url = WTF::URL(moduleName);
-        if (url.isValid() && !url.isEmpty()) {
-            moduleNameZ = Bun::toStringRef(url.fileSystemPath());
+        auto sourceURL = sourceOrigin.url();
+        BunString moduleNameZ;
+        String moduleStringHolder;
+        if (moduleName->startsWith("file://"_s)) {
+            auto url = WTF::URL(moduleName);
+            if (url.isValid() && !url.isEmpty()) {
+                moduleStringHolder = url.fileSystemPath();
+                moduleNameZ = Bun::toStringRef(moduleStringHolder);
+            } else {
+                moduleNameZ = Bun::toStringRef(moduleName);
+            }
         } else {
             moduleNameZ = Bun::toStringRef(moduleName);
         }
-    } else {
-        moduleNameZ = Bun::toStringRef(moduleName);
-    }
-    auto sourceOriginZ = sourceURL.isEmpty() ? BunStringCwd
-        : sourceURL.protocolIsFile()
-        ? Bun::toStringRef(sourceURL.fileSystemPath())
-        : sourceURL.protocol() == "builtin"_s
-        ? // On Windows, drive letter from standalone mode gets put into the URL host
-        Bun::toStringRef(sourceURL.string().substring(10 /* builtin:// */))
-        : Bun::toStringRef(sourceURL.path().toString());
-    ZigString queryString = { 0, 0 };
-    resolved.success = false;
-    Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
-    moduleNameZ.deref();
-    sourceOriginZ.deref();
-    ASSERT(startRefCount == moduleName.impl()->refCount());
-    if (!resolved.success) {
-        throwException(scope, resolved.result.err, globalObject);
-        auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-        return promise->rejectWithCaughtException(globalObject, scope);
-    }
 
-    JSC::Identifier resolvedIdentifier;
-    if (queryString.len == 0) {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString(BunString::ZeroCopy));
-    } else {
-        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+        ZigString queryString = { 0, 0 };
+        String sourceOriginStringHolder;
+
+        if (sourceURL.isEmpty()) {
+            sourceOriginStringHolder = String("."_s);
+        } else if (sourceURL.protocolIsFile()) {
+            sourceOriginStringHolder = sourceURL.fileSystemPath();
+        } else if (sourceURL.protocol() == "builtin"_s) {
+            ASSERT(sourceURL.string().startsWith("builtin://"_s));
+            sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);
+        } else {
+            sourceOriginStringHolder = sourceURL.path().toString();
+        }
+
+        auto sourceOriginZ = Bun::toStringRef(sourceOriginStringHolder);
+
+        Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
+
+        // If resolution failed, make sure it becomes a pending exception
+        if (UNLIKELY(!resolved.success && !scope.exception())) {
+            throwException(scope, resolved.result.err, globalObject);
+        }
+
+        // And convert that pending exception into a rejected promise.
+        if (UNLIKELY(scope.exception())) {
+            auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+            moduleNameZ.deref();
+            sourceOriginZ.deref();
+
+            return promise->rejectWithCaughtException(globalObject, scope);
+        }
+
+        if (queryString.len == 0) {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
+        } else {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+        }
+
+        moduleNameZ.deref();
+        sourceOriginZ.deref();
     }
 
     // This gets passed through the "parameters" argument to moduleLoaderFetch.

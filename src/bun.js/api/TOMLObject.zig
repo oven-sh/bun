@@ -31,7 +31,7 @@ pub fn parse(
     defer input_slice.deinit();
     var source = logger.Source.initPathString("input.toml", input_slice.slice());
     const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
+        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse toml"));
     };
 
     // for now...
@@ -46,7 +46,7 @@ pub fn parse(
             .mangled_props = null,
         },
     ) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
+        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to print toml"));
     };
 
     const slice = writer.ctx.buffer.slice();

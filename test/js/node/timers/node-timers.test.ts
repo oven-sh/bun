@@ -250,3 +250,7 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
     5000,
   );
 });
+
+it("should defer microtasks when an exception is thrown in an immediate", async () => {
+  expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
+});

@@ -129,8 +129,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     String scriptUrl;
-    if (auto* url = jsDynamicCast<JSDOMURL*>(argument0.value())) {
-        scriptUrl = url->wrapped().href().string();
+    if (auto* domUrl = jsDynamicCast<JSDOMURL*>(argument0.value()); domUrl && domUrl->wrapped().href().isValid()) {
+        scriptUrl = domUrl->wrapped().href().string();
     } else if (argument0.value().isString()) {
         scriptUrl = argument0.value().getString(lexicalGlobalObject);
     } else {

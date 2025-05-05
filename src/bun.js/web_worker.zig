@@ -452,6 +452,8 @@ pub const WebWorker = struct {
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});
+        // TODO(@190n) call dispatchOnline earlier (basically as soon as spin() starts, before
+        // we start running JS)
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
         this.setStatus(.running);

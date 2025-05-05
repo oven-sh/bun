@@ -442,12 +442,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     JSC::JSValue millisecondsValue = callFrame->argument(0);
 
-    // HACK to try mimicking an ASan failure in CI
-    if (millisecondsValue.isInt32() && millisecondsValue.asInt32() == 5386) {
-        auto* crash = new char[100];
-        return JSValue::encode(jsNumber(crash[callFrame->argument(1).asInt32()]));
-    }
-
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
         auto now = MonotonicTime::now();
         double milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();

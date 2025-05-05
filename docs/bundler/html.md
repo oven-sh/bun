@@ -194,15 +194,15 @@ import "tailwindcss";
 
 Only one of those are necessary, not all three.
 
-## `--console` streams console logs from the browser to the terminal
+### Echo console logs from browser to terminal
 
 Bun's dev server supports streaming console logs from the browser to the terminal.
 
 To enable, pass the `--console` CLI flag.
 
-{% bunDevServerTerminal alt="bun --console ./index.html" path="./index.html" routes="" /%}
+{% bunDevServerTerminal alt="bun ./index.html --console" path="./index.html --console" routes="" /%}
 
-Each call to `console.log` or `console.error` will be broadcast to the terminal that started the server.
+Each call to `console.log` or `console.error` will be broadcast to the terminal that started the server. This is useful to see errors from the browser in the same place you run your server. This is also useful for AI agents that watch terminal output.
 
 Internally, this reuses the existing WebSocket connection from hot module reloading to send the logs.
 

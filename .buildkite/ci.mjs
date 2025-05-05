@@ -952,19 +952,14 @@ async function getPipelineOptions() {
     return;
   }
 
-  const canary = await getCanaryRevision();
-  const buildPlatformsMap = new Map(buildPlatforms.map(platform => [getTargetKey(platform), platform]));
-  const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
-
-  // No need to run the asan builds when not building a PR.
-  if (!canary) {
-    for (const platform of buildPlatforms) {
-      if (platform.profile === "asan") {
-        const key = getTargetKey(platform);
-        buildPlatformsMap.delete(key);
-      }
-    }
+  let filteredBuildPlatforms = buildPlatforms;
+  if (isMainBranch()) {
+    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
   }
+
+  const canary = await getCanaryRevision();
+  const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
+  const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
 
   if (isManual) {
     const { fields } = getOptionsStep();

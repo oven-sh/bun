@@ -232,9 +232,8 @@ pub const JSValkeyClient = struct {
         return .undefined;
     }
 
-    pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+    pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
         js.onconnectSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *JSC.JSGlobalObject) JSValue {
@@ -244,9 +243,8 @@ pub const JSValkeyClient = struct {
         return .undefined;
     }
 
-    pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+    pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
         js.oncloseSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive

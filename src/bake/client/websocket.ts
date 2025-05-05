@@ -57,10 +57,25 @@ export function getMainWebSocket(): WebSocketWrapper | null {
   return mainWebSocket;
 }
 
+// Modern browsers allow the WebSocket constructor to receive an http: or https: URL and implicitly convert it to a ws: or wss: URL.
+// But, older browsers didn't support this, so we normalize the URL manually.
+let normalizeWebSocketURL = (url: string) => {
+  const origin = globalThis?.location?.origin ?? globalThis?.location?.href ?? "http://localhost:3000";
+  let object = new URL(url, origin);
+  if (object.protocol === "https:") {
+    object.protocol = "wss:";
+  } else if (object.protocol === "http:") {
+    object.protocol = "ws:";
+  }
+
+  return object.toString();
+};
+
 export function initWebSocket(
   handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
   { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
+  url = normalizeWebSocketURL(url);
   let firstConnection = true;
   let closed = false;
 

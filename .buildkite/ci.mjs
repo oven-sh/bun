@@ -634,15 +634,15 @@ function getReleaseStep(buildPlatforms, options) {
  * @param {Platform[]} buildPlatforms
  * @returns {Step}
  */
-function getBenchmarkStep(buildPlatforms) {
+function getBenchmarkStep() {
   return {
     key: "benchmark",
     label: "📊",
     agents: {
       queue: "build-image",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
-    command: "node .buildkite/scripts/upload-benchmark.ts",
+    depends_on: `${getTargetKey(platform)}-build-bun`,
+    command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }
 
@@ -1126,9 +1126,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    // TODO: fix the broken benchmark step
-    // steps.push(getBenchmarkStep(buildPlatforms));
   }
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

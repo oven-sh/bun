@@ -79,7 +79,7 @@ namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
-static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
+static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
     return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->ArrayBufferSink();
 }
@@ -698,61 +698,61 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
-    ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
-    Cookie                                         constructCookieObject                                              DontDelete|ReadOnly|PropertyCallback
-    CookieMap                                      constructCookieMapObject                                           DontDelete|ReadOnly|PropertyCallback
-    CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
-    FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
-    FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
-    Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
-    MD4                                            BunObject_getter_wrap_MD4                                           DontDelete|PropertyCallback
-    MD5                                            BunObject_getter_wrap_MD5                                           DontDelete|PropertyCallback
-    SHA1                                           BunObject_getter_wrap_SHA1                                          DontDelete|PropertyCallback
-    SHA224                                         BunObject_getter_wrap_SHA224                                        DontDelete|PropertyCallback
-    SHA256                                         BunObject_getter_wrap_SHA256                                        DontDelete|PropertyCallback
-    SHA384                                         BunObject_getter_wrap_SHA384                                        DontDelete|PropertyCallback
-    SHA512                                         BunObject_getter_wrap_SHA512                                        DontDelete|PropertyCallback
-    SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
-    TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
-    Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
-    embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
-    S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
-    s3                                             BunObject_getter_wrap_s3                                            DontDelete|PropertyCallback
-    CSRF                                           BunObject_getter_wrap_CSRF                                          DontDelete|PropertyCallback
+    ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
+    Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
+    CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
+    CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
+    FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
+    FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
+    Glob                                           BunObject_lazyPropCb_wrap_Glob                                      DontDelete|PropertyCallback
+    MD4                                            BunObject_lazyPropCb_wrap_MD4                                       DontDelete|PropertyCallback
+    MD5                                            BunObject_lazyPropCb_wrap_MD5                                       DontDelete|PropertyCallback
+    SHA1                                           BunObject_lazyPropCb_wrap_SHA1                                      DontDelete|PropertyCallback
+    SHA224                                         BunObject_lazyPropCb_wrap_SHA224                                    DontDelete|PropertyCallback
+    SHA256                                         BunObject_lazyPropCb_wrap_SHA256                                    DontDelete|PropertyCallback
+    SHA384                                         BunObject_lazyPropCb_wrap_SHA384                                    DontDelete|PropertyCallback
+    SHA512                                         BunObject_lazyPropCb_wrap_SHA512                                    DontDelete|PropertyCallback
+    SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
+    TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
+    Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
+    embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
+    S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
+    s3                                             BunObject_lazyPropCb_wrap_s3                                        DontDelete|PropertyCallback
+    CSRF                                           BunObject_lazyPropCb_wrap_CSRF                                      DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
-    argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
+    argv                                           BunObject_lazyPropCb_wrap_argv                                      DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
-    cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
+    cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
-    deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
+    deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
-    enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
+    enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
-    fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
-    file                                           BunObject_callback_file                                               DontDelete|Function 1
-    fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
+    fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
+    file                                           BunObject_callback_file                                             DontDelete|Function 1
+    fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
-    hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
+    hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
-    inspect                                        BunObject_getter_wrap_inspect                                       DontDelete|PropertyCallback
+    inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
-    udpSocket                                        BunObject_callback_udpSocket                                      DontDelete|Function 1
-    main                                           BunObject_getter_wrap_main                                          DontDelete|CustomAccessor|ReadOnly
+    udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
+    main                                           bunObjectMain                                                       DontDelete|CustomAccessor
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
-    origin                                         BunObject_getter_wrap_origin                                        DontEnum|ReadOnly|DontDelete|PropertyCallback
+    origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
@@ -770,7 +770,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
-    semver                                         BunObject_getter_wrap_semver                                        ReadOnly|DontDelete|PropertyCallback
+    semver                                         BunObject_lazyPropCb_wrap_semver                                    ReadOnly|DontDelete|PropertyCallback
     sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
     postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
     SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
@@ -781,15 +781,15 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
     spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
-    stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
-    stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
-    stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
+    stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
+    stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
+    stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
-    unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
+    unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
-    RedisClient                                   BunObject_getter_wrap_ValkeyClient                                  DontDelete|PropertyCallback
-    redis                                         BunObject_getter_wrap_valkey                                        DontDelete|PropertyCallback
+    RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
+    redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
 @end
 */
@@ -834,20 +834,21 @@ public:
     }
 };
 
-extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*, JSC::JSObject*);
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
+extern "C" bool SYSV_ABI BunObject_setter_main(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
-static JSC::EncodedJSValue SYSV_ABI BunObject_getter_wrap_main(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisEncoded, JSC::PropertyName prop)
+static JSC_DEFINE_CUSTOM_GETTER(bunObjectMain, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisEncoded, PropertyName propertyName))
 {
-    (void)prop;
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    auto thisValue = JSValue::decode(thisEncoded);
-    auto* thisObject = thisValue.getObject();
-    if (!thisObject) {
-        scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisValue, "Object"_s));
-        return {};
-    }
+    (void)thisEncoded;
+    (void)propertyName;
+    return BunObject_getter_main(globalObject);
+}
 
-    return BunObject_getter_main(globalObject, thisObject);
+static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisEncoded, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    (void)thisEncoded;
+    (void)propertyName;
+    return BunObject_setter_main(globalObject, encodedValue);
 }
 
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator

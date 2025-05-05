@@ -191,7 +191,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
                                                .value_or(std::span<WTF::StringImpl*> {});
     void* impl = WebWorker__create(
         worker.ptr(),
-        defaultGlobalObject(context.jsGlobalObject())->bunVM(),
+        bunVM(context.jsGlobalObject()),
         nameStr,
         urlStr,
         &errorMessage,

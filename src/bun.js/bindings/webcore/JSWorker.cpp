@@ -207,13 +207,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             if (transferListValue.isObject()) {
                 JSC::JSObject* transferListObject = transferListValue.getObject();
                 if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
-                    for (unsigned i = 0; i < transferListArray->length(); i++) {
-                        JSC::JSValue transferListValue = transferListArray->get(lexicalGlobalObject, i);
-                        if (transferListValue.isObject()) {
-                            JSC::JSObject* transferListObject = transferListValue.getObject();
-                            transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                    JSC::forEachInArrayLike(globalObject, transferListArray, [&](JSValue transferValue) -> bool {
+                        if (auto* transferObject = transferValue.getObject()) {
+                            transferList.append({ vm, transferObject });
                         }
-                    }
+                        return true;
+                    });
                 }
             }
         }

@@ -313,7 +313,7 @@ private:
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
             }
-
+        
             auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedData != nullptr) {

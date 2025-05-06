@@ -5,6 +5,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
 const String = bun.String;
+const JSError = bun.JSError;
 
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
@@ -267,7 +268,7 @@ pub const JSPromise = opaque {
         JSC__JSPromise__resolve(this, globalThis, value);
     }
 
-    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -276,7 +277,9 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__reject(this, globalThis, value);
+        const err = value catch |err| globalThis.takeException(err);
+
+        JSC__JSPromise__reject(this, globalThis, err);
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {

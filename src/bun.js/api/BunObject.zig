@@ -1023,8 +1023,10 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         break :brk config;
     };
 
+    const vm = globalObject.bunVM();
+
     if (config.allow_hot) {
-        if (globalObject.bunVM().hotMap()) |hot| {
+        if (vm.hotMap()) |hot| {
             if (config.id.len == 0) {
                 config.id = config.computeID(globalObject.allocator());
             }
@@ -1091,6 +1093,16 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                             hot.insert(config.id, server);
                         }
                     }
+
+                    if (vm.debugger) |*debugger| {
+                        debugger.http_server_agent.notifyServerStarted(
+                            JSC.API.AnyServer.from(server),
+                        );
+                        debugger.http_server_agent.notifyServerRoutesUpdated(
+                            JSC.API.AnyServer.from(server),
+                        ) catch bun.outOfMemory();
+                    }
+
                     return obj;
                 },
             }

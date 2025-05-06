@@ -28,7 +28,7 @@ const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] 
 );
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler } from "bun";
+import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
@@ -1332,6 +1332,10 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (typeof port === "string") {
+    const numPort = Number(port);
+    if (!Number.isNaN(numPort)) port = numPort;
+  }
   let backlog;
   let path;
   let exclusive = false;

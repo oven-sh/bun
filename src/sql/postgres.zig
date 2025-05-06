@@ -1413,9 +1413,8 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+    pub fn setOnConnect(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         js.onconnectSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     pub fn getOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1426,9 +1425,8 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+    pub fn setOnClose(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         js.oncloseSetCached(thisValue, globalObject, value);
-        return true;
     }
 
     pub fn setupTLS(this: *PostgresSQLConnection) void {

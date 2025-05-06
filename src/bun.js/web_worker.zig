@@ -194,7 +194,7 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
-) callconv(.C) ?*WebWorker {
+) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
     var spec_slice = specifier_str.toUTF8(bun.default_allocator);
@@ -491,7 +491,7 @@ fn spin(this: *WebWorker) void {
 }
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
-pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
+pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
     if (this.hasRequestedTerminate()) {
         return;
     }
@@ -514,7 +514,7 @@ pub fn exit(this: *WebWorker) void {
 }
 
 /// Request a terminate from any thread.
-pub fn notifyNeedTermination(this: *WebWorker) callconv(.C) void {
+pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
     }

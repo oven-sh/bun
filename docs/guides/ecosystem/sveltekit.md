@@ -6,7 +6,7 @@ Use `sv create my-app` to create a SvelteKit project with SvelteKit CLI. Answer 
 
 ```sh
 $ bunx sv create my-app
-┌  Welcome to the Svelte CLI! (v0.5.7)
+┌  Welcome to the Svelte CLI! (v0.6.21)
 │
 ◇  Which template would you like?
 │  SvelteKit demo
@@ -53,7 +53,7 @@ $ bun --bun run dev
   $ vite dev
   Forced re-optimization of dependencies
   
-    VITE v5.4.10  ready in 424 ms
+    VITE v6.1.0  ready in 453 ms
   
     ➜  Local:   http://localhost:5173/
     ➜  Network: use --host to expose
@@ -107,15 +107,14 @@ To build a production bundle:
 ```sh
 $ bun --bun run build
   $ vite build
-  vite v5.4.10 building SSR bundle for production...
-  "confetti" is imported from external module "@neoconfetti/svelte" but never used in "src/routes/sverdle/+page.svelte".
-  ✓ 130 modules transformed.
-  vite v5.4.10 building for production...
-  ✓ 148 modules transformed.
+  vite v6.1.0 building SSR bundle for production...
+  ✓ 187 modules transformed.
+  vite v6.1.0 building for production...
+  ✓ 172 modules transformed.
   ...
-  ✓ built in 231ms
+  ✓ built in 261ms
   ...
-  ✓ built in 899ms
+  ✓ built in 1.24ms
   
   Run npm run preview to preview your production build locally.
   

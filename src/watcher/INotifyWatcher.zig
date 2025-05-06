@@ -228,7 +228,7 @@ pub fn stop(this: *INotifyWatcher) void {
 pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
     defer Output.flush();
 
-    var events = switch (this.platform.read()) {
+    const events: []const *align(1) Event = switch (this.platform.read()) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
@@ -247,7 +247,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
         var watchevents = this.watch_events[0..slice.len];
         var watch_event_id: u32 = 0;
-        for (slice) |*event| {
+        for (slice) |event| {
             watchevents[watch_event_id] = watchEventFromInotifyEvent(
                 event,
                 @intCast(std.mem.indexOfScalar(

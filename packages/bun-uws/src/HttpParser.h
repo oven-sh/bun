@@ -97,7 +97,6 @@ namespace uWS
         }
     };
 
-
     struct ConsumeRequestLineResult {
         char *position;
         bool isAncientHTTP;
@@ -119,7 +118,6 @@ namespace uWS
             return headerParserError != HTTP_HEADER_PARSER_ERROR_NONE || position == nullptr;
         }
     };
-    
 
     struct HttpRequest
     {

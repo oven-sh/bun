@@ -102,10 +102,7 @@ namespace uWS
         char *position;
         bool isAncientHTTP;
         HTTPHeaderParserError headerParserError;
-
-
         public:
-
         static ConsumeRequestLineResult error(HTTPHeaderParserError error) {
             return ConsumeRequestLineResult{nullptr, false, error};
         }

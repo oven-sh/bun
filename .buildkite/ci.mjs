@@ -332,8 +332,8 @@ function getZigAgent(platform, options) {
     {
       os: "linux",
       arch: "x64",
-      distro: "debian",
-      release: "11",
+      distro: "alpine",
+      release: "3.21",
     },
     options,
     {

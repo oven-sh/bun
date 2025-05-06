@@ -1723,18 +1723,6 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    pub fn fastGetWithError(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
-        if (bun.Environment.isDebug)
-            bun.assert(this.isObject());
-
-        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
-            .zero => error.JSError,
-            .undefined => null,
-            .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
-    }
-
     pub fn fastGetDirect(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = fastGetDirect_(this, global, @intFromEnum(builtin_name));
         if (result == .zero) {
@@ -1836,7 +1824,7 @@ pub const JSValue = enum(i64) {
         // This call requires `get` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
             if (comptime BuiltinName.get(property_slice)) |builtin_name| {
-                return target.fastGetWithError(global, builtin_name);
+                return target.fastGet(global, builtin_name);
             }
         }
 

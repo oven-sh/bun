@@ -18,10 +18,13 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   unlink,
   unlinkSync,
   writeFileSync,
+  linkSync,
+  symlinkSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
@@ -786,13 +789,38 @@ async function spawnSafe(options) {
   };
 }
 
+let _combinedPath = "";
+function getCombinedPath(execPath) {
+  if (!_combinedPath) {
+    _combinedPath = addPath(realpathSync(dirname(execPath)), process.env.PATH);
+    // If we're running bun-profile.exe, try to make a symlink to bun.exe so
+    // that anything looking for "bun" will find it
+    if (isCI && basename(execPath, extname(execPath)).toLowerCase() !== "bun") {
+      const existingPath = execPath;
+      const newPath = join(dirname(execPath), "bun" + extname(execPath));
+      try {
+        // On Windows, we might run into permissions issues with symlinks.
+        // If that happens, fall back to a regular hardlink.
+        symlinkSync(existingPath, newPath, "file");
+      } catch (error) {
+        try {
+          linkSync(existingPath, newPath);
+        } catch (error) {
+          console.warn(`Failed to link bun`, error);
+        }
+      }
+    }
+  }
+  return _combinedPath;
+}
+
 /**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
-  const path = addPath(dirname(execPath), process.env.PATH);
+  const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
@@ -812,9 +840,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    ASAN_OPTIONS: "allow_user_segv_handler=1",
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
+
+  if (basename(execPath).includes("asan")) {
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
+  }
+
+  if (isWindows && bunEnv.Path) {
+    delete bunEnv.Path;
+  }
 
   if (env) {
     Object.assign(bunEnv, env);

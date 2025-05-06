@@ -106,7 +106,7 @@ namespace uWS
             return ConsumeRequestLineResult{nullptr, false, error};
         }
 
-        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP) {
+        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP = false) {
             return ConsumeRequestLineResult{position, isAncientHTTP, HTTP_HEADER_PARSER_ERROR_NONE};
         }
 
@@ -482,7 +482,7 @@ namespace uWS
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
-                            return ConsumeRequestLineResult::success(nextPosition, false);
+                            return ConsumeRequestLineResult::success(nextPosition);
                         } else if (memcmp(" HTTP/1.0\r\n", data, 11) == 0) {
                             return ConsumeRequestLineResult::success(nextPosition, true);
                         }

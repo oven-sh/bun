@@ -167,7 +167,7 @@ function onConnectEnd() {
   }
 }
 
-const SocketHandlers: SocketHandler = {
+const SocketHandlers = {
   close(socket, err) {
     const self = socket.data;
     if (!self || self[kclosed]) return;
@@ -300,7 +300,8 @@ const SocketHandlers: SocketHandler = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
-};
+  // TODO: We can improve the type of the socket here
+} satisfies SocketHandler<import("net").Socket & { [Key in PropertyKey]: unknown }, "buffer">;
 
 const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {

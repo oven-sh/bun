@@ -68,6 +68,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
+  ["ERR_ENCODING_NOT_SUPPORTED", RangeError],
   ["ERR_EXECUTION_ENVIRONMENT_NOT_AVAILABLE", Error],
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
   ["ERR_FS_CP_DIR_TO_NON_DIR", Error],

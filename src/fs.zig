@@ -800,8 +800,6 @@ pub const FileSystem = struct {
         pub const Limit = struct {
             pub var handles: usize = 0;
             pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
-            pub var stack: usize = 0;
-            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open

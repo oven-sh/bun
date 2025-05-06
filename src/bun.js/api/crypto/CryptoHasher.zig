@@ -135,21 +135,21 @@ pub const CryptoHasher = union(enum) {
         return globalThis.throw("HMAC has been consumed and is no longer usable", .{});
     }
 
-    pub fn getByteLength(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getByteLength(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return JSC.JSValue.jsNumber(switch (this.*) {
             .evp => |*inner| inner.size(),
             .hmac => |inner| if (inner) |hmac| hmac.size() else {
-                throwHmacConsumed(globalThis) catch return .zero;
+                return throwHmacConsumed(globalThis);
             },
             .zig => |*inner| inner.digest_length,
         });
     }
 
-    pub fn getAlgorithm(this: *CryptoHasher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getAlgorithm(this: *CryptoHasher, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         return switch (this.*) {
             inline .evp, .zig => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
             .hmac => |inner| if (inner) |hmac| ZigString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
-                throwHmacConsumed(globalObject) catch return .zero;
+                return throwHmacConsumed(globalObject);
             },
         };
     }

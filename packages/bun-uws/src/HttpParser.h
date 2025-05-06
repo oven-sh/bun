@@ -103,6 +103,32 @@ namespace uWS
             return 0;
         }
     };
+
+
+    struct ConsumeRequestLineResult {
+        char *position;
+        bool isAncientHTTP;
+        HTTPHeaderParserError headerParserError;
+
+
+        public:
+
+        static ConsumeRequestLineResult error(HTTPHeaderParserError error) {
+            return ConsumeRequestLineResult{nullptr, false, error};
+        }
+
+        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP) {
+            return ConsumeRequestLineResult{position, isAncientHTTP, HTTP_HEADER_PARSER_ERROR_NONE};
+        }
+
+        static ConsumeRequestLineResult shortRead(bool isAncientHTTP = false) {
+            return ConsumeRequestLineResult{nullptr, isAncientHTTP, HTTP_HEADER_PARSER_ERROR_NONE};
+        }
+
+        bool isErrorOrShortRead() {
+            return headerParserError != HTTP_HEADER_PARSER_ERROR_NONE || position == nullptr;
+        }
+    };
     
 
     struct HttpRequest
@@ -424,28 +450,29 @@ namespace uWS
             return 0;
         }
 
+
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
         /* PS: this function on error can return char* to HTTPHeaderParserError enum, with is not the best design, this need to be refactor */
-        static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP) {
+        static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
             while (data[0] > 32) {
                 if (!isValidMethodChar(data[0]) ) {
-                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 data++;
 
             }
             if (&data[1] == end) [[unlikely]] {
-                return nullptr;
+                return ConsumeRequestLineResult::shortRead();
             }
 
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                   if(!isValidMethod(header.key)) {
-                    return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_METHOD;
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
                 start = data;
@@ -456,50 +483,49 @@ namespace uWS
                         while (*(unsigned char *)data > 32) data++;
                         /* Now we stand on space */
                         header.value = {start, (size_t) (data - start)};
+                        auto nextPosition = data + 11;
                         /* Check that the following is http 1.1 */
-                        if (data + 11 >= end) {
+                        if (nextPosition >= end) {
                             /* Whatever we have must be part of the version string */
                             if (memcmp(" HTTP/1.1\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
-                                return nullptr;
+                                return ConsumeRequestLineResult::shortRead(false);
                             } else if (memcmp(" HTTP/1.0\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
-                                isAncientHTTP = true;
-                                return data + 11;
+                                return ConsumeRequestLineResult::shortRead(true);
                             }
-                            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
+                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
-                            return data + 11;
+                            return ConsumeRequestLineResult::success(nextPosition, false);
                         } else if (memcmp(" HTTP/1.0\r\n", data, 11) == 0) {
-                            isAncientHTTP = true;
-                            return data + 11;
+                            return ConsumeRequestLineResult::success(nextPosition, true);
                         }
                         /* If we stand at the post padded CR, we have fragmented input so try again later */
                         if (data[0] == '\r') {
-                            return nullptr;
+                            return ConsumeRequestLineResult::shortRead(false);
                         }
                         /* This is an error */
-                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
+                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
                 }
             }
 
             /* If we stand at the post padded CR, we have fragmented input so try again later */
             if (data[0] == '\r') {
-                return nullptr;
+                return ConsumeRequestLineResult::shortRead(false);
             }
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
                     case -1:
-                        return nullptr;
+                        return ConsumeRequestLineResult::shortRead(false);
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
-                        return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST;
+                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
                 }
             }
 
-            return (char *) HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION;
+            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
         }
 
         /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed; htab (9) is also allowed)
@@ -548,10 +574,11 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            if ((char *) 4 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
+            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0]);
+            if (requestLineResult.isErrorOrShortRead()) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
-                switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
+                switch (requestLineResult.headerParserError) {
                     case HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION:
                         err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;
                         parserError = HTTP_PARSER_ERROR_INVALID_HTTP_VERSION;
@@ -565,11 +592,17 @@ namespace uWS
                         parserError = HTTP_PARSER_ERROR_INVALID_METHOD;
                         break;
                     default: {
+                        /* Short read */
                         err = 0;
                         break;
                     }
                 }
                 return 0;
+            }
+            postPaddedBuffer = requestLineResult.position;
+            
+            if(requestLineResult.isAncientHTTP) {
+                isAncientHTTP = true;
             }
             /* No request headers found */
             size_t buffer_size = end - postPaddedBuffer;

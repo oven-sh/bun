@@ -73,10 +73,11 @@ test(function eventInitializedWithNonStringType() {
     assertEquals(event.cancelable, false);
 });
 test(function eventIsTrusted() {
-    const desc1 = Object.getOwnPropertyDescriptor(new Event("x"), "isTrusted");
+    // Node breaks web spec and puts the isTrusted getter on the prototype
+    const desc1 = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(new Event("x")), "isTrusted");
     assert(desc1);
     assertEquals(typeof desc1.get, "function");
-    const desc2 = Object.getOwnPropertyDescriptor(new Event("x"), "isTrusted");
+    const desc2 = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(new Event("x")), "isTrusted");
     assert(desc2);
     assertEquals(typeof desc2!.get, "function");
     assertEquals(desc1!.get, desc2!.get);

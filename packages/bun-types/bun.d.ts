@@ -1422,13 +1422,31 @@ declare module "bun" {
     (strings: string[] | TemplateStringsArray, ...values: any[]): SQLQuery;
 
     /**
-     * Helper function to allow easy use to insert values into a query
+     * Helper function for inserting an object into a query
+     *
      * @example
      * ```ts
+     * // Insert an object
      * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     *
+     * // Or pick specific columns
+     * const result = await sql`insert into users ${sql(users, "id", "name")} RETURNING *`;
+     *
+     * // Or a single object
+     * const result = await sql`insert into users ${sql(user)} RETURNING *`;
      * ```
      */
-    (obj: any): SQLQuery;
+    <T extends Record<string, any>>(obj: T | T[], ...values: (keyof T)[]): SQLQuery;
+
+    /**
+     * Helper function for inserting any serializable value into a query
+     *
+     * @example
+     * ```ts
+     * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+     * ```
+     */
+    (obj: unknown): SQLQuery;
 
     /**
      * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL

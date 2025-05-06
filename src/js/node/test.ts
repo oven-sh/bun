@@ -3,163 +3,25 @@
 
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
-const Readable = require("internal/streams/readable");
 
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
-const kDefaultFilePath = callerSourceOrigin();
 
-function run(...args: unknown[]) {
+function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
 
-function mock(...args: unknown[]) {
+function mock() {
   throwNotImplemented("mock()", 5090, "Use `bun:test` in the interim.");
 }
 
-/**
- * @link https://nodejs.org/api/test.html#class-mockfunctioncontext
- */
-class MockFunctionContext {
-  constructor() {
-    throwNotImplemented("new MockFunctionContext()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  get calls() {
-    throwNotImplemented("calls()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  callCount() {
-    throwNotImplemented("callCount()", 5090, "Use `bun:test` in the interim.");
-    return 0;
-  }
-
-  mockImplementation(fn: Function) {
-    throwNotImplemented("mockImplementation()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  mockImplementationOnce(fn: Function, onCall?: unknown) {
-    throwNotImplemented("mockImplementationOnce()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  resetCalls() {
-    throwNotImplemented("resetCalls()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  restore() {
-    throwNotImplemented("restore()", 5090, "Use `bun:test` in the interim.");
-  }
-}
-
-/**
- * @link https://nodejs.org/api/test.html#class-mockmodulecontext
- */
-class MockModuleContext {
-  constructor() {
-    throwNotImplemented("new MockModuleContext()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  restore() {
-    throwNotImplemented("restore()", 5090, "Use `bun:test` in the interim.");
-  }
-}
-
-/**
- * @link https://nodejs.org/api/test.html#class-mocktracker
- */
-class MockTracker {
-  constructor() {
-    throwNotImplemented("new MockTracker()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  fn(original: unknown, implementation: unknown, options: unknown) {
-    throwNotImplemented("fn()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  method(object: unknown, methodName: unknown, implementation: unknown, options: unknown) {
-    throwNotImplemented("method()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  getter(original: unknown, implementation: unknown, options: unknown) {
-    throwNotImplemented("getter()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  setter(original: unknown, implementation: unknown, options: unknown) {
-    throwNotImplemented("setter()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  module(specifier: unknown, options: unknown) {
-    throwNotImplemented("module()", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
-
-  reset() {
-    throwNotImplemented("reset()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  restoreAll() {
-    throwNotImplemented("restoreAll()", 5090, "Use `bun:test` in the interim.");
-  }
-}
-
-class MockTimers {
-  constructor() {
-    throwNotImplemented("new MockTimers()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  enable(options: unknown) {
-    throwNotImplemented("enable()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  reset() {
-    throwNotImplemented("reset()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  tick(milliseconds: unknown) {
-    throwNotImplemented("tick()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  runAll() {
-    throwNotImplemented("runAll()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  setTime(milliseconds: unknown) {
-    throwNotImplemented("setTime()", 5090, "Use `bun:test` in the interim.");
-  }
-
-  [Symbol.dispose]() {
-    this.reset();
-  }
-}
-
-/**
- * @link https://nodejs.org/api/test.html#class-testsstream
- */
-class TestsStream extends Readable {
-  constructor() {
-    super();
-    throwNotImplemented("new TestsStream()", 5090, "Use `bun:test` in the interim.");
-  }
-}
-
-function fileSnapshot(value: unknown, path: string, options: { serializers?: Function[] } = kEmptyObject) {
+function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
 }
 
-function snapshot(value: unknown, options: { serializers?: Function[] } = kEmptyObject) {
+function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("snapshot()", 5090, "Use `bun:test` in the interim.");
-}
-
-function register(name: string, fn: Function) {
-  throwNotImplemented("register()", 5090, "Use `bun:test` in the interim.");
 }
 
 const assert = {
@@ -184,7 +46,7 @@ class SuiteContext {
 
   constructor(name: string | undefined, filePath: string | undefined) {
     this.#name = name;
-    this.#filePath = filePath || kDefaultFilePath;
+    this.#filePath = filePath || Bun.main;
   }
 
   get name(): string {
@@ -254,7 +116,7 @@ class TestContext {
     console.log(message);
   }
 
-  plan(count: number, options: { wait?: boolean } = kEmptyObject) {
+  plan(_count: number, _options: { wait?: boolean } = kEmptyObject) {
     throwNotImplemented("plan()", 5090, "Use `bun:test` in the interim.");
   }
 
@@ -267,43 +129,43 @@ class TestContext {
     return undefined;
   }
 
-  runOnly(value?: boolean) {
+  runOnly(_value?: boolean) {
     throwNotImplemented("runOnly()", 5090, "Use `bun:test` in the interim.");
   }
 
-  skip(message?: string) {
+  skip(_message?: string) {
     throwNotImplemented("skip()", 5090, "Use `bun:test` in the interim.");
   }
 
-  todo(message?: string) {
+  todo(_message?: string) {
     throwNotImplemented("todo()", 5090, "Use `bun:test` in the interim.");
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn, options } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1);
     const { beforeAll } = bunTest(this);
     beforeAll(fn);
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn, options } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1);
     const { afterAll } = bunTest(this);
     afterAll(fn);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn, options } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1);
     const { beforeEach } = bunTest(this);
     beforeEach(fn);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn, options } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1);
     const { afterEach } = bunTest(this);
     afterEach(fn);
   }
 
-  waitFor(condition: unknown, options: { timeout?: number } = kEmptyObject) {
+  waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
     throwNotImplemented("waitFor()", 5090, "Use `bun:test` in the interim.");
   }
 
@@ -327,7 +189,7 @@ class TestContext {
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+    const { name, fn } = createDescribe(arg0, arg1, arg2);
 
     if (this.#insideTest) {
       throwNotImplemented("describe() inside another test()", 5090, "Use `bun:test` in the interim.");
@@ -342,28 +204,28 @@ function bunTest(ctx: SuiteContext | TestContext) {
   return jest(ctx.filePath);
 }
 
-let ctx = new TestContext(false, undefined, kDefaultFilePath, undefined);
+let ctx = new TestContext(false, undefined, Bun.main, undefined);
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  const { name, fn } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest(ctx);
   describe(name, fn);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  const { name, fn } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest(ctx);
   describe.skip(name, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  const { name, fn } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest(ctx);
   describe.todo(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  const { name, fn } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest(ctx);
   describe.only(name, fn);
 };
@@ -393,59 +255,32 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 function before(arg0: unknown, arg1: unknown) {
-  const { fn, options } = createHook(arg0, arg1);
+  const { fn } = createHook(arg0, arg1);
   const { beforeAll } = bunTest(ctx);
   beforeAll(fn);
 }
 
 function after(arg0: unknown, arg1: unknown) {
-  const { fn, options } = createHook(arg0, arg1);
+  const { fn } = createHook(arg0, arg1);
   const { afterAll } = bunTest(ctx);
   afterAll(fn);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {
-  const { fn, options } = createHook(arg0, arg1);
+  const { fn } = createHook(arg0, arg1);
   const { beforeEach } = bunTest(ctx);
   beforeEach(fn);
 }
 
 function afterEach(arg0: unknown, arg1: unknown) {
-  const { fn, options } = createHook(arg0, arg1);
+  const { fn } = createHook(arg0, arg1);
   const { afterEach } = bunTest(ctx);
   afterEach(fn);
 }
 
-function isBuiltinModule(filePath: string) {
-  return filePath.startsWith("node:") || filePath.startsWith("bun:") || filePath.startsWith("[native code]");
-}
-
-function callerSourceOrigin(): string {
-  const error = new Error();
-  const originalPrepareStackTrace = Error.prepareStackTrace;
-  let origin: string | undefined;
-  Error.prepareStackTrace = (_, stack) => {
-    origin = stack
-      .find(s => {
-        const filePath = s.getFileName();
-        if (filePath && !isBuiltinModule(filePath)) {
-          return filePath;
-        }
-        return undefined;
-      })
-      ?.getFileName();
-  };
-  error.stack;
-  Error.prepareStackTrace = originalPrepareStackTrace;
-  if (!origin) {
-    throw new Error("Failed to get caller source origin");
-  }
-  return origin;
-}
-
 function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   let name: string;
-  let options: TestOptions;
+  let options: unknown;
   let fn: TestFn;
 
   if (typeof arg0 === "function") {
@@ -478,7 +313,7 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
     options = kDefaultOptions;
   }
 
-  return { name, options, fn };
+  return { name, options: options as TestOptions, fn };
 }
 
 function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -594,11 +429,11 @@ type HookOptions = {
   timeout?: number;
 };
 
-function setDefaultSnapshotSerializer(serializers: unknown[]) {
+function setDefaultSnapshotSerializer(_serializers: unknown[]) {
   throwNotImplemented("setDefaultSnapshotSerializer()", 5090, "Use `bun:test` in the interim.");
 }
 
-function setResolveSnapshotPath(fn: unknown) {
+function setResolveSnapshotPath(_fn: unknown) {
   throwNotImplemented("setResolveSnapshotPath()", 5090, "Use `bun:test` in the interim.");
 }
 

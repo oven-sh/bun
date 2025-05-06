@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const E = bun.JSAst.E;
 const Expr = bun.JSAst.Expr;

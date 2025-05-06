@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
@@ -343,7 +343,7 @@ pub const SupportsCondition = union(enum) {
                 try dest.writeChar('(');
 
                 const prefix: css.VendorPrefix = property_id.prefix().orNone();
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar('(');
                 }
 
@@ -365,7 +365,7 @@ pub const SupportsCondition = union(enum) {
                     }
                 }
 
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar(')');
                 }
                 try dest.writeChar(')');

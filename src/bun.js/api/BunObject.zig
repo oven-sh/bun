@@ -11,7 +11,7 @@ pub const BunObject = struct {
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
     pub const color = toJSCallback(bun.css.CssColor.jsFunctionColor);
-    pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
+    pub const connect = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "connect", false));
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
@@ -21,7 +21,7 @@ pub const BunObject = struct {
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
-    pub const listen = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "listen", false));
+    pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
     pub const openInEditor = toJSCallback(Bun.openInEditor);
@@ -29,13 +29,13 @@ pub const BunObject = struct {
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
     pub const serve = toJSCallback(Bun.serve);
-    pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
+    pub const sha = toJSCallback(host_fn.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const shrink = toJSCallback(Bun.shrink);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
-    pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
-    pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
-    pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
+    pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
+    pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
+    pub const udpSocket = toJSCallback(host_fn.wrapStaticMethod(api.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
 
@@ -84,7 +84,7 @@ pub const BunObject = struct {
         return "BunObject_callback_" ++ baseName;
     }
 
-    const toJSCallback = JSC.toJSHostFunction;
+    const toJSCallback = JSC.toJSHostFn;
 
     const LazyPropertyCallback = fn (*JSC.JSGlobalObject, *JSC.JSObject) callconv(JSC.conv) JSValue;
 
@@ -266,7 +266,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const arguments_ = callframe.arguments_old(2);
     const path_buf = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(path_buf);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         return globalThis.throw("which: expected 1 argument, got 0", .{});
@@ -366,7 +366,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
+    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -424,7 +424,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -456,7 +456,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -469,7 +469,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -595,7 +595,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 0,
             ).unwrap() catch break :use_resolved_path;
 
-            defer _ = bun.sys.close(fd);
+            defer fd.close();
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
@@ -620,15 +620,15 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
 }
 
 pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.Node.Process.getArgv(globalThis);
+    return node.process.getArgv(globalThis);
 }
 
 const Editor = @import("../../open.zig").Editor;
 
-pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn openInEditor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
     const args = callframe.arguments_old(4);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -777,7 +777,7 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!
 }
 
 fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!JSC.JSValue {
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         return globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
@@ -818,7 +818,7 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
     );
 }
 
-fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
+fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -840,7 +840,7 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
     }
 
     if (query_string.len > 0) {
@@ -867,7 +867,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -881,7 +881,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(global, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -892,7 +892,7 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -916,7 +916,7 @@ export fn Bun__resolveSyncWithPaths(
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
@@ -939,7 +939,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
@@ -1001,7 +1001,7 @@ pub fn nanoseconds(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();
     var config: JSC.API.ServerConfig = brk: {
-        var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
 
         try JSC.API.ServerConfig.fromJS(
@@ -1023,8 +1023,10 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         break :brk config;
     };
 
+    const vm = globalObject.bunVM();
+
     if (config.allow_hot) {
-        if (globalObject.bunVM().hotMap()) |hot| {
+        if (vm.hotMap()) |hot| {
             if (config.id.len == 0) {
                 config.id = config.computeID(globalObject.allocator());
             }
@@ -1082,7 +1084,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     }
                     const obj = server.toJS(globalObject);
                     if (route_list_object != .zero) {
-                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                        ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
                     server.js_value.set(globalObject, obj);
 
@@ -1091,6 +1093,16 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                             hot.insert(config.id, server);
                         }
                     }
+
+                    if (vm.debugger) |*debugger| {
+                        debugger.http_server_agent.notifyServerStarted(
+                            JSC.API.AnyServer.from(server),
+                        );
+                        debugger.http_server_agent.notifyServerRoutesUpdated(
+                            JSC.API.AnyServer.from(server),
+                        ) catch bun.outOfMemory();
+                    }
+
                     return obj;
                 },
             }
@@ -1175,7 +1187,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const arguments_ = callframe.arguments_old(2);
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
     var buf: bun.PathBuffer = undefined;
@@ -1242,11 +1254,11 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 }
 
 pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.JSTranspiler.getConstructor(globalThis);
+    return JSC.API.JSTranspiler.js.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.FileSystemRouter.getConstructor(globalThis);
+    return JSC.API.FileSystemRouter.js.getConstructor(globalThis);
 }
 
 pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1258,10 +1270,10 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 }
 
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.Glob.getConstructor(globalThis);
+    return JSC.API.Glob.js.getConstructor(globalThis);
 }
 pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.WebCore.S3Client.getConstructor(globalThis);
+    return JSC.WebCore.S3Client.js.getConstructor(globalThis);
 }
 
 pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1281,7 +1293,7 @@ pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject)
 }
 
 pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.Valkey.getConstructor(globalThis);
+    return JSC.API.Valkey.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1324,15 +1336,6 @@ pub fn getSemver(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
 pub fn getUnsafe(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return UnsafeObject.create(globalThis);
 }
-
-pub const HashObject = @import("./HashObject.zig");
-pub const UnsafeObject = @import("./UnsafeObject.zig");
-pub const TOMLObject = @import("./TOMLObject.zig");
-
-const Debugger = JSC.Debugger;
-
-pub const Timer = @import("./Timer.zig");
-pub const FFIObject = @import("./FFIObject.zig");
 
 pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
     if (str.length() == 0)
@@ -1713,35 +1716,33 @@ pub const JSZlib = struct {
     }
 };
 
-pub const Subprocess = @import("./bun/subprocess.zig");
+// const InternalTestingAPIs = struct {
+//     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+//         const args = callframe.arguments_old(1);
+//         if (args.len < 1) {
+//             globalThis.throwNotEnoughArguments("code", 1, 0);
+//         }
 
-const InternalTestingAPIs = struct {
-    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
+//         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+//         defer code.deinit();
+//         var buffer = MutableString.initEmpty(bun.default_allocator);
+//         defer buffer.deinit();
+//         var writer = buffer.bufferedWriter();
+//         const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+//             .enable_colors = true,
+//             .check_for_unhighlighted_write = false,
+//         });
+//         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
 
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-        defer code.deinit();
-        var buffer = MutableString.initEmpty(bun.default_allocator);
-        defer buffer.deinit();
-        var writer = buffer.bufferedWriter();
-        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
-            .enable_colors = true,
-            .check_for_unhighlighted_write = false,
-        });
-        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
-        };
+//         writer.flush() catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
 
-        writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
-        };
-
-        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
-    }
-};
+//         return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
+//     }
+// };
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
@@ -1755,7 +1756,7 @@ const conv = std.builtin.CallingConvention.Unspecified;
 const S3File = @import("../webcore/S3File.zig");
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uv = bun.windows.libuv;
 const Environment = bun.Environment;
 const Global = bun.Global;
@@ -1773,7 +1774,6 @@ const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -1793,19 +1793,15 @@ const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
-
-const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
-const Node = bun.JSC.Node;
+const api = bun.api;
+const node = bun.api.node;
+const host_fn = bun.jsc.host_fn;
 const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;
 const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
@@ -1831,3 +1827,10 @@ const Async = bun.Async;
 const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
+
+const Debugger = JSC.Debugger;
+const HashObject = bun.api.HashObject;
+const UnsafeObject = bun.api.UnsafeObject;
+const TOMLObject = bun.api.TOMLObject;
+const Timer = bun.api.Timer;
+const FFIObject = bun.api.FFIObject;

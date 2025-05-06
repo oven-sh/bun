@@ -14,9 +14,13 @@ import {
   __name,
   __using,
 } from "../runtime.bun";
+// This import is different based on client vs server side.
+// On the server, remapping is done automatically.
+import { type SourceMapURL, derefMapping } from "#stack-trace";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
-let registry = new Map<Id, HMRModule>();
+const registry = new Map<Id, HMRModule>();
+const registrySourceMapIds = new Map<string, SourceMapURL>();
 /** Server */
 export const serverManifest = {};
 /** Server */
@@ -28,7 +32,7 @@ let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
-let lazyDynamicImportWithOptions;
+let lazyDynamicImportWithOptions: null | Function = null;
 
 const enum State {
   Pending,
@@ -436,7 +440,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
-        : list.every(x => x instanceof HMRModule)
+        : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
@@ -517,7 +521,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         // TODO: there is a bug in the way exports are verified. Additionally a
         // possible performance issue. For the meantime, this is disabled since
-        // it was not shipped in the initial 1.2.3 HMR, and real issues will 
+        // it was not shipped in the initial 1.2.3 HMR, and real issues will
         // just throw 'undefined is not a function' or so on.
 
         // if (!availableExportKeys.includes(key)) {
@@ -533,7 +537,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       i = expectedExportKeyEnd;
 
       if (IS_BUN_DEVELOPMENT) {
-        DEBUG.ASSERT(list[list.length - 1] as any instanceof HMRModule);
+        DEBUG.ASSERT((list[list.length - 1] as any) instanceof HMRModule);
       }
     }
   }
@@ -579,7 +583,7 @@ type HotEventHandler = (data: any) => void;
 
 // If updating this, make sure the `devserver.d.ts` types are
 // kept in sync.
-type HMREvent = 
+type HMREvent =
   | "bun:ready"
   | "bun:beforeUpdate"
   | "bun:afterUpdate"
@@ -591,7 +595,7 @@ type HMREvent =
   | "bun:ws:connect";
 
 /** Called when modules are replaced. */
-export async function replaceModules(modules: Record<Id, UnloadedModule>) {
+export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
 
   emitEvent("bun:beforeUpdate", null);
@@ -607,6 +611,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
+    // Unref old source maps, and track new ones
+    if (side === "client") {
+      DEBUG.ASSERT(sourceMapId);
+      const existingSourceMapId = registrySourceMapIds.get(key);
+      if (existingSourceMapId) derefMapping(existingSourceMapId);
+      registrySourceMapIds.set(key, sourceMapId);
+    }
+
     const existing = registry.get(key);
     if (!existing) continue;
 
@@ -670,9 +682,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-        DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-        DEBUG.ASSERT(current);
-        DEBUG.ASSERT(current.selfAccept === null);
+      DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
+      DEBUG.ASSERT(current);
+      DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
@@ -698,9 +710,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     }
     message = message.trim();
     if (side === "client") {
-      sessionStorage.setItem(
+      sessionStorage?.setItem?.(
         "bun:hmr:message",
-        JSON.stringify({
+        JSON.stringify?.({
           message,
           kind: "warn",
         }),
@@ -804,6 +816,10 @@ export function emitEvent(event: HMREvent, data: any) {
   }
 }
 
+export function onEvent(event: HMREvent, cb) {
+  (eventHandlers[event] ??= [])!.push(cb);
+}
+
 function throwNotFound(id: Id, isUserDynamic: boolean) {
   if (isUserDynamic) {
     throw new Error(
@@ -865,6 +881,7 @@ function registerSynthetic(id: Id, esmExports) {
   const module = new HMRModule(id, false);
   module.exports = esmExports;
   registry.set(id, module);
+  unloadedModuleRegistry[id] = true as any;
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {
@@ -941,13 +958,3 @@ if (side === "client") {
     onServerSideReload: cb => (onServerSideReload = cb),
   });
 }
-
-// The following API may be altered at any point.
-// Thankfully, you can just call `import.meta.hot.on`
-let testingHook = globalThis['bun do not use this outside of internal testing or else i\'ll cry'];
-testingHook?.({
-  onEvent(event: HMREvent, cb) {
-    eventHandlers[event] ??= [];
-    eventHandlers[event]!.push(cb);
-  },
-});

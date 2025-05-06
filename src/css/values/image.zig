@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -25,8 +25,8 @@ pub const Image = union(enum) {
     /// An `image-set()`.
     image_set: ImageSet,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deinit(_: *@This(), _: std.mem.Allocator) void {
         // TODO: implement this
@@ -68,7 +68,7 @@ pub const Image = union(enum) {
 
     pub fn hasVendorPrefix(this: *const @This()) bool {
         const prefix = this.getVendorPrefix();
-        return !prefix.isEmpty() and !prefix.eq(VendorPrefix{ .none = true });
+        return !prefix.isEmpty() and prefix != VendorPrefix{ .none = true };
     }
 
     /// Returns the vendor prefix used in the image value.
@@ -76,7 +76,7 @@ pub const Image = union(enum) {
         return switch (this.*) {
             .gradient => |a| a.getVendorPrefix(),
             .image_set => |a| a.getVendorPrefix(),
-            else => VendorPrefix.empty(),
+            else => .{},
         };
     }
 
@@ -120,7 +120,7 @@ pub const Image = union(enum) {
         var res = css.SmallList(Image, 6){};
 
         // Get RGB fallbacks if needed.
-        const rgb = if (fallbacks.contains(ColorFallbackKind.RGB))
+        const rgb = if (fallbacks.rgb)
             this.getFallback(allocator, ColorFallbackKind.RGB)
         else
             null;
@@ -129,7 +129,7 @@ pub const Image = union(enum) {
         const prefix_image = if (rgb) |r| &r else this;
 
         // Legacy -webkit-gradient()
-        if (prefixes.contains(VendorPrefix.WEBKIT) and
+        if (prefixes.webkit and
             if (targets.browsers) |browsers| css.prefixes.Feature.isWebkitGradient(browsers) else false and
                 prefix_image.* == .gradient)
         {
@@ -139,31 +139,31 @@ pub const Image = union(enum) {
         }
 
         // Standard syntax, with prefixes.
-        if (prefixes.contains(VendorPrefix.WEBKIT)) {
+        if (prefixes.webkit) {
             res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.WEBKIT));
         }
 
-        if (prefixes.contains(VendorPrefix.MOZ)) {
+        if (prefixes.moz) {
             res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.MOZ));
         }
 
-        if (prefixes.contains(VendorPrefix.O)) {
+        if (prefixes.o) {
             res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.O));
         }
 
-        if (prefixes.contains(VendorPrefix.NONE)) {
+        if (prefixes.none) {
             // Unprefixed, rgb fallback.
             if (rgb) |r| {
                 res.append(allocator, r);
             }
 
             // P3 fallback.
-            if (fallbacks.contains(ColorFallbackKind.P3)) {
+            if (fallbacks.p3) {
                 res.append(allocator, this.getFallback(allocator, ColorFallbackKind.P3));
             }
 
             // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
-            if (fallbacks.contains(ColorFallbackKind.LAB)) {
+            if (fallbacks.lab) {
                 this.* = this.getFallback(allocator, ColorFallbackKind.LAB);
             }
         } else if (res.pop()) |last| {
@@ -186,7 +186,7 @@ pub const Image = union(enum) {
     pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
         return switch (this.*) {
             .gradient => |grad| grad.getNecessaryFallbacks(targets),
-            else => css.ColorFallbackKind.empty(),
+            else => css.ColorFallbackKind{},
         };
     }
 
@@ -255,7 +255,7 @@ pub const ImageSet = struct {
             } else {
                 try dest.delim(',', false);
             }
-            try option.toCss(W, dest, this.vendor_prefix.neq(VendorPrefix{ .none = true }));
+            try option.toCss(W, dest, this.vendor_prefix != VendorPrefix{ .none = true });
         }
         return dest.writeChar(')');
     }

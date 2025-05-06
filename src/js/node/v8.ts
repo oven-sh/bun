@@ -126,7 +126,7 @@ function getDefaultHeapSnapshotPath() {
 
 let fs;
 
-function writeHeapSnapshot(path, options) {
+function writeHeapSnapshot(path, _options) {
   if (path !== undefined) {
     if (typeof path !== "string") {
       throw $ERR_INVALID_ARG_TYPE("path", "string", path);

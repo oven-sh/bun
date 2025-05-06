@@ -253,3 +253,73 @@ test("gc", () => {
     messageChannel.port2;
   }
 });
+
+test("cloneable and transferable equals", async () => {
+  const assert = require("assert");
+  const mc = new MessageChannel();
+  const original = Uint8Array.from([21, 11, 96, 126, 243, 128, 164]);
+  const buf = Uint8Array.from([21, 11, 96, 126, 243, 128, 164]);
+  const ab = buf.buffer.transfer();
+  expect(ab).toBeInstanceOf(ArrayBuffer);
+  expect(new Uint8Array(ab)).toEqual(original);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  mc.port1.onmessage = ({ data }) => {
+    try {
+      expect(data).toBeInstanceOf(ArrayBuffer);
+      expect(new Uint8Array(data)).toEqual(original);
+      mc.port1.close();
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  };
+  mc.port2.postMessage(ab);
+  await promise;
+});
+
+test("cloneable and non-transferable equals (BunFile)", async () => {
+  const mc = new MessageChannel();
+  const file = Bun.file(import.meta.filename);
+  expect(file).toBeInstanceOf(Blob); // Bun.BunFile isnt exposed to JS
+  expect(file.name).toEqual(import.meta.filename);
+  expect(file.type).toEqual("text/javascript;charset=utf-8");
+  const { promise, resolve, reject } = Promise.withResolvers();
+  mc.port1.onmessage = ({ data }) => {
+    try {
+      expect(data).toBeInstanceOf(file.__proto__.constructor);
+      expect(data.name).toEqual(import.meta.filename);
+      expect(data.type).toEqual("text/javascript;charset=utf-8");
+      // expect(data).not.toBeEmptyObject();
+      mc.port1.close();
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  };
+  mc.port2.postMessage(file);
+  await promise;
+});
+
+test("cloneable and non-transferable equals (net.BlockList)", async () => {
+  const net = require("node:net");
+  const mc = new MessageChannel();
+  const blocklist = new net.BlockList();
+  blocklist.addAddress("123.123.123.123");
+  const { promise, resolve, reject } = Promise.withResolvers();
+  mc.port1.onmessage = ({ data }) => {
+    try {
+      expect(data).toBeInstanceOf(net.BlockList);
+      expect(data.check("123.123.123.123")).toBeTrue();
+      expect(!data.check("123.123.123.124")).toBeTrue();
+      data.addAddress("123.123.123.124");
+      expect(blocklist.check("123.123.123.124")).toBeTrue();
+      expect(data.check("123.123.123.124")).toBeTrue();
+      mc.port1.close();
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  };
+  mc.port2.postMessage(blocklist);
+  await promise;
+});

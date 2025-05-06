@@ -249,10 +249,10 @@ pub const ShellMkdirTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
-        var node_fs = JSC.Node.NodeFS{};
+        var node_fs = JSC.Node.fs.NodeFS{};
         // Recursive
         if (this.opts.parents) {
-            const args = JSC.Node.Arguments.Mkdir{
+            const args = JSC.Node.fs.Arguments.Mkdir{
                 .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = true,
                 .always_return_none = true,
@@ -268,7 +268,7 @@ pub const ShellMkdirTask = struct {
                 },
             }
         } else {
-            const args = JSC.Node.Arguments.Mkdir{
+            const args = JSC.Node.fs.Arguments.Mkdir{
                 .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
                 .recursive = false,
                 .always_return_none = true,
@@ -378,7 +378,7 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 
 // --
 const debug = bun.Output.scoped(.ShellMkdir, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

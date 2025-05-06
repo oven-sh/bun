@@ -1,8 +1,8 @@
 //! ## IMPORTANT NOTE
 //!
-//! Do _NOT_ import from "root" in this file! Do _NOT_ use the Bun object in this file!
+//! Do _NOT_ import from "bun" in this file! Do _NOT_ use the Bun object in this file!
 //!
-//! This file has tests defined in it which _cannot_ be run if `@import("root")` is used!
+//! This file has tests defined in it which _cannot_ be run if `@import("bun")` is used!
 //!
 //! Run tests with `:zig test %`
 const std = @import("std");

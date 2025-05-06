@@ -32,7 +32,7 @@ pub fn add(global: *JSC.JSGlobalObject, a: i32, b: i32) !i32 {
 const gen = bun.gen.math; // "math" being this file's basename
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 ```
 

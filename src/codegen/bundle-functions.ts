@@ -146,7 +146,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
       // consume async token and function name
-      const nameMatch = contents.match(/^export\s+(async\s+)?function\s([a-zA-Z0-9]+)\s*/);
+      const nameMatch = contents.match(/^export\s+(async\s+)?function\s([_a-zA-Z0-9]+)\s*/);
       if (!nameMatch)
         throw new SyntaxError("Could not parse function name:\n" + contents.slice(0, contents.indexOf("\n")));
       const async = Boolean(nameMatch[1]);

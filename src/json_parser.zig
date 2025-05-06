@@ -6,7 +6,7 @@ const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const BabyList = @import("./baby_list.zig").BabyList;
 const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -15,7 +15,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -1036,7 +1036,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{
         .mangled_props = null,

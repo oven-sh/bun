@@ -30,7 +30,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       } finally {
         // Cleanup
-        await client.disconnect();
+        await client.close();
       }
     });
 
@@ -110,7 +110,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       // Should still report disconnected
       expect(client.connected).toBe(false);
 
-      await client.disconnect();
+      await client.close();
     });
   });
 
@@ -136,7 +136,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       }
 
-      await client.disconnect();
+      await client.close();
     });
 
     test("should reject commands when offline queue is disabled", async () => {
@@ -155,7 +155,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(error.message).toMatch(/connection closed|offline queue is disabled/i);
       }
 
-      await client.disconnect();
+      await client.close();
     });
 
     // Skip this test since it's hard to reliably wait for max retries in a test environment
@@ -183,7 +183,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       expect(onconnect).toHaveBeenCalled();
 
       // Explicitly disconnect to trigger onclose
-      client.disconnect();
+      client.close();
 
       // Wait a short time for disconnect callbacks to execute
       await delay(50);
@@ -220,7 +220,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       }
 
       // Disconnect to trigger close handler
-      await client.disconnect();
+      await client.close();
 
       // Wait a short time for the callbacks to execute
       await delay(50);
@@ -251,7 +251,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       await client.set("__test_key", "test-value");
 
       // Manually disconnect
-      client.disconnect();
+      client.close();
 
       // Try to send a command
       expect(client.connected).toBe(false);
@@ -273,15 +273,15 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       });
 
       // Disconnect immediately
-      await client.disconnect();
+      await client.close();
 
       expect(client.connected).toBe(false);
       expect(async () => {
         await client.get("any-key");
       }).toThrowErrorMatchingInlineSnapshot(`"Connection closed"`);
       // Multiple disconnects should not cause issues
-      await client.disconnect();
-      await client.disconnect();
+      await client.close();
+      await client.close();
     });
   });
 
@@ -297,7 +297,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         });
 
         // Immediately disconnect
-        promises.push(client.disconnect());
+        promises.push(client.close());
       }
 
       // All should resolve without errors
@@ -330,7 +330,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 
       // Clean up
       for (const client of clients) {
-        await client.disconnect();
+        await client.close();
       }
     });
   });

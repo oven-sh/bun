@@ -8,24 +8,8 @@ declare module "bun:jsc" {
   function fullGC(): number;
   function edenGC(): number;
   function heapSize(): number;
-  function heapStats(): {
-    heapSize: number;
-    heapCapacity: number;
-    extraMemorySize: number;
-    objectCount: number;
-    protectedObjectCount: number;
-    globalObjectCount: number;
-    protectedGlobalObjectCount: number;
-    objectTypeCounts: Record<string, number>;
-    protectedObjectTypeCounts: Record<string, number>;
-  };
-  function memoryUsage(): {
-    current: number;
-    peak: number;
-    currentCommit: number;
-    peakCommit: number;
-    pageFaults: number;
-  };
+  function heapStats(): HeapStats;
+  function memoryUsage(): MemoryUsage;
   function getRandomSeed(): number;
   function setRandomSeed(value: number): void;
   function isRope(input: string): boolean;
@@ -77,6 +61,26 @@ declare module "bun:jsc" {
    * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
    */
   function setTimeZone(timeZone: string): string;
+
+  interface HeapStats {
+    heapSize: number;
+    heapCapacity: number;
+    extraMemorySize: number;
+    objectCount: number;
+    protectedObjectCount: number;
+    globalObjectCount: number;
+    protectedGlobalObjectCount: number;
+    objectTypeCounts: Record<string, number>;
+    protectedObjectTypeCounts: Record<string, number>;
+  }
+
+  interface MemoryUsage {
+    current: number;
+    peak: number;
+    currentCommit: number;
+    peakCommit: number;
+    pageFaults: number;
+  }
 
   interface SamplingProfile {
     /**

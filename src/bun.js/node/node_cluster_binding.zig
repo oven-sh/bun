@@ -1,10 +1,10 @@
 // Most of this code should be rewritten.
-// - Usage of JSC.Strong here is likely to cause memory leaks.
+// - Usage of JSC.Strong.Optional here is likely to cause memory leaks.
 // - These sequence numbers and ACKs shouldn't exist from JavaScript's perspective
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -42,7 +42,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     if (callback.isFunction()) {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder
@@ -71,7 +71,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
-        Bun__Process__queueNextTick1(globalThis, fnvalue, ex);
+        fnvalue.callNextTick(globalThis, .{ex});
         return .false;
     }
 
@@ -81,9 +81,9 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("onInternalMessageChild", .{});
     const arguments = callframe.arguments_old(2).ptr;
-    // TODO: we should not create two JSC.Strong here. If absolutely necessary, a single Array. should be all we use.
-    child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
-    child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
+    // TODO: we should not create two JSC.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
+    child_singleton.worker = .create(arguments[0], globalThis);
+    child_singleton.cb = .create(arguments[1], globalThis);
     try child_singleton.flush(globalThis);
     return .undefined;
 }
@@ -103,10 +103,10 @@ pub const InternalMsgHolder = struct {
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
-    worker: JSC.Strong = .empty,
-    cb: JSC.Strong = .empty,
-    messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
+    callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong.Optional) = .{},
+    worker: JSC.Strong.Optional = .empty,
+    cb: JSC.Strong.Optional = .empty,
+    messages: std.ArrayListUnmanaged(JSC.Strong.Optional) = .{},
 
     pub fn isReady(this: *InternalMsgHolder) bool {
         return this.worker.has() and this.cb.has();
@@ -115,7 +115,7 @@ pub const InternalMsgHolder = struct {
     pub fn enqueue(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
         //TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
         const new_item_ptr = this.messages.addOne(bun.default_allocator) catch bun.outOfMemory();
-        new_item_ptr.* = JSC.Strong.create(message, globalThis);
+        new_item_ptr.* = .create(message, globalThis);
     }
 
     pub fn dispatch(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
@@ -197,7 +197,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
     // sequence number for InternalMsgHolder
@@ -221,8 +221,8 @@ pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC
     const subprocess = arguments[0].as(bun.JSC.Subprocess).?;
     const ipc_data = subprocess.ipc() orelse return .undefined;
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = JSC.Strong.create(arguments[1], globalThis);
-    ipc_data.internal_msg_queue.cb = JSC.Strong.create(arguments[2], globalThis);
+    ipc_data.internal_msg_queue.worker = .create(arguments[1], globalThis);
+    ipc_data.internal_msg_queue.cb = .create(arguments[2], globalThis);
     return .undefined;
 }
 

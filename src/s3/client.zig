@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const picohttp = bun.picohttp;
 
@@ -184,7 +184,7 @@ pub fn listObjects(
 
     search_params.deinitWithAllocator(bun.default_allocator);
 
-    const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+    const headers = bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
 
     const task = bun.new(S3HttpSimpleTask, .{
         .http = undefined,
@@ -284,7 +284,8 @@ pub fn writableStream(
     };
     const proxy_url = (proxy orelse "");
     this.ref(); // ref the credentials
-    const task = MultiPartUpload.new(.{
+    const task = bun.new(MultiPartUpload, .{
+        .ref_count = .init(),
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -322,16 +323,19 @@ pub fn writableStream(
 }
 
 const S3UploadStreamWrapper = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
     sink: *JSC.WebCore.NetworkSink,
     task: *MultiPartUpload,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
-    ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
     global: *JSC.JSGlobalObject,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
@@ -352,12 +356,12 @@ const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn deinit(self: *@This()) void {
+    fn deinit(self: *@This()) void {
         self.readable_stream_ref.deinit();
         self.sink.finalize();
-        self.sink.destroy();
+        self.sink.deinit();
         self.task.deref();
-        self.destroy();
+        bun.destroy(self);
     }
 };
 
@@ -402,9 +406,9 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 comptime {
-    const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
+    const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
     @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
-    const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
+    const jsonRejectRequestStream = JSC.toJSHostFn(onUploadStreamRejectRequestStream);
     @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 
@@ -426,12 +430,12 @@ pub fn uploadStream(
     const proxy_url = (proxy orelse "");
 
     if (readable_stream.isDisturbed(globalThis)) {
-        return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
     }
 
     switch (readable_stream.ptr) {
         .Invalid => {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
         },
         inline .File, .Bytes => |stream| {
             if (stream.pending.result == .err) {
@@ -449,7 +453,8 @@ pub fn uploadStream(
         else => {},
     }
 
-    const task = MultiPartUpload.new(.{
+    const task = bun.new(MultiPartUpload, .{
+        .ref_count = .init(),
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -478,7 +483,8 @@ pub fn uploadStream(
     task.ref(); // + 1 for the stream wrapper
 
     const endPromise = response_stream.sink.endPromise.value();
-    const ctx = S3UploadStreamWrapper.new(.{
+    const ctx = bun.new(S3UploadStreamWrapper, .{
+        .ref_count = .init(),
         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
         .sink = &response_stream.sink,
         .callback = callback,
@@ -627,9 +633,9 @@ pub fn downloadStream(
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
         } else {
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
         }
     };
     const proxy = proxy_url orelse "";
@@ -697,7 +703,7 @@ pub fn readableStream(
     const readable_value = reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         path: []const u8,
@@ -735,7 +741,7 @@ pub fn readableStream(
         pub fn deinit(self: *@This()) void {
             self.readable_stream_ref.deinit();
             bun.default_allocator.free(self.path);
-            self.destroy();
+            bun.destroy(self);
         }
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {

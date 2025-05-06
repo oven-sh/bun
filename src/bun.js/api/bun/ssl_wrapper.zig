@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
@@ -33,7 +33,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
         flags: Flags = .{},
 
-        pub const Flags = packed struct {
+        pub const Flags = packed struct(u8) {
             handshake_state: HandshakeState = HandshakeState.HANDSHAKE_PENDING,
             received_ssl_shutdown: bool = false,
             sent_ssl_shutdown: bool = false,

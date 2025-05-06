@@ -1,6 +1,21 @@
-const bun = @import("root").bun;
+//! Platform specific APIs for Windows
+//!
+//! If an API can be implemented on multiple platforms,
+//! it does not belong in this namespace.
+const bun = @import("bun");
+const builtin = @import("builtin");
+const Output = bun.Output;
 const windows = std.os.windows;
+const w = std.os.windows;
 const win32 = windows;
+const log = bun.sys.syslog;
+const Maybe = bun.sys.Maybe;
+
+const c = bun.c;
+pub const ntdll = windows.ntdll;
+pub const kernel32 = windows.kernel32;
+pub const GetLastError = kernel32.GetLastError;
+
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
 pub const MAX_PATH = windows.MAX_PATH;
 pub const WORD = windows.WORD;
@@ -38,7 +53,6 @@ pub const FILETIME = windows.FILETIME;
 
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
-pub const kernel32 = windows.kernel32;
 pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
 pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
 pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
@@ -62,9 +76,6 @@ pub const FILE_WRITE_THROUGH = windows.FILE_WRITE_THROUGH;
 pub const FILE_SEQUENTIAL_ONLY = windows.FILE_SEQUENTIAL_ONLY;
 pub const FILE_SYNCHRONOUS_IO_NONALERT = windows.FILE_SYNCHRONOUS_IO_NONALERT;
 pub const FILE_OPEN_REPARSE_POINT = windows.FILE_OPEN_REPARSE_POINT;
-pub usingnamespace kernel32;
-pub const ntdll = windows.ntdll;
-pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
 
@@ -107,7 +118,7 @@ pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
 
     const rc = function(hFile);
     if (comptime Environment.enable_logs)
-        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.FD.fromNative(hFile), rc });
     return rc;
 }
 
@@ -152,7 +163,7 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
 
-const SystemErrno = bun.C.SystemErrno;
+const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -3034,15 +3045,15 @@ pub extern "kernel32" fn SetFileInformationByHandle(
     bufferSize: DWORD,
 ) BOOL;
 
-pub fn getLastErrno() bun.C.E {
-    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
+pub fn getLastErrno() bun.sys.E {
+    return (bun.sys.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
 pub fn getLastError() anyerror {
     return bun.errnoToZigErr(getLastErrno());
 }
 
-pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
         .ACCESS_DENIED => .PERM,
@@ -3064,14 +3075,14 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         } else .BUSY,
         .OBJECT_NAME_INVALID => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received OBJECT_NAME_INVALID, indicates a file path conversion issue.", .{});
-            bun.crash_handler.dumpCurrentStackTrace(null);
+            bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             break :brk .INVAL;
         } else .INVAL,
 
         else => |t| {
             if (bun.Environment.isDebug) {
                 bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-                bun.crash_handler.dumpCurrentStackTrace(null);
+                bun.crash_handler.dumpCurrentStackTrace(null, .{ .frame_count = 10 });
             }
             return .UNKNOWN;
         },
@@ -3257,6 +3268,7 @@ comptime {
     if (Environment.isWindows) {
         @export(&Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
         @export(&Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+        @export(&@"windows process.dlopen", .{ .name = "Bun__LoadLibraryBunString" });
     }
 }
 
@@ -3414,7 +3426,7 @@ pub fn GetFinalPathNameByHandle(
     });
 
     if (return_length == 0) {
-        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.windows.GetLastError() });
+        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, GetLastError() });
         return error.FileNotFound;
     }
 
@@ -3478,7 +3490,6 @@ pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
-const SetConsoleMode = kernel32.SetConsoleMode;
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
@@ -3667,3 +3678,382 @@ pub extern "kernel32" fn GetCommandLineW() callconv(.winapi) LPWSTR;
 pub extern "kernel32" fn CreateDirectoryW(lpPathName: [*:0]const u16, lpSecurityAttributes: ?*windows.SECURITY_ATTRIBUTES) callconv(.winapi) BOOL;
 pub extern "kernel32" fn SetEndOfFile(hFile: HANDLE) callconv(.winapi) BOOL;
 pub extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *FILETIME, out_lpExitTime: *FILETIME, out_lpKernelTime: *FILETIME, out_lpUserTime: *FILETIME) callconv(.winapi) BOOL;
+
+/// Returns the original mode, or null on failure
+pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: DWORD = 0, unset: DWORD = 0 }) !DWORD {
+    const fd = i.fd();
+    var original_mode: DWORD = 0;
+    if (c.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+        if (c.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
+            return getLastError();
+        }
+    } else return getLastError();
+    return original_mode;
+}
+
+const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_CHILD");
+
+// magic exit code to indicate to the watcher manager that the child process should be re-spawned
+// this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
+pub const watcher_reload_exit: DWORD = 3224497970;
+
+pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
+pub fn isWatcherChild() bool {
+    var buf: [1]u16 = undefined;
+    return c.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
+}
+
+pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
+    // this process will be the parent of the child process that actually runs the script
+    var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+    windows_enable_stdio_inheritance();
+    const job = CreateJobObjectA(null, null) orelse Output.panic(
+        "Could not create watcher Job Object: {s}",
+        .{@tagName(std.os.windows.kernel32.GetLastError())},
+    );
+    var jeli = std.mem.zeroes(c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+    jeli.BasicLimitInformation.LimitFlags =
+        c.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+        c.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
+        c.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
+        c.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+    if (c.SetInformationJobObject(
+        job,
+        c.JobObjectExtendedLimitInformation,
+        &jeli,
+        @sizeOf(c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+    ) == 0) {
+        Output.panic(
+            "Could not configure watcher Job Object: {s}",
+            .{@tagName(std.os.windows.kernel32.GetLastError())},
+        );
+    }
+
+    while (true) {
+        spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            if (err == error.Win32Error) {
+                Output.panic("Failed to spawn process: {s}\n", .{@tagName(GetLastError())});
+            }
+            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+        };
+        windows.WaitForSingleObject(procinfo.hProcess, c.INFINITE) catch |err| {
+            Output.panic("Failed to wait for child process: {s}\n", .{@errorName(err)});
+        };
+        var exit_code: DWORD = 0;
+        if (c.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
+            const err = windows.GetLastError();
+            _ = c.NtClose(procinfo.hProcess);
+            Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
+        }
+        _ = c.NtClose(procinfo.hProcess);
+
+        // magic exit code to indicate that the child process should be re-spawned
+        if (exit_code == watcher_reload_exit) {
+            continue;
+        } else {
+            bun.Global.exit(exit_code);
+        }
+    }
+}
+
+pub fn spawnWatcherChild(
+    allocator: std.mem.Allocator,
+    procinfo: *std.os.windows.PROCESS_INFORMATION,
+    job: HANDLE,
+) !void {
+    // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
+    var attr_size: usize = undefined;
+    _ = InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
+    const p = try allocator.alloc(u8, attr_size);
+    defer allocator.free(p);
+    if (InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
+        return error.Win32Error;
+    }
+    if (UpdateProcThreadAttribute(
+        p.ptr,
+        0,
+        c.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+        @ptrCast(&job),
+        @sizeOf(HANDLE),
+        null,
+        null,
+    ) == 0) {
+        return error.Win32Error;
+    }
+
+    const flags: DWORD = c.CREATE_UNICODE_ENVIRONMENT | c.EXTENDED_STARTUPINFO_PRESENT;
+
+    const image_path = exePathW();
+    var wbuf: WPathBuffer = undefined;
+    @memcpy(wbuf[0..image_path.len], image_path);
+    wbuf[image_path.len] = 0;
+
+    const image_pathZ = wbuf[0..image_path.len :0];
+
+    const kernelenv = kernel32.GetEnvironmentStringsW();
+    defer if (kernelenv) |envptr| {
+        _ = kernel32.FreeEnvironmentStringsW(envptr);
+    };
+
+    var size: usize = 0;
+    if (kernelenv) |pointer| {
+        // check that env is non-empty
+        if (pointer[0] != 0 or pointer[1] != 0) {
+            // array is terminated by two nulls
+            while (pointer[size] != 0 or pointer[size + 1] != 0) size += 1;
+            size += 1;
+        }
+    }
+    // now pointer[size] is the first null
+
+    const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+    defer allocator.free(envbuf);
+    if (kernelenv) |pointer| {
+        @memcpy(envbuf[0..size], pointer);
+    }
+    @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
+    envbuf[size + watcherChildEnv.len] = '=';
+    envbuf[size + watcherChildEnv.len + 1] = '1';
+    envbuf[size + watcherChildEnv.len + 2] = 0;
+    envbuf[size + watcherChildEnv.len + 3] = 0;
+
+    var startupinfo = STARTUPINFOEXW{
+        .StartupInfo = .{
+            .cb = @sizeOf(STARTUPINFOEXW),
+            .lpReserved = null,
+            .lpDesktop = null,
+            .lpTitle = null,
+            .dwX = 0,
+            .dwY = 0,
+            .dwXSize = 0,
+            .dwYSize = 0,
+            .dwXCountChars = 0,
+            .dwYCountChars = 0,
+            .dwFillAttribute = 0,
+            .dwFlags = c.STARTF_USESTDHANDLES,
+            .wShowWindow = 0,
+            .cbReserved2 = 0,
+            .lpReserved2 = null,
+            .hStdInput = std.io.getStdIn().handle,
+            .hStdOutput = std.io.getStdOut().handle,
+            .hStdError = std.io.getStdErr().handle,
+        },
+        .lpAttributeList = p.ptr,
+    };
+    @memset(std.mem.asBytes(procinfo), 0);
+    const rc = kernel32.CreateProcessW(
+        image_pathZ.ptr,
+        c.GetCommandLineW(),
+        null,
+        null,
+        1,
+        flags,
+        envbuf.ptr,
+        null,
+        @ptrCast(&startupinfo),
+        procinfo,
+    );
+    if (rc == 0) {
+        return error.Win32Error;
+    }
+    var is_in_job: c.BOOL = 0;
+    _ = c.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
+    bun.debugAssert(is_in_job != 0);
+    _ = c.NtClose(procinfo.hThread);
+}
+
+/// Returns null on error. Use windows API to lookup the actual error.
+/// The reason this function is in zig is so that we can use our own utf16-conversion functions.
+///
+/// Using characters16() does not seem to always have the sentinel. or something else
+/// broke when I just used it. Not sure. ... but this works!
+fn @"windows process.dlopen"(str: *bun.String) callconv(.C) ?*anyopaque {
+    if (comptime !bun.Environment.isWindows) {
+        @compileError(unreachable);
+    }
+
+    var buf: bun.WPathBuffer = undefined;
+    const data = switch (str.encoding()) {
+        .utf8 => bun.strings.convertUTF8toUTF16InBuffer(&buf, str.utf8()),
+        .utf16 => brk: {
+            @memcpy(buf[0..str.length()], str.utf16());
+            break :brk buf[0..str.length()];
+        },
+        .latin1 => brk: {
+            bun.strings.copyU8IntoU16(&buf, str.latin1());
+            break :brk buf[0..str.length()];
+        },
+    };
+    buf[data.len] = 0;
+    const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
+    return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+pub extern fn windows_enable_stdio_inheritance() void;
+
+/// Extracted from standard library except this takes an open file descriptor
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    var info = w.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtSetInformationFile(
+        fd.cast(),
+        &io,
+        &info,
+        @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+
+    log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
+/// Does not close the file descriptor.
+///
+/// For this to succeed
+/// - source_fd must have been opened with access_mask=w.DELETE
+/// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
+pub fn moveOpenedFileAt(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_file_name: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
+    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
+    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
+    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
+    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
+    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        bun.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
+
+    const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
+    var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+
+    const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_file_name.len * 2;
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.sys.E.NAMETOOLONG, .NtSetInformationFile);
+
+    const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+    var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+    rename_info.* = .{
+        .Flags = flags,
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(new_file_name)) null else new_dir_fd.cast(),
+        .FileNameLength = @intCast(new_file_name.len * 2), // already checked error.NameTooLong
+        .FileName = undefined,
+    };
+    @memcpy(@as([*]u16, &rename_info.FileName)[0..new_file_name.len], new_file_name);
+    const rc = w.ntdll.NtSetInformationFile(
+        src_fd.cast(),
+        &io_status_block,
+        rename_info,
+        @intCast(struct_len), // already checked for error.NameTooLong
+        .FileRenameInformationEx,
+    );
+    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+
+    if (bun.Environment.isDebug) {
+        if (rc == .ACCESS_DENIED) {
+            bun.Output.debugWarn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", .{});
+        }
+    }
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
+///
+/// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
+pub fn moveOpenedFileAtLoose(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_path: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    bun.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+
+    const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
+        new_path[2..]
+    else
+        new_path;
+
+    if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
+        const dirname = new_path[0..last_slash];
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true, .iterable = false })) {
+            .err => |e| return .{ .err = e },
+            .result => |fd| fd,
+        };
+        defer fd.close();
+
+        const basename = new_path[last_slash + 1 ..];
+        return moveOpenedFileAt(src_fd, fd, basename, replace_if_exists);
+    }
+
+    // easy mode
+    return moveOpenedFileAt(src_fd, new_dir_fd, without_leading_dot_slash, replace_if_exists);
+}
+
+/// Derived from std.os.windows.renameAtW
+/// Allows more errors
+pub fn renameAtW(
+    old_dir_fd: bun.FileDescriptor,
+    old_path_w: []const u16,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    const src_fd = brk: {
+        switch (bun.sys.openFileAtWindows(
+            old_dir_fd,
+            old_path_w,
+            .{
+                .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+                .disposition = w.FILE_OPEN,
+                .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+            },
+        )) {
+            .err => {
+                // retry, wtihout FILE_TRAVERSE flag
+                switch (bun.sys.openFileAtWindows(
+                    old_dir_fd,
+                    old_path_w,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
+                )) {
+                    .err => |err2| return .{ .err = err2 },
+                    .result => |fd| break :brk fd,
+                }
+            },
+            .result => |fd| break :brk fd,
+        }
+    };
+    defer src_fd.close();
+
+    return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
+}

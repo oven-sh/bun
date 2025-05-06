@@ -19,7 +19,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const posix = std.posix;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
@@ -89,10 +89,7 @@ const assert = bun.assert;
 ///
 /// Functions which accept a `_: OutputNeedsIOSafeGuard` parameter can
 /// safely assume the stdout/stderr they are working with require IO.
-pub const OutputNeedsIOSafeGuard = struct {
-    /// Dummy zero sized field to prevent it from being trivial to create this type (by doing `.{}`)
-    __i_know_what_i_am_doing_it_needs_io_yes: u0,
-};
+pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 
 pub const ExitCode = u16;
 
@@ -174,7 +171,7 @@ const CowFd = struct {
 
     pub fn deinit(this: *CowFd) void {
         assert(this.refcount == 0);
-        _ = bun.sys.close(this.__fd);
+        this.__fd.close();
         bun.default_allocator.destroy(this);
     }
 };
@@ -329,7 +326,7 @@ pub const ShellArgs = struct {
     /// Root ast node
     script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn arena_allocator(this: *ShellArgs) std.mem.Allocator {
         return this.__arena.allocator();
@@ -338,7 +335,7 @@ pub const ShellArgs = struct {
     pub fn deinit(this: *ShellArgs) void {
         this.__arena.deinit();
         bun.destroy(this.__arena);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn init() *ShellArgs {
@@ -353,7 +350,11 @@ pub const ShellArgs = struct {
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
+    pub const js = JSC.Codegen.JSShellInterpreter;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the allocator used to allocate interpreter state
@@ -614,7 +615,7 @@ pub const Interpreter = struct {
                     return Maybe(void).initErr(err);
                 },
             };
-            _ = Syscall.close2(this.cwd_fd);
+            _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
             this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
@@ -668,8 +669,6 @@ pub const Interpreter = struct {
         }
     };
 
-    pub usingnamespace JSC.Codegen.JSShellInterpreter;
-
     const ThisInterpreter = @This();
 
     const ShellErrorKind = error{
@@ -692,7 +691,7 @@ pub const Interpreter = struct {
     pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
@@ -1070,13 +1069,13 @@ pub const Interpreter = struct {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDOUT_FD)) {
+            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(bun.STDERR_FD)) {
+            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr())) {
                 .result => |fd| fd,
                 .err => |err| return .{ .err = err },
             };
@@ -1148,7 +1147,7 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const buffer: JSC.Buffer = .{
+        const buffer: JSC.Node.Buffer = .{
             .allocator = bun.default_allocator,
             .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };
@@ -2034,11 +2033,11 @@ pub const Interpreter = struct {
         fn expandVarArgv(this: *const Expansion, original_int: u8) []const u8 {
             var int = original_int;
             switch (this.base.interpreter.event_loop) {
-                .js => |js| {
+                .js => |event_loop| {
                     if (int == 0) return bun.selfExePath() catch "";
                     int -= 1;
 
-                    const vm = js.virtual_machine;
+                    const vm = event_loop.virtual_machine;
                     if (vm.main.len > 0) {
                         if (int == 0) return vm.main;
                         int -= 1;
@@ -3086,20 +3085,18 @@ pub const Interpreter = struct {
                     if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
                         return .{ .err = Syscall.Error.fromCode(e, .pipe) };
                     }
-                    pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
-                    pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
+                    pipe[0] = .fromUV(fds[0]);
+                    pipe[1] = .fromUV(fds[1]);
                 } else {
-                    const fds: [2]bun.FileDescriptor = switch (bun.sys.socketpair(
+                    switch (bun.sys.socketpair(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
                         0,
                         .blocking,
                     )) {
-                        .result => |fds| .{ bun.toFD(fds[0]), bun.toFD(fds[1]) },
+                        .result => |fds| pipe.* = fds,
                         .err => |err| return .{ .err = err },
-                    };
-
-                    pipe.* = fds;
+                    }
                 }
                 set_count.* += 1;
             }
@@ -4437,7 +4434,7 @@ pub const Interpreter = struct {
                         if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
                             const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
                                 .array_buffer = buf,
-                                .held = JSC.Strong.create(buf.value, global),
+                                .held = .create(buf.value, global),
                             } };
 
                             setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
@@ -4691,12 +4688,16 @@ pub const Interpreter = struct {
 
     /// This type is reference counted, but deinitialization is queued onto the event loop
     pub const IOReader = struct {
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
         fd: bun.FileDescriptor,
         reader: ReaderImpl,
         buf: std.ArrayListUnmanaged(u8) = .{},
         readers: Readers = .{ .inlined = .{} },
         read: usize = 0,
-        ref_count: u32 = 1,
+        ref_count: RefCount,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
         concurrent_task: JSC.EventLoopTask,
@@ -4705,8 +4706,6 @@ pub const Interpreter = struct {
 
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
-
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -4729,7 +4728,8 @@ pub const Interpreter = struct {
         }
 
         pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
-            const this = IOReader.new(.{
+            const this = bun.new(IOReader, .{
+                .ref_count = .init(),
                 .fd = fd,
                 .reader = ReaderImpl.init(@This()),
                 .evtloop = evtloop,
@@ -4863,12 +4863,12 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn asyncDeinit(this: *@This()) void {
+        fn asyncDeinit(this: *@This()) void {
             log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
-            this.async_deinit.enqueue();
+            this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
         }
 
-        pub fn __deinit(this: *@This()) void {
+        fn asyncDeinitCallback(this: *@This()) void {
             if (this.fd != bun.invalid_fd) {
                 // windows reader closes the file descriptor
                 if (bun.Environment.isWindows) {
@@ -4877,7 +4877,7 @@ pub const Interpreter = struct {
                     }
                 } else {
                     log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
-                    _ = bun.sys.close(this.fd);
+                    this.fd.close();
                 }
             }
             this.buf.deinit(bun.default_allocator);
@@ -4914,7 +4914,7 @@ pub const Interpreter = struct {
 
         pub fn runFromMainThread(this: *AsyncDeinitReader) void {
             const ioreader: *IOReader = @alignCast(@fieldParentPtr("async_deinit", this));
-            ioreader.__deinit();
+            ioreader.asyncDeinitCallback();
         }
 
         pub fn runFromMainThreadMini(this: *AsyncDeinitReader, _: *void) void {
@@ -4945,7 +4945,7 @@ pub const Interpreter = struct {
         }
 
         pub fn runFromMainThread(this: *@This()) void {
-            this.writer().__deinit();
+            this.writer().deinitOnMainThread();
         }
 
         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
@@ -5054,7 +5054,7 @@ pub fn MaybeChild(comptime T: type) type {
 }
 
 fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
+    if (fd.closeAllowingBadFileDescriptor(null)) |err| {
         log("ERR closefd: {}\n", .{err});
     }
 }
@@ -5331,12 +5331,12 @@ pub const ShellSyscall = struct {
                         .err => |e| return .{ .err = e },
                     };
                     return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                        .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                        .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
                 return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
-                    .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
+                    .result => |fd| fd.makeLibUVOwnedForSyscall(.open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };
             }
@@ -5354,7 +5354,7 @@ pub const ShellSyscall = struct {
             .err => |e| return .{ .err = e.withPath(path) },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -5365,7 +5365,7 @@ pub const ShellSyscall = struct {
             .err => |e| return .{ .err = e },
         };
         if (bun.Environment.isWindows) {
-            return bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail);
+            return fd.makeLibUVOwnedForSyscall(.open, .close_on_fail);
         }
         return .{ .result = fd };
     }
@@ -5373,7 +5373,7 @@ pub const ShellSyscall = struct {
     pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
-                .result => |duped_fd| bun.sys.toLibUVOwnedFD(duped_fd, .dup, .close_on_fail),
+                .result => |duped_fd| duped_fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail),
                 .err => |e| .{ .err = e },
             };
         }
@@ -5569,8 +5569,10 @@ pub fn FlagParser(comptime Opts: type) type {
 }
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
-    if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
-    // macos allows regular files to be pollable: ISREG(mode) == true
-    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
+    return switch (bun.Environment.os) {
+        .windows, .wasm => false,
+        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        // macos allows regular files to be pollable: ISREG(mode) == true
+        .mac => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.S.ISREG(mode) or posix.isatty(fd.native()),
+    };
 }

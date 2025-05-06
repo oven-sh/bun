@@ -22,18 +22,23 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const {
-  SocketAddress,
-  addServerName,
-  upgradeDuplexToTLS,
-  isNamedPipeSocket,
-  normalizedArgsSymbol,
-} = require("internal/net");
+const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
+  "socket.zig",
+  "createNodeTLSBinding",
+);
+const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler } from "bun";
-import type { ServerOpts, Server as ServerType } from "node:net";
+import type { SocketHandler, SocketListener } from "bun";
+import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+
+const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
+const BlockList = $zig("node_net_binding.zig", "BlockList");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -43,9 +48,6 @@ var IPv4Reg;
 // IPv6 Segment
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
-
-const DEFAULT_IPV4_ADDR = "0.0.0.0";
-const DEFAULT_IPV6_ADDR = "::";
 
 function isIPv4(s): boolean {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
@@ -76,7 +78,6 @@ const { connect: bunConnect } = Bun;
 var { setTimeout } = globalThis;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
@@ -114,10 +115,6 @@ function emitCloseNT(self, hasError) {
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
-}
-function finishSocket(hasError) {
-  detachSocket(this);
-  this.emit("close", hasError);
 }
 function destroyNT(self, err) {
   self.destroy(err);
@@ -305,7 +302,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 };
 
-const SocketEmitEndNT = (self, err?) => {
+const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -483,8 +480,6 @@ function Socket(options?) {
   const {
     socket,
     signal,
-    write,
-    read,
     allowHalfOpen = false,
     onread = null,
     noDelay = false,
@@ -587,6 +582,22 @@ Socket.prototype.address = function address() {
   };
 };
 
+Socket.prototype._onTimeout = function () {
+  // if there is pending data, write is in progress
+  // so we suppress the timeout
+  if (this._pendingData) {
+    return;
+  }
+
+  const handle = this._handle;
+  // if there is a handle, and it has pending data,
+  // we suppress the timeout because a write is in progress
+  if (handle && getBufferedAmount(handle) > 0) {
+    return;
+  }
+  this.emit("timeout");
+};
+
 Object.defineProperty(Socket.prototype, "bufferSize", {
   get: function () {
     return this.writableLength;
@@ -672,14 +683,6 @@ Socket.prototype.connect = function connect(...args) {
     socket,
     localAddress,
     localPort,
-    // TODOs
-    family,
-    hints,
-    lookup,
-    noDelay,
-    keepAlive,
-    keepAliveInitialDelay,
-    requestCert,
     rejectUnauthorized,
     pauseOnConnect,
     servername,
@@ -1329,6 +1332,10 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (typeof port === "string") {
+    const numPort = Number(port);
+    if (!Number.isNaN(numPort)) port = numPort;
+  }
   let backlog;
   let path;
   let exclusive = false;
@@ -1396,7 +1403,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
         }
-      } else if (!Number.isSafeInteger(port) || port < 0) {
+      } else if (port === undefined) {
         port = 0;
       }
 
@@ -1478,7 +1485,7 @@ Server.prototype[kRealListen] = function (
   reusePort,
   tls,
   contexts,
-  onListen,
+  _onListen,
 ) {
   if (path) {
     this._handle = Bun.listen({
@@ -1676,17 +1683,6 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// TODO:
-class BlockList {
-  constructor() {}
-
-  addSubnet(net, prefix, type) {}
-
-  check(address, type) {
-    return false;
-  }
-}
-
 export default {
   createServer,
   Server,
@@ -1698,10 +1694,10 @@ export default {
   Socket,
   _normalizeArgs: normalizeArgs,
 
-  getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
-  setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
-  getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
-  setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
+  getDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamily,
+  getDefaultAutoSelectFamilyAttemptTimeout,
+  setDefaultAutoSelectFamilyAttemptTimeout,
 
   BlockList,
   SocketAddress,

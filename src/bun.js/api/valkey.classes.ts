@@ -59,7 +59,7 @@ export default [
         fn: "jsConnect",
         length: 0,
       },
-      disconnect: {
+      close: {
         fn: "jsDisconnect",
         length: 0,
       },

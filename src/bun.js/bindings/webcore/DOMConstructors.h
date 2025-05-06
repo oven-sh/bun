@@ -875,6 +875,11 @@ public:
     DOMConstructors() = default;
     ConstructorArray& array() { return m_array; }
     const ConstructorArray& array() const { return m_array; }
+    template<typename Visitor>
+    void visit(Visitor& visitor)
+    {
+        visitor.append(m_array.begin(), m_array.end());
+    }
 
 private:
     ConstructorArray m_array {};

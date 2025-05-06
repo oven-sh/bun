@@ -13,7 +13,7 @@ import { createClient, DEFAULT_REDIS_URL, ctx, ConnectionType, isEnabled } from 
 describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
   beforeEach(() => {
     if (ctx.redis?.connected) {
-      ctx.redis.disconnect?.();
+      ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
   });
@@ -259,7 +259,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       await client.set(key, "initial-value");
 
       // Disconnect explicitly
-      client.disconnect();
+      client.close();
 
       // This command should fail
       expect(async () => await client.get(key)).toThrowErrorMatchingInlineSnapshot(`"Connection has failed"`);

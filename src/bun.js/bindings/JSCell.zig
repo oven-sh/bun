@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const GetterSetter = @import("GetterSetter.zig").GetterSetter;
 const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 const FFI = @import("FFI.zig");

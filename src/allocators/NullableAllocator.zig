@@ -1,6 +1,6 @@
 //! A nullable allocator the same size as `std.mem.Allocator`.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const NullableAllocator = @This();
 

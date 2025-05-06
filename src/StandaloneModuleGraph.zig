@@ -1,7 +1,7 @@
 //! Originally, we tried using LIEF to inject the module graph into a MachO segment
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Schema = bun.Schema.Api;
 const strings = bun.strings;
@@ -136,7 +136,7 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
-        cached_blob: ?*bun.JSC.WebCore.Blob = null,
+        cached_blob: ?*bun.webcore.Blob = null,
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
@@ -171,13 +171,13 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
+        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.webcore.Blob {
             if (this.cached_blob == null) {
-                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.webcore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
-                const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
+                const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
                 b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
@@ -254,7 +254,7 @@ pub const StandaloneModuleGraph = struct {
                     stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
                     stored.is_standalone_module_graph = true;
 
-                    const parsed = stored.new(); // allocate this on the heap
+                    const parsed = bun.new(SourceMap.ParsedSourceMap, stored);
                     parsed.ref(); // never free
                     this.* = .{ .parsed = parsed };
                     return parsed;
@@ -486,7 +486,7 @@ pub const StandaloneModuleGraph = struct {
                     // Make the file writable so we can delete it
                     _ = Syscall.fchmod(fd, 0o777);
                 }
-                _ = Syscall.close(fd);
+                fd.close();
                 _ = Syscall.unlink(name);
             }
         }.toClean;
@@ -579,7 +579,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 unreachable;
             };
-            const self_fd = brk2: {
+            const self_fd: bun.FileDescriptor = brk2: {
                 for (0..3) |retry| {
                     switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
@@ -601,9 +601,9 @@ pub const StandaloneModuleGraph = struct {
                 unreachable;
             };
 
-            defer _ = Syscall.close(self_fd);
+            defer self_fd.close();
 
-            bun.copyFile(self_fd.cast(), fd.cast()).unwrap() catch |err| {
+            bun.copyFile(self_fd, fd).unwrap() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);
@@ -659,7 +659,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
                 return cloned_executable_fd;
             },
@@ -727,7 +727,7 @@ pub const StandaloneModuleGraph = struct {
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
                 _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
-                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
 
                 return cloned_executable_fd;
@@ -791,7 +791,7 @@ pub const StandaloneModuleGraph = struct {
             .{ .windows_hide_console = windows_hide_console },
             target,
         );
-        fd.assertKind(.system);
+        bun.debugAssert(fd.kind == .system);
 
         if (Environment.isWindows) {
             var outfile_buf: bun.OSPathBuffer = undefined;
@@ -803,18 +803,18 @@ pub const StandaloneModuleGraph = struct {
                 break :brk outfile_buf_u16[0..outfile_w.len :0];
             };
 
-            bun.C.moveOpenedFileAtLoose(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
+            bun.windows.moveOpenedFileAtLoose(fd, .fromStdDir(root_dir), outfile_slice, true).unwrap() catch |err| {
                 if (err == error.EISDIR) {
                     Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.utf16(outfile_slice)});
                 } else {
                     Output.err(err, "failed to move executable to result path", .{});
                 }
 
-                _ = bun.C.deleteOpenedFile(fd);
+                _ = bun.windows.deleteOpenedFile(fd);
 
                 Global.exit(1);
             };
-            _ = bun.sys.close(fd);
+            fd.close();
 
             if (windows_icon) |icon_utf8| {
                 var icon_buf: bun.OSPathBuffer = undefined;
@@ -832,11 +832,11 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        bun.C.moveFileZWithHandle(
+        bun.sys.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
             bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),
-            bun.toFD(root_dir.fd),
+            .fromStdDir(root_dir),
             bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
@@ -871,7 +871,7 @@ pub const StandaloneModuleGraph = struct {
 
         // Do not invoke libuv here.
         const self_exe = openSelf() catch return null;
-        defer _ = Syscall.close(self_exe);
+        defer self_exe.close();
 
         var trailer_bytes: [4096]u8 = undefined;
         std.posix.lseek_END(self_exe.cast(), -4096) catch return null;
@@ -1010,7 +1010,7 @@ pub const StandaloneModuleGraph = struct {
         switch (Environment.os) {
             .linux => {
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
-                    return bun.toFD(easymode.handle);
+                    return .fromStdFile(easymode);
                 } else |_| {
                     if (bun.argv.len > 0) {
                         // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
@@ -1021,7 +1021,7 @@ pub const StandaloneModuleGraph = struct {
                             "",
                             bun.argv[0],
                         )) |path| {
-                            return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);
+                            return .fromStdFile(try std.fs.cwd().openFileZ(path, .{}));
                         }
                     }
 
@@ -1033,7 +1033,7 @@ pub const StandaloneModuleGraph = struct {
                 // opened with no modification.
                 const self_exe_path = try bun.selfExePath();
                 const file = try std.fs.openFileAbsoluteZ(self_exe_path.ptr, .{});
-                return bun.toFD(file.handle);
+                return .fromStdFile(file);
             },
             .windows => {
                 const image_path_unicode_string = std.os.windows.peb().ProcessParameters.ImagePathName;
@@ -1050,7 +1050,7 @@ pub const StandaloneModuleGraph = struct {
                 }
 
                 return bun.sys.openFileAtWindows(
-                    bun.FileDescriptor.cwd(),
+                    .cwd(),
                     nt_path,
                     .{
                         .access_mask = w.SYNCHRONIZE | w.GENERIC_READ,

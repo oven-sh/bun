@@ -767,14 +767,12 @@ node_api_create_external_string_latin1(napi_env env,
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("latin1 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("latin1 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -803,15 +801,14 @@ node_api_create_external_string_utf16(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
+
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        if (finalize_callback) {
-            NAPI_LOG("utf16 string finalizer");
-            finalize_callback(env, str, hint);
-        }
+        NAPI_LOG("utf16 string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(impl.get()));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -1201,7 +1198,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_set_ref(NapiRef* ref, JSC__JSValue val_)
+extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
 {
     NAPI_LOG_CURRENT_FUNCTION;
     JSC::JSValue val = JSC::JSValue::decode(val_);
@@ -1417,16 +1414,13 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_ARG(env, error);
     auto globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = toJS(error);
-    if (value) {
-        JSC::throwException(globalObject, throwScope, value);
-    } else {
-        JSC::throwException(globalObject, throwScope, JSC::createError(globalObject, "Error (via napi)"_s));
-    }
+    JSC::throwException(globalObject, throwScope, value);
 
     return napi_set_last_error(env, napi_ok);
 }

@@ -1364,7 +1364,7 @@ void us_internal_ssl_socket_context_add_server_name(
   if (ssl_context) {
     /* Attach the user data to this context */
     if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
       printf("CANNOT SET EX DATA!\n");
       abort();
 #endif
@@ -1392,7 +1392,7 @@ int us_bun_internal_ssl_socket_context_add_server_name(
 
   /* Attach the user data to this context */
   if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     printf("CANNOT SET EX DATA!\n");
     abort();
 #endif
@@ -1617,7 +1617,7 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size, is_connecting);
-  if (*is_connecting) {
+  if (*is_connecting && s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
   }
 

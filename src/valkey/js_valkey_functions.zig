@@ -173,7 +173,11 @@ pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     };
     defer key.deinit();
 
-    const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{ .min = 0, .max = 2147483647 });
+    const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{
+        .min = 0,
+        .max = 2147483647,
+        .field_name = "seconds",
+    });
 
     // Convert seconds to a string
     var int_buf: [64]u8 = undefined;
@@ -772,7 +776,7 @@ const compile = struct {
 };
 
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const valkey = bun.valkey;
 const protocol = valkey.protocol;

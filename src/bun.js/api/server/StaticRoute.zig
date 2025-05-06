@@ -2,8 +2,13 @@
 //! Response object, or from globally allocated bytes.
 const StaticRoute = @This();
 
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
 // TODO: Remove optional. StaticRoute requires a server object or else it will
 // not ensure it is alive while sending a large blob.
+ref_count: RefCount,
 server: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
@@ -12,9 +17,6 @@ has_content_disposition: bool = false,
 headers: Headers = .{
     .allocator = bun.default_allocator,
 },
-ref_count: u32 = 1,
-
-pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
@@ -30,7 +32,8 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
-    return StaticRoute.new(.{
+    return bun.new(StaticRoute, .{
+        .ref_count = .init(),
         .blob = blob.*,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
@@ -51,14 +54,15 @@ fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();
 
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn clone(this: *StaticRoute, globalThis: *JSC.JSGlobalObject) !*StaticRoute {
     var blob = this.blob.toBlob(globalThis);
     this.blob = .{ .Blob = blob };
 
-    return StaticRoute.new(.{
+    return bun.new(StaticRoute, .{
+        .ref_count = .init(),
         .blob = .{ .Blob = blob.dupe() },
         .cached_blob_size = this.cached_blob_size,
         .has_content_disposition = this.has_content_disposition,
@@ -87,7 +91,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 
                 .Null, .Empty => {
                     break :brk .{
-                        .InternalBlob = JSC.WebCore.InternalBlob{
+                        .InternalBlob = .{
                             .bytes = std.ArrayList(u8).init(bun.default_allocator),
                         },
                     };
@@ -132,7 +136,8 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .allocator = bun.default_allocator,
             };
 
-        return StaticRoute.new(.{
+        return bun.new(StaticRoute, .{
+            .ref_count = .init(),
             .blob = blob,
             .cached_blob_size = blob.size(),
             .has_content_disposition = has_content_disposition,
@@ -338,13 +343,13 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Api = @import("../../../api/schema.zig").Api;
 const JSC = bun.JSC;
 const uws = bun.uws;
-const Headers = JSC.WebCore.Headers;
+const Headers = bun.http.Headers;
 const AnyServer = JSC.API.AnyServer;
-const AnyBlob = JSC.WebCore.AnyBlob;
+const AnyBlob = JSC.WebCore.Blob.Any;
 const writeStatus = @import("../server.zig").writeStatus;
 const AnyResponse = uws.AnyResponse;

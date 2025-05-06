@@ -1501,7 +1501,7 @@ export class VerdaccioRegistry {
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun") || bunExe(),
+      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
     });
 
     this.process.stderr?.on("data", data => {

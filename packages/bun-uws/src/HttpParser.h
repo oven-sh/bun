@@ -68,18 +68,11 @@ namespace uWS
     };
 
     struct HttpParserResult {
-        
-
         HttpParserError parserError = HTTP_PARSER_ERROR_NONE;
         unsigned int errorStatusCodeOrConsumedBytes = 0;
         void* returnedData = nullptr;
-    
-
     public:
-        
-
         static HttpParserResult error(unsigned int errorStatusCode, HttpParserError error) {
-
             return HttpParserResult{.parserError = error, .errorStatusCodeOrConsumedBytes = errorStatusCode, .returnedData = nullptr};
         }
 
@@ -87,6 +80,7 @@ namespace uWS
             return HttpParserResult{.parserError = HTTP_PARSER_ERROR_NONE, .errorStatusCodeOrConsumedBytes = consumedBytes, .returnedData = data};
         }
 
+        /* Returns the number of consumed bytes if there was no error, otherwise 0 */
         unsigned int consumedBytes() {
             if (parserError != HTTP_PARSER_ERROR_NONE) {
                 return 0;
@@ -451,7 +445,6 @@ namespace uWS
 
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
-        /* PS: this function on error can return char* to HTTPHeaderParserError enum, with is not the best design, this need to be refactor */
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;

@@ -228,82 +228,110 @@ pub fn stop(this: *INotifyWatcher) void {
 pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
     defer Output.flush();
 
+    // Get events from the platform
     const events: []const *align(1) Event = switch (this.platform.read()) {
         .result => |result| result,
         .err => |err| return .{ .err = err },
     };
     if (events.len == 0) return .{ .result = {} };
 
-    // TODO: is this thread safe?
-    var remaining_events = events.len;
+    // Setup stack fallback allocators for better performance
+    var valid_events_stack_buf = std.heap.stackFallback(@sizeOf(WatchEvent) * 129, bun.default_allocator);
+    var valid_events = std.ArrayList(WatchEvent).init(valid_events_stack_buf.get());
+    defer valid_events.deinit();
+
+    // Create a fixed-size buffer for temporary paths
+    var temp_path_slices: [128]?[:0]u8 = undefined;
+    var temp_path_count: u8 = 0;
 
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
-    while (remaining_events > 0) {
-        var name_off: u8 = 0;
-        var temp_name_list: [128]?[:0]u8 = undefined;
-        var temp_name_off: u8 = 0;
+    // Process each event individually, with careful bounds checking
+    for (events) |event| {
+        const watch_idx = std.mem.indexOfScalar(EventListIndex, eventlist_index, event.watch_descriptor) orelse continue;
 
-        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
-        var watchevents = this.watch_events[0..slice.len];
-        var watch_event_id: u32 = 0;
-        for (slice) |event| {
-            const watch_index = std.mem.indexOfScalar(
-                EventListIndex,
-                eventlist_index,
-                event.watch_descriptor,
-            ) orelse continue;
-            if (watch_index >= watchevents.len) {
-                Output.debugWarn("watch_index {d} >= watchevents.len {d}", .{ watch_index, watchevents.len });
-                continue;
-            }
+        // Skip invalid indices
+        if (watch_idx >= this.watchlist.len) continue;
 
-            watchevents[watch_event_id] = watchEventFromInotifyEvent(
-                event,
-                @intCast(watch_index),
-            );
-            temp_name_list[temp_name_off] = if (event.name_len > 0)
-                event.name()
-            else
-                null;
-            watchevents[watch_event_id].name_off = temp_name_off;
-            watchevents[watch_event_id].name_len = @as(u8, @intFromBool((event.name_len > 0)));
-            temp_name_off += @as(u8, @intFromBool((event.name_len > 0)));
+        // Create the event safely
+        const watch_event = watchEventFromInotifyEvent(event, @intCast(watch_idx));
 
-            watch_event_id += 1;
+        // Store path information
+        var path_idx: ?u8 = null;
+        if (event.name_len > 0 and temp_path_count < temp_path_slices.len) {
+            temp_path_slices[temp_path_count] = event.name();
+            path_idx = temp_path_count;
+            temp_path_count += 1;
         }
 
-        var all_events = watchevents[0..watch_event_id];
-        // Use a stable sort.
-        std.sort.insertion(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
-
-        var last_event_index: usize = 0;
-        var last_event_id: EventListIndex = std.math.maxInt(EventListIndex);
-
-        for (all_events, 0..) |_, i| {
-            if (all_events[i].name_len > 0) {
-                this.changed_filepaths[name_off] = temp_name_list[all_events[i].name_off];
-                all_events[i].name_off = name_off;
-                name_off += 1;
-            }
-
-            if (all_events[i].index == last_event_id) {
-                all_events[last_event_index].merge(all_events[i]);
-                continue;
-            }
-            last_event_index = i;
-            last_event_id = all_events[i].index;
+        // Add event to our list
+        var final_event = watch_event;
+        if (path_idx) |idx| {
+            final_event.name_len = 1;
+            final_event.name_off = idx;
         }
-        if (all_events.len == 0) return .{ .result = {} };
 
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        if (this.running) {
-            this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+        valid_events.append(final_event) catch continue;
+    }
+
+    // Skip processing if no valid events
+    if (valid_events.items.len == 0) return .{ .result = {} };
+
+    // Sort events stably by index
+    std.sort.insertion(WatchEvent, valid_events.items, {}, WatchEvent.sortByIndex);
+
+    // Setup stack fallback for unique events
+    var unique_events_stack_buf = std.heap.stackFallback(@sizeOf(WatchEvent) * 129, bun.default_allocator);
+    var unique_events = std.ArrayList(WatchEvent).init(unique_events_stack_buf.get());
+    defer unique_events.deinit();
+
+    // Merge events with the same index
+    var current_idx: ?WatchItemIndex = null;
+    var current_event: ?WatchEvent = null;
+
+    for (valid_events.items) |event| {
+        if (current_idx != null and current_idx.? == event.index) {
+            // Merge with current event
+            var merged = current_event.?;
+            merged.merge(event);
+            current_event = merged;
         } else {
-            break;
+            // Add previous event and start new one
+            if (current_event != null) {
+                unique_events.append(current_event.?) catch {};
+            }
+            current_idx = event.index;
+            current_event = event;
         }
-        remaining_events -= slice.len;
+    }
+
+    // Add the last event
+    if (current_event != null) {
+        unique_events.append(current_event.?) catch {};
+    }
+
+    // Now that we have our final set of unique events, copy paths to the standard location
+    var name_off: u8 = 0;
+
+    for (unique_events.items) |*event| {
+        if (event.name_len > 0 and event.name_off < temp_path_count) {
+            // Copy path to the final location
+            this.changed_filepaths[name_off] = temp_path_slices[event.name_off];
+
+            // Update event to point to the new location
+            event.name_off = name_off;
+
+            // Move to next path slot
+            name_off += 1;
+        }
+    }
+
+    // Process events safely
+    this.mutex.lock();
+    defer this.mutex.unlock();
+
+    if (this.running) {
+        this.onFileUpdate(this.ctx, unique_events.items, this.changed_filepaths[0..name_off], this.watchlist);
     }
 
     return .{ .result = {} };

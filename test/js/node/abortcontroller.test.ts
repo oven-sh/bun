@@ -325,21 +325,6 @@ describe("AbortSignal.any", () => {
     controller2.abort();
     expect(eventFired).toBe(true);
   });
-
-  test("cleanup: removes abort listeners when any signal aborts", () => {
-    const controller1 = new AbortController();
-    const controller2 = new AbortController();
-
-    // Testing internal implementation details is tricky
-    // This is a loose check that listeners are properly cleaned up
-    const anySignal = AbortSignal.any([controller1.signal, controller2.signal]);
-
-    controller1.abort();
-
-    // This is a loose way to check cleanup, but not very reliable
-    // We're just ensuring controller2 can still be aborted without affecting our test
-    controller2.abort();
-  });
 });
 
 describe("AbortSignal integration", () => {
@@ -365,27 +350,5 @@ describe("AbortSignal integration", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(DOMException);
     }
-  });
-
-  test("cleanup: AbortController and signal are garbage collectable", async () => {
-    let weak;
-
-    // Create and abort in a separate scope
-    (() => {
-      const controller = new AbortController();
-      weak = controller;
-      controller.abort();
-    })();
-
-    // Force garbage collection, although we can't guarantee it will run
-    if (global.gc) {
-      global.gc();
-    }
-
-    // Wait a bit to allow for potential GC
-    await new Promise(resolve => setTimeout(resolve, 10));
-
-    // We can't reliably test GC, but at least we've exercised the code
-    // that should allow for GC to happen
   });
 });

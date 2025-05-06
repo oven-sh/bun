@@ -287,12 +287,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 RETURN_IF_EXCEPTION(scope, );
                 execArgv.append(str);
             });
+            RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTFMove(execArgv));
         }
     }
 
     Vector<RefPtr<MessagePort>> ports;
     auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(throwScope, {});
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
     auto* environmentData = globalObject->nodeWorkerEnvironmentData();
     // If node:worker_threads has not been imported, environment data will not be set up yet.

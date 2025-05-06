@@ -1325,7 +1325,7 @@ Socket.prototype.end = function end(data, encoding, callback) {
 };
 
 Socket.prototype._destroy = function _destroy(err, callback) {
-  $debug("destroy");
+  $debug("Socket.prototype._destroy");
 
   this.connecting = false;
 
@@ -2189,6 +2189,8 @@ function afterConnect(status, handle, req, readable, writable) {
   if (self.destroyed) {
     return;
   }
+
+  $debug("afterConnect", status, readable, writable);
 
   $assert(self.connecting);
   self.connecting = false;

@@ -79,6 +79,31 @@ const kAfterWritePending = 1 << 28;
 const kBuffered = 1 << 29;
 const kEnded = 1 << 30;
 
+function fmtState(state) {
+  return [
+    state & kObjectMode ? "ObjectMode" : "",
+    state & kFinalCalled ? "FinalCalled" : "",
+    state & kNeedDrain ? "NeedDrain" : "",
+    state & kEnding ? "Ending" : "",
+    state & kEnded ? "Ended" : "",
+    state & kFinished ? "Finished" : "",
+    state & kDestroyed ? "Destroyed" : "",
+    state & kDecodeStrings ? "DecodeStrings" : "",
+    state & kWriting ? "Writing" : "",
+    state & kSync ? "Sync" : "",
+    state & kBufferProcessing ? "BufferProcessing" : "",
+    state & kConstructed ? "Constructed" : "",
+    state & kPrefinished ? "Prefinished" : "",
+    state & kErrorEmitted ? "ErrorEmitted" : "",
+    state & kEmitClose ? "EmitClose" : "",
+    state & kAutoDestroy ? "AutoDestroy" : "",
+    state & kClosed ? "Closed" : "",
+    state & kCloseEmitted ? "CloseEmitted" : "",
+    state & kAllBuffers ? "AllBuffers" : "",
+    state & kAllNoop ? "AllNoop" : "",
+  ].join(" ");
+}
+
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
   return {
@@ -669,6 +694,7 @@ function afterWrite(stream, state, count, cb) {
     errorBuffer(state);
   }
 
+  $debug("afterWrite", fmtState(state[kState]));
   if ((state[kState] & kEnding) !== 0) {
     finishMaybe(stream, state, true);
   }
@@ -826,19 +852,7 @@ Writable.prototype.end = function (chunk, encoding, cb) {
 };
 
 function needFinish(state) {
-  $debug(
-    "needFinish",
-    state[kState] & kEnding ? "Ending" : "",
-    state[kState] & kDestroyed ? "Destroyed" : "",
-    state[kState] & kConstructed ? "Constructed" : "",
-    state[kState] & kFinished ? "Finished" : "",
-    state[kState] & kWriting ? "Writing" : "",
-    state[kState] & kErrorEmitted ? "ErrorEmitted" : "",
-    state[kState] & kCloseEmitted ? "CloseEmitted" : "",
-    state[kState] & kErrored ? "Errored" : "",
-    state[kState] & kBuffered ? "Buffered" : "",
-    `length=${state.length}`,
-  );
+  $debug("needFinish", fmtState(state[kState]), `length=${state.length}`);
   return (
     // State is ended && constructed but not destroyed, finished, writing, errorEmitted or closedEmitted
     (state[kState] &

@@ -38,7 +38,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 transpiler: bun.transpiler.Transpiler,
-arena: bun.ArenaAllocator,
+arena: *bun.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
 buffer_writer: ?JSPrinter.BufferWriter = null,
@@ -117,30 +117,18 @@ pub const TransformTask = struct {
         const name = this.loader.stdinName();
         const source = logger.Source.initPathString(name, this.input_code.slice());
 
-        const prev_memory_allocators = .{ JSAst.Stmt.Data.Store.memory_allocator, JSAst.Expr.Data.Store.memory_allocator };
-        defer {
-            JSAst.Stmt.Data.Store.memory_allocator = prev_memory_allocators[0];
-            JSAst.Expr.Data.Store.memory_allocator = prev_memory_allocators[1];
-        }
-
         var arena = Mimalloc.Arena.init() catch unreachable;
+        defer arena.deinit();
 
         const allocator = arena.allocator();
-
         var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
-        ast_memory_allocator.* = .{
-            .allocator = allocator,
+        ast_memory_allocator.setup(allocator);
+
+        var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+            .current = ast_memory_allocator,
         };
-        ast_memory_allocator.reset();
-
-        JSAst.Stmt.Data.Store.memory_allocator = ast_memory_allocator;
-        JSAst.Expr.Data.Store.memory_allocator = ast_memory_allocator;
-
-        defer {
-            JSAst.Stmt.Data.Store.reset();
-            JSAst.Expr.Data.Store.reset();
-            arena.deinit();
-        }
+        ast_scope.enter();
+        defer ast_scope.exit();
 
         this.transpiler.setAllocator(allocator);
         this.transpiler.setLog(&this.log);
@@ -847,7 +835,8 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
 
     var arena = Mimalloc.Arena.init() catch unreachable;
     const prev_allocator = this.transpiler.allocator;
-    this.transpiler.setAllocator(arena.allocator());
+    const allocator = arena.allocator();
+    this.transpiler.setAllocator(allocator);
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
     this.transpiler.setLog(&log);
@@ -856,13 +845,16 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
         this.transpiler.setAllocator(prev_allocator);
         arena.deinit();
     }
+    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    ast_memory_allocator.setup(allocator);
+    var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+        .current = ast_memory_allocator,
+        .previous = JSAst.Stmt.Data.Store.memory_allocator,
+    };
+    ast_scope.enter();
+    defer ast_scope.exit();
 
-    defer {
-        JSAst.Stmt.Data.Store.reset();
-        JSAst.Expr.Data.Store.reset();
-    }
-
-    var parse_result = getParseResult(this, arena.allocator(), code, loader, Transpiler.MacroJSValueType.zero) orelse {
+    var parse_result = getParseResult(this, allocator, code, loader, Transpiler.MacroJSValueType.zero) orelse {
         if ((this.transpiler.log.warnings + this.transpiler.log.errors) > 0) {
             return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         }
@@ -991,15 +983,20 @@ pub fn transformSync(
         }
     }
 
-    JSAst.Stmt.Data.Store.reset();
-    JSAst.Expr.Data.Store.reset();
-    defer {
-        JSAst.Stmt.Data.Store.reset();
-        JSAst.Expr.Data.Store.reset();
-    }
+    const allocator = arena.allocator();
+
+    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    ast_memory_allocator.setup(allocator);
+
+    var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+        .current = ast_memory_allocator,
+        .previous = JSAst.Stmt.Data.Store.memory_allocator,
+    };
+    ast_scope.enter();
+    defer ast_scope.exit();
 
     const prev_bundler = this.transpiler;
-    this.transpiler.setAllocator(arena.allocator());
+    this.transpiler.setAllocator(allocator);
     this.transpiler.macro_context = null;
     var log = logger.Log.init(arena.backingAllocator());
     log.level = this.transpiler_options.log.level;
@@ -1010,7 +1007,7 @@ pub fn transformSync(
     }
     const parse_result = getParseResult(
         this,
-        arena.allocator(),
+        allocator,
         code,
         loader,
         js_ctx_value,
@@ -1154,14 +1151,16 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
         this.transpiler.macro_context = JSAst.Macro.MacroContext.init(&this.transpiler);
     }
     opts.macro_context = &this.transpiler.macro_context.?;
+    const allocator = arena.allocator();
+    var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();
+    ast_memory_allocator.setup(allocator);
 
-    JSAst.Stmt.Data.Store.reset();
-    JSAst.Expr.Data.Store.reset();
-
-    defer {
-        JSAst.Stmt.Data.Store.reset();
-        JSAst.Expr.Data.Store.reset();
-    }
+    var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+        .current = ast_memory_allocator,
+        .previous = JSAst.Stmt.Data.Store.memory_allocator,
+    };
+    ast_scope.enter();
+    defer ast_scope.exit();
 
     transpiler.resolver.caches.js.scan(
         transpiler.allocator,

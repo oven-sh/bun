@@ -1918,8 +1918,12 @@ fn startAsyncBundle(
     const allocator = heap.allocator();
     const ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
     ast_memory_allocator.* = .{ .allocator = allocator };
+    var ast_scope = bun.JSAst.ASTMemoryAllocator.Scope{
+        .current = ast_memory_allocator,
+    };
+    ast_scope.enter();
+    defer ast_scope.exit();
     ast_memory_allocator.reset();
-    ast_memory_allocator.push();
 
     const bv2 = try BundleV2.init(
         &dev.server_transpiler,

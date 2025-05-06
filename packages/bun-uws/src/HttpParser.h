@@ -45,7 +45,6 @@ namespace uWS
 
     /* We require at least this much post padding */
     static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
-    static void *FULLPTR = (void *)~(uintptr_t)0;
 
     enum HttpParserError: uint8_t {
         HTTP_PARSER_ERROR_NONE = 0,
@@ -699,10 +698,7 @@ namespace uWS
             return 0;
         }
 
-    /* This is the only caller of getHeaders and is thus the deepest part of the parser.
-     * From here we return either [consumed, user] for "keep going",
-     * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
-     * or [whatever, fullptr] for "break and close me, I am a parser error!" */
+    /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
     HttpParserResult fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
@@ -751,7 +747,6 @@ namespace uWS
             auto transferEncodingStringLen = transferEncodingString.length();
             auto contentLengthStringLen = contentLengthString.length();
             if (transferEncodingStringLen && contentLengthStringLen) {
-                /* Returning fullptr is the same as calling the errorHandler */
                 /* We could be smart and set an error in the context along with this, to indicate what
                  * http error response we might want to return */
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
@@ -839,7 +834,6 @@ namespace uWS
                 break;
             }
         }
-        /* Whenever we return FULLPTR, the interpretation of "consumed" should be the HttpError enum. */
         if (err) {
             return HttpParserResult::error(err, parserError);
         }

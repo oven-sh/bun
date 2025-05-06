@@ -242,6 +242,13 @@ var InternalSecureContext = class SecureContext {
         throw new TypeError("secureOptions argument must be an number");
       }
       this.secureOptions = secureOptions;
+
+      if (options.privateKeyEngine !== undefined && typeof options.privateKeyEngine !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("privateKeyEngine", "string", options.privateKeyEngine);
+      }
+      if (options.privateKeyIdentifier !== undefined && typeof options.privateKeyIdentifier !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("privateKeyIdentifier", "string", options.privateKeyIdentifier);
+      }
     }
     this.context = context;
   }

@@ -477,6 +477,7 @@ namespace uWS
                             if (memcmp(" HTTP/1.1\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
                                 return ConsumeRequestLineResult::shortRead();
                             } else if (memcmp(" HTTP/1.0\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
+                                /*Indicates that the request line is ancient HTTP*/
                                 return ConsumeRequestLineResult::shortRead(true);
                             }
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
@@ -484,6 +485,7 @@ namespace uWS
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
                             return ConsumeRequestLineResult::success(nextPosition);
                         } else if (memcmp(" HTTP/1.0\r\n", data, 11) == 0) {
+                            /*Indicates that the request line is ancient HTTP*/
                             return ConsumeRequestLineResult::success(nextPosition, true);
                         }
                         /* If we stand at the post padded CR, we have fragmented input so try again later */

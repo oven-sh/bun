@@ -4215,11 +4215,9 @@ pub const File = struct {
             .result => |bytes| bytes,
         };
 
-        if (comptime Environment.isWindows) {
-            if (opts.convert_bom) {
-                if (bun.strings.BOM.detect(bytes)) |bom| {
-                    bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
-                }
+        if (opts.convert_bom) {
+            if (bun.strings.BOM.detect(bytes)) |bom| {
+                bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
             }
         }
 

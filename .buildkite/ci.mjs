@@ -323,9 +323,25 @@ function getCppAgent(platform, options) {
 function getZigAgent(platform, options) {
   const { arch } = platform;
 
-  return {
-    queue: "build-zig",
-  };
+  // Uncomment to restore to using macOS on-prem for Zig.
+  // return {
+  //   queue: "build-zig",
+  // };
+
+  return getEc2Agent(
+    {
+      os: "linux",
+      arch: "x64",
+      distro: "debian",
+      release: "11",
+    },
+    options,
+    {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 4,
+      threadsPerCore: 1,
+    },
+  );
 }
 
 /**

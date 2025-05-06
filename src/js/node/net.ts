@@ -279,6 +279,7 @@ const SocketHandlers = {
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
+        // TODO: authorizationError should be error instance?
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
           self.destroy(verifyError);
@@ -301,7 +302,7 @@ const SocketHandlers = {
   },
   binaryType: "buffer",
   // TODO: We can improve the type of the socket here
-} satisfies SocketHandler<import("net").Socket & { [Key in PropertyKey]: unknown }, "buffer">;
+} satisfies SocketHandler<import("node:tls").TLSSocket & { [Key in PropertyKey]: unknown }, "buffer">;
 
 const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {

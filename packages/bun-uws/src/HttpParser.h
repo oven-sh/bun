@@ -692,7 +692,7 @@ namespace uWS
          * This is to always catch scan for \r but not for \r\n. */
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
-        
+        req->ancientHttp = false;
         for (;length;) {
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp);
             if(result.isError()) {

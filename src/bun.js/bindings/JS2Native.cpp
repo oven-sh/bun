@@ -22,7 +22,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
 {
     JSC::JSValue target = callFrame->uncheckedArgument(0);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(target.isInt32(), "In call to $lazy: expected Int32, got %s", target.toWTFString(lexicalGlobalObject).utf8().data());
 #endif
 

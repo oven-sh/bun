@@ -136,9 +136,6 @@
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
     "**/*.i": true,
-
-    // uws WebSocket.cpp conflicts with webcore WebSocket.cpp
-    "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
     "*.css": "tailwindcss",

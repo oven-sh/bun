@@ -1237,7 +1237,7 @@ pub const Formatter = struct {
 
             if (js_type.canGet() and js_type != .ProxyObject and !opts.disable_inspect_custom) {
                 // Attempt to get custom formatter
-                if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                if (try value.fastGet(globalThis, .inspectCustom)) |callback_value| {
                     if (callback_value.isCallable()) {
                         return .{
                             .tag = .{
@@ -2939,7 +2939,7 @@ pub const Formatter = struct {
                         },
                     }
 
-                    if (value.fastGet(this.globalThis, .message)) |message_value| {
+                    if (try value.fastGet(this.globalThis, .message)) |message_value| {
                         if (message_value.isString()) {
                             if (!this.single_line) {
                                 this.writeIndent(Writer, writer_) catch unreachable;
@@ -2973,7 +2973,7 @@ pub const Formatter = struct {
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
+                            const data = (try value.fastGet(this.globalThis, .data)) orelse JSValue.undefined;
                             const tag = Tag.getAdvanced(data, this.globalThis, .{
                                 .hide_global = true,
                                 .disable_inspect_custom = this.disable_inspect_custom,
@@ -2986,7 +2986,7 @@ pub const Formatter = struct {
                             }
                         },
                         .ErrorEvent => {
-                            if (value.fastGet(this.globalThis, .@"error")) |error_value| {
+                            if (try value.fastGet(this.globalThis, .@"error")) |error_value| {
                                 if (!this.single_line) {
                                     this.writeIndent(Writer, writer_) catch unreachable;
                                 }

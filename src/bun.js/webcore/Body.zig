@@ -724,7 +724,7 @@ pub const Value = union(Tag) {
                         var blob = Blob.new(new.use());
                         blob.allocator = bun.default_allocator;
                         if (headers) |fetch_headers| {
-                            if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                            if (try fetch_headers.fastGet(.ContentType)) |content_type| {
                                 var content_slice = content_type.toSlice(bun.default_allocator);
                                 defer content_slice.deinit();
                                 var allocated = false;
@@ -1331,7 +1331,7 @@ pub fn Mixin(comptime Type: type) type {
             blob.allocator = bun.default_allocator;
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
-                    if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                    if (try fetch_headers.fastGet(.ContentType)) |content_type| {
                         var content_slice = content_type.toSlice(blob.allocator.?);
                         defer content_slice.deinit();
                         var allocated = false;

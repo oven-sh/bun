@@ -1671,7 +1671,7 @@ pub fn Bun__fetch_(
         }
 
         if (request_init_object) |request_init| {
-            if (request_init.fastGet(globalThis, .url)) |url_| {
+            if (try request_init.fastGet(globalThis, .url)) |url_| {
                 if (!url_.isUndefined()) {
                     break :extract_url try bun.String.fromJS(url_, globalThis);
                 }
@@ -2123,7 +2123,7 @@ pub fn Bun__fetch_(
         }
 
         if (request_init_object) |req| {
-            if (req.fastGet(globalThis, .body)) |body__| {
+            if (try req.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
                     break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                 }
@@ -2149,7 +2149,7 @@ pub fn Bun__fetch_(
 
         const fetch_headers: ?*bun.webcore.FetchHeaders = brk: {
             if (options_object) |options| {
-                if (options.fastGet(globalThis, .headers)) |headers_value| {
+                if (try options.fastGet(globalThis, .headers)) |headers_value| {
                     if (!headers_value.isUndefined()) {
                         if (headers_value.as(FetchHeaders)) |headers__| {
                             if (headers__.isEmpty()) {
@@ -2183,7 +2183,7 @@ pub fn Bun__fetch_(
             }
 
             if (request_init_object) |options| {
-                if (options.fastGet(globalThis, .headers)) |headers_value| {
+                if (try options.fastGet(globalThis, .headers)) |headers_value| {
                     if (!headers_value.isUndefined()) {
                         if (headers_value.as(FetchHeaders)) |headers__| {
                             if (headers__.isEmpty()) {
@@ -2217,7 +2217,7 @@ pub fn Bun__fetch_(
         }
 
         if (fetch_headers) |headers_| {
-            if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+            if (try headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                 if (hostname) |host| {
                     hostname = null;
                     allocator.free(host);
@@ -2225,7 +2225,7 @@ pub fn Bun__fetch_(
                 hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
             }
             if (url.isS3()) {
-                if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                if (try headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
                     if (range) |range_| {
                         range = null;
                         allocator.free(range_);

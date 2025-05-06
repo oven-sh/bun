@@ -56,9 +56,9 @@ optionx(ZIG_LOCAL_CACHE_DIR FILEPATH "The path to local the zig cache directory"
 optionx(ZIG_GLOBAL_CACHE_DIR FILEPATH "The path to the global zig cache directory" DEFAULT ${CACHE_PATH}/zig/global)
 
 if(CI AND CMAKE_HOST_APPLE)
-  set(ZIG_COMPILER_SAFE_DEFAULT OFF)
-else()
   set(ZIG_COMPILER_SAFE_DEFAULT ON)
+else()
+  set(ZIG_COMPILER_SAFE_DEFAULT OFF)
 endif()
 
 optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler. Only availble on macos aarch64." DEFAULT ${ZIG_COMPILER_SAFE_DEFAULT})

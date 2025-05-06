@@ -133,7 +133,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         pub fn reset(store: *Store) void {
             log("reset", .{});
 
-            if (Environment.isDebug) {
+            if (Environment.isDebug or Environment.enable_asan) {
                 var it: ?*Block = store.firstBlock();
                 while (it) |next| : (it = next.next) {
                     next.bytes_used = undefined;

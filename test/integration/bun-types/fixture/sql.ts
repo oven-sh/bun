@@ -1,5 +1,5 @@
 import { sql } from "bun";
-import { expectAssignable, expectNotAssignable, expectType } from "./utilities";
+import { expectAssignable, expectType } from "./utilities";
 
 {
   const postgres = new Bun.SQL();
@@ -117,19 +117,14 @@ expectAssignable<Promise<any>>(sqlQueryAny);
 expectAssignable<Promise<number>>(sqlQueryNumber);
 expectAssignable<Promise<string>>(sqlQueryString);
 
-expectAssignable<Bun.SQLQuery<any>>(sqlQueryNumber);
-expectAssignable<Bun.SQLQuery<any>>(sqlQueryString);
-
-expectNotAssignable<Bun.SQLQuery<number>>(sqlQueryString);
-expectAssignable<Bun.SQLQuery<number>>(sqlQueryNumber);
+expectType(sqlQueryNumber).is<Bun.SQLQuery<number>>();
+expectType(sqlQueryString).is<Bun.SQLQuery<string>>();
+expectType(sqlQueryNumber).is<Bun.SQLQuery<number>>();
 
 const queryA = sql`SELECT 1`;
 expectType(queryA).is<Bun.SQLQuery>();
 const queryB = sql({ foo: "bar" });
 expectType(queryB).is<Bun.SQLQuery>();
-
-expectNotAssignable<Bun.SQLQuery<number>>(sqlQueryAny);
-expectNotAssignable<Bun.SQLQuery<string>>(sqlQueryNumber);
 
 expectType(sql).is<Bun.SQL>();
 

@@ -8554,7 +8554,7 @@ pub const ASTMemoryAllocator = struct {
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
-    pub fn setup(this: *ASTMemoryAllocator, allocator: std.mem.Allocator) void {
+    pub fn enter(this: *ASTMemoryAllocator, allocator: std.mem.Allocator) ASTMemoryAllocator.Scope {
         this.allocator = allocator;
         this.stack_allocator = SFA{
             .buffer = undefined,
@@ -8563,6 +8563,12 @@ pub const ASTMemoryAllocator = struct {
         };
         this.bump_allocator = this.stack_allocator.get();
         this.previous = null;
+        var ast_scope = ASTMemoryAllocator.Scope{
+            .current = this,
+            .previous = Stmt.Data.Store.memory_allocator,
+        };
+        ast_scope.enter();
+        return ast_scope;
     }
     pub const Scope = struct {
         current: ?*ASTMemoryAllocator = null,

@@ -2325,11 +2325,7 @@ pub const RuntimeTranspilerStore = struct {
                 };
             }
 
-            ast_memory_store.?.setup(allocator);
-            var ast_scope = js_ast.ASTMemoryAllocator.Scope{
-                .current = ast_memory_store.?,
-            };
-            ast_scope.enter();
+            var ast_scope = ast_memory_store.?.enter(allocator);
             defer ast_scope.exit();
 
             const path = this.path;

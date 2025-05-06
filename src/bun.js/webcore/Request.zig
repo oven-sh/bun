@@ -118,7 +118,7 @@ pub fn init(
 
 pub fn getContentType(
     this: *Request,
-) ?ZigString.Slice {
+) bun.JSError!?ZigString.Slice {
     if (this.request_context.getRequest()) |req| {
         if (req.header("content-type")) |value| {
             return ZigString.Slice.fromUTF8NeverFree(value);

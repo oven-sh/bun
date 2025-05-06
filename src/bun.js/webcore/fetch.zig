@@ -2092,7 +2092,7 @@ pub fn Bun__fetch_(
     //
     body = extract_body: {
         if (options_object) |options| {
-            if (options.fastGet(globalThis, .body)) |body__| {
+            if (try options.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
                     break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                 }
@@ -2590,7 +2590,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.options,
                 credentialsWithOptions.acl,
                 credentialsWithOptions.storage_class,
-                if (headers) |h| h.getContentType() else null,
+                if (headers) |h| (try h.getContentType()) else null,
                 proxy_url,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
@@ -2630,7 +2630,7 @@ pub fn Bun__fetch_(
             result.url = ""; // fetch now owns this
         }
 
-        const content_type = if (headers) |h| h.getContentType() else null;
+        const content_type = if (headers) |h| (try h.getContentType()) else null;
         var header_buffer: [10]picohttp.Header = undefined;
 
         if (range) |range_| {

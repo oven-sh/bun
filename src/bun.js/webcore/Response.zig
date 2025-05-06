@@ -343,7 +343,7 @@ pub fn finalize(
 
 pub fn getContentType(
     this: *Response,
-) ?ZigString.Slice {
+) bun.JSError!?ZigString.Slice {
     if (this.init.headers) |headers| {
         if (try headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);

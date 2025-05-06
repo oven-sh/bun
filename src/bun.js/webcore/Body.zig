@@ -1305,7 +1305,7 @@ pub fn Mixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             this_value: JSValue,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {

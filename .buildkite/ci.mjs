@@ -323,9 +323,26 @@ function getCppAgent(platform, options) {
 function getZigAgent(platform, options) {
   const { arch } = platform;
 
-  return {
-    queue: "build-zig",
-  };
+  // Uncomment to restore to using macOS on-prem for Zig.
+  // return {
+  //   queue: "build-zig",
+  // };
+
+  return getEc2Agent(
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "musl",
+      distro: "alpine",
+      release: "3.21",
+    },
+    options,
+    {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 4,
+      threadsPerCore: 1,
+    },
+  );
 }
 
 /**
@@ -634,15 +651,15 @@ function getReleaseStep(buildPlatforms, options) {
  * @param {Platform[]} buildPlatforms
  * @returns {Step}
  */
-function getBenchmarkStep(buildPlatforms) {
+function getBenchmarkStep() {
   return {
     key: "benchmark",
     label: "📊",
     agents: {
       queue: "build-image",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
-    command: "node .buildkite/scripts/upload-benchmark.ts",
+    depends_on: `linux-x64-build-bun`,
+    command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }
 
@@ -1126,9 +1143,8 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
-    // TODO: fix the broken benchmark step
-    // steps.push(getBenchmarkStep(buildPlatforms));
   }
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

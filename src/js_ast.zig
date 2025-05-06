@@ -119,7 +119,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             log("deinit", .{});
             var it = store.firstBlock().next; // do not free `store.head`
             while (it) |next| {
-                if (Environment.isDebug)
+                if (Environment.isDebug or Environment.enable_asan)
                     @memset(next.buffer, undefined);
                 it = next.next;
                 backing_allocator.destroy(next);
@@ -3222,7 +3222,8 @@ pub const Stmt = struct {
                     return;
                 }
 
-                instance.?.reset();
+                if (!disable_reset)
+                    instance.?.reset();
             }
 
             pub fn reset() void {
@@ -6347,7 +6348,8 @@ pub const Expr = struct {
                     return;
                 }
 
-                instance.?.reset();
+                if (!disable_reset)
+                    instance.?.reset();
             }
 
             pub fn append(comptime T: type, value: T) *T {

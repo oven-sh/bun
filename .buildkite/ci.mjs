@@ -332,6 +332,7 @@ function getZigAgent(platform, options) {
     {
       os: "linux",
       arch: "x64",
+      abi: "musl",
       distro: "alpine",
       release: "3.21",
     },

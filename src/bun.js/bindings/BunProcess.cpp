@@ -1,4 +1,3 @@
-#include "BoundEmitFunction.h"
 #include "ModuleLoader.h"
 #include "napi.h"
 
@@ -3075,7 +3074,15 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, con
 
 void Process::emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event)
 {
-    queueNextTick(globalObject, BoundEmitFunction::create(getVM(globalObject), globalObject, this, eventName, event));
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto emit = this->get(globalObject, Identifier::fromString(vm, "emit"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    if (!emit.getObject()) return;
+
+    auto* bound = JSBoundFunction::create(vm, globalObject, emit.getObject(), this, {}, 0, nullptr);
+    JSValue args[] = { jsString(vm, String(eventName)), event };
+    queueNextTick(globalObject, bound, args);
 }
 
 extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)

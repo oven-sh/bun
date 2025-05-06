@@ -346,6 +346,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     }
     auto* process = jsCast<Bun::Process*>(globalObject->processObject());
     process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsValue);
 }

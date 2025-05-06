@@ -182,7 +182,6 @@
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
-#include "BoundEmitFunction.h"
 #include "node/NodeTimers.h"
 
 #include "JSBunRequest.h"
@@ -3370,9 +3369,6 @@ void GlobalObject::finishCreation(VM& vm)
     });
     m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
         init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
-    });
-    m_BoundEmitFunctionStructure.initLater([](const LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::BoundEmitFunction::createStructure(init.vm, init.owner));
     });
 
     configureNodeVM(vm, this);

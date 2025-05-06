@@ -1,3 +1,4 @@
+import { sql } from "bun";
 import { expectAssignable, expectNotAssignable, expectType } from "./utilities";
 
 {
@@ -122,7 +123,6 @@ expectAssignable<Bun.SQLQuery<any>>(sqlQueryString);
 expectNotAssignable<Bun.SQLQuery<number>>(sqlQueryString);
 expectAssignable<Bun.SQLQuery<number>>(sqlQueryNumber);
 
-const sql = new Bun.SQL();
 const queryA = sql`SELECT 1`;
 expectType(queryA).is<Bun.SQLQuery>();
 const queryB = sql({ foo: "bar" });
@@ -159,3 +159,39 @@ expectType(await queryNum.simple()).is<number>();
 expectType(await queryNum.execute()).is<number>();
 expectType(await queryNum.raw()).is<number>();
 expectType(await queryNum.values()).is<number>();
+
+const _sqlInstance: Bun.SQL = Bun.sql;
+
+expectType(sql({ name: "Alice", email: "alice@example.com" })).is<Bun.SQLQuery>();
+
+expectType(
+  sql([
+    { name: "Alice", email: "alice@example.com" },
+    { name: "Bob", email: "bob@example.com" },
+  ]),
+).is<Bun.SQLQuery>();
+
+const user = { name: "Alice", email: "alice@example.com", age: 25 };
+expectType(sql(user, "name", "email")).is<Bun.SQLQuery>();
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+];
+expectType(sql(users, "id")).is<Bun.SQLQuery>();
+
+expectType(sql([1, 2, 3])).is<Bun.SQLQuery>();
+
+expectType(sql("users")).is<Bun.SQLQuery>();
+
+// @ts-expect-error - missing key in object
+sql(user, "notAKey");
+
+// @ts-expect-error - wrong type for key argument
+sql(user, 123);
+
+// @ts-expect-error - array of objects, missing key
+sql(users, "notAKey");
+
+// @ts-expect-error - array of numbers, extra key argument
+sql([1, 2, 3], "notAKey");

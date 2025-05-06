@@ -1436,7 +1436,7 @@ declare module "bun" {
      * const result = await sql`insert into users ${sql(user)} RETURNING *`;
      * ```
      */
-    <T extends Record<string, any>>(obj: T | T[], ...values: (keyof T)[]): SQLQuery;
+    <T extends { [Key in PropertyKey]: unknown }>(obj: T | T[] | readonly T[], ...columns: (keyof T)[]): SQLQuery;
 
     /**
      * Helper function for inserting any serializable value into a query
@@ -1795,14 +1795,14 @@ declare module "bun" {
    *
    * @category Database
    */
-  var sql: SQL;
+  const sql: SQL;
 
   /**
    * SQL client for PostgreSQL
    *
    * @category Database
    */
-  var postgres: SQL;
+  const postgres: SQL;
 
   /**
    * Generate and verify CSRF tokens

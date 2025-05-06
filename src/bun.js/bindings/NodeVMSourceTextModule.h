@@ -31,13 +31,21 @@ public:
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
+    bool createModuleRecord(JSGlobalObject* globalObject);
+
     EncodedJSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
+    // EncodedJSValue link(JSGlobalObject* globalObject, JSValue linker);
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
 private:
-    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier)
+    WriteBarrier<JSModuleRecord> m_moduleRecord;
+    SourceCode m_sourceCode;
+
+    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, SourceCode sourceCode)
         : Base(vm, structure, WTFMove(identifier))
+        , m_sourceCode(WTFMove(sourceCode))
     {
     }
 

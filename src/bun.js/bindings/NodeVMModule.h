@@ -4,6 +4,8 @@
 
 namespace Bun {
 
+class NodeVMSourceTextModule;
+
 class NodeVMModuleRequest final {
 public:
     NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes = {});
@@ -50,6 +52,12 @@ public:
 
     const WTF::Vector<NodeVMModuleRequest>& moduleRequests() const { return m_moduleRequests; }
     void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
+
+    // Purposely not virtual. Dispatches to the correct subclass.
+    bool finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex);
+
+    // Purposely not virtual. Dispatches to the correct subclass.
+    bool createModuleRecord(JSC::JSGlobalObject* globalObject);
 
 protected:
     WTF::String m_identifier;

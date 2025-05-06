@@ -37,6 +37,26 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
+bool NodeVMModule::finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex)
+{
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+        return thisObject->finishInstantiate(globalObject, stack, dfsIndex);
+        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
+        // return thisObject->finishInstantiate(globalObject);
+    }
+
+    return true;
+}
+
+bool NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
+{
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+        return thisObject->createModuleRecord(globalObject);
+    }
+
+    return true;
+}
+
 NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -65,6 +85,7 @@ JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleLink);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleSetExport);
+JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord);
 
 static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "identifier"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeVmModuleGetterIdentifier, nullptr } },
@@ -78,6 +99,7 @@ static const HashTableValue NodeVMModulePrototypeTableValues[] = {
     { "link"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleLink, 2 } },
     { "createCachedData"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateCachedData, 0 } },
     { "setExport"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleSetExport, 2 } },
+    { "createModuleRecord"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeVmModuleCreateModuleRecord, 0 } },
 };
 
 NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structure)
@@ -188,8 +210,15 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
         return throwArgumentTypeError(*globalObject, scope, 1, "moduleNatives"_s, "Module"_s, "Module"_s, "Array"_s);
     }
 
+    // JSValue linker = callFrame->argument(0);
+
+    // if (!linker.isCallable()) {
+    //     return throwArgumentTypeError(*globalObject, scope, 0, "linker"_s, "Module"_s, "Module"_s, "function"_s);
+    // }
+
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         return thisObject->link(globalObject, specifiers, moduleNatives);
+        // return thisObject->link(globalObject, linker);
         // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         //     return thisObject->link(globalObject, specifiers, moduleNatives);
     } else {
@@ -214,6 +243,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
 {
     // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
     return JSC::encodedJSUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    return JSValue::encode(JSC::jsBoolean(thisObject->createModuleRecord(globalObject)));
 }
 
 template<typename Visitor>

@@ -35,6 +35,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForImportMeta;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSourceTextModule;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSyntheticModule;
@@ -63,7 +64,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;

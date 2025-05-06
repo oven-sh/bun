@@ -260,6 +260,8 @@ class SourceTextModule extends Module {
   async [kLink](linker) {
     this.#statusOverride = "linking";
 
+    console.log({ createModuleRecord: this[kNative].createModuleRecord() });
+
     const moduleRequests = this[kNative].getModuleRequests();
     // Iterates the module requests and links with the linker.
     // Specifiers should be aligned with the moduleRequests array in order.
@@ -301,6 +303,8 @@ class SourceTextModule extends Module {
     } finally {
       this.#statusOverride = undefined;
     }
+
+    // return await this[kNative].link(linker);
   }
 
   get dependencySpecifiers() {

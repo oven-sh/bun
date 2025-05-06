@@ -1957,6 +1957,7 @@ extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
 pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
     this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
     this.overridden_main.deinit();
@@ -2027,6 +2028,7 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachi
 pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
     this.has_loaded = false;
     this.main = entry_path;
+    this.main_resolved_path.deref();
     this.main_resolved_path = .empty;
     this.main_hash = Watcher.getHash(entry_path);
     this.overridden_main.deinit();

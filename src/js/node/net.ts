@@ -711,7 +711,7 @@ Socket.prototype.connect = function connect(...args) {
       allowHalfOpen: this.allowHalfOpen,
     }).catch(error => {
       if (!this.destroyed) {
-        this.emit("error", error);
+        SocketHandlers.error(this, error);
         this.emit("close");
       }
     });
@@ -879,7 +879,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          this.emit("error", error);
+          SocketHandlers.error(this, error);
           this.emit("close");
         }
       });
@@ -894,7 +894,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          this.emit("error", error);
+          SocketHandlers.error(this, error);
           this.emit("close");
         }
       });

@@ -248,13 +248,19 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         var watchevents = this.watch_events[0..slice.len];
         var watch_event_id: u32 = 0;
         for (slice) |event| {
+            const watch_index = std.mem.indexOfScalar(
+                EventListIndex,
+                eventlist_index,
+                event.watch_descriptor,
+            ) orelse continue;
+            if (watch_index >= watchevents.len) {
+                Output.debugWarn("watch_index {d} >= watchevents.len {d}", .{ watch_index, watchevents.len });
+                continue;
+            }
+
             watchevents[watch_event_id] = watchEventFromInotifyEvent(
                 event,
-                @intCast(std.mem.indexOfScalar(
-                    EventListIndex,
-                    eventlist_index,
-                    event.watch_descriptor,
-                ) orelse continue),
+                @intCast(watch_index),
             );
             temp_name_list[temp_name_off] = if (event.name_len > 0)
                 event.name()
@@ -268,7 +274,8 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         }
 
         var all_events = watchevents[0..watch_event_id];
-        std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+        // Use a stable sort.
+        std.sort.insertion(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
         var last_event_index: usize = 0;
         var last_event_id: EventListIndex = std.math.maxInt(EventListIndex);

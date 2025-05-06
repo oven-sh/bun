@@ -3025,7 +3025,7 @@ CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObje
 }
 
 JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* globalObject,
-    const JSValue* errors, size_t errors_count,
+    const EncodedJSValue* errors, size_t errors_count,
     const ZigString* arg3)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3042,7 +3042,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
                  errors_count))) {
 
             for (size_t i = 0; i < errors_count; ++i) {
-                array->initializeIndexWithoutBarrier(initializationScope, i, errors[i]);
+                array->initializeIndexWithoutBarrier(initializationScope, i, JSValue::decode(errors[i]));
             }
         }
     }

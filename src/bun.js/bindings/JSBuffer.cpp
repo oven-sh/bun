@@ -1960,30 +1960,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
-// DOMJIT makes it slower! TODO: investigate why
-// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
-
-// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-//     if (!encoded) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-
-//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-//         return {};
-//     }
-
-//     auto encoding = encoded.value();
-
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
-// }
-
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L711
 template<BufferEncodingType encoding>
 static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)

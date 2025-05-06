@@ -572,87 +572,6 @@ pub fn publishBinary(
     );
 }
 
-pub fn publishBinaryWithoutTypeChecks(
-    this: *ServerWebSocket,
-    globalThis: *JSC.JSGlobalObject,
-    topic_str: *JSC.JSString,
-    array: *JSC.JSUint8Array,
-) bun.JSError!JSC.JSValue {
-    const app = this.handler.app orelse {
-        log("publish() closed", .{});
-        return JSValue.jsNumber(0);
-    };
-    const flags = this.handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
-
-    var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
-    defer topic_slice.deinit();
-    if (topic_slice.len == 0) {
-        return globalThis.throw("publishBinary requires a non-empty topic", .{});
-    }
-
-    const compress = true;
-
-    const buffer = array.slice();
-    if (buffer.len == 0) {
-        return JSC.JSValue.jsNumber(0);
-    }
-
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
-    else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
-
-    return JSValue.jsNumber(
-        // if 0, return 0
-        // else return number of bytes sent
-        if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-    );
-}
-
-pub fn publishTextWithoutTypeChecks(
-    this: *ServerWebSocket,
-    globalThis: *JSC.JSGlobalObject,
-    topic_str: *JSC.JSString,
-    str: *JSC.JSString,
-) bun.JSError!JSC.JSValue {
-    const app = this.handler.app orelse {
-        log("publish() closed", .{});
-        return JSValue.jsNumber(0);
-    };
-    const flags = this.handler.flags;
-    const ssl = flags.ssl;
-    const publish_to_self = flags.publish_to_self;
-
-    var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
-    defer topic_slice.deinit();
-    if (topic_slice.len == 0) {
-        return globalThis.throw("publishBinary requires a non-empty topic", .{});
-    }
-
-    const compress = true;
-
-    const slice = str.toSlice(globalThis, bun.default_allocator);
-    defer slice.deinit();
-    const buffer = slice.slice();
-
-    if (buffer.len == 0) {
-        return JSC.JSValue.jsNumber(0);
-    }
-
-    const result = if (!publish_to_self and !this.isClosed())
-        this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
-    else
-        uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
-
-    return JSValue.jsNumber(
-        // if 0, return 0
-        // else return number of bytes sent
-        if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
-    );
-}
-
 pub fn cork(
     this: *ServerWebSocket,
     globalThis: *JSC.JSGlobalObject,
@@ -826,37 +745,6 @@ pub fn sendText(
     }
 }
 
-pub fn sendTextWithoutTypeChecks(
-    this: *ServerWebSocket,
-    globalThis: *JSC.JSGlobalObject,
-    message_str: *JSC.JSString,
-    compress: bool,
-) JSValue {
-    if (this.isClosed()) {
-        log("sendText() closed", .{});
-        return JSValue.jsNumber(0);
-    }
-
-    var string_slice = message_str.toSlice(globalThis, bun.default_allocator);
-    defer string_slice.deinit();
-
-    const buffer = string_slice.slice();
-    switch (this.websocket().send(buffer, .text, compress, true)) {
-        .backpressure => {
-            log("sendText() backpressure ({d} bytes string)", .{buffer.len});
-            return JSValue.jsNumber(-1);
-        },
-        .success => {
-            log("sendText() success ({d} bytes string)", .{buffer.len});
-            return JSValue.jsNumber(buffer.len);
-        },
-        .dropped => {
-            log("sendText() dropped ({d} bytes string)", .{buffer.len});
-            return JSValue.jsNumber(0);
-        },
-    }
-}
-
 pub fn sendBinary(
     this: *ServerWebSocket,
     globalThis: *JSC.JSGlobalObject,
@@ -895,35 +783,6 @@ pub fn sendBinary(
         .success => {
             log("sendBinary() success ({d} bytes)", .{buffer.len});
             return JSValue.jsNumber(buffer.slice().len);
-        },
-        .dropped => {
-            log("sendBinary() dropped ({d} bytes)", .{buffer.len});
-            return JSValue.jsNumber(0);
-        },
-    }
-}
-
-pub fn sendBinaryWithoutTypeChecks(
-    this: *ServerWebSocket,
-    _: *JSC.JSGlobalObject,
-    array_buffer: *JSC.JSUint8Array,
-    compress: bool,
-) JSValue {
-    if (this.isClosed()) {
-        log("sendBinary() closed", .{});
-        return JSValue.jsNumber(0);
-    }
-
-    const buffer = array_buffer.slice();
-
-    switch (this.websocket().send(buffer, .binary, compress, true)) {
-        .backpressure => {
-            log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
-            return JSValue.jsNumber(-1);
-        },
-        .success => {
-            log("sendBinary() success ({d} bytes)", .{buffer.len});
-            return JSValue.jsNumber(buffer.len);
         },
         .dropped => {
             log("sendBinary() dropped ({d} bytes)", .{buffer.len});

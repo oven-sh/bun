@@ -187,10 +187,6 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
     };
 }
 
-pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) bun.JSError!JSValue {
-    return this.decodeSlice(globalThis, uint8array.slice(), false);
-}
-
 fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
     switch (this.encoding) {
         EncodingLabel.latin1 => {

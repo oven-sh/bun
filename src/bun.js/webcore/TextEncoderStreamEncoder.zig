@@ -32,16 +32,6 @@ pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject
     return this.encodeLatin1(globalObject, str.slice());
 }
 
-pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, input: *JSC.JSString) JSValue {
-    const str = input.getZigString(globalObject);
-
-    if (str.is16Bit()) {
-        return this.encodeUTF16(globalObject, str.utf16SliceAligned());
-    }
-
-    return this.encodeLatin1(globalObject, str.slice());
-}
-
 fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u8) JSValue {
     log("encodeLatin1: \"{s}\"", .{input});
 
@@ -182,10 +172,6 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
 }
 
 pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-    return flushBody(this, globalObject);
-}
-
-pub fn flushWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSValue {
     return flushBody(this, globalObject);
 }
 

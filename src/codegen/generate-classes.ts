@@ -54,10 +54,6 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
-function DOMJITName(fnName) {
-  return `${fnName}WithoutTypeChecks`;
-}
-
 function argTypeName(arg) {
   return {
     ["bool"]: "bool",
@@ -68,116 +64,12 @@ function argTypeName(arg) {
   }[arg];
 }
 
-function DOMJITType(type) {
-  return {
-    ["bool"]: "JSC::SpecBoolean",
-    ["int"]: "JSC::SpecInt32Only",
-    ["JSUint8Array"]: "JSC::SpecUint8Array",
-    ["JSString"]: "JSC::SpecString",
-    ["JSValue"]: "JSC::SpecHeapTop",
-  }[type];
-}
-
-function ZigDOMJITArgType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "i32",
-    ["JSUint8Array"]: "*jsc.JSUint8Array",
-    ["JSString"]: "*jsc.JSString",
-    ["JSValue"]: "jsc.JSValue",
-  }[type];
-}
-
-function ZigDOMJITArgTypeDefinition(type, index) {
-  return `arg${index}: ${ZigDOMJITArgType(type)}`;
-}
-
-function ZigDOMJITFunctionType(thisName, { args, returns }) {
-  return `fn (*${thisName}, *jsc.JSGlobalObject, ${args
-    .map(ZigDOMJITArgType)
-    .join(", ")}) callconv(jsc.conv) ${ZigDOMJITArgType("JSValue")}`;
-}
-
-function DOMJITReturnType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "int32_t",
-    ["JSUint8Array"]: "JSC::JSUint8Array*",
-    ["JSString"]: "JSString*",
-    ["JSValue"]: "EncodedJSValue",
-  }[type];
-}
-
-function DOMJITFunctionDeclaration(jsClassName, fnName, symName, { args, returns, pure = false }) {
-  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
-  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
-  const domJITArgs = args.length > 0 ? `, ${args.map(DOMJITType).join(", ")}` : "";
-  externs += `
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${DOMJITName(symName)}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject${formattedArgs});
-  `;
-
-  return (
-    `
-extern JSC_CALLCONV JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${DOMJITName(
-      fnName,
-    )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}));
-static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnName)}Wrapper,
-  ${jsClassName}::info(),
-  ${
-    pure
-      ? "JSC::DOMJIT::Effect::forPure()"
-      : "JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top())"
-  },
-  ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}${domJITArgs});
-`.trim() + "\n"
-  );
-}
-
-function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }, fn) {
-  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
-  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
-  const retArgs = argNames.length > 0 ? `, ${args.map((b, i) => "arg" + i).join(", ")}` : "";
-
-  return `
-JSC_DEFINE_JIT_OPERATION(${DOMJITName(
-    fnName,
-  )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-#if BUN_DEBUG
-    ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
-    JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
-    JSValue decoded = JSValue::decode(result);
-    if (wrapper->m_${fn}_expectedResultType) {
-        if (decoded.isCell() && !decoded.isEmpty()) {
-          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
-        } else {
-          ASSERT_WITH_MESSAGE(!wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-        }
-    } else if (!decoded.isEmpty()) {
-        wrapper->m_${fn}_expectedResultType = decoded.isCell()
-          ? std::optional<JSC::JSType>(decoded.asCell()->type())
-          : std::optional<JSC::JSType>(std::nullopt);
-    }
-    return { result };
-#endif
-    return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
-}
-`.trim();
-}
-
 function zigExportName(to: Map<string, string>, symbolName: (name: string) => string, prop) {
-  var { defaultValue, getter, setter, accessor, fn, DOMJIT, cache } = prop;
+  var { defaultValue, getter, setter, accessor, fn, cache } = prop;
   const exportNames = {
     getter: "",
     setter: "",
     fn: "",
-    DOMJIT: "",
   };
 
   if (accessor) {
@@ -194,9 +86,6 @@ function zigExportName(to: Map<string, string>, symbolName: (name: string) => st
   }
 
   if (fn && !to.get(fn)) {
-    if (DOMJIT) {
-      to.set(DOMJITName(fn), (exportNames.DOMJIT = symbolName(DOMJITName(fn))));
-    }
     to.set(fn, (exportNames.fn = symbolName(fn)));
   }
 
@@ -220,7 +109,6 @@ function propRow(
     fn,
     length = 0,
     cache,
-    DOMJIT,
     enumerable = true,
     configurable = false,
     value,
@@ -274,12 +162,6 @@ function propRow(
     } } }
 `.trim();
   } else if (fn !== undefined) {
-    if (DOMJIT) {
-      // { "getElementById"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTestDOMJITPrototypeFunction_getElementById, &DOMJITSignatureForTestDOMJITGetElementById } },
-      return `
-      { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ${fn}, &DOMJITSignatureFor${symbol} } }
-      `.trim();
-    }
     return `
 { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::NativeFunctionType, ${fn}, ${
       length || 0
@@ -912,24 +794,6 @@ function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) 
         `.trim(),
         "\n",
       );
-
-      if (proto[name].DOMJIT) {
-        rows.push(
-          DOMJITFunctionDeclaration(
-            className(typeName),
-            symbolName(typeName, name),
-            symbolName(typeName, proto[name].fn),
-            proto[name].DOMJIT,
-          ),
-          DOMJITFunctionDefinition(
-            className(typeName),
-            symbolName(typeName, name),
-            symbolName(typeName, proto[name].fn),
-            proto[name].DOMJIT,
-            proto[name].fn,
-          ),
-        );
-      }
     }
   }
 
@@ -1201,25 +1065,6 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
-    ${
-      !proto[name].DOMJIT
-        ? ""
-        : `
-    JSValue decoded = JSValue::decode(result);
-    if (thisObject->m_${fn}_expectedResultType) {
-      if (decoded.isCell() && !decoded.isEmpty()) {
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
-      } else {
-        ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-      }
-    } else if (!decoded.isEmpty()) {
-      thisObject->m_${fn}_expectedResultType = decoded.isCell()
-        ? std::optional<JSC::JSType>(decoded.asCell()->type())
-        : std::optional<JSC::JSType>(std::nullopt);
-    }`
-    }
-
     return result;
 #endif
 
@@ -1398,8 +1243,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
           })
           .join("\n")}
 
-        ${domJITTypeCheckFields(proto, klass)}
-
         ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
@@ -1409,23 +1252,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     };
     ${suffix}
   `.trim();
-}
-
-function domJITTypeCheckFields(proto, klass) {
-  var output = "#if BUN_DEBUG\n";
-  for (const name in proto) {
-    const { DOMJIT, fn } = proto[name];
-    if (!DOMJIT) continue;
-    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
-  }
-
-  for (const name in klass) {
-    const { DOMJIT, fn } = klass[name];
-    if (!DOMJIT) continue;
-    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
-  }
-  output += "#endif\n";
-  return output;
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
@@ -1945,7 +1771,7 @@ const JavaScriptCoreBindings = struct {
     {
       const exportNames = name => zigExportName(exports, name => protoSymbolName(typeName, name), proto[name]);
       for (const name in proto) {
-        const { getter, setter, accessor, fn, this: thisValue = false, cache, DOMJIT } = proto[name];
+        const { getter, setter, accessor, fn, this: thisValue = false, cache } = proto[name];
         const names = exportNames(name);
         if (names.getter) {
           output += `
@@ -1983,17 +1809,6 @@ const JavaScriptCoreBindings = struct {
         }
 
         if (names.fn) {
-          if (names.DOMJIT) {
-            const { args, returns } = DOMJIT;
-            output += `
-          pub fn ${names.DOMJIT}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ${args
-            .map(ZigDOMJITArgTypeDefinition)
-            .join(", ")}) callconv(jsc.conv) jsc.JSValue {
-            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
-          }
-          `;
-          }
-
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame${proto[name].passThis ? ", js_this_value: jsc.JSValue" : ""}) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_method("${typeName}", "${name}", callFrame);
@@ -2007,7 +1822,7 @@ const JavaScriptCoreBindings = struct {
     {
       const exportNames = name => zigExportName(exports, name => classSymbolName(typeName, name), klass[name]);
       for (const name in klass) {
-        const { getter, setter, accessor, fn, this: thisValue = true, cache, DOMJIT } = klass[name];
+        const { getter, setter, accessor, fn, this: thisValue = true, cache } = klass[name];
         const names = exportNames(name);
         if (names.getter) {
           output += `
@@ -2035,19 +1850,6 @@ const JavaScriptCoreBindings = struct {
         }
 
         if (names.fn) {
-          if (DOMJIT) {
-            const { args, returns } = DOMJIT;
-
-            output += `
-          pub fn ${names.DOMJIT}(globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, ${args
-            .map(ZigDOMJITArgTypeDefinition)
-            .join(", ")}) callconv(jsc.conv) jsc.JSValue {
-            if (comptime Environment.enable_logs) log_zig_class_domjit("${typeName}", "${name}");
-            return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
-          }
-          `;
-          }
-
           output += `
         pub fn ${names.fn}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_class_method("${typeName}", "${name}", callFrame);
@@ -2277,11 +2079,6 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "JSDOMConvertBufferSource.h"

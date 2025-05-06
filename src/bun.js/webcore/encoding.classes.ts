@@ -23,11 +23,6 @@ export default [
       decode: {
         fn: "decode",
         length: 1,
-
-        DOMJIT: {
-          returns: "JSString",
-          args: ["JSUint8Array"],
-        },
       },
     },
   }),
@@ -42,20 +37,10 @@ export default [
       encode: {
         fn: "encode",
         length: 1,
-
-        DOMJIT: {
-          returns: "JSUint8Array",
-          args: ["JSString"],
-        },
       },
       flush: {
         fn: "flush",
         length: 0,
-
-        DOMJIT: {
-          returns: "JSUint8Array",
-          args: [],
-        },
       },
     },
   }),

@@ -27,23 +27,6 @@ pub fn timingSafeEqual(_: *@This(), global: *JSC.JSGlobalObject, callframe: *JSC
     return JSC.Node.crypto.timingSafeEqual(global, callframe);
 }
 
-pub fn timingSafeEqualWithoutTypeChecks(
-    _: *@This(),
-    globalThis: *JSC.JSGlobalObject,
-    array_a: *JSC.JSUint8Array,
-    array_b: *JSC.JSUint8Array,
-) JSC.JSValue {
-    const a = array_a.slice();
-    const b = array_b.slice();
-
-    const len = a.len;
-    if (b.len != len) {
-        return globalThis.ERR(.CRYPTO_TIMING_SAFE_EQUAL_LENGTH, "Input buffers must have the same byte length", .{}).throw();
-    }
-
-    return JSC.jsBoolean(bun.BoringSSL.c.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
-}
-
 pub fn getRandomValues(
     _: *@This(),
     globalThis: *JSC.JSGlobalObject,
@@ -62,16 +45,6 @@ pub fn getRandomValues(
     randomData(globalThis, slice.ptr, slice.len);
 
     return arguments[0];
-}
-
-pub fn getRandomValuesWithoutTypeChecks(
-    _: *@This(),
-    globalThis: *JSC.JSGlobalObject,
-    array: *JSC.JSUint8Array,
-) JSC.JSValue {
-    const slice = array.slice();
-    randomData(globalThis, slice.ptr, slice.len);
-    return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
 }
 
 fn randomData(
@@ -160,21 +133,6 @@ pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallF
     }
 
     return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
-}
-
-pub fn randomUUIDWithoutTypeChecks(
-    _: *Crypto,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const str, var bytes = bun.String.createUninitialized(.latin1, 36);
-    defer str.deref();
-
-    // randomUUID must have been called already many times before this kicks
-    // in so we can skip the rare_data pointer check.
-    const uuid = globalThis.bunVM().rare_data.?.nextUUID();
-
-    uuid.print(bytes[0..36]);
-    return str.toJS(globalThis);
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {

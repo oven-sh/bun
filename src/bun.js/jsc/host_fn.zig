@@ -469,9 +469,6 @@ pub fn DOMCall(
             return jsc.toJSHostValue(globalObject, @field(Container, functionName)(globalObject, thisValue, arguments_ptr[0..arguments_len]));
         }
 
-        pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
-        pub const Fastpath = @TypeOf(fastpath);
-        pub const Arguments = std.meta.ArgsTuple(Fastpath);
         const PutFnType = *const fn (globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(.c) void;
         const put_fn = @extern(PutFnType, .{ .name = className ++ "__" ++ functionName ++ "__put" });
 
@@ -483,7 +480,6 @@ pub fn DOMCall(
 
         comptime {
             @export(&slowpath, .{ .name = className ++ "__" ++ functionName ++ "__slowpath" });
-            @export(&fastpath, .{ .name = className ++ "__" ++ functionName ++ "__fastpath" });
         }
     };
 }

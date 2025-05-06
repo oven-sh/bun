@@ -13,12 +13,6 @@ pub const JSObject = opaque {
         return JSC__JSObject__maxInlineCapacity;
     }
 
-    extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
-    extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;
-    extern fn Bun__JSObject__getCodePropertyVMInquiry(global: *JSGlobalObject, obj: *JSObject) JSValue;
-    extern fn JSC__createStructure(global: *JSC.JSGlobalObject, owner: *JSC.JSCell, length: u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
-    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
-
     pub fn toJS(obj: *JSObject) JSValue {
         return JSValue.fromCell(obj);
     }
@@ -133,28 +127,28 @@ pub const JSObject = opaque {
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
-            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
-                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this))), obj, global });
+            pub fn call(this: ?*anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
+                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this.?))), obj, global });
             }
         };
     }
 
     pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) JSValue {
         const Type = Initializer(Ctx, Ctx.create);
-        return JSC__JSObject__create(global, length, creator, Type.call);
+        return bun.c.JSC__JSObject__create(global, length, creator, Type.call);
     }
 
     pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
-        return JSC__JSObject__getIndex(this, globalThis, i);
+        return bun.c.JSC__JSObject__getIndex(this, globalThis, i);
     }
 
     pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
-        return JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
+        return bun.c.JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
     }
 
     /// This will not call getters or be observable from JavaScript.
     pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {
-        const v = Bun__JSObject__getCodePropertyVMInquiry(global, obj);
+        const v = bun.c.Bun__JSObject__getCodePropertyVMInquiry(global, obj);
         if (v == .zero) return null;
         return v;
     }

@@ -231,6 +231,7 @@ test('AbortSignal with a timeout is not collected while there is an active liste
 
   await sleep(10);
   globalThis.gc();
+  if (typeof Bun !== "undefined") Bun.gc(true); // only force gc will collect the signal in bun
   strictEqual(ref.deref(), undefined);
 });
 

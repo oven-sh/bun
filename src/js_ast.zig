@@ -3214,6 +3214,17 @@ pub const Stmt = struct {
                 instance = StoreType.init();
             }
 
+            /// create || reset
+            pub fn begin() void {
+                if (memory_allocator != null) return;
+                if (instance == null) {
+                    create();
+                    return;
+                }
+
+                instance.?.reset();
+            }
+
             pub fn reset() void {
                 if (disable_reset or memory_allocator != null) return;
                 instance.?.reset();
@@ -6322,10 +6333,21 @@ pub const Expr = struct {
             }
 
             pub inline fn assert() void {
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.isDebug or Environment.enable_asan) {
                     if (instance == null and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
+            }
+
+            /// create || reset
+            pub fn begin() void {
+                if (memory_allocator != null) return;
+                if (instance == null) {
+                    create();
+                    return;
+                }
+
+                instance.?.reset();
             }
 
             pub fn append(comptime T: type, value: T) *T {
@@ -8578,8 +8600,16 @@ pub const ASTMemoryAllocator = struct {
             bun.debugAssert(Expr.Data.Store.memory_allocator == Stmt.Data.Store.memory_allocator);
 
             this.previous = Expr.Data.Store.memory_allocator;
-            Expr.Data.Store.memory_allocator = this.current;
-            Stmt.Data.Store.memory_allocator = this.current;
+
+            const current = this.current;
+
+            Expr.Data.Store.memory_allocator = current;
+            Stmt.Data.Store.memory_allocator = current;
+
+            if (current == null) {
+                Stmt.Data.Store.begin();
+                Expr.Data.Store.begin();
+            }
         }
 
         pub fn exit(this: *const @This()) void {

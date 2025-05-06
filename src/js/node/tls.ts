@@ -244,12 +244,16 @@ var InternalSecureContext = class SecureContext {
       this.secureOptions = secureOptions;
 
       if (!$isUndefinedOrNull(options.privateKeyEngine) && typeof options.privateKeyEngine !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("privateKeyEngine", "string", options.privateKeyEngine);
+        // prettier-ignore
+        throw $ERR_INVALID_ARG_TYPE("privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
       }
+
       if (!$isUndefinedOrNull(options.privateKeyIdentifier) && typeof options.privateKeyIdentifier !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("privateKeyIdentifier", "string", options.privateKeyIdentifier);
+        // prettier-ignore
+        throw $ERR_INVALID_ARG_TYPE("privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
       }
     }
+
     this.context = context;
   }
 };

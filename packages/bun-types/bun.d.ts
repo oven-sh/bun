@@ -1511,7 +1511,7 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * await sql.flush();
+     * sql.flush();
      * ```
      */
     flush(): void;

@@ -4205,7 +4205,6 @@ pub const File = struct {
     }
 
     const ToSourceOptions = struct {
-        /// Windows only
         convert_bom: bool = false,
     };
 

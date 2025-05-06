@@ -1378,7 +1378,6 @@ Socket.prototype._final = function _final(callback) {
   if (!socket) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  socket.shutdown();
   process.nextTick(endNT, socket, callback);
 };
 

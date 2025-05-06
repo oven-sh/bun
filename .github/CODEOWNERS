@@ -1,3 +1,11 @@
+# Build system
 CMakeLists.txt @Electroid
-*.cmake @Electroid
-*.cmake.patch @Electroid
+cmake/ @Electroid
+scripts/ @Electroid
+
+# Debugger protocol
+packages/bun-inspector-protocol @Electroid
+packages/bun-debug-adapter-protocol @Electroid
+
+# Tests
+test/expectations.txt @Jarred-Sumner

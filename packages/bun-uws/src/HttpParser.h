@@ -487,7 +487,7 @@ namespace uWS
                         if (nextPosition >= end) {
                             /* Whatever we have must be part of the version string */
                             if (memcmp(" HTTP/1.1\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
-                                return ConsumeRequestLineResult::shortRead(false);
+                                return ConsumeRequestLineResult::shortRead();
                             } else if (memcmp(" HTTP/1.0\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
                                 return ConsumeRequestLineResult::shortRead(true);
                             }
@@ -500,7 +500,7 @@ namespace uWS
                         }
                         /* If we stand at the post padded CR, we have fragmented input so try again later */
                         if (data[0] == '\r') {
-                            return ConsumeRequestLineResult::shortRead(false);
+                            return ConsumeRequestLineResult::shortRead();
                         }
                         /* This is an error */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
@@ -510,14 +510,14 @@ namespace uWS
 
             /* If we stand at the post padded CR, we have fragmented input so try again later */
             if (data[0] == '\r') {
-                return ConsumeRequestLineResult::shortRead(false);
+                return ConsumeRequestLineResult::shortRead();
             }
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
                     case -1:
-                        return ConsumeRequestLineResult::shortRead(false);
+                        return ConsumeRequestLineResult::shortRead();
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
@@ -891,9 +891,11 @@ public:
 
             // break here on break
             HttpParserResult consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
-            if (consumed.httpErrorStatusCode()) {
+            /* Return data will be different than user if we are upgraded to WebSocket or have an error */
+            if (consumed.returnedData != user) {
                 return consumed;
             }
+            /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
             auto consumedBytes = consumed.consumedBytes();
             if (consumedBytes) {
 
@@ -946,9 +948,11 @@ public:
         }
 
         HttpParserResult consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
-        if (consumed.httpErrorStatusCode()) {
+        /* Return data will be different than user if we are upgraded to WebSocket or have an error */
+        if (consumed.returnedData != user) {
             return consumed;
         }
+        /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
         auto consumedBytes = consumed.consumedBytes();
 
         data += consumedBytes;

@@ -1,13 +1,5 @@
 #pragma once
 
-#include <stdint.h>
-
-typedef uint32_t WebCore__ScriptExecutionContextIdentifier;
-
-#ifndef __cplusplus
-typedef struct JSC__JSGlobalObject JSC__JSGlobalObject;
-#else
-
 #include "root.h"
 #include "ActiveDOMObject.h"
 #include <wtf/CrossThreadTask.h>
@@ -31,8 +23,6 @@ struct us_socket_t;
 struct us_socket_context_t;
 struct us_loop_t;
 
-using JSC__JSGlobalObject = JSC::JSGlobalObject;
-
 namespace WebCore {
 
 class WebSocket;
@@ -44,7 +34,7 @@ class EventLoopTask;
 
 class ContextDestructionObserver;
 
-using ScriptExecutionContextIdentifier = WebCore__ScriptExecutionContextIdentifier;
+using ScriptExecutionContextIdentifier = uint32_t;
 
 #if ENABLE(MALLOC_BREAKDOWN)
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
@@ -218,15 +208,3 @@ public:
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
 
 }
-
-#endif
-
-// Zig bindings
-#ifdef __cplusplus
-extern "C" {
-#endif
-WebCore__ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC__JSGlobalObject*);
-JSC__JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(WebCore__ScriptExecutionContextIdentifier);
-#ifdef __cplusplus
-}
-#endif

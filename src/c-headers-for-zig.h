@@ -69,5 +69,3 @@
 #undef lstat
 #undef fstat
 #undef stat
-
-#include "bun.js/bindings/ScriptExecutionContext.h"

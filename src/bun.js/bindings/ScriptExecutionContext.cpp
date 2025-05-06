@@ -391,16 +391,17 @@ void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionCont
     postTaskOnTimeout(task, timeout);
 }
 
-}
-
-WebCore::ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
+// Zig bindings
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
 {
     return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
 }
 
-JSC__JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(WebCore__ScriptExecutionContextIdentifier id)
+extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
 {
-    auto* context = WebCore::ScriptExecutionContext::getScriptExecutionContext(id);
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
     if (context) return context->globalObject();
     return nullptr;
 }
+
+} // namespace WebCore

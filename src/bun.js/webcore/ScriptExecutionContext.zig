@@ -1,13 +1,15 @@
 const bun = @import("bun");
 
+extern fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) ?*bun.jsc.JSGlobalObject;
+
 /// Safe handle to a JavaScript execution environment that may have exited.
 /// Obtain with global_object.scriptExecutionContextIdentifier()
-pub const Identifier = enum(bun.c.WebCore__ScriptExecutionContextIdentifier) {
+pub const Identifier = enum(u32) {
     _,
 
     /// Returns null if the context referred to by `self` no longer exists
     pub fn globalObject(self: Identifier) ?*bun.jsc.JSGlobalObject {
-        return bun.c.ScriptExecutionContextIdentifier__getGlobalObject(@intFromEnum(self));
+        return ScriptExecutionContextIdentifier__getGlobalObject(@intFromEnum(self));
     }
 
     /// Returns null if the context referred to by `self` no longer exists

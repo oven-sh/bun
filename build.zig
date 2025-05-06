@@ -508,38 +508,34 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
     }
 
-    // translate-c is unable to translate the unsuffixed windows functions
-    // like `SetCurrentDirectory` since they are defined with an odd macro
-    // that translate-c doesn't handle.
-    //
-    //     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
-    //
-    // In these cases, it's better to just reference the underlying function
-    // directly: SetCurrentDirectoryW. To make the error better, a post
-    // processing step is applied to the translate-c file.
-    //
-    // Additionally, this step makes it so that decls like NTSTATUS and
-    // HANDLE point to the standard library structures.
-    //
-    // This is also used on all platforms to rewrite some `opaque` types.
-    // In most cases, we want to define our own `opaque` so that we can
-    // use it as a namespace that provides decls. Normally the translate-c
-    // output will include its own `opaque` types, which would require a
-    // `@ptrCast` to and from the type we define. Instead, we replace these
-    // types with their equivalents imported from Bun.
-    const helper_exe = b.addExecutable(.{
-        .name = "process_translate_c",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/codegen/process_translate_c.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
-        }),
-    });
-    const in = translate_c.getOutput();
-    const run = b.addRunArtifact(helper_exe);
-    run.addFileArg(in);
-    const out = run.addOutputFileArg("c-headers-for-zig.zig");
-    return out;
+    if (target.result.os.tag == .windows) {
+        // translate-c is unable to translate the unsuffixed windows functions
+        // like `SetCurrentDirectory` since they are defined with an odd macro
+        // that translate-c doesn't handle.
+        //
+        //     #define SetCurrentDirectory __MINGW_NAME_AW(SetCurrentDirectory)
+        //
+        // In these cases, it's better to just reference the underlying function
+        // directly: SetCurrentDirectoryW. To make the error better, a post
+        // processing step is applied to the translate-c file.
+        //
+        // Additionally, this step makes it so that decls like NTSTATUS and
+        // HANDLE point to the standard library structures.
+        const helper_exe = b.addExecutable(.{
+            .name = "process_windows_translate_c",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/codegen/process_windows_translate_c.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
+        });
+        const in = translate_c.getOutput();
+        const run = b.addRunArtifact(helper_exe);
+        run.addFileArg(in);
+        const out = run.addOutputFileArg("c-headers-for-zig.zig");
+        return out;
+    }
+    return translate_c.getOutput();
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {

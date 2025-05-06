@@ -314,13 +314,14 @@ private:
                 us_socket_close(SSL, s, 0, nullptr);
             }
 
+            auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
-            if (result.returnedData != nullptr) {
+            if (returnedData != nullptr) {
                 /* We don't want open sockets to keep the event loop alive between HTTP requests */
-                us_socket_unref((us_socket_t *) result.returnedData);
+                us_socket_unref((us_socket_t *) returnedData);
 
                 /* Timeout on uncork failure */
-                auto [written, failed] = ((AsyncSocket<SSL> *) result.returnedData)->uncork();
+                auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
                 if (written > 0 || failed) {
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                     ((HttpResponse<SSL> *) s)->resetTimeout();
@@ -337,7 +338,7 @@ private:
                         }
                     }
                 }
-                return (us_socket_t *) result.returnedData;
+                return (us_socket_t *) returnedData;
             }
 
             /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */

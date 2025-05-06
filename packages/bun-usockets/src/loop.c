@@ -417,7 +417,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
                             if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
                                 int fd = *(int *)CMSG_DATA(cmsg_ptr);
-                                s->context->on_fd(s, fd);
+                                s = s->context->on_fd(s, fd);
+                                if(us_socket_is_closed(0, s)) {
+                                    break;
+                                }
                             }
                         }
                     }else{

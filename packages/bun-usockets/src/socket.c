@@ -377,6 +377,8 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 }
 
 #if !defined(_WIN32)
+/* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
+    number is less than the length, the file descriptor was not sent. */
 int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
     if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
         return 0;

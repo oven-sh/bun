@@ -1094,7 +1094,7 @@ Socket.prototype.setTimeout = function setTimeout(timeout, callback) {
     this.once("timeout", callback);
   }
   this._handle?.timeout(Math.ceil(timeout / 1000));
-  this._timeout = timeout;
+  this.timeout = timeout;
   return this;
 };
 
@@ -1710,14 +1710,3 @@ export default {
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 } as any as typeof import("node:net");
-
-Object.defineProperty(Socket.prototype, "timeout", {
-  get: function () {
-    return this._timeout || 0;
-  },
-  set: function (val) {
-    this.setTimeout(val);
-  },
-  configurable: true,
-  enumerable: true,
-});

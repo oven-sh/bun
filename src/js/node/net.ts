@@ -1337,6 +1337,10 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (typeof port === "string") {
+    const numPort = Number(port);
+    if (!Number.isNaN(numPort)) port = numPort;
+  }
   let backlog;
   let path;
   let exclusive = false;

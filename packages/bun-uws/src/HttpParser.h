@@ -946,12 +946,13 @@ public:
         }
 
         HttpParserResult consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
-        if (consumed.returnedData != user) {
+        if (consumed.httpErrorStatusCode()) {
             return consumed;
         }
+        auto consumedBytes = consumed.consumedBytes();
 
-        data += consumed.errorStatusCodeOrConsumedBytes;
-        length -= consumed.errorStatusCodeOrConsumedBytes;
+        data += consumedBytes;
+        length -= consumedBytes;
 
         if (length) {
             if (length < MAX_FALLBACK_SIZE) {

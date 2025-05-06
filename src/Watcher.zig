@@ -186,6 +186,7 @@ pub const WatchEvent = struct {
             try w.writeAll("{");
             var first = true;
             inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (comptime std.mem.eql(u8, name, "_padding")) continue;
                 if (@field(op, name)) {
                     if (!first) {
                         try w.writeAll(",");

@@ -1047,6 +1047,28 @@ pub const FieldDescription = struct {
     }
 
     pub const decode = decoderWrap(FieldDescription, decodeInternal).decode;
+
+    pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSValue {
+        const obj = JSValue.createEmptyObject(globalObject, 4);
+
+        const name = switch (this.name_or_index) {
+            .name => |n| bun.String.init(n.slice()).toJS(globalObject),
+            .index => |i| JSValue.jsNumberFromInt32(@intCast(i)),
+            .duplicate => .null,
+        };
+        obj.put(globalObject, JSC.ZigString.static("name"), name);
+
+        const table = JSValue.jsNumberFromInt32(@intCast(this.table_oid));
+        obj.put(globalObject, JSC.ZigString.static("table"), table);
+
+        const number = JSValue.jsNumberFromInt32(@intCast(this.column_index));
+        obj.put(globalObject, JSC.ZigString.static("number"), number);
+
+        const @"type" = JSValue.jsNumberFromInt32(@intCast(this.type_oid));
+        obj.put(globalObject, JSC.ZigString.static("type"), @"type");
+
+        return obj;
+    }
 };
 
 pub const RowDescription = struct {

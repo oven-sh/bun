@@ -79,8 +79,12 @@ export default [
         fn: "setPendingValue",
         length: 1,
       },
+      statement: {
+        getter: "getStatement",
+        this: true,
+      }
     },
-    values: ["pendingValue", "target", "columns", "binding"],
+    values: ["pendingValue", "target", "columns", "binding", "statement"],
     estimatedSize: true,
   }),
 ];

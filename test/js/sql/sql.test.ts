@@ -2383,8 +2383,24 @@ if (isDockerEnabled()) {
   //   [true, (await sql`bad keyword`.catch(e => e)) instanceof sql.PostgresError]
   // )
 
-  test.todo("Result has columns spec", async () => {
+  test("Safe result has columns spec", async () => {
     expect((await sql`select 1 as x`).columns[0].name).toBe("x");
+  });
+
+  test("Unsafe result has columns spec", async () => {
+    expect((await sql.unsafe("select 1 as x")).columns[0].name).toBe("x");
+  });
+
+  test("Result has statement with query", async () => {
+    expect((await sql`select 1 as x`).statement.string).toBe("select 1 as x");
+  });
+
+  test("Result has statement with template query", async () => {
+    expect((await sql`select ${"TEST"} as x`).statement.string).toBe("select $1  as x");
+  });
+
+  test("Result has statement with columns", async () => {
+    expect((await sql`select 1 as x`).statement.columns[0].name).toBe("x");
   });
 
   // t('forEach has result as second argument', async() => {

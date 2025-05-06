@@ -625,6 +625,38 @@ pub const PostgresSQLQuery = struct {
         pending_value.push(globalThis, value);
     }
 
+    pub fn getStatement(this: *PostgresSQLQuery, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
+        if (this.statement) |statement| {
+            if (PostgresSQLQuery.statementGetCached(thisValue)) |value| {
+                return value;
+            }
+
+            const obj = JSValue.createEmptyObject(globalObject, 2);
+
+            obj.put(globalObject, JSC.ZigString.static("string"), this.query.toJS(globalObject));
+
+            const columns = brk: {
+                const fields = &statement.fields;
+                const columns = JSValue.createEmptyArray(globalObject, fields.len);
+
+                var i: u32 = 0;
+                for (fields.*) |*field| {
+                    columns.putIndex(globalObject, i, field.toJS(globalObject));
+                    i += 1;
+                }
+
+                break :brk columns;
+            };
+            obj.put(globalObject, JSC.ZigString.static("columns"), columns);
+
+            PostgresSQLQuery.statementSetCached(thisValue, globalObject, obj);
+
+            return obj;
+        }
+
+        return .undefined;
+    }
+
     pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalObject;
         this.flags.is_done = true;

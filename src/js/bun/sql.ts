@@ -47,8 +47,18 @@ class SQLResultArray extends PublicArray {
     Object.defineProperties(this, {
       count: { value: null, writable: true },
       command: { value: null, writable: true },
+      query: { value: null, writable: true },
     });
   }
+
+  get statement() {
+    return this.query?.[_handle]?.statement;
+  }
+
+  get columns() {
+    return this.query?.[_handle]?.statement?.columns;
+  }
+
   static get [Symbol.species]() {
     return Array;
   }
@@ -638,6 +648,7 @@ init(
         result.command = cmds[commandTag];
       }
 
+      result.query = query;
       result.count = count || 0;
       const last_result = query[_results];
 
@@ -664,6 +675,7 @@ init(
       result.command = cmds[commandTag];
     }
 
+    result.query = query;
     result.count = count || 0;
     if (queries) {
       const queriesIndex = queries.indexOf(query);

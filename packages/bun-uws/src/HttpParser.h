@@ -76,8 +76,12 @@ namespace uWS
             return HttpParserResult{.parserError = error, .errorStatusCodeOrConsumedBytes = errorStatusCode, .returnedData = nullptr};
         }
 
-        static HttpParserResult success(unsigned int consumedBytes, void* data) {
+        static HttpParserResult success(unsigned int consumedBytes, void* data = nullptr) {
             return HttpParserResult{.parserError = HTTP_PARSER_ERROR_NONE, .errorStatusCodeOrConsumedBytes = consumedBytes, .returnedData = data};
+        }
+
+        static HttpParserResult shortRead() {
+            return HttpParserResult{.parserError = HTTP_PARSER_ERROR_NONE, .errorStatusCodeOrConsumedBytes = 0, .returnedData = nullptr};
         }
 
         /* Returns the number of consumed bytes if there was no error, otherwise 0 */
@@ -94,6 +98,11 @@ namespace uWS
                 return errorStatusCodeOrConsumedBytes;
             }
             return 0;
+        }
+
+        /* Returns true if there was an error */    
+        bool isError() {
+            return parserError != HTTP_PARSER_ERROR_NONE;
         }
     };
 
@@ -533,7 +542,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, unsigned int &err, HttpParserError &parserError, bool &isAncientHTTP) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             #ifdef UWS_WITH_PROXY
@@ -569,24 +578,16 @@ namespace uWS
                 /* Assuming it is 505 HTTP Version Not Supported */
                 switch (requestLineResult.headerParserError) {
                     case HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION:
-                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;
-                        parserError = HTTP_PARSER_ERROR_INVALID_HTTP_VERSION;
-                        break;
+                        return HttpParserResult::error(HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED, HTTP_PARSER_ERROR_INVALID_HTTP_VERSION);
                     case HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST:
-                        err = HTTP_ERROR_400_BAD_REQUEST;
-                        parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
-                        break;
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
                     case HTTP_HEADER_PARSER_ERROR_INVALID_METHOD:
-                        err = HTTP_ERROR_400_BAD_REQUEST;
-                        parserError = HTTP_PARSER_ERROR_INVALID_METHOD;
-                        break;
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_METHOD);
                     default: {
                         /* Short read */
-                        err = 0;
-                        break;
                     }
                 }
-                return 0;
+                return HttpParserResult::shortRead();
             }
             postPaddedBuffer = requestLineResult.position;
             
@@ -597,13 +598,11 @@ namespace uWS
             size_t buffer_size = end - postPaddedBuffer;
             if(buffer_size < 2) {
                 /* Fragmented request */
-                err = HTTP_ERROR_400_BAD_REQUEST;
-                parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
-                return 0;
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
             }
             if(buffer_size >= 2 && postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
                 /* No headers found */
-                return (unsigned int) ((postPaddedBuffer + 2) - start);
+                return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
             headers++;
 
@@ -617,12 +616,10 @@ namespace uWS
                 if (postPaddedBuffer[0] != ':') {
                     /* If we stand at the end, we are fragmented */
                     if (postPaddedBuffer == end) {
-                        return 0;
+                        return HttpParserResult::shortRead();
                     }
                     /* Error: invalid chars in field name */
-                    err = HTTP_ERROR_400_BAD_REQUEST;
-                    parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
-                    return 0;
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
                 }
                 postPaddedBuffer++;
 
@@ -638,9 +635,7 @@ namespace uWS
                             continue;
                         }
                         /* Error - invalid chars in field value */
-                        err = HTTP_ERROR_400_BAD_REQUEST;
-                        parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
-                        return 0;
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
                     }
                     break;
                 }
@@ -668,24 +663,22 @@ namespace uWS
                         if (postPaddedBuffer[1] == '\n') {
                             /* This cann take the very last header space */
                             headers->key = std::string_view(nullptr, 0);
-                            return (unsigned int) ((postPaddedBuffer + 2) - start);
+                            return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
                         } else {
                             /* \r\n\r plus non-\n letter is malformed request, or simply out of search space */
                             if (postPaddedBuffer + 1 < end) {
-                                err = HTTP_ERROR_400_BAD_REQUEST;
-                                parserError = HTTP_PARSER_ERROR_INVALID_REQUEST;
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
                             }
-                            return 0;
+                            return HttpParserResult::shortRead();
                         }
                     }
                 } else {
                     /* We are either out of search space or this is a malformed request */
-                    return 0;
+                    return HttpParserResult::shortRead();
                 }
             }
             /* We ran out of header space, too large request */
-            err = HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE;
-            return 0;
+            return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
@@ -694,15 +687,22 @@ namespace uWS
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
-        unsigned int err = 0;
-        HttpParserError parserError = HTTP_PARSER_ERROR_NONE;
 
         /* Fence two bytes past end of our buffer (buffer has post padded margins).
          * This is to always catch scan for \r but not for \r\n. */
         data[length] = '\r';
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
-        bool isAncientHTTP = false;
-        for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, err, parserError, isAncientHTTP)); ) {
+        
+        for (;length;) {
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp);
+            if(result.isError()) {
+                return result;
+            }
+            auto consumed = result.consumedBytes();
+            /* Short read */
+            if(!consumed) {
+                return HttpParserResult::success(consumedTotal, user);
+            }
             data += consumed;
             length -= consumed;
             consumedTotal += consumed;
@@ -712,9 +712,6 @@ namespace uWS
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
 
-            /* Store HTTP version (ancient 1.0 or 1.1) */
-            req->ancientHttp = isAncientHTTP;
-
             /* Add all headers to bloom filter */
             req->bf.reset();
             
@@ -722,7 +719,7 @@ namespace uWS
                 req->bf.add(h->key);
             }
             /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (!isAncientHTTP && requireHostHeader && !req->getHeader("host").data()) {
+            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -824,9 +821,7 @@ namespace uWS
                 break;
             }
         }
-        if (err) {
-            return HttpParserResult::error(err, parserError);
-        }
+        
         return HttpParserResult::success(consumedTotal, user);
     }
 

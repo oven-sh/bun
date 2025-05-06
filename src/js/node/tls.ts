@@ -5,7 +5,6 @@ const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { isNullOrUndefined } = require("node:util");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -244,10 +243,10 @@ var InternalSecureContext = class SecureContext {
       }
       this.secureOptions = secureOptions;
 
-      if (!isNullOrUndefined(options.privateKeyEngine) && typeof options.privateKeyEngine !== "string") {
+      if (!$isUndefinedOrNull(options.privateKeyEngine) && typeof options.privateKeyEngine !== "string") {
         throw $ERR_INVALID_ARG_TYPE("privateKeyEngine", "string", options.privateKeyEngine);
       }
-      if (!isNullOrUndefined(options.privateKeyIdentifier) && typeof options.privateKeyIdentifier !== "string") {
+      if (!$isUndefinedOrNull(options.privateKeyIdentifier) && typeof options.privateKeyIdentifier !== "string") {
         throw $ERR_INVALID_ARG_TYPE("privateKeyIdentifier", "string", options.privateKeyIdentifier);
       }
     }

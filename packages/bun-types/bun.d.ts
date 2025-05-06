@@ -1403,6 +1403,9 @@ declare module "bun" {
    */
   type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
 
+  type SQLAllowedArrayType = string | number | boolean | null;
+  type SQLAllowedArrayValue = SQLAllowedArrayType | SQLAllowedArrayValue[];
+
   /**
    * Main SQL client interface providing connection and transaction management
    */
@@ -1433,7 +1436,12 @@ declare module "bun" {
      * @example
      * const result = await sql`insert into users ${sql(users)} RETURNING *`;
      */
-    (obj: any): SQLQuery;
+    <T extends Record<string, any>>(obj: {
+      // Maps over object keys (K) and checks if the value is an array.
+      // If it is an array, ensures it only contains allowed SQL values (strings, numbers, booleans, null, or nested arrays of these).
+      // If not an array, keeps the original type.
+      [K in keyof T]: T[K] extends any[] ? SQLAllowedArrayValue[] : T[K];
+    }): SQLQuery;
     /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.commitDistributed("my_distributed_transaction");

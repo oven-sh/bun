@@ -210,7 +210,7 @@ const SocketHandlers = {
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
   },
-  error(socket, error, ignoreHadError) {
+  error(socket, error, ignoreHadError?: boolean) {
     const self = socket.data;
     if (!self) return;
     if (self._hadError && !ignoreHadError) return;
@@ -713,7 +713,7 @@ Socket.prototype.connect = function connect(...args) {
       allowHalfOpen: this.allowHalfOpen,
     }).catch(error => {
       if (!this.destroyed) {
-        SocketHandlers.error(this, error);
+        SocketHandlers.error(this, error, true);
         this.emit("close");
       }
     });
@@ -881,7 +881,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          SocketHandlers.error(this, error);
+          SocketHandlers.error(this, error, true);
           this.emit("close");
         }
       });
@@ -896,7 +896,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          SocketHandlers.error(this, error);
+          SocketHandlers.error(this, error, true);
           this.emit("close");
         }
       });

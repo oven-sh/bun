@@ -1642,7 +1642,13 @@ pub const RunCommand = struct {
                             break :outer;
                         const entry = keys[idx];
                         Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b><u>{s}<r>\"\n", .{target_name});
-                        Output.prettyError("\nDid you mean \"{s}\"?\n\n  <cyan><d>{s} <r><cyan><u>{s}<r>\n", .{ entry, std.fs.path.basename(bun.argv[0]), entry });
+                        var argv0 = std.fs.path.basename(bun.argv[0]);
+                        const extname = std.fs.path.extension(argv0);
+                        if (argv0.len > extname.len) {
+                            argv0.len -= extname.len;
+                        }
+
+                        Output.prettyError("\nDid you mean \"{s}\"?\n\n  <cyan><d>{s} <r><cyan><u>{s}<r>\n", .{ entry, argv0, entry });
                         break :print;
                     }
                 }

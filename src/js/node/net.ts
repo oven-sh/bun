@@ -28,7 +28,7 @@ const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] 
 );
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler } from "bun";
+import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
@@ -571,6 +571,10 @@ function Socket(options?) {
       signal.addEventListener("abort", destroyWhenAborted.bind(this));
     }
   }
+
+  if (options && typeof options.timeout === "number") {
+    this.setTimeout(options.timeout);
+  }
 }
 $toClass(Socket, "Socket", Duplex);
 
@@ -1088,7 +1092,7 @@ Socket.prototype.setTimeout = function setTimeout(timeout, callback) {
     this.once("timeout", callback);
   }
   this._handle?.timeout(Math.ceil(timeout / 1000));
-  this.timeout = timeout;
+  this._timeout = timeout;
   return this;
 };
 
@@ -1700,3 +1704,14 @@ export default {
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 } as any as typeof import("node:net");
+
+Object.defineProperty(Socket.prototype, "timeout", {
+  get: function () {
+    return this._timeout || 0;
+  },
+  set: function (val) {
+    this.setTimeout(val);
+  },
+  configurable: true,
+  enumerable: true,
+});

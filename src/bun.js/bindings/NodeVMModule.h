@@ -57,7 +57,7 @@ public:
     bool finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex);
 
     // Purposely not virtual. Dispatches to the correct subclass.
-    bool createModuleRecord(JSC::JSGlobalObject* globalObject);
+    JSValue createModuleRecord(JSC::JSGlobalObject* globalObject);
 
 protected:
     WTF::String m_identifier;

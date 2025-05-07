@@ -3,8 +3,8 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSModuleRecord.h"
-
-#include <print>
+#include "ModuleAnalyzer.h"
+#include "Parser.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -71,38 +71,127 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
 }
 
-bool NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
+JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (m_moduleRecord) {
-        return false;
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module record already present"_s);
+        return {};
     }
 
-    VM& vm = globalObject->vm();
+    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
 
-    // ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
+    ParserError parserError;
 
-    JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->m_moduleRecordStructure.get(globalObject), Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
+    std::unique_ptr<ModuleProgramNode> node = parseRootNode<ModuleProgramNode>(vm, m_sourceCode,
+        ImplementationVisibility::Public,
+        JSParserBuiltinMode::NotBuiltin,
+        StrictModeLexicallyScopedFeature,
+        JSParserScriptMode::Module,
+        SourceParseMode::ModuleAnalyzeMode,
+        parserError);
+
+    if (parserError.isValid()) {
+        throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
+        return {};
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(node != nullptr);
+
+    JSModuleRecord* moduleRecord = nullptr;
+
+    if (auto result = analyzer.analyze(*node)) {
+        moduleRecord = *result;
+    } else {
+        auto [type, message] = result.error();
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
+        return {};
+    }
+
     m_moduleRecord.set(vm, this, moduleRecord);
-
-    std::println("link synchronousness: {}", int(moduleRecord->link(globalObject, JSC::jsUndefined())));
+    m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
 
-    std::println("requests: {}", requests.size());
-
-    for (const auto& request : requests) {
-        std::println("request: {}", request.m_specifier->utf8().data());
+    if (requests.isEmpty()) {
+        return JSC::constructEmptyArray(globalObject, nullptr, 0);
     }
 
-    return true;
+    JSArray* requestsArray = JSC::constructEmptyArray(globalObject, nullptr, requests.size());
+
+    const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
+    const JSC::Identifier& specifierIdentifier = builtinNames.specifierPublicName();
+    const JSC::Identifier& attributesIdentifier = builtinNames.attributesPublicName();
+    const JSC::Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
+
+    for (unsigned i = 0; i < requests.size(); ++i) {
+        const auto& request = requests[i];
+
+        JSString* specifierValue = JSC::jsString(vm, WTF::String(*request.m_specifier));
+
+        JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        requestObject->putDirect(vm, specifierIdentifier, specifierValue);
+
+        WTF::String attributesTypeString = "unknown"_str;
+
+        if (request.m_attributes) {
+            JSValue attributesType {};
+            switch (request.m_attributes->type()) {
+                using AttributeType = decltype(request.m_attributes->type());
+                using enum AttributeType;
+            case None:
+                attributesTypeString = "none"_str;
+                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
+            case JavaScript:
+                attributesTypeString = "javascript"_str;
+                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
+            case WebAssembly:
+                attributesTypeString = "webassembly"_str;
+                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
+            case JSON:
+                attributesTypeString = "json"_str;
+                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
+            default:
+                attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
+                break;
+            }
+
+            WTF::HashMap<WTF::String, WTF::String> attributeMap {
+                { "type"_s, attributesTypeString },
+            };
+
+            JSObject* attributesObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+            attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
+            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
+                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
+                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
+            }
+            requestObject->putDirect(vm, attributesIdentifier, attributesObject);
+            addModuleRequest({ WTF::String(*request.m_specifier), WTFMove(attributeMap) });
+        } else {
+            addModuleRequest({ WTF::String(*request.m_specifier), {} });
+            requestObject->putDirect(vm, attributesIdentifier, JSC::jsNull());
+        }
+
+        requestsArray->putDirectIndex(globalObject, i, requestObject);
+    }
+
+    return requestsArray;
 }
 
-EncodedJSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives)
+JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives)
 {
     const unsigned length = specifiers->getArrayLength();
     ASSERT(length == moduleNatives->getArrayLength());
     if (length == 0) {
-        return JSC::encodedJSUndefined();
+        return JSC::jsUndefined();
     }
 
     VM& vm = globalObject->vm();
@@ -121,35 +210,8 @@ EncodedJSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArra
         m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
     }
 
-    return JSC::encodedJSUndefined();
+    return JSC::jsUndefined();
 }
-
-// EncodedJSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSValue linker)
-// {
-//     VM& vm = globalObject->vm();
-//     auto scope = DECLARE_THROW_SCOPE(vm);
-
-//     if (status() != Status::Unlinked) {
-//         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module is already linked"_s);
-//         return {};
-//     }
-
-//     status(Status::Linking);
-
-//     JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->m_moduleRecordStructure.get(globalObject), Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
-
-//     Synchronousness synchronousness = moduleRecord->link(globalObject, linker);
-
-//     std::println("synchronousness: {}", int(synchronousness));
-
-//     if (synchronousness == Synchronousness::Sync) {
-//         status(Status::Linked);
-//     }
-
-//     m_moduleRecord.set(vm, this, moduleRecord);
-
-//     return JSC::encodedJSUndefined();
-// }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {

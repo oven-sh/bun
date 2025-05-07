@@ -94,7 +94,7 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
     ),
   );
 const PromiseAll = Promise.all;
-const PromiseResolve = Promise.resolve;
+const PromiseResolve = Promise.resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
   new Promise((resolve, reject) => {
@@ -107,7 +107,7 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
     let pendingPromises = length;
     for (let i = 0; i < length; i++) {
       const promise = mapFn != null ? mapFn(promises[i], i) : promises[i];
-      PromisePrototypeThen(
+      PromisePrototypeThen.$call(
         PromiseResolve(promise),
         result => {
           returnVal[i] = result;

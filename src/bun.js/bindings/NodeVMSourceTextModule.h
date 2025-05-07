@@ -23,18 +23,15 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSourceTextModule = std::forward<decltype(space)>(space); });
     }
 
+    static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
     static void destroy(JSC::JSCell* cell);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
-
-    bool createModuleRecord(JSGlobalObject* globalObject);
-
-    EncodedJSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
-    // EncodedJSValue link(JSGlobalObject* globalObject, JSValue linker);
+    JSValue createModuleRecord(JSGlobalObject* globalObject);
+    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

@@ -48,13 +48,14 @@ bool NodeVMModule::finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deq
     return true;
 }
 
-bool NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
+JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
 {
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
         return thisObject->createModuleRecord(globalObject);
     }
 
-    return true;
+    ASSERT_NOT_REACHED();
+    return JSC::jsUndefined();
 }
 
 NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args)
@@ -217,7 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
     // }
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return thisObject->link(globalObject, specifiers, moduleNatives);
+        return JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives));
         // return thisObject->link(globalObject, linker);
         // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         //     return thisObject->link(globalObject, specifiers, moduleNatives);
@@ -248,7 +249,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
-    return JSValue::encode(JSC::jsBoolean(thisObject->createModuleRecord(globalObject)));
+    return JSValue::encode(thisObject->createModuleRecord(globalObject));
 }
 
 template<typename Visitor>

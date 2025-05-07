@@ -19,7 +19,7 @@ const ObjectFreeze = Object.freeze;
 const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = Promise.prototype.then;
-const PromiseResolve = Promise.resolve;
+const PromiseResolve = Promise.resolve.bind(Promise);
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -260,9 +260,8 @@ class SourceTextModule extends Module {
   async [kLink](linker) {
     this.#statusOverride = "linking";
 
-    console.log({ createModuleRecord: this[kNative].createModuleRecord() });
+    const moduleRequests = this[kNative].createModuleRecord();
 
-    const moduleRequests = this[kNative].getModuleRequests();
     // Iterates the module requests and links with the linker.
     // Specifiers should be aligned with the moduleRequests array in order.
     const specifiers = Array(moduleRequests.length);
@@ -275,6 +274,7 @@ class SourceTextModule extends Module {
         attributes,
         assert: attributes,
       });
+
       const modulePromise = PromisePrototypeThen.$call(PromiseResolve(linkerResult), async mod => {
         if (!isModule(mod)) {
           throw $ERR_VM_MODULE_NOT_MODULE();
@@ -303,8 +303,6 @@ class SourceTextModule extends Module {
     } finally {
       this.#statusOverride = undefined;
     }
-
-    // return await this[kNative].link(linker);
   }
 
   get dependencySpecifiers() {

@@ -381,11 +381,11 @@ pub const UDPSocket = struct {
         const globalThis = this.globalThis;
         const vm = globalThis.bunVM();
 
-        if (callback == .zero) {
-            _ = vm.uncaughtException(globalThis, err, false);
+        if (err.isTerminationException(vm.jsc)) {
             return;
         }
-        if (err.isTerminationException(vm.jsc)) {
+        if (callback == .zero) {
+            _ = vm.uncaughtException(globalThis, err, false);
             return;
         }
 

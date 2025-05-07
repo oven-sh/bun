@@ -25,6 +25,12 @@ Plugins have to be loaded before any other code runs! To achieve this, use the `
 preload = ["./myPlugin.ts"]
 ```
 
+Preloads can be either local files or npm packages. Anything that can be imported/required can be preloaded.
+
+```toml
+preload = ["bun-plugin-foo"]
+```
+
 To preload files before `bun test`:
 
 ```toml
@@ -32,7 +38,7 @@ To preload files before `bun test`:
 preload = ["./myPlugin.ts"]
 ```
 
-## Third-party plugins
+## Plugin conventions
 
 By convention, third-party plugins intended for consumption should export a factory function that accepts some configuration and returns a plugin object.
 

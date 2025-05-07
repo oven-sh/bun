@@ -245,4 +245,8 @@ extern "C" void* Bun__StackCheck__getMaxStack()
     return stackBoundsForCurrentThread.end();
 }
 
+extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
+{
+    WTFPrintBacktrace({ stack, stack_count });
+}
 }

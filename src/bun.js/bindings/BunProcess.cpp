@@ -369,8 +369,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto& vm = JSC::getVM(globalObject);
 
     if (!Bun__VM__allowAddons(globalObject->bunVM())) {
-        JSC::throwTypeError(globalObject, scope, "Cannot load native addon because loading addons is disabled."_s);
-        return {};
+        return ERR::DLOPEN_DISABLED(scope, globalObject, "Cannot load native addon because loading addons is disabled"_s);
     }
 
     auto argCount = callFrame->argumentCount();

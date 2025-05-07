@@ -3,7 +3,7 @@ import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
-const { validateFunction, validateInteger } = require("internal/validators");
+const { validateFunction, validateInteger, validateObject, validateBoolean } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -979,18 +979,76 @@ realpath.native = function realpath(p, options, callback) {
 };
 realpathSync.native = fs.realpathNativeSync.bind(fs);
 
+const defaultCpOptions = {
+  dereference: false,
+  errorOnExist: false,
+  filter: undefined,
+  force: true,
+  preserveTimestamps: false,
+  recursive: false,
+  verbatimSymlinks: false,
+};
+
+const F_OK = 0;
+const R_OK = 4;
+const W_OK = 2;
+const X_OK = 1;
+
+const kMinimumAccessMode = Math.min(F_OK, W_OK, R_OK, X_OK);
+const kMaximumAccessMode = F_OK | W_OK | R_OK | X_OK;
+const kDefaultCopyMode = 0;
+const COPYFILE_EXCL = 0;
+const COPYFILE_FICLONE = 0;
+const COPYFILE_FICLONE_FORCE = 0;
+const kMinimumCopyMode = Math.min(kDefaultCopyMode, COPYFILE_EXCL, COPYFILE_FICLONE, COPYFILE_FICLONE_FORCE);
+const kMaximumCopyMode = COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE;
+function getValidMode(mode, type: "copyFile" | "access") {
+  let min = kMinimumAccessMode;
+  let max = kMaximumAccessMode;
+  let def = F_OK;
+  if (type === "copyFile") {
+    min = kMinimumCopyMode;
+    max = kMaximumCopyMode;
+    def = mode || kDefaultCopyMode;
+  }
+  if (mode == null) {
+    return def;
+  }
+  validateInteger(mode, "mode", min, max);
+  return mode;
+}
+
+function validateCpOptions(options) {
+  validateObject(options, "options");
+  options = { ...defaultCpOptions, ...options };
+  validateBoolean(options.dereference, "options.dereference");
+  validateBoolean(options.errorOnExist, "options.errorOnExist");
+  validateBoolean(options.force, "options.force");
+  validateBoolean(options.preserveTimestamps, "options.preserveTimestamps");
+  validateBoolean(options.recursive, "options.recursive");
+  validateBoolean(options.verbatimSymlinks, "options.verbatimSymlinks");
+  options.mode = getValidMode(options.mode, "copyFile");
+  if (options.dereference === true && options.verbatimSymlinks === true) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR(
+      'Option "dereference" cannot be used in combination with option "verbatimSymlinks"',
+    );
+  }
+  if (options.filter !== undefined) {
+    validateFunction(options.filter, "options.filter");
+  }
+  return options;
+}
+
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
   if (!options) return fs.cpSync(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
-  }
+  options = validateCpOptions(options);
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
     return require("internal/fs/cp-sync")(src, dest, options);
   }
-  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
 }
 
 function cp(src, dest, options, callback) {
@@ -1224,10 +1282,10 @@ var exports = {
   Dirent,
   opendir,
   opendirSync,
-  F_OK: 0,
-  R_OK: 4,
-  W_OK: 2,
-  X_OK: 1,
+  F_OK,
+  R_OK,
+  W_OK,
+  X_OK,
   constants,
   Dir,
   Stats,

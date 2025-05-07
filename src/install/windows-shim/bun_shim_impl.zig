@@ -120,7 +120,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     if (!is_standalone) {
         bunDebugMessage(fmt, args);
     } else {
-        (std).log.debug(fmt, args);
+        std.log.debug(fmt, args);
     }
 }
 

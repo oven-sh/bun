@@ -595,14 +595,15 @@ pub const Framework = struct {
         bundler_options: *const BuildConfigSubset,
     ) !void {
         const JSAst = bun.JSAst;
-        const prev_alloc_stmt = JSAst.Stmt.Data.Store.memory_allocator;
-        const prev_alloc_expr = JSAst.Expr.Data.Store.memory_allocator;
-        defer JSAst.Stmt.Data.Store.memory_allocator = prev_alloc_stmt;
-        defer JSAst.Expr.Data.Store.memory_allocator = prev_alloc_expr;
+
         var ast_memory_allocator: JSAst.ASTMemoryAllocator = undefined;
         ast_memory_allocator.initWithoutStack(arena);
-        JSAst.Stmt.Data.Store.memory_allocator = &ast_memory_allocator;
-        JSAst.Expr.Data.Store.memory_allocator = &ast_memory_allocator;
+        var ast_scope = JSAst.ASTMemoryAllocator.Scope{
+            .previous = JSAst.Stmt.Data.Store.memory_allocator,
+            .current = &ast_memory_allocator,
+        };
+        ast_scope.enter();
+        defer ast_scope.exit();
 
         out.* = try bun.Transpiler.init(
             arena,

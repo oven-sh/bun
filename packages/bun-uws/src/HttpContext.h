@@ -468,7 +468,11 @@ public:
         HttpContext *httpContext;
 
         enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-        httpContext = (HttpContext *) us_create_bun_socket_context(SSL, (us_loop_t *) loop, sizeof(HttpContextData<SSL>), options, &err);
+        if constexpr (SSL) {
+            httpContext = (HttpContext *) us_create_bun_ssl_socket_context((us_loop_t *) loop, sizeof(HttpContextData<SSL>), options, &err);
+        } else {
+            httpContext = (HttpContext *) us_create_bun_nossl_socket_context((us_loop_t *) loop, sizeof(HttpContextData<SSL>));
+        }
 
         if (!httpContext) {
             return nullptr;

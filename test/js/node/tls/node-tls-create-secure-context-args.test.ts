@@ -39,7 +39,8 @@ describe("tls.createSecureContext extra arguments test", () => {
   });
 
   it("should not throw for invalid privateKeyEngine when privateKeyIdentifier is not provided", () => {
-    // Node.js does not throw an error in the case where only one key is provided, even if the key is invalid
+    // Node.js does not throw an error in the case where only privateKeyEngine is provided, even if
+    // the key is invalid. The checks for both keys are only done when privateKeyIdentifier is passed.
     // Verifiable with: `node -p 'tls.createSecureContext({ privateKeyEngine: 0 })'`
 
     // @ts-expect-error

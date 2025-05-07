@@ -250,7 +250,7 @@ var InternalSecureContext = class SecureContext {
 
       if (!$isUndefinedOrNull(options.privateKeyIdentifier) && typeof options.privateKeyIdentifier !== "string") {
         // prettier-ignore
-        throw $ERR_INVALID_ARG_TYPE("privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
+        throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
       }
     }
 

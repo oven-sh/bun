@@ -286,6 +286,16 @@ describe("web worker", () => {
       return promise;
     });
   });
+
+  describe("error event", () => {
+    test("is fired with a string of the error", async () => {
+      const worker = new Worker("data:text/javascript,throw 5");
+      const [err] = await once(worker, "error");
+      expect(err.type).toBe("error");
+      expect(err.message).toBe("5");
+      expect(err.error).toBe(null);
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

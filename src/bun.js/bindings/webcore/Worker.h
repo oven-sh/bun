@@ -84,7 +84,9 @@ public:
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     // Fire a 'message' event in the Worker for messages that were sent before the Worker started running
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchError(WTF::String message);
+    void dispatchErrorWithMessage(WTF::String message);
+    // true if successful
+    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }

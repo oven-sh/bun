@@ -12,6 +12,18 @@ const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
+const getMinTLSVersion = $newZigFunction(
+  "node_tls_binding.zig",
+  "getMinTLSVersion",
+  0,
+) as () => import("node:tls").SecureVersion;
+
+const getMaxTLSVersion = $newZigFunction(
+  "node_tls_binding.zig",
+  "getMaxTLSVersion",
+  0,
+) as () => import("node:tls").SecureVersion;
+
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -656,8 +668,8 @@ const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
-  DEFAULT_MIN_VERSION: import("tls").SecureVersion = "TLSv1.2",
-  DEFAULT_MAX_VERSION: import("tls").SecureVersion = "TLSv1.3";
+  DEFAULT_MIN_VERSION = getMinTLSVersion(),
+  DEFAULT_MAX_VERSION = getMaxTLSVersion();
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

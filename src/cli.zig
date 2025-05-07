@@ -246,6 +246,7 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -713,6 +714,10 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                ctx.runtime_options.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1549,6 +1554,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        allow_addons: bool = true,
     };
 
     var global_cli_ctx: Context = undefined;

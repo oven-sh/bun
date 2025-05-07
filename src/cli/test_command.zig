@@ -1107,6 +1107,7 @@ pub const TestCommand = struct {
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
                 .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT"),
+                .allow_addons = ctx.runtime_options.allow_addons,
             },
         );
         vm.argv = ctx.passthrough;

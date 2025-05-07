@@ -8099,6 +8099,7 @@ pub const Macro = struct {
                 .log = log,
                 .is_main_thread = false,
                 .env_loader = env,
+                .allow_addons = true,
             });
 
             _vm.enableMacroMode();

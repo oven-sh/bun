@@ -34,6 +34,8 @@ pub const WebWorker = struct {
     // Blob URL.
     eval_mode: bool,
 
+    allow_addons: bool,
+
     /// `user_keep_alive` is the state of the user's .ref()/.unref() calls
     /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
     user_keep_alive: bool = false,
@@ -247,6 +249,7 @@ pub const WebWorker = struct {
             .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
             .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
             .preloads = preloads.items,
+            .allow_addons = parent.allow_addons,
         };
 
         worker.parent_poll_ref.ref(parent);
@@ -286,6 +289,7 @@ pub const WebWorker = struct {
             .args = this.parent.transpiler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
+            .allow_addons = this.allow_addons,
         });
         vm.allocator = this.arena.?.allocator();
         vm.arena = &this.arena.?;

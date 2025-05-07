@@ -17,6 +17,7 @@ comptime {
     @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+    @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
 }
 
 global: *JSGlobalObject,
@@ -42,6 +43,9 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 counters: Counters = .{},
+
+// is set with --no-addons
+allow_addons: bool = true,
 
 hot_reload: bun.CLI.Command.HotReload = .none,
 jsc: *VM = undefined,
@@ -191,6 +195,10 @@ pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
+
+pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
+    return this.allow_addons;
+}
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
     return .init(body, &this.body_value_hive_allocator);
@@ -918,6 +926,7 @@ pub const Options = struct {
     store_fd: bool = false,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
+    allow_addons: bool,
 
     // --print needs the result from evaluating the main module
     eval: bool = false,
@@ -980,6 +989,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .allow_addons = opts.allow_addons,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(

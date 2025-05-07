@@ -34,6 +34,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         .log = ctx.log,
         .args = ctx.args,
         .smol = ctx.runtime_options.smol,
+        .allow_addons = ctx.runtime_options.allow_addons,
     });
     defer vm.deinit();
     // A special global object is used to allow registering virtual modules

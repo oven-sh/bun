@@ -150,6 +150,7 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
         .allocator = arena.allocator(),
         .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
         .store_fd = false,
+        .allow_addons = other_vm.allow_addons,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
     vm.arena = &arena;

@@ -5341,6 +5341,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
+// This enum must match the zig enum in src/bun.js/bindings/JSValue.zig JSValue.BuiltinName
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -5365,6 +5366,7 @@ enum class BuiltinNamesMap : uint8_t {
     ignoreBOM,
     type,
     signal,
+    cmd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5440,6 +5442,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::signal: {
         return clientData->builtinNames().signalPublicName();
+    }
+    case BuiltinNamesMap::cmd: {
+        return clientData->builtinNames().cmdPublicName();
     }
     default: {
         ASSERT_NOT_REACHED();

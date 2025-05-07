@@ -279,14 +279,15 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     return context;
 }
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
 #ifndef LIBUS_NO_SSL
-    if (ssl) {
-        /* This function will call us, again, with SSL = false and a bigger ext_size */
-        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
-    }
+    /* This function will call us, again, with SSL = false and a bigger ext_size */
+    return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
 #endif
+    return us_create_bun_nossl_socket_context(loop, context_ext_size);
+}
 
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size) {
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
@@ -370,8 +371,8 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
     ls->s.flags.low_prio_state = 0;
-        ls->s.flags.is_paused = 0;
-
+    ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
@@ -406,6 +407,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.flags.low_prio_state = 0;
     ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
     us_internal_socket_context_link_listen_socket(context, ls);
 
@@ -413,7 +415,6 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 
     return ls;
 }
-
 
 struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
@@ -437,6 +438,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.low_prio_state = 0;
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
+    socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
     
 
@@ -563,6 +565,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->flags.low_prio_state = 0;
         s->flags.allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         s->flags.is_paused = 0;
+        s->flags.is_ipc = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(s->context, s);
 
@@ -739,6 +742,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.low_prio_state = 0;
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
+    connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);
@@ -841,6 +845,14 @@ void us_socket_context_on_data(int ssl, struct us_socket_context_t *context, str
 #endif
 
     context->on_data = on_data;
+}
+
+void us_socket_context_on_fd(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_fd)(struct us_socket_t *s, int fd)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) return;
+#endif
+
+    context->on_fd = on_fd;
 }
 
 void us_socket_context_on_writable(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_writable)(struct us_socket_t *s)) {

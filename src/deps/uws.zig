@@ -1555,6 +1555,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
+        pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
+            return switch (this.socket) {
+                .upgradedDuplex, .pipe => this.write(data, false),
+                .connected => |socket| socket.writeFd(data, file_descriptor),
+                .connecting, .detached => 0,
+            };
+        }
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.rawWrite(is_ssl, data, msg_more),
@@ -1768,8 +1775,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime This: type,
             this: *This,
             comptime socket_field_name: ?[]const u8,
+            is_ipc: bool,
         ) ?ThisSocket {
-            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle.asSocketFd()) orelse return null } };
+            const socket_ = ThisSocket{ .socket = .{ .connected = us_socket_from_fd(ctx, @sizeOf(*anyopaque), handle.asSocketFd(), @intFromBool(is_ipc)) orelse return null } };
 
             if (socket_.ext(*anyopaque)) |holder| {
                 holder.* = this;
@@ -1980,6 +1988,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
             if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
+            if (comptime @hasDecl(Type, "onFd") and @typeInfo(@TypeOf(Type.onFd)) != .null)
+                us_socket_context_on_fd(ssl_int, ctx, SocketHandler.on_fd);
             if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
@@ -2049,6 +2059,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                         buf.?[0..@as(usize, @intCast(len))],
+                    );
+                    return socket;
+                }
+                pub fn on_fd(socket: *Socket, file_descriptor: c_int) callconv(.C) ?*Socket {
+                    Fields.onFd(
+                        getValue(socket),
+                        ThisSocket.from(socket),
+                        file_descriptor,
                     );
                     return socket;
                 }
@@ -2125,6 +2143,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
             if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
+            if (comptime @hasDecl(Type, "onFd") and @typeInfo(@TypeOf(Type.onFd)) != .null)
+                us_socket_context_on_fd(ssl_int, ctx, SocketHandler.on_fd);
             if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
@@ -2248,6 +2268,9 @@ pub const SocketContext = opaque {
             fn data(socket: *Socket, _: [*c]u8, _: i32) callconv(.C) ?*Socket {
                 return socket;
             }
+            fn fd(socket: *Socket, _: c_int) callconv(.C) ?*Socket {
+                return socket;
+            }
             fn writable(socket: *Socket) callconv(.C) ?*Socket {
                 return socket;
             }
@@ -2271,6 +2294,7 @@ pub const SocketContext = opaque {
         us_socket_context_on_open(ssl_int, ctx, DummyCallbacks.open);
         us_socket_context_on_close(ssl_int, ctx, DummyCallbacks.close);
         us_socket_context_on_data(ssl_int, ctx, DummyCallbacks.data);
+        us_socket_context_on_fd(ssl_int, ctx, DummyCallbacks.fd);
         us_socket_context_on_writable(ssl_int, ctx, DummyCallbacks.writable);
         us_socket_context_on_timeout(ssl_int, ctx, DummyCallbacks.timeout);
         us_socket_context_on_connect_error(ssl_int, ctx, DummyCallbacks.connect_error);
@@ -2579,7 +2603,8 @@ pub extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketCo
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
-pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*SocketContext;
+pub extern fn us_create_bun_ssl_socket_context(loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t, err: *create_bun_socket_error_t) ?*SocketContext;
+pub extern fn us_create_bun_nossl_socket_context(loop: ?*Loop, ext_size: i32) ?*SocketContext;
 pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
 pub extern fn us_socket_context_ref(ssl: i32, context: ?*SocketContext) void;
@@ -2587,6 +2612,7 @@ pub extern fn us_socket_context_unref(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_fd(ssl: i32, context: ?*SocketContext, on_fd: *const fn (*Socket, c_int) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_writable: *const fn (*Socket) callconv(.C) ?*Socket) void;
 
 extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_handshake: *const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;
@@ -3022,12 +3048,13 @@ pub const ListenSocket = opaque {
         us_listen_socket_close(@intFromBool(ssl), this);
     }
     pub fn getLocalAddress(this: *ListenSocket, ssl: bool, buf: []u8) ![]const u8 {
-        const self: *uws.Socket = @ptrCast(this);
-        return self.localAddress(ssl, buf);
+        return this.getSocket().localAddress(ssl, buf);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
-        const self: *uws.Socket = @ptrCast(this);
-        return self.localPort(ssl);
+        return this.getSocket().localPort(ssl);
+    }
+    pub fn getSocket(this: *ListenSocket) *uws.Socket {
+        return @ptrCast(this);
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
@@ -4299,6 +4326,7 @@ pub extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
     fd: LIBUS_SOCKET_DESCRIPTOR,
+    is_ipc: c_int,
 ) ?*Socket;
 
 pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SOCKET_DESCRIPTOR) ?SocketTCP {

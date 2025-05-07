@@ -311,6 +311,7 @@ const Handlers = struct {
 pub const SocketConfig = struct {
     hostname_or_unix: JSC.ZigString.Slice,
     port: ?u16 = null,
+    fd: ?bun.FileDescriptor = null,
     ssl: ?JSC.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
@@ -341,6 +342,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         errdefer hostname_or_unix.deinit();
         var port: ?u16 = null;
+        var fd: ?bun.FileDescriptor = null;
         var exclusive = false;
         var allowHalfOpen = false;
         var reusePort = false;
@@ -370,6 +372,7 @@ pub const SocketConfig = struct {
         hostname_or_unix: {
             if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
+                    fd = fd_.asFileDescriptor();
                     break :hostname_or_unix;
                 }
             }
@@ -468,6 +471,7 @@ pub const SocketConfig = struct {
         return SocketConfig{
             .hostname_or_unix = hostname_or_unix,
             .port = port,
+            .fd = fd,
             .ssl = ssl,
             .handlers = handlers,
             .default_data = default_data,
@@ -693,13 +697,10 @@ pub const Listener = struct {
         vm.eventLoop().ensureWaker();
 
         var create_err: uws.create_bun_socket_error_t = .none;
-        const socket_context = uws.us_create_bun_socket_context(
-            @intFromBool(ssl_enabled),
-            uws.Loop.get(),
-            @sizeOf(usize),
-            ctx_opts,
-            &create_err,
-        ) orelse {
+        const socket_context = switch (ssl_enabled) {
+            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
+        } orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
                 socket_config.handlers.unprotect();
@@ -759,7 +760,7 @@ pub const Listener = struct {
 
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
-        } else .{
+        } else if (socket_config.fd) |fd| .{ .fd = fd } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
         var errno: c_int = 0;
@@ -789,7 +790,10 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => unreachable,
+                .fd => |fd| {
+                    _ = fd;
+                    return globalObject.ERR(.INVALID_ARG_VALUE, "Bun does not support listening on a file descriptor.", .{}).throw();
+                },
             }
         } orelse {
             defer {
@@ -1202,7 +1206,10 @@ pub const Listener = struct {
             .{};
 
         var create_err: uws.create_bun_socket_error_t = .none;
-        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err) orelse {
+        const socket_context = switch (ssl_enabled) {
+            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
+        } orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
@@ -1464,7 +1471,7 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
+                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },
             }

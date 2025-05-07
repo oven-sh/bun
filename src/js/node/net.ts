@@ -31,7 +31,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal, validateInt32 } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");

@@ -31,7 +31,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal, validateInt32 } = require("internal/validators");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
@@ -1343,10 +1343,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let reusePort = false;
   let ipv6Only = false;
   let fd;
-  if (typeof port === "object" && "fd" in port) {
-    fd = port.fd;
-    port = undefined;
-  }
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -1382,6 +1378,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
+
+      if (typeof options.fd === "number" && options.fd >= 0) {
+        fd = options.fd;
+        port = 0;
+      }
 
       const isLinux = process.platform === "linux";
 

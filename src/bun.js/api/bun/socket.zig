@@ -794,7 +794,7 @@ pub const Listener = struct {
                 },
                 .fd => |file_descriptor| {
                     _ = file_descriptor;
-                    return globalObject.throw("TODO: support listen with fd", .{});
+                    return globalObject.throw("Listen with fd is not supported . Please open a GitHub issue if you would like it to be supported.", .{});
                 },
             }
         } orelse {

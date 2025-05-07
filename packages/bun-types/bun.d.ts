@@ -6770,7 +6770,7 @@ declare module "bun" {
       total: number;
     };
     /**
-     * The maximum amount of resident set size (in bytes) used by the process during its lifetime.
+     * The maximum amount of resident set size (in kilobytes) used by the process during its lifetime.
      */
     maxRSS: number;
 

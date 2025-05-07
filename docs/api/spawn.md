@@ -204,7 +204,7 @@ const proc = Bun.spawn(["bun", "--version"]);
 await proc.exited;
 
 const usage = proc.resourceUsage();
-console.log(`Max memory used: ${usage.maxRSS} bytes`);
+console.log(`Max memory used: ${usage.maxRSS} KB`);
 console.log(`CPU time (user): ${usage.cpuTime.user} µs`);
 console.log(`CPU time (system): ${usage.cpuTime.system} µs`);
 ```

@@ -2007,7 +2007,13 @@ pub const BundleOptions = struct {
             // 3. user conditions
             opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
-            if (true) {
+            dont_append_node_addons: {
+                if (transform.allow_addons) |allow_addons| {
+                    if (!allow_addons) {
+                        break :dont_append_node_addons;
+                    }
+                }
+
                 try opts.conditions.append("node-addons");
             }
 

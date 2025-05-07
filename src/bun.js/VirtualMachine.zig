@@ -44,9 +44,6 @@ smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 counters: Counters = .{},
 
-// is set with --no-addons
-allow_addons: bool = true,
-
 hot_reload: bun.CLI.Command.HotReload = .none,
 jsc: *VM = undefined,
 
@@ -197,7 +194,7 @@ pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObj
 pub const OnException = fn (*ZigException) void;
 
 pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
-    return this.allow_addons;
+    return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
@@ -926,7 +923,6 @@ pub const Options = struct {
     store_fd: bool = false,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
-    allow_addons: bool,
 
     // --print needs the result from evaluating the main module
     eval: bool = false,
@@ -989,7 +985,6 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
-        .allow_addons = opts.allow_addons,
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(

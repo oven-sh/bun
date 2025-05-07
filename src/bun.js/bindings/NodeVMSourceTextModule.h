@@ -41,8 +41,8 @@ private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     SourceCode m_sourceCode;
 
-    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, SourceCode sourceCode)
-        : Base(vm, structure, WTFMove(identifier))
+    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode)
+        : Base(vm, structure, WTFMove(identifier), context)
         , m_sourceCode(WTFMove(sourceCode))
     {
     }

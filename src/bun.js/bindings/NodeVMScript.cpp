@@ -12,19 +12,6 @@
 namespace Bun {
 using namespace NodeVM;
 
-/// For some reason Node has this error message with a grammar error and we have to match it so the tests pass:
-/// `The "<name>" argument must be an vm.Context`
-static JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value)
-{
-    WTF::StringBuilder builder;
-    builder.append("The \""_s);
-    builder.append(name);
-    builder.append("\" argument must be an vm.Context"_s);
-
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
-    return {};
-}
-
 bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
 {
     bool any = BaseVMOptions::fromJS(globalObject, vm, scope, optionsArg);
@@ -254,34 +241,6 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-extern "C" void Bun__ensureSignalHandler();
-
-static void ensureSigintHandler()
-{
-#if !OS(WINDOWS)
-    Bun__ensureSignalHandler();
-
-    struct sigaction action;
-    memset(&action, 0, sizeof(struct sigaction));
-
-    // Set the handler in the action struct
-    action.sa_handler = [](int signalNumber) {
-        SigintWatcher::get().signalReceived();
-    };
-
-    // Clear the sa_mask
-    sigemptyset(&action.sa_mask);
-    sigaddset(&action.sa_mask, SIGINT);
-    action.sa_flags = SA_RESTART;
-
-    sigaction(SIGINT, &action, nullptr);
-
-    SigintWatcher::get().install();
-#else
-    static_assert(false, "TODO(@heimskr): implement sigint handler on Windows");
-#endif
-}
-
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
 
@@ -301,7 +260,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     globalObject->setContextifiedObject(contextifiedObject);
 
     if (options.breakOnSigint) {
-        ensureSigintHandler();
+        SigintWatcher::ensureSigintHandler();
         SigintWatcher::get().registerGlobalObject(globalObject);
     }
 
@@ -346,7 +305,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     if (options.breakOnSigint) {
-        ensureSigintHandler();
+        // TODO(@heimskr): register global object as appropriate
+        SigintWatcher::ensureSigintHandler();
     }
 
     NakedPtr<JSC::Exception> exception;
@@ -456,25 +416,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     ArgList args(callFrame);
     JSValue contextArg = args.at(0);
-    if (contextArg.isUndefinedOrNull()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
-    }
-
-    if (!contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
-    }
-
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, contextArg, true);
+    RETURN_IF_EXCEPTION(scope, {});
     JSObject* context = asObject(contextArg);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-    if (scopeValue.isUndefined()) {
-        return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
-    }
-
-    NodeVMGlobalObject* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
-    if (!nodeVmGlobalObject) {
-        return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
-    }
+    ASSERT(nodeVmGlobalObject != nullptr);
 
     return runInContext(nodeVmGlobalObject, script, context, args.at(1));
 }

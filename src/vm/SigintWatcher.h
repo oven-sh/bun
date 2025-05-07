@@ -25,6 +25,44 @@ public:
 
     static SigintWatcher& get();
 
+    class GlobalObjectHolder {
+    public:
+        GlobalObjectHolder(NodeVMGlobalObject* globalObject)
+            : m_globalObject(globalObject)
+        {
+            ensureSigintHandler();
+            get().registerGlobalObject(globalObject);
+        }
+
+        ~GlobalObjectHolder()
+        {
+            get().unregisterGlobalObject(m_globalObject);
+        }
+
+        GlobalObjectHolder(const GlobalObjectHolder&) = delete;
+        GlobalObjectHolder(GlobalObjectHolder&& other)
+            : m_globalObject(std::exchange(other.m_globalObject, nullptr))
+        {
+        }
+
+        GlobalObjectHolder& operator=(const GlobalObjectHolder&) = delete;
+        GlobalObjectHolder& operator=(GlobalObjectHolder&& other)
+        {
+            m_globalObject = std::exchange(other.m_globalObject, nullptr);
+            return *this;
+        }
+
+    private:
+        NodeVMGlobalObject* m_globalObject;
+    };
+
+    static GlobalObjectHolder hold(NodeVMGlobalObject* globalObject)
+    {
+        return { globalObject };
+    }
+
+    static void ensureSigintHandler();
+
 private:
     std::thread m_thread;
     std::atomic_bool m_installed = false;

@@ -63,10 +63,11 @@ protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
     mutable WriteBarrier<JSObject> m_namespace;
+    mutable WriteBarrier<JSObject> m_context;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     mutable WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
 
-    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier);
+    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

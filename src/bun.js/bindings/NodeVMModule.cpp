@@ -31,10 +31,13 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
-NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier)
+NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context)
     : Base(vm, structure)
     , m_identifier(WTFMove(identifier))
 {
+    if (context.isObject()) {
+        m_context.set(vm, this, asObject(context));
+    }
 }
 
 bool NodeVMModule::finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex)
@@ -195,17 +198,16 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue timeoutValue = callFrame->argument(0);
-    if (!timeoutValue.isUInt32() || timeoutValue.asUInt32() == 0) {
-        return throwArgumentTypeError(*globalObject, scope, 0, "timeout"_s, "Module"_s, "Module"_s, "positive integer"_s);
+    uint32_t timeout = 0;
+    if (timeoutValue.isUInt32()) {
+        timeout = timeoutValue.asUInt32();
     }
 
     JSValue breakOnSigintValue = callFrame->argument(1);
-    if (!breakOnSigintValue.isBoolean()) {
-        return throwArgumentTypeError(*globalObject, scope, 1, "breakOnSigint"_s, "Module"_s, "Module"_s, "boolean"_s);
+    bool breakOnSigint = false;
+    if (breakOnSigintValue.isBoolean()) {
+        breakOnSigint = breakOnSigintValue.asBoolean();
     }
-
-    uint32_t timeout = timeoutValue.asUInt32();
-    bool breakOnSigint = breakOnSigintValue.asBoolean();
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
@@ -283,6 +285,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(vmModule, visitor);
 
     visitor.append(vmModule->m_namespace);
+    visitor.append(vmModule->m_context);
 
     auto moduleNatives = vmModule->m_resolveCache.values();
     visitor.append(moduleNatives.begin(), moduleNatives.end());

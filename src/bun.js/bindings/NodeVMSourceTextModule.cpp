@@ -1,12 +1,12 @@
 #include "NodeVMSourceTextModule.h"
 
-#include <print>
-
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSModuleRecord.h"
 #include "ModuleAnalyzer.h"
 #include "Parser.h"
+
+#include "../vm/SigintWatcher.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -63,7 +63,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), WTFMove(sourceCode));
+    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode));
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -115,11 +115,6 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
     m_moduleRecord.set(vm, this, moduleRecord);
     m_moduleRequests.clear();
-
-    std::println("import entries count: {}", moduleRecord->importEntries().size());
-    for (const auto& [key, value] : moduleRecord->importEntries()) {
-        std::println("import entry({}): name={{{}}}, type={{{}}}", key->utf8().data(), value.importName.utf8().data(), int(value.type));
-    }
 
     const auto& requests = moduleRecord->requestedModules();
 
@@ -203,8 +198,6 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         return JSC::jsUndefined();
     }
 
-    // JSModuleRecord* record = m_moduleRecord.get();
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -219,11 +212,10 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         JSObject* moduleNative = moduleNativeValue.getObject();
 
         m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
-
-        // AbstractModuleRecord::ImportEntry entry;
-
-        // record->addImportEntry(entry);
     }
+
+    // JSModuleRecord* record = m_moduleRecord.get();
+    // record->link(globalObject, jsUndefined());
 
     status(Status::Linked);
     return JSC::jsUndefined();
@@ -239,7 +231,33 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         return {};
     }
 
-    return JSC::jsUndefined();
+    JSModuleRecord* record = m_moduleRecord.get();
+    JSValue result {};
+
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+
+    auto run = [&] {
+        // TODO(@heimskr): top-level await support
+        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
+    };
+
+    if (timeout != 0 && breakOnSigint) {
+        // TODO(@heimskr): timeout support
+        auto holder = SigintWatcher::hold(nodeVmGlobalObject);
+        run();
+    } else if (timeout != 0) {
+        // TODO(@heimskr): timeout support
+        run();
+    } else if (breakOnSigint) {
+        auto holder = SigintWatcher::hold(nodeVmGlobalObject);
+        run();
+    } else {
+        run();
+    }
+
+    RETURN_IF_EXCEPTION(scope, (status(Status::Errored), JSValue {}));
+    status(Status::Evaluated);
+    return result;
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

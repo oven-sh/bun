@@ -362,6 +362,53 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
     return std::nullopt;
 }
 
+NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (contextValue.isUndefinedOrNull()) {
+        if (canThrow) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
+        }
+        return nullptr;
+    }
+
+    if (!contextValue.isObject()) {
+        if (canThrow) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
+        }
+        return nullptr;
+    }
+
+    JSObject* context = asObject(contextValue);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+    if (scopeValue.isUndefined()) {
+        if (canThrow) {
+            INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
+        }
+        return nullptr;
+    }
+
+    NodeVMGlobalObject* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+    if (!nodeVmGlobalObject) {
+        if (canThrow) {
+            INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
+        }
+        return nullptr;
+    }
+
+    return nodeVmGlobalObject;
+}
+
+/// For some reason Node has this error message with a grammatical error and we have to match it so the tests pass:
+/// `The "<name>" argument must be an vm.Context`
+JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, makeString("The \""_s, name, "\" argument must be an vm.Context"_s)));
+    return {};
+}
+
 } // namespace NodeVM
 
 using namespace NodeVM;

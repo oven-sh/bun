@@ -57,6 +57,10 @@ void SigintWatcher::signalReceived()
 
 void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
 {
+    if (globalObject == nullptr) {
+        return;
+    }
+
     std::unique_lock lock(m_globalObjectsMutex);
 
     m_globalObjects.push_back(globalObject);
@@ -64,6 +68,10 @@ void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
 
 void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
 {
+    if (globalObject == nullptr) {
+        return;
+    }
+
     std::unique_lock lock(m_globalObjectsMutex);
 
     auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
@@ -94,6 +102,34 @@ bool SigintWatcher::signalAll()
     }
 
     return true;
+}
+
+extern "C" void Bun__ensureSignalHandler();
+
+void SigintWatcher::ensureSigintHandler()
+{
+#if !OS(WINDOWS)
+    Bun__ensureSignalHandler();
+
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+
+    // Set the handler in the action struct
+    action.sa_handler = [](int signalNumber) {
+        get().signalReceived();
+    };
+
+    // Clear the sa_mask
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGINT);
+    action.sa_flags = SA_RESTART;
+
+    sigaction(SIGINT, &action, nullptr);
+
+    get().install();
+#else
+    static_assert(false, "TODO(@heimskr): implement sigint handler on Windows");
+#endif
 }
 
 } // namespace Bun

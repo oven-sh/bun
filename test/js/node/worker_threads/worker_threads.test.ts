@@ -292,16 +292,57 @@ test("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
 });
 
-test("worker event", () => {
-  const { promise, resolve } = Promise.withResolvers();
-  let worker: Worker | undefined = undefined;
-  let called = false;
-  process.once("worker", eventWorker => {
-    called = true;
-    expect(eventWorker as any).toBe(worker);
-    resolve();
+describe("worker event", () => {
+  test("is emitted on the next tick with the right value", () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let worker: Worker | undefined = undefined;
+    let called = false;
+    process.once("worker", eventWorker => {
+      called = true;
+      expect(eventWorker as any).toBe(worker);
+      resolve();
+    });
+    worker = new Worker(new URL("data:text/javascript,"));
+    expect(called).toBeFalse();
+    return promise;
   });
-  worker = new Worker(new URL("data:text/javascript,"));
-  expect(called).toBeFalse();
-  return promise;
+
+  test("uses an overridden process.emit function", async () => {
+    const previousEmit = process.emit;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let worker: Worker | undefined;
+      // should not actually emit the event
+      process.on("worker", expect.unreachable);
+      worker = new Worker("", { eval: true });
+      // should look up process.emit on the next tick, not synchronously during the Worker constructor
+      (process as any).emit = (event, value) => {
+        try {
+          expect(event).toBe("worker");
+          expect(value).toBe(worker);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      await promise;
+    } finally {
+      process.emit = previousEmit;
+      process.off("worker", expect.unreachable);
+    }
+  });
+
+  test("throws if process.emit is not a function", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "emit-non-function-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
 });

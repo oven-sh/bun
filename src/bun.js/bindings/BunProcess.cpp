@@ -2593,6 +2593,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
+    thisObject->m_emitHelperFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -3075,14 +3076,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, con
 void Process::emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto emit = this->get(globalObject, Identifier::fromString(vm, "emit"_s));
-    RETURN_IF_EXCEPTION(scope, );
-    if (!emit.getObject()) return;
-
-    auto* bound = JSBoundFunction::create(vm, globalObject, emit.getObject(), this, {}, 0, nullptr);
+    auto* function = m_emitHelperFunction.getInitializedOnMainThread(this);
     JSValue args[] = { jsString(vm, String(eventName)), event };
-    queueNextTick(globalObject, bound, args);
+    queueNextTick(globalObject, function, args);
 }
 
 extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)
@@ -3381,6 +3377,24 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* process = zigGlobalObject->processObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto emit = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(emit);
+    if (callData.type == CallData::Type::None) {
+        scope.throwException(globalObject, createNotAFunctionError(globalObject, emit));
+        return {};
+    }
+    auto ret = JSC::call(globalObject, emit, callData, process, callFrame);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(ret);
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
 {
     auto* process = static_cast<Process*>(global->processObject());
@@ -3530,6 +3544,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+    m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

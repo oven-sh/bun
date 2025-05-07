@@ -22,6 +22,9 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    // Function that looks up "emit" on "process" and calls it with the provided arguments
+    // Only used by internal code via passing to queueNextTick
+    LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116

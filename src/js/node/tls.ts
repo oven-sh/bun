@@ -1,4 +1,6 @@
 // Hardcoded module "node:tls"
+import type { SecureVersion } from "node:tls";
+
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
@@ -12,17 +14,19 @@ const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
+type TLSSecureVersionNumber = SecureVersion extends `TLSv${infer N extends number}` ? N : never;
+
 const getMinTLSVersion = $newZigFunction(
   "node_tls_binding.zig",
-  "getMinTLSVersion",
+  "getDefaultMinTLSVersion",
   0,
-) as () => import("node:tls").SecureVersion;
+) as () => TLSSecureVersionNumber | null;
 
 const getMaxTLSVersion = $newZigFunction(
   "node_tls_binding.zig",
-  "getMaxTLSVersion",
+  "getDefaultMaxTLSVersion",
   0,
-) as () => import("node:tls").SecureVersion;
+) as () => TLSSecureVersionNumber | null;
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -667,9 +671,10 @@ function createServer(options, connectionListener) {
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
-    "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
-  DEFAULT_MIN_VERSION = getMinTLSVersion(),
-  DEFAULT_MAX_VERSION = getMaxTLSVersion();
+    "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
+
+const DEFAULT_MIN_VERSION: SecureVersion = `TLSv${getMinTLSVersion() ?? "1"}`;
+const DEFAULT_MAX_VERSION: SecureVersion = `TLSv${getMaxTLSVersion() ?? "1.3"}`;
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

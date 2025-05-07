@@ -1561,9 +1561,6 @@ pub const Command = struct {
     };
 
     pub const RuntimeOptions = struct {
-        tls_min: ?f32 = null,
-        tls_max: ?f32 = null,
-
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,

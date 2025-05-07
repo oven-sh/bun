@@ -22,15 +22,15 @@ const server = tls.createServer({
   const s = tls.connect({
     socket: socket,
     rejectUnauthorized: false
-  }, function() {
-    s.on('data', function(chunk) {
+  }, common.mustCall(function() {
+    s.on('data', common.mustCall(function(chunk) {
       out += chunk;
-    });
-    s.on('end', function() {
+    }));
+    s.on('end', common.mustCall(function() {
       s.destroy();
       server.close();
-    });
-  });
+    }));
+  }));
 
   socket.connect(this.address().port);
 });

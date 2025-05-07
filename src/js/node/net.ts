@@ -515,8 +515,20 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
     socket[owner_symbol] = self;
     that[ksocket] = socket;
     that[kpromise] = null;
-    req!.oncomplete(0, self._handle, req, true, true);
+    $debug("self[kupgraded]", String(self[kupgraded]));
+    if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
+    if (!self[kupgraded]) {
+      self.connecting = false;
+      const options = self[bunTLSConnectOptions];
+      if (options) {
+        const { session } = options;
+        if (session) {
+          self.setSession(session);
+        }
+      }
+      SocketHandlers2.drain!(socket);
+    }
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
@@ -555,7 +567,6 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
     $debug("Bun.Socket close");
     let { self, that } = socket.data;
     if (!that) that = SocketHandle[kAttach](socket, self);
-    that[ksocket] = null;
     if (self[kclosed]) return;
     self[kclosed] = true;
     self[kended] = true;
@@ -734,7 +745,8 @@ class SocketHandle {
   }
   end() {
     $debug("SocketHandle.end");
-    return this.#socket?.$end(...arguments);
+    $assert(this.#socket != null);
+    return this.#socket.$end(...arguments);
   }
   close(cb) {
     $debug("SocketHandle.close");
@@ -1317,10 +1329,7 @@ Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
 };
 
 Socket.prototype.end = function end(data, encoding, callback) {
-  if (!this._readableState.endEmitted) {
-    // process.nextTick(self => self.emit("end"), this);
-    // this.emit("end");
-  }
+  $debug("Socket.prototype.end");
   return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
@@ -1957,7 +1966,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   //TLS
   let connection = self[ksocket];
-  let upgradeDuplex = false;
   if (options.socket) {
     connection = options.socket;
   }
@@ -2098,7 +2106,6 @@ function internalConnectMultiple(context, canceled?) {
 
   //TLS
   let connection = self[ksocket];
-  let upgradeDuplex = false;
   if (context.options.socket) {
     connection = context.options.socket;
   }

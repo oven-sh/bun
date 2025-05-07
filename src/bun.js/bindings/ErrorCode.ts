@@ -276,5 +276,6 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
   ["HPE_INTERNAL", Error],
+  ["HPE_INVALID_HEADER_TOKEN", Error],
 ];
 export default errors;

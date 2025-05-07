@@ -711,6 +711,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
   HTTP_PARSER_ERROR_INVALID_EOF = 8,
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+  HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
 }
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
@@ -726,14 +727,23 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       err = $HPE_INVALID_EOF_STATE("Parse Error");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
-      err = $HPE_INVALID_METHOD("Parse Error");
+      err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
+      err.bytesParsed = 1; // always 1 for now because is the first byte of the request line
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN:
+      err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");
       break;
   }
   err.rawPacket = rawPacket;
-  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
+  const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
+  self.emit("connection", nodeSocket);
+  self.emit("clientError", err, nodeSocket);
+  if (nodeSocket.listenerCount("error") > 0) {
+    nodeSocket.emit("error", err);
+  }
 }
 const ServerPrototype = {
   constructor: Server,
@@ -1120,7 +1130,8 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
+      // always set strict method validation to true for node.js compatibility
+      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, true, onServerClientError.bind(this));
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();

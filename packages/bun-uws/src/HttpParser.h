@@ -39,6 +39,7 @@
 #include "QueryParser.h"
 #include "HttpErrors.h"
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
 {
@@ -57,6 +58,7 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+        HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
     };
 
 
@@ -365,7 +367,7 @@ namespace uWS
             return false;
         }
 
-        static inline void *consumeFieldName(char *p) {
+        static inline char *consumeFieldName(char *p) {
             /* Best case fast path (particularly useful with clang) */
             while (true) {
                 while ((*p >= 65) & (*p <= 90)) [[likely]] {
@@ -376,7 +378,7 @@ namespace uWS
                     p++;
                 }
                 if (*p == ':') {
-                    return (void *)p;
+                    return p;
                 }
                 if (*p == '-') {
                     p++;
@@ -390,11 +392,15 @@ namespace uWS
             while (isFieldNameByteFastLowercased(*(unsigned char *)p)) {
                 p++;
             }
-            return (void *)p;
+            return p;
         }
 
-        static bool isValidMethod(std::string_view str) {
+        static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
             if (str.empty()) return false;
+             
+            if (useStrictMethodValidation) {
+                return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
+            }
 
             for (char c : str) {
                 if (!isValidMethodChar(c))
@@ -449,7 +455,7 @@ namespace uWS
 
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
-        static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header) {
+        static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
@@ -467,7 +473,7 @@ namespace uWS
             if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
-                  if(!isValidMethod(header.key)) {
+                if(!isValidMethod(header.key, useStrictMethodValidation)) {
                     return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
@@ -530,19 +536,19 @@ namespace uWS
         * Field values are usually constrained to the range of US-ASCII characters [...]
         * Field values containing CR, LF, or NUL characters are invalid and dangerous [...]
         * Field values containing other CTL characters are also invalid. */
-        static inline void *tryConsumeFieldValue(char *p) {
+        static inline char * tryConsumeFieldValue(char *p) {
             for (; true; p += 8) {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
                 if (hasLess(word, 32)) {
                     while (*(unsigned char *)p > 31) p++;
-                    return (void *)p;
+                    return p;
                 }
             }
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool useStrictMethodValidation) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             #ifdef UWS_WITH_PROXY
@@ -572,7 +578,7 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0]);
+            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation);
             if (requestLineResult.isErrorOrShortRead()) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
@@ -609,9 +615,8 @@ namespace uWS
             for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
-                postPaddedBuffer = (char *) consumeFieldName(postPaddedBuffer);
+                postPaddedBuffer = consumeFieldName(postPaddedBuffer);
                 headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
-
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
                 if (postPaddedBuffer[0] != ':') {
                     /* If we stand at the end, we are fragmented */
@@ -619,14 +624,14 @@ namespace uWS
                         return HttpParserResult::shortRead();
                     }
                     /* Error: invalid chars in field name */
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                 }
                 postPaddedBuffer++;
 
                 preliminaryValue = postPaddedBuffer;
                 /* The goal of this call is to find next "\r\n", or any invalid field value chars, fast */
                 while (true) {
-                    postPaddedBuffer = (char *) tryConsumeFieldValue(postPaddedBuffer);
+                    postPaddedBuffer = tryConsumeFieldValue(postPaddedBuffer);
                     /* If this is not CR then we caught some stinky invalid char on the way */
                     if (postPaddedBuffer[0] != '\r') {
                         /* If TAB then keep searching */
@@ -635,17 +640,17 @@ namespace uWS
                             continue;
                         }
                         /* Error - invalid chars in field value */
-                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                     }
                     break;
                 }
+                
                 /* We fence end[0] with \r, followed by end[1] being something that is "not \n", to signify "not found".
                     * This way we can have this one single check to see if we found \r\n WITHIN our allowed search space. */
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
-
                     /* Trim trailing whitespace (SP, HTAB) */
                     while (headers->value.length() && headers->value.back() < 33) {
                         headers->value.remove_suffix(1);
@@ -673,6 +678,10 @@ namespace uWS
                         }
                     }
                 } else {
+                    if(postPaddedBuffer[0] == '\r') {
+                        // invalid char after \r
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+                    }
                     /* We are either out of search space or this is a malformed request */
                     return HttpParserResult::shortRead();
                 }
@@ -683,7 +692,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -694,7 +703,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, useStrictMethodValidation);
             if(result.isError()) {
                 return result;
             }
@@ -826,7 +835,7 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(bool requireHostHeader, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
 
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
@@ -875,7 +884,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(requireHostHeader,fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -932,7 +941,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(requireHostHeader,data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

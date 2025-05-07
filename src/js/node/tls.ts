@@ -628,7 +628,7 @@ const DEFAULT_CIPHERS_LIST = DEFAULT_CIPHERS.split(":");
 const DEFAULT_CIPHERS_SET = new Set([...DEFAULT_CIPHERS_LIST.map(c => c.toLowerCase()), ...DEFAULT_CIPHERS_LIST]);
 
 function normalizeConnectArgs(listArgs) {
-  const args = (net as any)._normalizeArgs(listArgs);
+  const args = net._normalizeArgs(listArgs);
   $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.
@@ -651,10 +651,12 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols } = options;
+  const { ALPNProtocols } = options as { ALPNProtocols?: unknown };
+
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);
   }
+
   return new TLSSocket(options).connect(normal);
 }
 

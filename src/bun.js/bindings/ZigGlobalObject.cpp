@@ -1300,11 +1300,6 @@ void GlobalObject::destroy(JSCell* cell)
     static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject();
 }
 
-WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
-{
-    return m_scriptExecutionContext;
-}
-
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 {
     return m_scriptExecutionContext;

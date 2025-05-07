@@ -12,7 +12,8 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.debug.assert": { reason: "Use bun.assert instead", limit: 26 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 0 },
-  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 2 },
+  "std.log": { reason: "Don't let this be committed", limit: 1 },
+  "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny" },
   "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
@@ -32,6 +33,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 240, regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
+  "catch unreachable": { reason: "For out-of-memory, prefer 'catch bun.outOfMemory()'", limit: 1850 },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs", limit: 180 },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()", limit: 103 },
@@ -39,7 +41,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 18 },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv", limit: 48 },
 
-  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 289 },
+  ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API", limit: 287 },
 
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded.", limit: 176 },
 };

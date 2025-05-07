@@ -628,7 +628,7 @@ namespace uWS
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
                 headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
-                if(headerStart - postPaddedBuffer > maxHeaderSize) {
+                if(maxHeaderSize && headerStart - postPaddedBuffer > maxHeaderSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
@@ -675,7 +675,7 @@ namespace uWS
                         headers->value.remove_prefix(1);
                     }
 
-                    if(headerStart - postPaddedBuffer > maxHeaderSize) {
+                    if(maxHeaderSize && headerStart - postPaddedBuffer > maxHeaderSize) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
                     headers++;

@@ -400,8 +400,8 @@ extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__fo
 extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
 {
     auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
-    if (context) return context->globalObject();
-    return nullptr;
+    if (!context) return nullptr;
+    return context->globalObject();
 }
 
 } // namespace WebCore

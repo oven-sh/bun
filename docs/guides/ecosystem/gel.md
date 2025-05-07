@@ -32,7 +32,7 @@ Welcome to Gel! with Bun\_/
 {% codetabs %}
 
 ```sh#Linux/macOS
-$ curl https://www.geldata.com/sh --proto "=https" -sSf1 | sh
+$ curl https://www.geldata.com/sh --proto "=https" -sSf | sh
 ```
 
 ```sh#Windows

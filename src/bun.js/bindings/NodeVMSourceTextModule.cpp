@@ -3,7 +3,6 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSModuleRecord.h"
-#include "ModuleAnalyzer.h"
 
 #include <print>
 
@@ -80,7 +79,7 @@ bool NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
     VM& vm = globalObject->vm();
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
+    // ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
 
     JSModuleRecord* moduleRecord = JSModuleRecord::create(globalObject, vm, globalObject->m_moduleRecordStructure.get(globalObject), Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
     m_moduleRecord.set(vm, this, moduleRecord);

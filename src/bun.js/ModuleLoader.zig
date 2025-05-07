@@ -2283,6 +2283,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
+
             this.promise.deinit();
             this.deinit();
 
@@ -2326,18 +2327,21 @@ pub const RuntimeTranspilerStore = struct {
             const path = this.path;
             const specifier = this.path.text;
             const loader = this.loader;
-            this.log = logger.Log.init(bun.default_allocator);
 
             var cache = JSC.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
             };
-
+            var log = logger.Log.init(allocator);
+            defer {
+                this.log = logger.Log.init(bun.default_allocator);
+                log.cloneToWithRecycled(&this.log, true) catch bun.outOfMemory();
+            }
             var vm = this.vm;
             var transpiler: bun.Transpiler = undefined;
             transpiler = vm.transpiler;
             transpiler.setAllocator(allocator);
-            transpiler.setLog(&this.log);
+            transpiler.setLog(&log);
             transpiler.resolver.opts = transpiler.options;
             transpiler.macro_context = null;
             transpiler.linker.resolver = &transpiler.resolver;
@@ -2450,6 +2454,7 @@ pub const RuntimeTranspilerStore = struct {
                 }
 
                 this.parse_error = error.ParseError;
+
                 return;
             };
 

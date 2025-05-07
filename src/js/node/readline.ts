@@ -2268,32 +2268,34 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-Interface.prototype.question[promisify.custom] = function question(query, options) {
-  if (options === null || typeof options !== "object") {
-    options = kEmptyObject;
-  }
-
-  var signal = options?.signal;
-
-  if (signal && signal.aborted) {
-    return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
-  }
-
-  return new Promise((resolve, reject) => {
-    var cb = resolve;
-    if (signal) {
-      var onAbort = () => {
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
+{
+  Interface.prototype.question[promisify.custom] = function question(query, options) {
+    if (options === null || typeof options !== "object") {
+      options = kEmptyObject;
     }
-    this.question(query, options, cb);
-  });
-};
+
+    var signal = options?.signal;
+
+    if (signal && signal.aborted) {
+      return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+    }
+
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (signal) {
+        var onAbort = () => {
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this.question(query, options, cb);
+    });
+  };
+}
 
 /**
  * Creates a new `readline.Interface` instance.

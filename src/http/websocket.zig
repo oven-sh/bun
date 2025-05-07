@@ -96,29 +96,3 @@ pub const WebsocketHeader = packed struct(u16) {
         return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     }
 };
-
-pub const WebsocketDataFrame = struct {
-    header: WebsocketHeader,
-    mask: [4]u8 = undefined,
-    data: []const u8,
-
-    pub fn isValid(dataframe: WebsocketDataFrame) bool {
-        // Validate control frame
-        if (dataframe.header.opcode.isControl()) {
-            if (!dataframe.header.final) {
-                return false; // Control frames cannot be fragmented
-            }
-            if (dataframe.data.len > 125) {
-                return false; // Control frame payloads cannot exceed 125 bytes
-            }
-        }
-
-        // Validate header len field
-        const expected = switch (dataframe.data.len) {
-            0...126 => dataframe.data.len,
-            127...0xFFFF => 126,
-            else => 127,
-        };
-        return dataframe.header.len == expected;
-    }
-};

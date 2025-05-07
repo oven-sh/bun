@@ -8581,6 +8581,16 @@ pub const ASTMemoryAllocator = struct {
         ptr.* = value;
         return ptr;
     }
+
+    /// Initialize ASTMemoryAllocator as `undefined`, and call this.
+    pub fn initWithoutStack(this: *ASTMemoryAllocator, arena: std.mem.Allocator) void {
+        this.stack_allocator = SFA{
+            .buffer = undefined,
+            .fallback_allocator = arena,
+            .fixed_buffer_allocator = .init(&.{}),
+        };
+        this.bump_allocator = this.stack_allocator.get();
+    }
 };
 
 pub const UseDirective = enum(u2) {

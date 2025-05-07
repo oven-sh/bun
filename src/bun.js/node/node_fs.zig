@@ -3055,6 +3055,7 @@ pub const Arguments = struct {
             errorOnExist: bool,
             force: bool,
             deinit_paths: bool = true,
+            verbatim_symlinks: bool,
         };
 
         pub fn deinit(this: *const Cp) void {
@@ -3079,7 +3080,7 @@ pub const Arguments = struct {
             var errorOnExist: bool = false;
             var force: bool = true;
             var mode: i32 = 0;
-
+            var verbatim_symlinks: bool = false;
             if (arguments.next()) |arg| {
                 arguments.eat();
                 recursive = arg.toBoolean();
@@ -3102,6 +3103,11 @@ pub const Arguments = struct {
                 }
             }
 
+            if (arguments.next()) |arg| {
+                arguments.eat();
+                verbatim_symlinks = arg.toBoolean();
+            }
+
             return Cp{
                 .src = src,
                 .dest = dest,
@@ -3110,6 +3116,7 @@ pub const Arguments = struct {
                     .recursive = recursive,
                     .errorOnExist = errorOnExist,
                     .force = force,
+                    .verbatim_symlinks = verbatim_symlinks,
                 },
             };
         }

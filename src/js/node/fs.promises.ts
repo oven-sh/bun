@@ -97,15 +97,34 @@ function watch(
   };
 }
 
+function validateCpOptions(options) {
+  validateObject(options, "options");
+  options = { ...defaultCpOptions, ...options };
+  validateBoolean(options.dereference, "options.dereference");
+  validateBoolean(options.errorOnExist, "options.errorOnExist");
+  validateBoolean(options.force, "options.force");
+  validateBoolean(options.preserveTimestamps, "options.preserveTimestamps");
+  validateBoolean(options.recursive, "options.recursive");
+  validateBoolean(options.verbatimSymlinks, "options.verbatimSymlinks");
+  options.mode = getValidMode(options.mode, "copyFile");
+  if (options.dereference === true && options.verbatimSymlinks === true) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR(
+      'Option "dereference" cannot be used in combination with option "verbatimSymlinks"',
+    );
+  }
+  if (options.filter !== undefined) {
+    validateFunction(options.filter, "options.filter");
+  }
+  return options;
+}
+
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cp(src, dest, options) {
   if (!options) return fs.cp(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
-  }
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+  options = validateCpOptions(options);
+  if (options.dereference || options.filter || options.preserveTimestamps || !options.verbatimSymlinks) {
     return require("internal/fs/cp")(src, dest, options);
   }
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);

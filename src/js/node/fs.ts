@@ -997,9 +997,9 @@ const X_OK = 1;
 const kMinimumAccessMode = Math.min(F_OK, W_OK, R_OK, X_OK);
 const kMaximumAccessMode = F_OK | W_OK | R_OK | X_OK;
 const kDefaultCopyMode = 0;
-const COPYFILE_EXCL = 0;
-const COPYFILE_FICLONE = 0;
-const COPYFILE_FICLONE_FORCE = 0;
+const COPYFILE_EXCL = constants.COPYFILE_EXCL;
+const COPYFILE_FICLONE = constants.COPYFILE_FICLONE;
+const COPYFILE_FICLONE_FORCE = constants.COPYFILE_FICLONE_FORCE;
 const kMinimumCopyMode = Math.min(kDefaultCopyMode, COPYFILE_EXCL, COPYFILE_FICLONE, COPYFILE_FICLONE_FORCE);
 const kMaximumCopyMode = COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE;
 function getValidMode(mode, type: "copyFile" | "access") {
@@ -1045,7 +1045,7 @@ function validateCpOptions(options) {
 function cpSync(src, dest, options) {
   if (!options) return fs.cpSync(src, dest);
   options = validateCpOptions(options);
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
+  if (options.dereference || options.filter || options.preserveTimestamps || !options.verbatimSymlinks) {
     return require("internal/fs/cp-sync")(src, dest, options);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);

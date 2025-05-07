@@ -86,7 +86,7 @@ To connect to my-gel-db, run `gel`
 
 ---
 
-After all these manipulations, you shoud alreay have in your arsenal `gel` command, if not, then go back to [install Gel](https://www.geldata.com/)
+After all these manipulations, you should already have in your arsenal `gel` command, if not, then go back to [install Gel](https://www.geldata.com/)
 
 ```sh
 $ gel

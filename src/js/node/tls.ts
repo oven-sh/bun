@@ -247,8 +247,10 @@ var InternalSecureContext = class SecureContext {
   }
 };
 
-function SecureContext(options) {
-  return new InternalSecureContext(options) as unknown as void;
+function SecureContext(options): void {
+  // TODO: The `never` exists because TypeScript only lets you construct functions that return void
+  // but in reality we should just be calling like InternalSecureContext.$call or similar
+  return new InternalSecureContext(options) as never;
 }
 
 function createSecureContext(options) {

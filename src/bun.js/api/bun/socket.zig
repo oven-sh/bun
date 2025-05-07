@@ -792,7 +792,7 @@ pub const Listener = struct {
                 },
                 .fd => |fd| {
                     _ = fd;
-                    return globalObject.throw("Listen with fd is not supported yet in Bun. Please open a GitHub issue if you would like it to be supported.", .{});
+                    return globalObject.throwInvalidArguments("Bun does not support listening on a file descriptor.", .{});
                 },
             }
         } orelse {

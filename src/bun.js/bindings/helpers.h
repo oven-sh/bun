@@ -368,9 +368,6 @@ static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* gl
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err);
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err);
 
-// for windows, uses uv_strerror and uv_err_name
-JSC::JSValue createUVError(JSC::JSGlobalObject* global, int err, ASCIILiteral syscall, const char* message = nullptr);
-
 static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral syscall, int err)
 {
     scope.throwException(globalObject, createSystemError(globalObject, syscall, err));
@@ -379,11 +376,6 @@ static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, ASCIILiteral syscall, int err)
 {
     scope.throwException(globalObject, createSystemError(globalObject, message, syscall, err));
-}
-
-static void throwUVError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, int err, ASCIILiteral syscall, const char* message = nullptr)
-{
-    scope.throwException(globalObject, createUVError(globalObject, err, syscall, message));
 }
 
 template<typename WebCoreType, typename OutType>

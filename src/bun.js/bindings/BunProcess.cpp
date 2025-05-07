@@ -2922,7 +2922,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     uv_rusage_t rusage;
     int err = uv_getrusage(&rusage);
     if (err) {
-        throwUVError(throwScope, globalObject, err, "uv_getrusage"_s);
+        throwSystemError(throwScope, globalObject, "uv_getrusage"_s, err);
         return {};
     }
 #endif

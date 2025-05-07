@@ -7,6 +7,8 @@
 #include "JavaScriptCore/SourceCodeKey.h"
 #include "NodeVMScript.h"
 
+#include "../vm/SigintWatcher.h"
+
 namespace Bun {
 using namespace NodeVM;
 
@@ -252,6 +254,34 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+extern "C" void Bun__ensureSignalHandler();
+
+static void ensureSigintHandler()
+{
+#if !OS(WINDOWS)
+    Bun__ensureSignalHandler();
+
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+
+    // Set the handler in the action struct
+    action.sa_handler = [](int signalNumber) {
+        SigintWatcher::get().signalReceived();
+    };
+
+    // Clear the sa_mask
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGINT);
+    action.sa_flags = SA_RESTART;
+
+    sigaction(SIGINT, &action, nullptr);
+
+    SigintWatcher::get().install();
+#else
+    static_assert(false, "TODO(@heimskr): implement sigint handler on Windows");
+#endif
+}
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
 
@@ -269,6 +299,11 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     // Set the contextified object before evaluating
     globalObject->setContextifiedObject(contextifiedObject);
+
+    if (options.breakOnSigint) {
+        ensureSigintHandler();
+        SigintWatcher::get().registerGlobalObject(globalObject);
+    }
 
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
@@ -308,6 +343,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     if (!options.fromJS(globalObject, vm, throwScope, contextArg)) {
         RETURN_IF_EXCEPTION(throwScope, {});
         options = {};
+    }
+
+    if (options.breakOnSigint) {
+        ensureSigintHandler();
     }
 
     NakedPtr<JSC::Exception> exception;
@@ -469,8 +508,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobal->NodeVMGlobalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(vm,
+        zigGlobal->NodeVMGlobalObjectStructure(),
+        {});
 
     return runInContext(targetContext, script, context, callFrame->argument(1));
 }

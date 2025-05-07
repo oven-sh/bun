@@ -15,6 +15,7 @@
 namespace Bun {
 
 class NodeVMGlobalObject;
+class NodeVMContextOptions;
 
 namespace NodeVM {
 
@@ -24,6 +25,7 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey);
 /// For vm.compileFunction we need to return an anonymous function expression
 ///
 /// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
@@ -40,17 +42,18 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
+    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options);
     static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, NodeVMContextOptions options);
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSC::JSObject* contextifiedObject() const { return m_sandbox.get(); }
     void clearContextifiedObject();
+    void sigintReceived();
 
     // Override property access to delegate to contextified object
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
@@ -105,6 +108,12 @@ public:
     using BaseVMOptions::BaseVMOptions;
 
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
+};
+
+class NodeVMContextOptions final {
+public:
+    bool allowStrings = true;
+    bool allowWasm = true;
 };
 
 } // namespace Bun

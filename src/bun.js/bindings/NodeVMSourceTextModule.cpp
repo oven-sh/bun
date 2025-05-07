@@ -1,5 +1,7 @@
 #include "NodeVMSourceTextModule.h"
 
+#include <print>
+
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSModuleRecord.h"
@@ -114,6 +116,11 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     m_moduleRecord.set(vm, this, moduleRecord);
     m_moduleRequests.clear();
 
+    std::println("import entries count: {}", moduleRecord->importEntries().size());
+    for (const auto& [key, value] : moduleRecord->importEntries()) {
+        std::println("import entry({}): name={{{}}}, type={{{}}}", key->utf8().data(), value.importName.utf8().data(), int(value.type));
+    }
+
     const auto& requests = moduleRecord->requestedModules();
 
     if (requests.isEmpty()) {
@@ -190,9 +197,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 {
     const unsigned length = specifiers->getArrayLength();
     ASSERT(length == moduleNatives->getArrayLength());
+
     if (length == 0) {
+        status(Status::Linked);
         return JSC::jsUndefined();
     }
+
+    // JSModuleRecord* record = m_moduleRecord.get();
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -208,6 +219,24 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         JSObject* moduleNative = moduleNativeValue.getObject();
 
         m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+
+        // AbstractModuleRecord::ImportEntry entry;
+
+        // record->addImportEntry(entry);
+    }
+
+    status(Status::Linked);
+    return JSC::jsUndefined();
+}
+
+JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
+        return {};
     }
 
     return JSC::jsUndefined();

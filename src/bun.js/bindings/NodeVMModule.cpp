@@ -191,8 +191,31 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSC::encodedJSUndefined();
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue timeoutValue = callFrame->argument(0);
+    if (!timeoutValue.isUInt32() || timeoutValue.asUInt32() == 0) {
+        return throwArgumentTypeError(*globalObject, scope, 0, "timeout"_s, "Module"_s, "Module"_s, "positive integer"_s);
+    }
+
+    JSValue breakOnSigintValue = callFrame->argument(1);
+    if (!breakOnSigintValue.isBoolean()) {
+        return throwArgumentTypeError(*globalObject, scope, 1, "breakOnSigint"_s, "Module"_s, "Module"_s, "boolean"_s);
+    }
+
+    uint32_t timeout = timeoutValue.asUInt32();
+    bool breakOnSigint = breakOnSigintValue.asBoolean();
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+        return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
+        // return thisObject->link(globalObject, linker);
+        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+        //     return thisObject->link(globalObject, specifiers, moduleNatives);
+    } else {
+        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+        return {};
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -32,6 +32,7 @@ public:
 
     JSValue createModuleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
+    JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

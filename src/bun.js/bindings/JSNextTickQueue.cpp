@@ -76,20 +76,26 @@ bool JSNextTickQueue::isEmpty()
 
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool mustResetContext = false;
     if (isEmpty()) {
+        RETURN_IF_EXCEPTION(scope, );
         vm.drainMicrotasks();
+        RETURN_IF_EXCEPTION(scope, );
         mustResetContext = true;
     }
 
     if (!isEmpty()) {
+        RETURN_IF_EXCEPTION(scope, );
         if (mustResetContext) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+            RETURN_IF_EXCEPTION(scope, );
         }
         auto* drainFn = internalField(2).get().getObject();
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        RETURN_IF_EXCEPTION(scope, );
         MarkedArgumentBuffer drainArgs;
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 

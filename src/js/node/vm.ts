@@ -51,7 +51,7 @@ const {
 } = vm;
 
 function runInContext(code, context, options) {
-  return new Script(code, options).runInContext(context);
+  return new Script(code, options).runInContext(context, options);
 }
 
 function createScript(code, options) {
@@ -182,7 +182,7 @@ class Module {
     }
     const { breakOnSigint = false } = options;
     validateBoolean(breakOnSigint, "options.breakOnSigint");
-    const status = this[kNative].getStatus();
+    const status = this[kNative].getStatusCode();
     if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
       throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
     }
@@ -298,6 +298,7 @@ class SourceTextModule extends Module {
       const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, moduleNatives);
     } catch (e) {
+      console.error("linking error:", e);
       this.#error = e;
       throw e;
     } finally {

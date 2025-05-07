@@ -798,8 +798,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
-static HashMap<String, int>* signalNameToNumberMap = nullptr;
-static HashMap<int, String>* signalNumberToNameMap = nullptr;
+static std::optional<HashMap<String, int>> signalNameToNumberMap;
+static std::optional<HashMap<int, String>> signalNumberToNameMap;
 
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
 struct SignalHandleValue {
@@ -854,7 +854,7 @@ static void loadSignalNumberMap()
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
-        signalNameToNumberMap = new HashMap<String, int>();
+        signalNameToNumberMap.emplace();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
         // libuv supported signals
@@ -1066,7 +1066,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 {
     if (Bun__isMainThreadVM()) {
         // IPC handlers
-        if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
+        if (eventName == "message" || eventName == "disconnect") {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
@@ -1095,7 +1095,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
             auto signalNames = getSignalNames();
-            signalNumberToNameMap = new HashMap<int, String>();
+            signalNumberToNameMap.emplace();
             signalNumberToNameMap->reserveInitialCapacity(31);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);
             signalNumberToNameMap->add(SIGINT, signalNames[1]);

@@ -6613,9 +6613,10 @@ declare module "bun" {
       ipc?(
         message: any,
         /**
-         * The {@link Subprocess} that sent the message
+         * The {@link Subprocess} that received the message
          */
         subprocess: Subprocess<In, Out, Err>,
+        handle?: unknown,
       ): void;
 
       /**

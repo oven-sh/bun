@@ -1504,7 +1504,7 @@ Server.prototype[kRealListen] = function (
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
     });
-  } else if (fd) {
+  } else if (fd != null) {
     this._handle = Bun.listen({
       fd,
       hostname,

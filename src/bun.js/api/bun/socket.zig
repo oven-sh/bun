@@ -311,6 +311,7 @@ const Handlers = struct {
 pub const SocketConfig = struct {
     hostname_or_unix: JSC.ZigString.Slice,
     port: ?u16 = null,
+    fd: ?bun.FileDescriptor = null,
     ssl: ?JSC.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
@@ -341,6 +342,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         errdefer hostname_or_unix.deinit();
         var port: ?u16 = null;
+        var fd: ?bun.FileDescriptor = null;
         var exclusive = false;
         var allowHalfOpen = false;
         var reusePort = false;
@@ -370,6 +372,7 @@ pub const SocketConfig = struct {
         hostname_or_unix: {
             if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
+                    fd = fd_.asFileDescriptor();
                     break :hostname_or_unix;
                 }
             }
@@ -468,6 +471,7 @@ pub const SocketConfig = struct {
         return SocketConfig{
             .hostname_or_unix = hostname_or_unix,
             .port = port,
+            .fd = fd,
             .ssl = ssl,
             .handlers = handlers,
             .default_data = default_data,
@@ -756,15 +760,9 @@ pub const Listener = struct {
 
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
-        } else .{
+        } else if (socket_config.fd) |fd| .{ .fd = fd } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
-        if (try opts.getTruthy(globalObject, "fd")) |fd_| {
-            if (fd_.isNumber()) {
-                const fd = fd_.asFileDescriptor();
-                connection = .{ .fd = fd };
-            }
-        }
         var errno: c_int = 0;
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
@@ -792,9 +790,9 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => |file_descriptor| {
-                    _ = file_descriptor;
-                    return globalObject.throw("Listen with fd is not supported . Please open a GitHub issue if you would like it to be supported.", .{});
+                .fd => |fd| {
+                    _ = fd;
+                    return globalObject.throw("Listen with fd is not supported yet in Bun. Please open a GitHub issue if you would like it to be supported.", .{});
                 },
             }
         } orelse {

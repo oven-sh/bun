@@ -1191,10 +1191,10 @@ pub const ESMConditions = struct {
     }
 
     pub fn append(self: *ESMConditions, condition: string) bun.OOM!void {
-        self.default.putAssumeCapacity(condition, {});
-        self.import.putAssumeCapacity(condition, {});
-        self.require.putAssumeCapacity(condition, {});
-        self.style.putAssumeCapacity(condition, {});
+        try self.default.put(condition, {});
+        try self.import.put(condition, {});
+        try self.require.put(condition, {});
+        try self.style.put(condition, {});
     }
 };
 

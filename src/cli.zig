@@ -246,7 +246,7 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
-        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addon\"") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{

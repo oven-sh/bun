@@ -237,8 +237,6 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--tls-max-v1.2                    Set the maximum TLS version to 1.2") catch unreachable,
-        clap.parseParam("--tls-min-v1.3                    Set the minimum TLS version to 1.3") catch unreachable,
         clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
         clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
@@ -246,6 +244,16 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+
+        clap.parseParam("--tls-max-v1                      Set the maximum TLS version to 1") catch unreachable,
+        clap.parseParam("--tls-max-v1.1                    Set the maximum TLS version to 1.1") catch unreachable,
+        clap.parseParam("--tls-max-v1.2                    Set the maximum TLS version to 1.2") catch unreachable,
+        clap.parseParam("--tls-max-v1.3                    Set the maximum TLS version to 1.3") catch unreachable,
+
+        clap.parseParam("--tls-min-v1                      Set the minimum TLS version to 1") catch unreachable,
+        clap.parseParam("--tls-min-v1.1                    Set the minimum TLS version to 1.1") catch unreachable,
+        clap.parseParam("--tls-min-v1.2                    Set the minimum TLS version to 1.2") catch unreachable,
+        clap.parseParam("--tls-min-v1.3                    Set the minimum TLS version to 1.3") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -747,16 +755,23 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.flag("--tls-max-v1.2")) {
-                ctx.runtime_options.tls_max_v1_2 = true;
-            }
+            // TLS version flags here are specified in ascending order for MAX, and descending order for MIN
+            // because Node will use the maximum value for --tls-max and the minimum value for --tls-min
+            // See comments on:
+            // - https://bun.sh/reference/node/tls/DEFAULT_MAX_VERSION
+            // - https://bun.sh/reference/node/tls/DEFAULT_MIN_VERSION
+            if (args.flag("--tls-max-v1")) ctx.runtime_options.tls_max = 1;
+            if (args.flag("--tls-max-v1.1")) ctx.runtime_options.tls_max = 1.1;
+            if (args.flag("--tls-max-v1.2")) ctx.runtime_options.tls_max = 1.2;
+            if (args.flag("--tls-max-v1.3")) ctx.runtime_options.tls_max = 1.3;
 
-            if (args.flag("--tls-min-v1.3")) {
-                ctx.runtime_options.tls_min_v1_3 = true;
-            }
+            if (args.flag("--tls-min-v1.3")) ctx.runtime_options.tls_min = 1.3;
+            if (args.flag("--tls-min-v1.2")) ctx.runtime_options.tls_min = 1.2;
+            if (args.flag("--tls-min-v1.1")) ctx.runtime_options.tls_min = 1.1;
+            if (args.flag("--tls-min-v1")) ctx.runtime_options.tls_min = 1;
 
-            if (ctx.runtime_options.tls_min_v1_3 and ctx.runtime_options.tls_max_v1_2) {
-                Output.errGeneric("either --tls-min-v1.3 or --tls-max-v1.2 can be used, not both", .{});
+            if (ctx.runtime_options.tls_min != null and ctx.runtime_options.tls_max != null) {
+                Output.errGeneric("either --tls-min-v1.x or --tls-max-v1.x can be used, not both", .{});
                 Global.exit(1);
             }
 
@@ -1546,8 +1561,9 @@ pub const Command = struct {
     };
 
     pub const RuntimeOptions = struct {
-        tls_max_v1_2: bool = false,
-        tls_min_v1_3: bool = false,
+        tls_min: ?f32 = null,
+        tls_max: ?f32 = null,
+
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,

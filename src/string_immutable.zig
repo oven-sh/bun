@@ -1255,11 +1255,11 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
-pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) OOM![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
-pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) ![:0]u8 {
+pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) OOM![:0]u8 {
     var list = std.ArrayList(u8).init(allocator);
     try toUTF8AppendToList(&list, js);
     try list.append(0);
@@ -1451,7 +1451,7 @@ pub const BOM = enum {
 
     /// If an allocation is needed, free the input and the caller will
     /// replace it with the new return
-    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) ![]u8 {
+    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) OOM![]u8 {
         switch (bom) {
             .utf8 => {
                 _ = bun.c.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
@@ -2218,7 +2218,7 @@ pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Alloca
     return list.items;
 }
 
-pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
+pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) OOM![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         // add 16 bytes of padding for SIMDUTF

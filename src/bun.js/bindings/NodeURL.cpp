@@ -149,9 +149,11 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(binding);
     auto domainToAsciiFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public);
+    ASSERT(domainToAsciiFunction);
     auto domainToUnicodeFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public);
-    ASSERT(binding && domainToAsciiFunction && domainToUnicodeFunction);
+    ASSERT(domainToUnicodeFunction);
     binding->putByIndexInline(
         globalObject,
         (unsigned)0,

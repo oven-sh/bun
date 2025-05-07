@@ -690,6 +690,7 @@ declare function $ERR_BROTLI_INVALID_PARAM(p: number): RangeError;
 declare function $ERR_TLS_CERT_ALTNAME_INVALID(reason: string, host: string, cert): Error;
 declare function $ERR_USE_AFTER_CLOSE(name: string): Error;
 declare function $ERR_HTTP2_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
 declare function $ERR_INVALID_HTTP_TOKEN(name: string, value: string): TypeError;
 declare function $ERR_HTTP2_STATUS_INVALID(code: number): RangeError;
 declare function $ERR_HTTP2_INVALID_PSEUDOHEADER(name: string): TypeError;

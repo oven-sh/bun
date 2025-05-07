@@ -127,6 +127,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_CURSOR_POS", TypeError],
   ["ERR_INVALID_FILE_URL_HOST", TypeError],
   ["ERR_INVALID_FILE_URL_PATH", TypeError],
+  ["ERR_INVALID_HANDLE_TYPE", TypeError],
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_INVALID_IP_ADDRESS", TypeError],
   ["ERR_INVALID_MIME_SYNTAX", TypeError],

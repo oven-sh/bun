@@ -193,29 +193,34 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     const unsigned length = specifiers->getArrayLength();
     ASSERT(length == moduleNatives->getArrayLength());
 
-    if (length == 0) {
-        status(Status::Linked);
-        return JSC::jsUndefined();
+    if (length != 0) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        for (unsigned i = 0; i < length; i++) {
+            JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
+            JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
+
+            ASSERT(specifierValue.isString());
+            ASSERT(moduleNativeValue.isObject());
+
+            WTF::String specifier = specifierValue.toWTFString(globalObject);
+            JSObject* moduleNative = moduleNativeValue.getObject();
+
+            m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+        }
     }
 
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    for (unsigned i = 0; i < length; i++) {
-        JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
-        JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
-
-        ASSERT(specifierValue.isString());
-        ASSERT(moduleNativeValue.isObject());
-
-        WTF::String specifier = specifierValue.toWTFString(globalObject);
-        JSObject* moduleNative = moduleNativeValue.getObject();
-
-        m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+    if (NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false)) {
+        globalObject = nodeVmGlobalObject;
     }
 
-    // JSModuleRecord* record = m_moduleRecord.get();
-    // record->link(globalObject, jsUndefined());
+    JSModuleRecord* record = m_moduleRecord.get();
+    Synchronousness sync = record->link(globalObject, jsUndefined());
+
+    if (sync == Synchronousness::Async) {
+        ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
+    }
 
     status(Status::Linked);
     return JSC::jsUndefined();
@@ -235,6 +240,10 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
     JSValue result {};
 
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+
+    if (nodeVmGlobalObject) {
+        globalObject = nodeVmGlobalObject;
+    }
 
     auto run = [&] {
         // TODO(@heimskr): top-level await support

@@ -479,8 +479,6 @@ void NodeVMGlobalObject::sigintReceived()
 
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    // if (!propertyName.isSymbol())
-    //     printf("put called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
     if (!thisObject->m_sandbox) {
@@ -492,7 +490,9 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
-    (void)isContextualStore;
+    if (auto* proxy = jsDynamicCast<JSGlobalProxy*>(thisValue); proxy && proxy->target() == globalObject) {
+        isContextualStore = false;
+    }
     bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
@@ -531,10 +531,7 @@ static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
-    // if (!propertyName.isSymbol())
-    //     printf("getOwnPropertySlot called for %s\n", propertyName.publicName()->utf8().data());
-
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
@@ -975,9 +972,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
 //     // visitor.append(thisObject->m_proxyTarget);
 // }
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
+
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
-
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     if (UNLIKELY(!thisObject->m_sandbox)) {
         return Base::deleteProperty(cell, globalObject, propertyName, slot);

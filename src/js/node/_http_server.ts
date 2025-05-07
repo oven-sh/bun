@@ -40,6 +40,7 @@ const {
   drainMicrotasks,
   setServerIdleTimeout,
   setServerCustomOptions,
+  getMaxHTTPHeaderSize,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -265,6 +266,7 @@ const ServerResponsePrototype = {
     this._header = " ";
     const req = this.req;
     const socket = req.socket;
+    console.log("hey?", req._consuming, req?._readableState?.resumeScheduled);
     if (!req._consuming && !req?._readableState?.resumeScheduled) {
       req._dump();
     }
@@ -733,6 +735,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN:
       err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
       break;
+    case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
+      err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
+      err.bytesParsed = rawPacket.byteLength;
+      break;
     default:
       err = $HPE_INTERNAL("Parse Error");
       break;
@@ -1131,7 +1137,13 @@ const ServerPrototype = {
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
       // always set strict method validation to true for node.js compatibility
-      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, true, onServerClientError.bind(this));
+      setServerCustomOptions(
+        this[serverSymbol],
+        this.requireHostHeader,
+        true,
+        typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
+        onServerClientError.bind(this),
+      );
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1288,10 +1300,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   #resumeSocket() {
+    console.log("resumeSocket");
     const handle = this[kHandle];
     const response = handle?.response;
     if (response) {
+      console.log("response");
       const resumed = response.resume();
+      console.log("resumed", resumed);
       if (resumed && resumed !== true) {
         const bodyReadState = handle.hasBody;
 
@@ -1305,6 +1320,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
           req.push(resumed);
         }
         this.push(resumed);
+        console.log("pushed", resumed);
       }
     }
   }

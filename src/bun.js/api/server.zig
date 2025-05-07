@@ -5326,6 +5326,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
+        pub fn setMaxHTTPHeaderSize(this: *ThisServer, max_header_size: u64) void {
+            if (this.app) |app| {
+                app.setMaxHTTPHeaderSize(max_header_size);
+            }
+        }
+
         pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyRoute) !void {
             try this.config.appendStaticRoute(path, route);
         }
@@ -7852,11 +7858,41 @@ pub fn Server__setAppFlags_(server: JSC.JSValue, require_host_header: bool, use_
     }
 }
 
+pub export fn Server__setMaxHTTPHeaderSize(server: JSC.JSValue, max_header_size: u64, globalThis: *JSC.JSGlobalObject) void {
+    Server__setMaxHTTPHeaderSize_(server, max_header_size, globalThis) catch |err| switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => {
+            _ = globalThis.throwOutOfMemoryValue();
+        },
+    };
+}
+
+pub fn Server__setMaxHTTPHeaderSize_(server: JSC.JSValue, max_header_size: u64, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
+    }
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set requireHostHeader: The 'this' value is not a Server.", .{});
+    }
+
+    if (server.as(HTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(HTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else {
+        return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
+    }
+}
 comptime {
     _ = Server__setIdleTimeout;
     _ = Server__setAppFlags;
     _ = NodeHTTPResponse.create;
     _ = Server__setOnClientError;
+    _ = Server__setMaxHTTPHeaderSize;
 }
 
 extern fn NodeHTTPServer__onRequest_http(

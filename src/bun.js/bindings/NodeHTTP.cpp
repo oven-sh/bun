@@ -535,6 +535,8 @@ extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGloba
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setAppFlags(EncodedJSValue, bool, bool, JSC::JSGlobalObject*);
 extern "C" void Server__setOnClientError(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Server__setMaxHTTPHeaderSize(EncodedJSValue, uint64_t, JSC::JSGlobalObject*);
+
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1316,14 +1318,17 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 4);
+    ASSERT(callFrame->argumentCount() == 5);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue callback = callFrame->uncheckedArgument(3);
+    JSValue maxHeaderSize = callFrame->uncheckedArgument(3);
+    JSValue callback = callFrame->uncheckedArgument(4);
 
     Server__setAppFlags(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), globalObject);
+
+    Server__setMaxHTTPHeaderSize(JSValue::encode(serverValue), maxHeaderSize.toNumber(globalObject), globalObject);
 
     Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
 

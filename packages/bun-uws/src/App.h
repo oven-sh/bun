@@ -634,6 +634,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
+        httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

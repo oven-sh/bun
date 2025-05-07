@@ -64,6 +64,7 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     HttpFlags flags;
+    uint64_t maxHeaderSize = 0; // 0 means no limit
 
     // TODO: SNI
     void clearRoutes() {

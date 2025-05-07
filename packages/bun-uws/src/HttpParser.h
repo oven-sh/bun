@@ -67,6 +67,7 @@ namespace uWS
         HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION = 1,
         HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST = 2,
         HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
+        HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 4,
     };
 
     struct HttpParserResult {
@@ -455,7 +456,7 @@ namespace uWS
 
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
-        static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation) {
+        static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
@@ -481,8 +482,14 @@ namespace uWS
                 for (; true; data += 8) {
                     uint64_t word;
                     memcpy(&word, data, sizeof(uint64_t));
+                    if(maxHeaderSize && data - start > maxHeaderSize) {
+                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                    }
                     if (hasLess(word, 33)) {
                         while (*(unsigned char *)data > 32) data++;
+                        if(maxHeaderSize && data - start > maxHeaderSize) {
+                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                        }
                         /* Now we stand on space */
                         header.value = {start, (size_t) (data - start)};
                         auto nextPosition = data + 11;
@@ -548,7 +555,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool useStrictMethodValidation) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             #ifdef UWS_WITH_PROXY
@@ -578,7 +585,7 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation);
+            auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation, maxHeaderSize);
             if (requestLineResult.isErrorOrShortRead()) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
@@ -589,6 +596,8 @@ namespace uWS
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
                     case HTTP_HEADER_PARSER_ERROR_INVALID_METHOD:
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_METHOD);
+                    case HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
+                        return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     default: {
                         /* Short read */
                     }
@@ -602,6 +611,8 @@ namespace uWS
             }
             /* No request headers found */
             size_t buffer_size = end - postPaddedBuffer;
+            const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
+                
             if(buffer_size < 2) {
                 /* Fragmented request */
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
@@ -617,6 +628,9 @@ namespace uWS
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
                 headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
+                if(headerStart - postPaddedBuffer > maxHeaderSize) {
+                    return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
                 if (postPaddedBuffer[0] != ':') {
                     /* If we stand at the end, we are fragmented */
@@ -661,6 +675,9 @@ namespace uWS
                         headers->value.remove_prefix(1);
                     }
 
+                    if(headerStart - postPaddedBuffer > maxHeaderSize) {
+                        return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                    }
                     headers++;
 
                     /* We definitely have at least one header (or request line), so check if we are done */
@@ -692,7 +709,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -703,7 +720,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, useStrictMethodValidation);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -835,7 +852,7 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
 
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
@@ -884,7 +901,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -941,7 +958,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

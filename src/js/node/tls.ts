@@ -5,6 +5,8 @@ const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
+const { constants: cryptoConstants } = require("node:crypto");
+const { SSL_OP_NO_SSLv3, SSL_OP_NO_TLSv1, SSL_OP_NO_TLSv1_1, SSL_OP_NO_TLSv1_2, SSL_OP_NO_TLSv1_3 } = cryptoConstants;
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -201,6 +203,8 @@ var InternalSecureContext = class SecureContext {
   ca;
   passphrase;
   servername;
+  minVersion;
+  maxVersion;
   secureOptions;
 
   constructor(options) {
@@ -237,10 +241,58 @@ var InternalSecureContext = class SecureContext {
       }
       this.servername = servername;
 
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
+      let minVersion = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+      if (minVersion && typeof minVersion !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
       }
+      this.minVersion = minVersion;
+
+      let maxVersion = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      if (maxVersion && typeof maxVersion !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
+      }
+
+      this.maxVersion = maxVersion;
+
+      let secureOptions = options.secureOptions || 0;
+
+      if (secureOptions && typeof secureOptions !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+      }
+
+      switch (minVersion) {
+        case "TLSv1":
+          secureOptions |= SSL_OP_NO_SSLv3;
+          break;
+        case "TLSv1.1":
+          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1;
+          break;
+        case "TLSv1.2":
+          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1;
+          break;
+        case "TLSv1.3":
+          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2;
+          break;
+        default:
+          throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
+      }
+
+      switch (maxVersion) {
+        case "TLSv1":
+          secureOptions |= SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3;
+          break;
+        case "TLSv1.1":
+          secureOptions |= SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3;
+          break;
+        case "TLSv1.2":
+          secureOptions |= SSL_OP_NO_TLSv1_3;
+          break;
+        case "TLSv1.3":
+          break;
+        default:
+          throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
+      }
+
       this.secureOptions = secureOptions;
     }
     this.context = context;
@@ -604,8 +656,8 @@ const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
-  DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3";
+  DEFAULT_MIN_VERSION: import("tls").SecureVersion = "TLSv1.2",
+  DEFAULT_MAX_VERSION: import("tls").SecureVersion = "TLSv1.3";
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

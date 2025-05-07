@@ -241,16 +241,22 @@ var InternalSecureContext = class SecureContext {
       if (secureOptions && typeof secureOptions !== "number") {
         throw new TypeError("secureOptions argument must be an number");
       }
+
       this.secureOptions = secureOptions;
 
-      if (!$isUndefinedOrNull(options.privateKeyEngine) && typeof options.privateKeyEngine !== "string") {
-        // prettier-ignore
-        throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
-      }
+      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
+        if ($isUndefinedOrNull(options.privateKeyEngine)) {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
+        } else if (typeof options.privateKeyEngine !== "string") {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
+        }
 
-      if (!$isUndefinedOrNull(options.privateKeyIdentifier) && typeof options.privateKeyIdentifier !== "string") {
-        // prettier-ignore
-        throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
+        if (typeof options.privateKeyIdentifier !== "string") {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
+        }
       }
     }
 

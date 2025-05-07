@@ -25,6 +25,43 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+/// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+    debug_allocator_data.allocator
+else
+    default_allocator;
+pub const debug_allocator_data = struct {
+    comptime {
+        if (!Environment.isDebug) @compileError("only available in debug");
+    }
+    pub var backing: ?std.heap.DebugAllocator(.{}) = null;
+    pub const allocator: std.mem.Allocator = .{
+        .ptr = undefined,
+        .vtable = &.{
+            .alloc = &alloc,
+            .resize = &resize,
+            .remap = &remap,
+            .free = &free,
+        },
+    };
+
+    fn alloc(_: *anyopaque, new_len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
+    }
+
+    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    }
+};
+
 pub extern "c" fn powf(x: f32, y: f32) f32;
 pub extern "c" fn pow(x: f64, y: f64) f64;
 

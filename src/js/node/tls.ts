@@ -573,7 +573,7 @@ function Server(options, secureConnectionListener): void {
         const requested = options.ciphers.split(":");
         for (const r of requested) {
           if (!DEFAULT_CIPHERS_SET.has(r)) {
-            throw new Error("No cipher match");
+            throw $ERR_SSL_NO_CIPHER_MATCH();
           }
         }
 

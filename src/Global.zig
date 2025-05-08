@@ -117,6 +117,11 @@ pub fn exit(code: u32) noreturn {
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
 
+    if (Environment.isDebug) {
+        bun.assert(bun.debug_allocator_data.backing.?.deinit() == .ok);
+        bun.debug_allocator_data.backing = null;
+    }
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {

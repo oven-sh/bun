@@ -532,8 +532,7 @@ pub const JSValkeyClient = struct {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
-                        var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        const ctx_ = uws.us_create_bun_nossl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
                         vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;
@@ -544,7 +543,7 @@ pub const JSValkeyClient = struct {
                     vm.rareData().valkey_context.tls orelse brk_ctx: {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
+                        const ctx_ = uws.us_create_bun_ssl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.us_bun_socket_context_options_t{}, &err).?;
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                         vm.rareData().valkey_context.tls = ctx_;
                         break :brk_ctx ctx_;
@@ -555,7 +554,7 @@ pub const JSValkeyClient = struct {
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
-                    const ctx_ = uws.us_create_bun_socket_context(1, vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
+                    const ctx_ = uws.us_create_bun_ssl_socket_context(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                     break :brk_ctx .{ ctx_, true };
                 },

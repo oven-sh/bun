@@ -2958,7 +2958,7 @@ pub const PackageManager = struct {
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             entry.key_ptr.* = key;
 
-            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| {
+            const source = bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
                 _ = this.map.remove(key);
                 allocator.free(key);
                 return .{ .read_err = err };
@@ -9323,7 +9323,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -9504,7 +9504,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -11484,7 +11484,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :src s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
@@ -11895,7 +11895,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = brk: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :brk s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});

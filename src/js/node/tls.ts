@@ -972,9 +972,7 @@ function convertALPNProtocols(protocols, out) {
     // Copy new buffer not to be modified by user.
     out.ALPNProtocols = Buffer.from(protocols);
   } else if (isArrayBufferView(protocols)) {
-    out.ALPNProtocols = Buffer.from(
-      protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
-    );
+    out.ALPNProtocols = Buffer.from(protocols.buffer.slice(), protocols.byteOffset, protocols.byteLength);
   } else if (Buffer.isBuffer(protocols)) {
     out.ALPNProtocols = protocols;
   }

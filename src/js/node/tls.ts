@@ -310,8 +310,51 @@ var InternalSecureContext = class SecureContext {
       }
       this.secureOptions = secureOptions;
 
-      const minVersionName = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
-      const maxVersionName = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      const secureProtocol = options.secureProtocol;
+      const hasSecureProtocol = secureProtocol !== undefined;
+      const hasMinVersionOption = options.minVersion !== undefined;
+      const hasMaxVersionOption = options.maxVersion !== undefined;
+
+      if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
+        throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(
+          "options.secureProtocol",
+          hasMinVersionOption ? "options.minVersion" : "options.maxVersion",
+        );
+      }
+
+      let minVersionName;
+      let maxVersionName;
+
+      if (hasSecureProtocol) {
+        if (typeof secureProtocol !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
+        }
+
+        switch (secureProtocol) {
+          case "TLSv1_method":
+            minVersionName = maxVersionName = "TLSv1";
+            break;
+          case "TLSv1_1_method":
+            minVersionName = maxVersionName = "TLSv1.1";
+            break;
+          case "TLSv1_2_method":
+            minVersionName = maxVersionName = "TLSv1.2";
+            break;
+          case "TLSv1_3_method":
+            minVersionName = maxVersionName = "TLSv1.3";
+            break;
+          case "TLS_method":
+          case "SSLv23_method":
+            minVersionName = DEFAULT_MIN_VERSION;
+            maxVersionName = DEFAULT_MAX_VERSION;
+            break;
+          default:
+            throw $ERR_TLS_INVALID_PROTOCOL_METHOD(secureProtocol);
+        }
+      } else {
+        minVersionName = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+        maxVersionName = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      }
 
       if (minVersionName) {
         if (typeof minVersionName !== "string") {
@@ -593,15 +636,67 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
 
-  const minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
-  const maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+  const secureProtocol = options?.secureProtocol;
+  const hasSecureProtocol = secureProtocol !== undefined;
+  const hasMinVersionOption = options && options.minVersion !== undefined;
+  const hasMaxVersionOption = options && options.maxVersion !== undefined;
 
-  if (minVersionName && (typeof minVersionName !== "string" || !(minVersionName in TLS_VERSION_MAP))) {
-    throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
+  if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
+    throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(
+      "options.secureProtocol",
+      hasMinVersionOption ? "options.minVersion" : "options.maxVersion",
+    );
+  }
+
+  let minVersionName;
+  let maxVersionName;
+
+  if (hasSecureProtocol) {
+    if (typeof secureProtocol !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
+    }
+    switch (secureProtocol) {
+      case "TLSv1_method":
+        minVersionName = maxVersionName = "TLSv1";
+        break;
+      case "TLSv1_1_method":
+        minVersionName = maxVersionName = "TLSv1.1";
+        break;
+      case "TLSv1_2_method":
+        minVersionName = maxVersionName = "TLSv1.2";
+        break;
+      case "TLSv1_3_method":
+        minVersionName = maxVersionName = "TLSv1.3";
+        break;
+      case "TLS_method":
+      case "SSLv23_method":
+        minVersionName = DEFAULT_MIN_VERSION;
+        maxVersionName = DEFAULT_MAX_VERSION;
+        break;
+      default:
+        throw $ERR_TLS_INVALID_PROTOCOL_METHOD(secureProtocol);
+    }
+  } else {
+    minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+    maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+  }
+
+  if (minVersionName) {
+    if (typeof minVersionName !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
+    }
+    if (!(minVersionName in TLS_VERSION_MAP)) {
+      throw $ERR_TLS_INVALID_PROTOCOL_VERSION(minVersionName, "minimum");
+    }
   }
   this.minVersion = TLS_VERSION_MAP[minVersionName];
-  if (maxVersionName && (typeof maxVersionName !== "string" || !(maxVersionName in TLS_VERSION_MAP))) {
-    throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
+  if (maxVersionName) {
+    if (typeof maxVersionName !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
+    }
+    if (!(maxVersionName in TLS_VERSION_MAP)) {
+      throw $ERR_TLS_INVALID_PROTOCOL_VERSION(maxVersionName, "maximum");
+    }
   }
   this.maxVersion = TLS_VERSION_MAP[maxVersionName];
 
@@ -772,7 +867,8 @@ const DEFAULT_MIN_VERSION: SecureVersion = getTlsVersionOrDefault(getDefaultMinT
 const DEFAULT_MAX_VERSION: SecureVersion = getTlsVersionOrDefault(getDefaultMaxTLSVersionFromCLIFlag(), "TLSv1.3");
 
 function normalizeConnectArgs(listArgs) {
-  const args = net._normalizeArgs(listArgs);
+  // Cast to any to use internal _normalizeArgs helper as in Node.js implementation
+  const args = (net as any)._normalizeArgs(listArgs);
   $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.

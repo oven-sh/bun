@@ -211,13 +211,6 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
-// enum TLS_VERSION_MAP {
-//   "TLSv1" = 0x0301,
-//   "TLSv1.1" = 0x0302,
-//   "TLSv1.2" = 0x0303,
-//   "TLSv1.3" = 0x0304,
-// }
-
 const TLS_VERSION_MAP: Record<SecureVersion, number> = {
   "TLSv1": 0x0301,
   "TLSv1.1": 0x0302,

@@ -1160,8 +1160,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
-  const char *side = options.request_cert ? "[server]" : "[client]";
-  printf("[bun-debug-tls] %s received min_tls_version: %f, max_tls_version: %f\n", side, options.min_tls_version, options.max_tls_version);
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);

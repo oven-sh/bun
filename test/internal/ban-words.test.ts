@@ -1,5 +1,6 @@
-import { readdir } from "fs/promises";
 import path from "path";
+import { normalize } from "path/posix";
+import { file, Glob } from "bun";
 
 // prettier-ignore
 const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
@@ -47,27 +48,37 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 };
 const words_keys = [...Object.keys(words)];
 
+const sources: Array<{ output: string; paths: string[]; excludes?: string[] }> = await file(
+  path.join("cmake", "Sources.json"),
+).json();
+
 let counts: Record<string, [number, string][]> = {};
-const files = await readdir("src", { recursive: true, withFileTypes: true });
-for (const file of files) {
-  if (file.isDirectory()) continue;
-  if (!file.name.endsWith(".zig")) continue;
-  if (file.parentPath.startsWith("src" + path.sep + "deps")) continue;
-  if (file.parentPath.startsWith("src" + path.sep + "codegen")) continue;
-  const content = await Bun.file(file.parentPath + path.sep + file.name).text();
-  for (const word of words_keys) {
-    let regex = words[word].regex ? new RegExp(word, "g") : undefined;
-    const did_match = regex ? regex.test(content) : content.includes(word);
-    if (regex) regex.lastIndex = 0;
-    if (did_match) {
-      counts[word] ??= [];
-      const lines = content.split("\n");
-      for (let line_i = 0; line_i < lines.length; line_i++) {
-        const trim = lines[line_i].trim();
-        if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-        const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
-        for (let count_i = 0; count_i < count; count_i++) {
-          counts[word].push([line_i + 1, file.parentPath + path.sep + file.name]);
+
+for (const source of sources) {
+  const { paths, excludes } = source;
+  for (const pattern of paths) {
+    const glob = new Glob(pattern);
+    for await (const source of glob.scan()) {
+      if (excludes?.some(exclude => normalize(source) === normalize(exclude))) continue;
+      if (!source.endsWith(".zig")) continue;
+      if (source.startsWith("src" + path.sep + "deps")) continue;
+      if (source.startsWith("src" + path.sep + "codegen")) continue;
+      const content = await file(source).text();
+      for (const word of words_keys) {
+        let regex = words[word].regex ? new RegExp(word, "g") : undefined;
+        const did_match = regex ? regex.test(content) : content.includes(word);
+        if (regex) regex.lastIndex = 0;
+        if (did_match) {
+          counts[word] ??= [];
+          const lines = content.split("\n");
+          for (let line_i = 0; line_i < lines.length; line_i++) {
+            const trim = lines[line_i].trim();
+            if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
+            const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
+            for (let count_i = 0; count_i < count; count_i++) {
+              counts[word].push([line_i + 1, source]);
+            }
+          }
         }
       }
     }

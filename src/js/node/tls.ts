@@ -532,8 +532,6 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
-    minVersion: this[ksecureContext]?.minVersion,
-    maxVersion: this[ksecureContext]?.maxVersion,
     ...this[ksecureContext],
   };
 };

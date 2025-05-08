@@ -650,8 +650,8 @@ pub const ServerConfig = struct {
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
 
-        min_version: ?[*:0]const u8 = null,
-        max_version: ?[*:0]const u8 = null,
+        min_version: ?f64 = null,
+        max_version: ?f64 = null,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -688,6 +688,13 @@ pub const ServerConfig = struct {
             }
             ctx_opts.request_cert = this.request_cert;
             ctx_opts.reject_unauthorized = this.reject_unauthorized;
+
+            if (this.min_version != null) {
+                ctx_opts.min_tls_version = this.min_version.?;
+            }
+            if (this.max_version != null) {
+                ctx_opts.max_tls_version = this.max_version.?;
+            }
 
             return ctx_opts;
         }

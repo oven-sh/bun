@@ -66,20 +66,15 @@ namespace uWS {
             state |= bits;
             data.remove_prefix(1);
         }
-        auto len = data.length();
-        if(len >= 2) {
+        if(data.length() >= 2) {
             /* Consume \r\n */
             if((data[0] != '\r' || data[1] != '\n')) {
                 state = STATE_IS_ERROR;
                 return;
             }
+            state += 2; // include the two last /r/n
+            state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
             data.remove_prefix(2);
-            /* Now we stand on \n so consume it and enable size */
-            if (data.length()) {
-                state += 2; // include the two last /r/n
-                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
-                data.remove_prefix(1);
-            }
         }
         // short read
     }

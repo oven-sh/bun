@@ -21,6 +21,7 @@
 #include <string>
 #include <charconv>
 #include <string_view>
+#include <cstdint>
 
 namespace uWS {
     /* Safari 15.0 - 15.3 has a completely broken compression implementation (client_no_context_takeover not
@@ -78,8 +79,8 @@ namespace uWS {
         int request_cert = 0;
         unsigned int client_renegotiation_limit = 3;
         unsigned int client_renegotiation_window = 600;
-        double min_tls_version = 0.0;
-        double max_tls_version = 0.0;
+        unsigned int min_tls_version = 0;
+        unsigned int max_tls_version = 0;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

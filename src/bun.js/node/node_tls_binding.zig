@@ -5,7 +5,7 @@ const JSC = bun.JSC;
 
 pub fn getDefaultMinTLSVersion(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (bun.tls.min_tls_version) |version| {
-        return JSC.JSValue.jsNumberFromDouble(version);
+        return JSC.JSValue.jsNumber(version);
     }
 
     return JSC.JSValue.jsNull();
@@ -13,7 +13,7 @@ pub fn getDefaultMinTLSVersion(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
 
 pub fn getDefaultMaxTLSVersion(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (bun.tls.max_tls_version) |version| {
-        return JSC.JSValue.jsNumberFromDouble(version);
+        return JSC.JSValue.jsNumber(version);
     }
 
     return JSC.JSValue.jsNull();

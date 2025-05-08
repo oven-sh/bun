@@ -218,6 +218,12 @@ const TLS_VERSION_MAP = {
   "TLSv1.2": 0x0303,
   "TLSv1.3": 0x0304,
 };
+const TLS_VERSION_REVERSE_MAP = {
+  0x0301: "TLSv1",
+  0x0302: "TLSv1.1",
+  0x0303: "TLSv1.2",
+  0x0304: "TLSv1.3",
+};
 
 var InternalSecureContext = class SecureContext {
   context;
@@ -656,8 +662,10 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
 
-const DEFAULT_MIN_VERSION: SecureVersion = `TLSv${getMinTLSVersion() ?? "1.2"}`;
-const DEFAULT_MAX_VERSION: SecureVersion = `TLSv${getMaxTLSVersion() ?? "1.3"}`;
+const DEFAULT_MIN_VERSION: SecureVersion =
+  getMinTLSVersion() != null ? TLS_VERSION_REVERSE_MAP[getMinTLSVersion() as number] : "TLSv1.2";
+const DEFAULT_MAX_VERSION: SecureVersion =
+  getMaxTLSVersion() != null ? TLS_VERSION_REVERSE_MAP[getMaxTLSVersion() as number] : "TLSv1.3";
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

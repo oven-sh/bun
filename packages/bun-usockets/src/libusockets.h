@@ -195,8 +195,8 @@ struct us_socket_context_options_t {
     const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
-    double min_tls_version;
-    double max_tls_version;
+    unsigned int min_tls_version;
+    unsigned int max_tls_version;
 };
 
 struct us_bun_verify_error_t {

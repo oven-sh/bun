@@ -650,8 +650,8 @@ pub const ServerConfig = struct {
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
 
-        min_version: ?f64 = null,
-        max_version: ?f64 = null,
+        min_version: ?u16 = null,
+        max_version: ?u16 = null,
 
         const log = Output.scoped(.SSLConfig, false);
 

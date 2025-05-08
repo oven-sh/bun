@@ -3735,13 +3735,34 @@ extern "C" void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 void GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
+
+#if BUN_DEBUG
+    uintptr_t currentGeneration = vm.currentWeakRefVersion();
+#endif
+
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
         queue->drain(vm, this);
+
+#if BUN_DEBUG
+        // microtask queue draining may stop early when a
+        // termination exception is thrown within a microtask
+        if (!vm.hasPendingTerminationException()) {
+            vm.m_microtaskQueues.forEach([](JSC::MicrotaskQueue* queue) {
+                ASSERT(queue->isEmpty());
+            });
+        }
+
+        ASSERT(vm.currentWeakRefVersion() > currentGeneration);
+#endif
         return;
     }
 
     vm.drainMicrotasks();
+
+#if BUN_DEBUG
+    ASSERT(vm.currentWeakRefVersion() > currentGeneration);
+#endif
 }
 
 extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)

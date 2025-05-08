@@ -83,9 +83,14 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     }
 
     if (!isEmpty()) {
+        if (UNLIKELY(vm.hasPendingTerminationException())) {
+            return;
+        }
+
         if (mustResetContext) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
         }
+        // note: drainFn will drain vm microtask queue
         auto* drainFn = internalField(2).get().getObject();
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         MarkedArgumentBuffer drainArgs;

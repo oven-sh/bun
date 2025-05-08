@@ -692,6 +692,7 @@ pub const ServerConfig = struct {
             if (this.min_version != null) {
                 ctx_opts.min_tls_version = this.min_version.?;
             }
+
             if (this.max_version != null) {
                 ctx_opts.max_tls_version = this.max_version.?;
             }
@@ -1052,15 +1053,17 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "minVersion")) |min_version| {
-                result.min_version = min_version.coerceToDouble(global);
-                defer result.min_version.deinit();
-                any = true;
+                if (min_version.isNumber()) {
+                    result.min_version = @as(u16, @intCast(min_version.toInt32()));
+                    any = true;
+                }
             }
 
             if (try obj.getTruthy(global, "maxVersion")) |max_version| {
-                result.max_version = max_version.coerceToDouble(global);
-                defer result.max_version.deinit();
-                any = true;
+                if (max_version.isNumber()) {
+                    result.max_version = @as(u16, @intCast(max_version.toInt32()));
+                    any = true;
+                }
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {

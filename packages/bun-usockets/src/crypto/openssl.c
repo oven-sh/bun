@@ -1167,25 +1167,14 @@ SSL_CTX *create_ssl_context_from_bun_options(
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-  if (options.min_tls_version > 0.0) {
-    unsigned min_version;
-    if (options.min_tls_version >= 1.3) min_version = TLS1_3_VERSION;
-    else if (options.min_tls_version >= 1.2) min_version = TLS1_2_VERSION;
-    else if (options.min_tls_version >= 1.1) min_version = TLS1_1_VERSION;
-    else if (options.min_tls_version >= 1.0) min_version = TLS1_VERSION;
-    else min_version = TLS1_VERSION;
-    SSL_CTX_set_min_proto_version(ssl_context, min_version);
+  if (options.min_tls_version) {
+    SSL_CTX_set_min_proto_version(ssl_context, options.min_tls_version);
   } else {
     SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
   }
 
-  if (options.max_tls_version > 0.0) {
-    unsigned max_version;
-    if (options.max_tls_version >= 1.3) max_version = TLS1_3_VERSION;
-    else if (options.max_tls_version >= 1.2) max_version = TLS1_2_VERSION;
-    else if (options.max_tls_version >= 1.1) max_version = TLS1_1_VERSION;
-    else max_version = TLS1_VERSION;
-    SSL_CTX_set_max_proto_version(ssl_context, max_version);
+  if (options.max_tls_version) {
+    SSL_CTX_set_max_proto_version(ssl_context, options.max_tls_version);
   }
 
   /* The following are helpers. You may easily implement whatever you want by

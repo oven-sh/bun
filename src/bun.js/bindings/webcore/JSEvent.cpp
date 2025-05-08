@@ -55,6 +55,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
+#include "NodeValidator.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -158,6 +160,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefinedOrNull() && !argument1.value().isBoolean() && !argument1.value().isObject() && !argument1.value().isCallable()) {
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "options"_s, "object"_s, argument1.value());
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto object = Event::create(WTFMove(type), WTFMove(eventInitDict));

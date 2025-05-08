@@ -59,23 +59,20 @@ let asyncTest = Promise.resolve();
   ev.preventDefault();
   strictEqual(ev.defaultPrevented, false);
 }
-// TODO:
-//    Expected: ERR_INVALID_ARG_TYPE / The "options" argument must be of type object. Received type string ('foo')
-//    Actual:     Type error
-// {
-//   [
-//     'foo',
-//     1,
-//     false,
-//   ].forEach((i) => (
-//     throws(() => new Event('foo', i), {
-//       code: 'ERR_INVALID_ARG_TYPE',
-//       name: 'TypeError',
-//       message: 'The "options" argument must be of type object.' +
-//                common.invalidArgTypeHelper(i),
-//     })
-//   ));
-// }
+{
+  [
+    'foo',
+    1,
+    false,
+  ].forEach((i) => (
+    throws(() => new Event('foo', i), {
+      code: 'ERR_INVALID_ARG_TYPE',
+      name: 'TypeError',
+      message: 'The "options" argument must be of type object.' +
+               common.invalidArgTypeHelper(i),
+    })
+  ));
+}
 {
   const ev = new Event('foo');
   strictEqual(ev.cancelBubble, false);

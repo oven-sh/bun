@@ -1052,10 +1052,6 @@ pub const ServerConfig = struct {
                 any = true;
             }
 
-            // var formatter = JSC.ConsoleObject.Formatter{ .globalThis = global };
-            // defer formatter.deinit();
-            // Output.print("{}\n", .{obj.toFmt(&formatter)});
-
             if (try obj.getTruthy(global, "minVersion")) |min_version| {
                 result.min_version = @as(u16, @intCast(min_version.toInt32()));
                 any = true;

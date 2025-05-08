@@ -245,12 +245,10 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
 
-        clap.parseParam("--tls-max-v1                      Set the maximum TLS version to 1") catch unreachable,
-        clap.parseParam("--tls-max-v1.1                    Set the maximum TLS version to 1.1") catch unreachable,
         clap.parseParam("--tls-max-v1.2                    Set the maximum TLS version to 1.2") catch unreachable,
         clap.parseParam("--tls-max-v1.3                    Set the maximum TLS version to 1.3") catch unreachable,
 
-        clap.parseParam("--tls-min-v1                      Set the minimum TLS version to 1") catch unreachable,
+        clap.parseParam("--tls-min-v1.0                    Set the minimum TLS version to 1") catch unreachable,
         clap.parseParam("--tls-min-v1.1                    Set the minimum TLS version to 1.1") catch unreachable,
         clap.parseParam("--tls-min-v1.2                    Set the minimum TLS version to 1.2") catch unreachable,
         clap.parseParam("--tls-min-v1.3                    Set the minimum TLS version to 1.3") catch unreachable,
@@ -760,15 +758,16 @@ pub const Arguments = struct {
             // See comments on:
             // - https://bun.sh/reference/node/tls/DEFAULT_MAX_VERSION
             // - https://bun.sh/reference/node/tls/DEFAULT_MIN_VERSION
-            if (args.flag("--tls-max-v1")) bun.tls.max_tls_version = 0x0301;
-            if (args.flag("--tls-max-v1.1")) bun.tls.max_tls_version = 0x0302;
+
+            // if (args.flag("--tls-max-v1.0")) bun.tls.max_tls_version = 0x0301;
+            // if (args.flag("--tls-max-v1.1")) bun.tls.max_tls_version = 0x0302;
             if (args.flag("--tls-max-v1.2")) bun.tls.max_tls_version = 0x0303;
             if (args.flag("--tls-max-v1.3")) bun.tls.max_tls_version = 0x0304;
 
             if (args.flag("--tls-min-v1.3")) bun.tls.min_tls_version = 0x0304;
             if (args.flag("--tls-min-v1.2")) bun.tls.min_tls_version = 0x0303;
             if (args.flag("--tls-min-v1.1")) bun.tls.min_tls_version = 0x0302;
-            if (args.flag("--tls-min-v1")) bun.tls.min_tls_version = 0x0301;
+            if (args.flag("--tls-min-v1.0")) bun.tls.min_tls_version = 0x0301;
 
             if (bun.tls.min_tls_version != null and bun.tls.max_tls_version != null) {
                 Output.errGeneric("either --tls-min-v1.x or --tls-max-v1.x can be used, not both", .{});

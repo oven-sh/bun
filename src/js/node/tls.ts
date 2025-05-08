@@ -1,6 +1,7 @@
 // Hardcoded module "node:tls"
 import type { SecureVersion } from "node:tls";
 
+const { mirrorObject } = require("internal/util/types");
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
@@ -210,18 +211,21 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
-const TLS_VERSION_MAP = {
+// enum TLS_VERSION_MAP {
+//   "TLSv1" = 0x0301,
+//   "TLSv1.1" = 0x0302,
+//   "TLSv1.2" = 0x0303,
+//   "TLSv1.3" = 0x0304,
+// }
+
+const TLS_VERSION_MAP: Record<SecureVersion, number> = {
   "TLSv1": 0x0301,
   "TLSv1.1": 0x0302,
   "TLSv1.2": 0x0303,
   "TLSv1.3": 0x0304,
 };
-const TLS_VERSION_REVERSE_MAP = {
-  0x0301: "TLSv1",
-  0x0302: "TLSv1.1",
-  0x0303: "TLSv1.2",
-  0x0304: "TLSv1.3",
-};
+
+const TLS_VERSION_REVERSE_MAP = mirrorObject(TLS_VERSION_MAP);
 
 var InternalSecureContext = class SecureContext {
   context;
@@ -666,10 +670,15 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
 
-const DEFAULT_MIN_VERSION: SecureVersion =
-  getMinTLSVersion() != null ? TLS_VERSION_REVERSE_MAP[getMinTLSVersion() as number] : "TLSv1.2";
-const DEFAULT_MAX_VERSION: SecureVersion =
-  getMaxTLSVersion() != null ? TLS_VERSION_REVERSE_MAP[getMaxTLSVersion() as number] : "TLSv1.3";
+function getTlsVersionOrDefault(version: number | null, fallback: SecureVersion) {
+  if (!version) return fallback;
+  const asString = TLS_VERSION_REVERSE_MAP[version];
+  if (!asString) return fallback;
+  return asString;
+}
+
+const DEFAULT_MIN_VERSION: SecureVersion = getTlsVersionOrDefault(getMinTLSVersion(), "TLSv1.2");
+const DEFAULT_MAX_VERSION: SecureVersion = getTlsVersionOrDefault(getMaxTLSVersion(), "TLSv1.3");
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

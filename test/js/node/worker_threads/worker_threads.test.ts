@@ -1,4 +1,5 @@
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import wt, {
@@ -335,6 +336,58 @@ describe("worker event", () => {
   test("throws if process.emit is not a function", async () => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "emit-non-function-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("environmentData", () => {
+  test("can pass a value to a child", async () => {
+    setEnvironmentData("foo", new Map([["hello", "world"]]));
+    const worker = new Worker(
+      /* js */ `
+      const { getEnvironmentData, parentPort } = require("worker_threads");
+      parentPort.postMessage(getEnvironmentData("foo"));
+    `,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toEqual(new Map([["hello", "world"]]));
+  });
+
+  test("child modifications do not affect parent", async () => {
+    const worker = new Worker('require("worker_threads").setEnvironmentData("does_not_exist", "foo")', { eval: true });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    expect(getEnvironmentData("does_not_exist")).toBeUndefined();
+  });
+
+  test("is deeply inherited", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+    const out = await new Response(proc.stdout).text();
+    expect(out).toBe("foo\n".repeat(5));
+  });
+
+  test("can be used if parent thread had not imported worker_threads", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-empty-fixture.js"],
       env: bunEnv,
       cwd: __dirname,
       stderr: "pipe",

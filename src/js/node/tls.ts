@@ -254,17 +254,56 @@ var InternalSecureContext = class SecureContext {
         this.ca = ca;
       }
 
+      const ciphers = options.ciphers;
+      if (ciphers !== undefined) {
+        if (typeof ciphers !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
+        }
+        this.ciphers = ciphers;
+      }
+
       const passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
+      if (passphrase !== undefined && typeof passphrase !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
       this.passphrase = passphrase;
 
       const servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
+      if (servername !== undefined && typeof servername !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
       this.servername = servername;
+
+      const ecdhCurve = options.ecdhCurve;
+      if (ecdhCurve !== undefined && typeof ecdhCurve !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.ecdhCurve", "string", ecdhCurve);
+      }
+
+      const handshakeTimeout = options.handshakeTimeout;
+      if (handshakeTimeout !== undefined && typeof handshakeTimeout !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.handshakeTimeout", "number", handshakeTimeout);
+      }
+
+      const sessionTimeout = options.sessionTimeout;
+      if (sessionTimeout !== undefined && typeof sessionTimeout !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
+      }
+
+      const ticketKeys = options.ticketKeys;
+      if (ticketKeys !== undefined) {
+        if (!Buffer.isBuffer(ticketKeys)) {
+          const err = new TypeError(`The "options.ticketKeys" property must be an instance of Buffer`);
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        if (ticketKeys.length !== 48) {
+          throw $ERR_INVALID_ARG_VALUE(
+            "options.ticketKeys",
+            ticketKeys.length,
+            "The property 'options.ticketKeys' must be exactly 48 bytes",
+          );
+        }
+      }
 
       const secureOptions = options.secureOptions || 0;
       if (secureOptions && typeof secureOptions !== "number") {
@@ -272,15 +311,66 @@ var InternalSecureContext = class SecureContext {
       }
       this.secureOptions = secureOptions;
 
-      const minVersionName = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
-      if (minVersionName && (typeof minVersionName !== "string" || !(minVersionName in TLS_VERSION_MAP))) {
-        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
+      // BEGIN secureProtocol handling and version assignment
+      const { secureProtocol } = options;
+      const hasSecureProtocol = secureProtocol !== undefined;
+      const hasMinVersionOption = options.minVersion !== undefined;
+      const hasMaxVersionOption = options.maxVersion !== undefined;
+      if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
+        throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT();
+      }
+      let minVersionName;
+      let maxVersionName;
+      if (hasSecureProtocol) {
+        if (typeof secureProtocol !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
+        }
+        switch (secureProtocol) {
+          case "TLSv1_method":
+            minVersionName = maxVersionName = "TLSv1";
+            break;
+          case "TLSv1_1_method":
+            minVersionName = maxVersionName = "TLSv1.1";
+            break;
+          case "TLSv1_2_method":
+            minVersionName = maxVersionName = "TLSv1.2";
+            break;
+          case "TLSv1_3_method":
+            minVersionName = maxVersionName = "TLSv1.3";
+            break;
+          case "TLS_method":
+          case "SSLv23_method":
+            minVersionName = DEFAULT_MIN_VERSION;
+            maxVersionName = DEFAULT_MAX_VERSION;
+            break;
+          default:
+            throw $ERR_TLS_INVALID_PROTOCOL_METHOD();
+        }
+      } else {
+        minVersionName = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+        maxVersionName = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      }
+      if (minVersionName) {
+        if (typeof minVersionName !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
+        }
+        if (!(minVersionName in TLS_VERSION_MAP)) {
+          const err = new TypeError(`The value "${minVersionName}" is invalid for option "minVersion"`);
+          err.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
+          throw err;
+        }
       }
       this.minVersion = TLS_VERSION_MAP[minVersionName];
 
-      const maxVersionName = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
-      if (maxVersionName && (typeof maxVersionName !== "string" || !(maxVersionName in TLS_VERSION_MAP))) {
-        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
+      if (maxVersionName) {
+        if (typeof maxVersionName !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
+        }
+        if (!(maxVersionName in TLS_VERSION_MAP)) {
+          const err = new TypeError(`The value "${maxVersionName}" is invalid for option "maxVersion"`);
+          err.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
+          throw err;
+        }
       }
       this.maxVersion = TLS_VERSION_MAP[maxVersionName];
     }
@@ -329,6 +419,8 @@ function TLSSocket(socket?, options?) {
   this.authorizationError;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
+  this.ciphers = undefined;
+  this.ecdhCurve = undefined;
 
   const isNetSocketOrDuplex = socket instanceof Duplex;
 
@@ -337,7 +429,12 @@ function TLSSocket(socket?, options?) {
   NetSocket.$call(this, options);
 
   if (typeof options === "object") {
-    const { ALPNProtocols } = options;
+    const { ALPNProtocols, checkServerIdentity: csi } = options;
+
+    if (!$isUndefinedOrNull(csi) && typeof csi !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", csi);
+    }
+
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
@@ -532,13 +629,49 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
 
-  const minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+  // BEGIN secureProtocol handling and version assignment in Server
+  const { secureProtocol } = options || {};
+  const hasSecureProtocol = secureProtocol !== undefined;
+  const hasMinVersionOption = options && options.minVersion !== undefined;
+  const hasMaxVersionOption = options && options.maxVersion !== undefined;
+  if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
+    throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT();
+  }
+  let minVersionName;
+  let maxVersionName;
+  if (hasSecureProtocol) {
+    if (typeof secureProtocol !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
+    }
+    switch (secureProtocol) {
+      case "TLSv1_method":
+        minVersionName = maxVersionName = "TLSv1";
+        break;
+      case "TLSv1_1_method":
+        minVersionName = maxVersionName = "TLSv1.1";
+        break;
+      case "TLSv1_2_method":
+        minVersionName = maxVersionName = "TLSv1.2";
+        break;
+      case "TLSv1_3_method":
+        minVersionName = maxVersionName = "TLSv1.3";
+        break;
+      case "TLS_method":
+      case "SSLv23_method":
+        minVersionName = DEFAULT_MIN_VERSION;
+        maxVersionName = DEFAULT_MAX_VERSION;
+        break;
+      default:
+        throw $ERR_TLS_INVALID_PROTOCOL_METHOD();
+    }
+  } else {
+    minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+    maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+  }
   if (minVersionName && (typeof minVersionName !== "string" || !(minVersionName in TLS_VERSION_MAP))) {
     throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
   }
   this.minVersion = TLS_VERSION_MAP[minVersionName];
-
-  const maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
   if (maxVersionName && (typeof maxVersionName !== "string" || !(maxVersionName in TLS_VERSION_MAP))) {
     throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
   }
@@ -590,17 +723,56 @@ function Server(options, secureConnectionListener): void {
         this.ca = ca;
       }
 
+      const ciphers = options.ciphers;
+      if (ciphers !== undefined) {
+        if (typeof ciphers !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
+        }
+        this.ciphers = ciphers;
+      }
+
+      const ecdhCurve = options.ecdhCurve;
+      if (ecdhCurve !== undefined && typeof ecdhCurve !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.ecdhCurve", "string", ecdhCurve);
+      }
+
       let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
+      if (passphrase !== undefined && typeof passphrase !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
       this.passphrase = passphrase;
 
       let servername = options.servername;
-      if (servername && typeof servername !== "string") {
+      if (servername !== undefined && typeof servername !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
       this.servername = servername;
+
+      const handshakeTimeout = options.handshakeTimeout;
+      if (handshakeTimeout !== undefined && typeof handshakeTimeout !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.handshakeTimeout", "number", handshakeTimeout);
+      }
+
+      const sessionTimeout = options.sessionTimeout;
+      if (sessionTimeout !== undefined && typeof sessionTimeout !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
+      }
+
+      const ticketKeys = options.ticketKeys;
+      if (ticketKeys !== undefined) {
+        if (!Buffer.isBuffer(ticketKeys)) {
+          const err = new TypeError(`The "options.ticketKeys" property must be an instance of Buffer`);
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        if (ticketKeys.length !== 48) {
+          throw $ERR_INVALID_ARG_VALUE(
+            "options.ticketKeys",
+            ticketKeys.length,
+            "The property 'options.ticketKeys' must be exactly 48 bytes",
+          );
+        }
+      }
 
       let secureOptions = options.secureOptions || 0;
       if (secureOptions && typeof secureOptions !== "number") {
@@ -695,13 +867,64 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(path[, options][, callback])
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
-  let normal = normalizeConnectArgs(args);
-  const options = normal[0];
-  const { ALPNProtocols } = options;
-  if (ALPNProtocols) {
-    convertALPNProtocols(ALPNProtocols, options);
+  try {
+    // First validate checkServerIdentity before anything else
+    // This ensures checkServerIdentity validation errors take precedence
+    // even when the connect call itself would fail for other reasons
+    if (args.length > 0 && typeof args[0] === "object" && args[0] !== null) {
+      const { checkServerIdentity } = args[0];
+
+      if (
+        checkServerIdentity !== undefined &&
+        checkServerIdentity !== null &&
+        typeof checkServerIdentity !== "function"
+      ) {
+        const error = new TypeError(
+          `The "options.checkServerIdentity" property must be of type function. Received type ${typeof checkServerIdentity}`,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    }
+
+    let normal = normalizeConnectArgs(args);
+    const options = normal[0];
+    const { ALPNProtocols } = options;
+
+    if (ALPNProtocols) {
+      convertALPNProtocols(ALPNProtocols, options);
+    }
+    return new TLSSocket(options).connect(normal);
+  } catch (error) {
+    // If we get a missing args error but have checkServerIdentity to validate,
+    // we need to revalidate it to ensure the right error code is thrown
+    if (
+      error?.code === "ERR_MISSING_ARGS" &&
+      args.length > 0 &&
+      typeof args[0] === "object" &&
+      args[0] !== null &&
+      "checkServerIdentity" in args[0]
+    ) {
+      const { checkServerIdentity } = args[0];
+      if (
+        checkServerIdentity !== undefined &&
+        checkServerIdentity !== null &&
+        typeof checkServerIdentity !== "function"
+      ) {
+        // Override the ERR_MISSING_ARGS error with the ERR_INVALID_ARG_TYPE error
+        // that Node.js would throw in this case
+        const typeError = new TypeError(
+          `The "options.checkServerIdentity" property must be of type function. Received type ${typeof checkServerIdentity}`,
+        );
+        typeError.code = "ERR_INVALID_ARG_TYPE";
+        throw typeError;
+      }
+    }
+
+    // If it wasn't a missing args error with invalid checkServerIdentity,
+    // rethrow the original error
+    throw error;
   }
-  return new TLSSocket(options).connect(normal);
 }
 
 function getCiphers() {
@@ -718,9 +941,11 @@ function convertProtocols(protocols) {
       (p, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
-          throw new RangeError(
+          const err = new RangeError(
             `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
           );
+          err.code = "ERR_OUT_OF_RANGE";
+          throw err;
         }
         lens[i] = len;
         return p + 1 + len;

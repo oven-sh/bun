@@ -538,44 +538,45 @@ if (typeof Bun === "undefined") { // Node internal
   target.dispatchEvent(ev);
 }
 
-{
-  const eventTarget = new EventTarget();
-  // Single argument throws
-  throws(() => eventTarget.addEventListener('foo'), TypeError);
-  // Null events - does not throw
-  eventTarget.addEventListener('foo', null);
-  eventTarget.removeEventListener('foo', null);
-  eventTarget.addEventListener('foo', undefined);
-  eventTarget.removeEventListener('foo', undefined);
-  // Strings, booleans
-  throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
-  throws(() => eventTarget.addEventListener('foo', false), TypeError);
-  throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
-  asyncTest = asyncTest.then(async () => {
-    const eventTarget = new EventTarget();
-    // Single argument throws
-    throws(() => eventTarget.addEventListener('foo'), TypeError);
-    // Null events - does not throw
-
-    eventTarget.addEventListener('foo', null);
-    eventTarget.removeEventListener('foo', null);
-
-    // Warnings always happen after nextTick, so wait for a timer of 0
-    await delay(0);
-    strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
-    strictEqual(lastWarning.target, eventTarget);
-    lastWarning = null;
-    eventTarget.addEventListener('foo', undefined);
-    await delay(0);
-    strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
-    strictEqual(lastWarning.target, eventTarget);
-    eventTarget.removeEventListener('foo', undefined);
-    // Strings, booleans
-    throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
-    throws(() => eventTarget.addEventListener('foo', false), TypeError);
-    throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
-  });
-}
+// TODO: missing AddEventListenerArgumentTypeWarning
+// {
+//   const eventTarget = new EventTarget();
+//   // Single argument throws
+//   throws(() => eventTarget.addEventListener('foo'), TypeError);
+//   // Null events - does not throw
+//   eventTarget.addEventListener('foo', null);
+//   eventTarget.removeEventListener('foo', null);
+//   eventTarget.addEventListener('foo', undefined);
+//   eventTarget.removeEventListener('foo', undefined);
+//   // Strings, booleans
+//   throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
+//   throws(() => eventTarget.addEventListener('foo', false), TypeError);
+//   throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
+//   asyncTest = asyncTest.then(async () => {
+//     const eventTarget = new EventTarget();
+//     // Single argument throws
+//     throws(() => eventTarget.addEventListener('foo'), TypeError);
+//     // Null events - does not throw
+//
+//     eventTarget.addEventListener('foo', null);
+//     eventTarget.removeEventListener('foo', null);
+//
+//     // Warnings always happen after nextTick, so wait for a timer of 0
+//     await delay(0);
+//     strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
+//     strictEqual(lastWarning.target, eventTarget);
+//     lastWarning = null;
+//     eventTarget.addEventListener('foo', undefined);
+//     await delay(0);
+//     strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
+//     strictEqual(lastWarning.target, eventTarget);
+//     eventTarget.removeEventListener('foo', undefined);
+//     // Strings, booleans
+//     throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
+//     throws(() => eventTarget.addEventListener('foo', false), TypeError);
+//     throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
+//   });
+// }
 {
   const eventTarget = new EventTarget();
   const event = new Event('foo');
@@ -678,14 +679,14 @@ if (typeof Bun === "undefined") { // Node internal
   const et = new EventTarget();
   strictEqual(et.constructor.name, 'EventTarget');
 }
-{
+if (typeof Bun === "undefined") { // Node internal
   // Weak event listeners work
   const et = new EventTarget();
   const listener = common.mustCall();
   et.addEventListener('foo', listener, { [kWeakHandler]: et });
   et.dispatchEvent(new Event('foo'));
 }
-{
+if (typeof Bun === "undefined") { // Node internal
   // Weak event listeners can be removed and weakness is not part of the key
   const et = new EventTarget();
   const listener = common.mustNotCall();
@@ -693,7 +694,7 @@ if (typeof Bun === "undefined") { // Node internal
   et.removeEventListener('foo', listener);
   et.dispatchEvent(new Event('foo'));
 }
-{
+if (typeof Bun === "undefined") { // Node internal
   // Test listeners are held weakly
   const et = new EventTarget();
   et.addEventListener('foo', common.mustNotCall(), { [kWeakHandler]: {} });

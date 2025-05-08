@@ -818,7 +818,11 @@ function Server(options, secureConnectionListener): void {
     throw Error("Not implented in Bun yet");
   };
 
-  Server.prototype.setTicketKeys = function () {
+  Server.prototype.setTicketKeys = function (ticketKeys) {
+    if (!Buffer.isBuffer(ticketKeys) || ticketKeys.length !== 48) {
+      throw $ERR_INVALID_ARG_TYPE("Session ticket keys must be a 48-byte buffer");
+    }
+
     throw Error("Not implented in Bun yet");
   };
 

@@ -195,6 +195,8 @@ struct us_socket_context_options_t {
     const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
+    double min_tls_version;
+    double max_tls_version;
 };
 
 struct us_bun_verify_error_t {
@@ -237,6 +239,8 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    double min_tls_version;
+    double max_tls_version;
 };
 
 /* Return 15-bit timestamp for this context */

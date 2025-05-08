@@ -3,10 +3,7 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 
-pub fn getDefaultMinTLSVersion(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalThis; // autofix
-    _ = callframe; // autofix
-
+pub fn getDefaultMinTLSVersion(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (bun.tls.min_tls_version) |version| {
         return JSC.JSValue.jsNumberFromDouble(version);
     }
@@ -14,10 +11,7 @@ pub fn getDefaultMinTLSVersion(globalThis: *JSC.JSGlobalObject, callframe: *JSC.
     return JSC.JSValue.jsNull();
 }
 
-pub fn getDefaultMaxTLSVersion(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    _ = globalThis; // autofix
-    _ = callframe; // autofix
-
+pub fn getDefaultMaxTLSVersion(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     if (bun.tls.max_tls_version) |version| {
         return JSC.JSValue.jsNumberFromDouble(version);
     }

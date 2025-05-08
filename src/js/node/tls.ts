@@ -673,7 +673,7 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
 
-const DEFAULT_MIN_VERSION: SecureVersion = `TLSv${getMinTLSVersion() ?? "1"}`;
+const DEFAULT_MIN_VERSION: SecureVersion = `TLSv${getMinTLSVersion() ?? "1.2"}`;
 const DEFAULT_MAX_VERSION: SecureVersion = `TLSv${getMaxTLSVersion() ?? "1.3"}`;
 
 function normalizeConnectArgs(listArgs) {

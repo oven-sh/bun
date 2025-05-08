@@ -430,10 +430,11 @@ function TLSSocket(socket?, options?) {
   NetSocket.$call(this, options);
 
   if (typeof options === "object") {
-    const { ALPNProtocols, checkServerIdentity: csi } = options;
+    const { ALPNProtocols } = options;
 
-    if (!$isUndefinedOrNull(csi) && typeof csi !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", csi);
+    // use `in` check because passing undefined should throw according to node tests
+    if ("checkServerIdentity" in options && typeof options.checkServerIdentity !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", options.checkServerIdentity);
     }
 
     if (ALPNProtocols) {
@@ -871,10 +872,6 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-
-  if (!$isUndefinedOrNull(options.checkServerIdentity) && typeof options.checkServerIdentity !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", options.checkServerIdentity);
-  }
 
   const { ALPNProtocols } = options;
 

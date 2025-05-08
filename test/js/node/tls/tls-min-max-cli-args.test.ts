@@ -44,9 +44,12 @@ describe("TLS min/max CLI args", () => {
     expect(await child.exited).toBe(1);
   });
 
-  test("Specifying multiple min flags should use the highest version", async () => {
+  test("Specifying multiple max flags should use the highest version", async () => {
+    // Node.js docs:
+    // Using --tls-max-v1.3 sets the default to 'TLSv1.3'. If multiple of the options are provided, the highest maximum is used.
+
     const child = Bun.spawn({
-      cmd: [bunExe(), "--tls-min-v1.3", "--tls-min-v1.2", ...PRINT_MIN],
+      cmd: [bunExe(), "--tls-max-v1.3", "--tls-max-v1.2", ...PRINT_MAX],
       stdio: ["pipe", "pipe", "pipe"],
       env: bunEnv,
     });
@@ -55,9 +58,12 @@ describe("TLS min/max CLI args", () => {
     expect(stdout.trim()).toBe("TLSv1.3");
   });
 
-  test("Specifying multiple max flags should use the lowest version", async () => {
+  test("Specifying multiple min flags should use the lowest version", async () => {
+    // Node.js docs:
+    // Using --tls-min-v1.3 sets the default to 'TLSv1.3'. If multiple of the options are provided, the lowest minimum is used.
+
     const child = Bun.spawn({
-      cmd: [bunExe(), "--tls-max-v1.3", "--tls-max-v1.2", ...PRINT_MAX],
+      cmd: [bunExe(), "--tls-min-v1.3", "--tls-min-v1.2", ...PRINT_MIN],
       stdio: ["pipe", "pipe", "pipe"],
       env: bunEnv,
     });

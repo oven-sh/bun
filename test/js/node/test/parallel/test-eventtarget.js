@@ -309,46 +309,42 @@ let asyncTest = Promise.resolve();
   eventTarget.dispatchEvent(new Event('foo'));
 }
 
-// TODO: error 3:
-// ACTUAL:   message: "Argument 1 ('event') to EventTarget.dispatchEvent must be an instance of Event",
-// EXPECTED:   message: `The "event" argument must be an instance of Event. Received type string ('foo')`,
-// seems fine to do a 'typeof bun' check here
-// {
-//   // Coercion to string works
-//   strictEqual((new Event(1)).type, '1');
-//   strictEqual((new Event(false)).type, 'false');
-//   strictEqual((new Event({})).type, String({}));
-//
-//   const target = new EventTarget();
-//
-//   [
-//     'foo',
-//     {},  // No type event
-//     undefined,
-//     1,
-//     false,
-//   ].forEach((i) => {
-//     throws(() => target.dispatchEvent(i), {
-//       code: 'ERR_INVALID_ARG_TYPE',
-//       name: 'TypeError',
-//       message: 'The "event" argument must be an instance of Event.' +
-//                common.invalidArgTypeHelper(i),
-//     });
-//   });
-//
-//   const err = (arg) => ({
-//     code: 'ERR_INVALID_ARG_TYPE',
-//     name: 'TypeError',
-//     message: 'The "listener" argument must be an instance of EventListener.' +
-//              common.invalidArgTypeHelper(arg),
-//   });
-//
-//   [
-//     'foo',
-//     1,
-//     false,
-//   ].forEach((i) => throws(() => target.addEventListener('foo', i), err(i)));
-// }
+{
+  // Coercion to string works
+  strictEqual((new Event(1)).type, '1');
+  strictEqual((new Event(false)).type, 'false');
+  strictEqual((new Event({})).type, String({}));
+
+  const target = new EventTarget();
+
+  [
+    'foo',
+    {},  // No type event
+    undefined,
+    1,
+    false,
+  ].forEach((i) => {
+    throws(() => target.dispatchEvent(i), {
+      code: 'ERR_INVALID_ARG_TYPE',
+      name: 'TypeError',
+      message: typeof Bun === "undefined" ? 'The "event" argument must be an instance of Event.' +
+               common.invalidArgTypeHelper(i) : 'Argument 1 (\'event\') to EventTarget.dispatchEvent must be an instance of Event',
+    });
+  });
+
+  const err = (arg) => ({
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    ...typeof Bun === "undefined" ? {message: 'The "listener" argument must be an instance of EventListener.' +
+             common.invalidArgTypeHelper(arg)} : {},
+  });
+
+  [
+    'foo',
+    1,
+    false,
+  ].forEach((i) => throws(() => target.addEventListener('foo', i), err(i)));
+}
 
 {
   const target = new EventTarget();

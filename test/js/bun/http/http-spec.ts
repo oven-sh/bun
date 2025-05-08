@@ -57,37 +57,37 @@ const testCases: TestCase[] = [
   {
     request: "GET /hello HTTP/1.1\r\n",
     description: "Fragmented request line newline 2",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {
     request: "GET /hello HTTP/1.1\r\nHos",
     description: "Fragmented field name",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {
     request: "GET /hello HTTP/1.1\r\nHost:",
     description: "Fragmented field value 1",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {
     request: "GET /hello HTTP/1.1\r\nHost: ",
     description: "Fragmented field value 2",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {
     request: "GET /hello HTTP/1.1\r\nHost: localhost",
     description: "Fragmented field value 3",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {
     request: "GET /hello HTTP/1.1\r\nHost: localhost\r",
     description: "Fragmented field value 4",
-    expectedStatus: [[-1, -1]],
+    expectedStatus: [[400, 499]],
     expectedTimeout: true,
   },
   {

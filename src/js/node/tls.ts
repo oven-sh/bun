@@ -15,15 +15,15 @@ const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSB
 
 type TLSSecureVersionNumber = SecureVersion extends `TLSv${infer N extends number}` ? N : never;
 
-const getMinTLSVersion = $newZigFunction(
+const getDefaultMinTLSVersionFromCLIFlag = $newZigFunction(
   "node_tls_binding.zig",
-  "getDefaultMinTLSVersion",
+  "getDefaultMinTLSVersionFromCLIFlag",
   0,
 ) as () => TLSSecureVersionNumber | null;
 
-const getMaxTLSVersion = $newZigFunction(
+const getDefaultMaxTLSVersionFromCLIFlag = $newZigFunction(
   "node_tls_binding.zig",
-  "getDefaultMaxTLSVersion",
+  "getDefaultMaxTLSVersionFromCLIFlag",
   0,
 ) as () => TLSSecureVersionNumber | null;
 
@@ -845,8 +845,8 @@ function getTlsVersionOrDefault(version: number | null, fallback: SecureVersion)
   return asString;
 }
 
-const DEFAULT_MIN_VERSION: SecureVersion = getTlsVersionOrDefault(getMinTLSVersion(), "TLSv1.2");
-const DEFAULT_MAX_VERSION: SecureVersion = getTlsVersionOrDefault(getMaxTLSVersion(), "TLSv1.3");
+const DEFAULT_MIN_VERSION: SecureVersion = getTlsVersionOrDefault(getDefaultMinTLSVersionFromCLIFlag(), "TLSv1.2");
+const DEFAULT_MAX_VERSION: SecureVersion = getTlsVersionOrDefault(getDefaultMaxTLSVersionFromCLIFlag(), "TLSv1.3");
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

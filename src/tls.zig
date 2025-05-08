@@ -8,5 +8,5 @@ const bun = @import("bun");
 // A null value means no CLI flag was provided, and the *default* defaults
 // are defined in src/js/node/tls.ts
 
-pub var min_tls_version: ?u16 = null;
-pub var max_tls_version: ?u16 = null;
+pub var min_tls_version_from_cli_flag: ?u16 = null;
+pub var max_tls_version_from_cli_flag: ?u16 = null;

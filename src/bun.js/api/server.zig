@@ -1051,6 +1051,18 @@ pub const ServerConfig = struct {
                 any = true;
             }
 
+            if (try obj.getTruthy(global, "minVersion")) |min_version| {
+                result.min_version = min_version.coerceToDouble(global);
+                defer result.min_version.deinit();
+                any = true;
+            }
+
+            if (try obj.getTruthy(global, "maxVersion")) |max_version| {
+                result.max_version = max_version.coerceToDouble(global);
+                defer result.max_version.deinit();
+                any = true;
+            }
+
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
                 var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();

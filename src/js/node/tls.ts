@@ -219,9 +219,10 @@ var InternalSecureContext = class SecureContext {
   ca;
   passphrase;
   servername;
-  minVersion;
-  maxVersion;
   secureOptions;
+
+  minVersion: number | undefined;
+  maxVersion: number | undefined;
 
   constructor(options) {
     const context = {};
@@ -239,55 +240,52 @@ var InternalSecureContext = class SecureContext {
         this.key = key;
       }
 
-      let ca = options.ca;
+      const ca = options.ca;
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;
       }
 
-      let passphrase = options.passphrase;
+      const passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
         throw new TypeError("passphrase argument must be an string");
       }
       this.passphrase = passphrase;
 
-      let servername = options.servername;
+      const servername = options.servername;
       if (servername && typeof servername !== "string") {
         throw new TypeError("servername argument must be an string");
       }
       this.servername = servername;
 
-      let minVersion = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+      const secureOptions = options.secureOptions || 0;
+      if (secureOptions && typeof secureOptions !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+      }
+      this.secureOptions = secureOptions;
+
+      const minVersion = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
       if (minVersion && typeof minVersion !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
       }
-      this.minVersion = minVersion;
 
-      let maxVersion = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      const maxVersion = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
       if (maxVersion && typeof maxVersion !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
       }
 
-      this.maxVersion = maxVersion;
-
-      let secureOptions = options.secureOptions || 0;
-
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-      }
-
       switch (minVersion) {
         case "TLSv1":
-          secureOptions |= SSL_OP_NO_SSLv3;
+          this.minVersion = 1.0;
           break;
         case "TLSv1.1":
-          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1;
+          this.minVersion = 1.1;
           break;
         case "TLSv1.2":
-          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1;
+          this.minVersion = 1.2;
           break;
         case "TLSv1.3":
-          secureOptions |= SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2;
+          this.minVersion = 1.3;
           break;
         default:
           throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
@@ -295,22 +293,22 @@ var InternalSecureContext = class SecureContext {
 
       switch (maxVersion) {
         case "TLSv1":
-          secureOptions |= SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3;
+          this.maxVersion = 1.0;
           break;
         case "TLSv1.1":
-          secureOptions |= SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3;
+          this.maxVersion = 1.1;
           break;
         case "TLSv1.2":
-          secureOptions |= SSL_OP_NO_TLSv1_3;
+          this.maxVersion = 1.2;
           break;
         case "TLSv1.3":
+          this.maxVersion = 1.3;
           break;
         default:
           throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
       }
-
-      this.secureOptions = secureOptions;
     }
+
     this.context = context;
   }
 };
@@ -532,6 +530,8 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
+    minVersion: this.minVersion,
+    maxVersion: this.maxVersion,
     ...this[ksecureContext],
   };
 };
@@ -649,6 +649,8 @@ function Server(options, secureConnectionListener): void {
         cert: this.cert,
         ca: this.ca,
         passphrase: this.passphrase,
+        minVersion: this.minVersion,
+        maxVersion: this.maxVersion,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,

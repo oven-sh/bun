@@ -932,7 +932,6 @@ function convertALPNProtocols(protocols, out) {
       protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
     );
   } else if (isArrayBufferView(protocols)) {
-    // out.ALPNProtocols = Buffer.from(protocols.buffer.slice(), protocols.byteOffset, protocols.byteLength);
     out.ALPNProtocols = Buffer.from(
       protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
     );

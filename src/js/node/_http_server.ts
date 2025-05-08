@@ -266,7 +266,6 @@ const ServerResponsePrototype = {
     this._header = " ";
     const req = this.req;
     const socket = req.socket;
-    console.log("hey?", req._consuming, req?._readableState?.resumeScheduled);
     if (!req._consuming && !req?._readableState?.resumeScheduled) {
       req._dump();
     }
@@ -1300,13 +1299,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   #resumeSocket() {
-    console.log("resumeSocket");
     const handle = this[kHandle];
     const response = handle?.response;
     if (response) {
-      console.log("response");
       const resumed = response.resume();
-      console.log("resumed", resumed);
       if (resumed && resumed !== true) {
         const bodyReadState = handle.hasBody;
 
@@ -1320,7 +1316,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
           req.push(resumed);
         }
         this.push(resumed);
-        console.log("pushed", resumed);
       }
     }
   }

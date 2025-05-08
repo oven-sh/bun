@@ -73,9 +73,7 @@ namespace uWS {
                 state = STATE_IS_ERROR;
                 return;
             }
-            while(data.length() && data[0] != '\n') {
-                data.remove_prefix(1);
-            }
+            data.remove_prefix(2);
             /* Now we stand on \n so consume it and enable size */
             if (data.length()) {
                 state += 2; // include the two last /r/n

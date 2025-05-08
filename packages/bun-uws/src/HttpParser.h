@@ -482,12 +482,12 @@ namespace uWS
                 for (; true; data += 8) {
                     uint64_t word;
                     memcpy(&word, data, sizeof(uint64_t));
-                    if(maxHeaderSize && data - start > maxHeaderSize) {
+                    if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
                     if (hasLess(word, 33)) {
                         while (*(unsigned char *)data > 32) data++;
-                        if(maxHeaderSize && data - start > maxHeaderSize) {
+                        if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                         }
                         /* Now we stand on space */
@@ -628,7 +628,7 @@ namespace uWS
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
                 headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
-                if(maxHeaderSize && headerStart - postPaddedBuffer > maxHeaderSize) {
+                if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
@@ -675,7 +675,7 @@ namespace uWS
                         headers->value.remove_prefix(1);
                     }
 
-                    if(maxHeaderSize && headerStart - postPaddedBuffer > maxHeaderSize) {
+                    if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
                     headers++;

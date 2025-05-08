@@ -8,7 +8,6 @@ const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { constants: cryptoConstants } = require("node:crypto");
-const { SSL_OP_NO_SSLv3, SSL_OP_NO_TLSv1, SSL_OP_NO_TLSv1_1, SSL_OP_NO_TLSv1_2, SSL_OP_NO_TLSv1_3 } = cryptoConstants;
 
 const { Server: NetServer, Socket: NetSocket } = net;
 

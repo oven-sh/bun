@@ -322,8 +322,8 @@ var InternalSecureContext = class SecureContext {
         );
       }
 
-      let minVersionName;
-      let maxVersionName;
+      let minVersionName: SecureVersion | undefined;
+      let maxVersionName: SecureVersion | undefined;
 
       if (hasSecureProtocol) {
         if (typeof secureProtocol !== "string") {
@@ -361,9 +361,7 @@ var InternalSecureContext = class SecureContext {
           throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
         }
         if (!(minVersionName in TLS_VERSION_MAP)) {
-          const err = new TypeError(`The value "${minVersionName}" is invalid for option "minVersion"`);
-          err.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
-          throw err;
+          throw $ERR_TLS_INVALID_PROTOCOL_VERSION(minVersionName, "minimum");
         }
       }
       this.minVersion = TLS_VERSION_MAP[minVersionName];
@@ -373,9 +371,7 @@ var InternalSecureContext = class SecureContext {
           throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
         }
         if (!(maxVersionName in TLS_VERSION_MAP)) {
-          const err = new TypeError(`The value "${maxVersionName}" is invalid for option "maxVersion"`);
-          err.code = "ERR_TLS_INVALID_PROTOCOL_VERSION";
-          throw err;
+          throw $ERR_TLS_INVALID_PROTOCOL_VERSION(maxVersionName, "maximum");
         }
       }
       this.maxVersion = TLS_VERSION_MAP[maxVersionName];

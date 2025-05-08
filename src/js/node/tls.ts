@@ -292,13 +292,15 @@ var InternalSecureContext = class SecureContext {
       const ticketKeys = options.ticketKeys;
       if (ticketKeys !== undefined) {
         if (!Buffer.isBuffer(ticketKeys)) {
-          const err = new TypeError(`The "options.ticketKeys" property must be an instance of Buffer`);
-          err.code = "ERR_INVALID_ARG_TYPE";
-          throw err;
+          const error = new TypeError(
+            `The "options.ticketKeys" property must be an instance of Buffer. Received type ${typeof ticketKeys}`,
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
         }
         if (ticketKeys.length !== 48) {
           throw $ERR_INVALID_ARG_VALUE(
-            "options.ticketKeys",
+            "options.ticketsKeys",
             ticketKeys.length,
             "The property 'options.ticketKeys' must be exactly 48 bytes",
           );
@@ -759,9 +761,11 @@ function Server(options, secureConnectionListener): void {
       const ticketKeys = options.ticketKeys;
       if (ticketKeys !== undefined) {
         if (!Buffer.isBuffer(ticketKeys)) {
-          const err = new TypeError(`The "options.ticketKeys" property must be an instance of Buffer`);
-          err.code = "ERR_INVALID_ARG_TYPE";
-          throw err;
+          const error = new TypeError(
+            `The "options.ticketKeys" property must be an instance of Buffer. Received type ${typeof ticketKeys}`,
+          );
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
         }
         if (ticketKeys.length !== 48) {
           throw $ERR_INVALID_ARG_VALUE(
@@ -924,9 +928,14 @@ function convertALPNProtocols(protocols, out) {
     out.ALPNProtocols = convertProtocols(protocols);
   } else if (isTypedArray(protocols)) {
     // Copy new buffer not to be modified by user.
-    out.ALPNProtocols = Buffer.from(protocols);
+    out.ALPNProtocols = Buffer.from(
+      protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
+    );
   } else if (isArrayBufferView(protocols)) {
-    out.ALPNProtocols = Buffer.from(protocols.buffer.slice(), protocols.byteOffset, protocols.byteLength);
+    // out.ALPNProtocols = Buffer.from(protocols.buffer.slice(), protocols.byteOffset, protocols.byteLength);
+    out.ALPNProtocols = Buffer.from(
+      protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
+    );
   } else if (Buffer.isBuffer(protocols)) {
     out.ALPNProtocols = protocols;
   }

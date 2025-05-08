@@ -311,7 +311,6 @@ var InternalSecureContext = class SecureContext {
       }
       this.secureOptions = secureOptions;
 
-      // BEGIN secureProtocol handling and version assignment
       const { secureProtocol } = options;
       const hasSecureProtocol = secureProtocol !== undefined;
       const hasMinVersionOption = options.minVersion !== undefined;
@@ -629,7 +628,6 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
 
-  // BEGIN secureProtocol handling and version assignment in Server
   const { secureProtocol } = options || {};
   const hasSecureProtocol = secureProtocol !== undefined;
   const hasMinVersionOption = options && options.minVersion !== undefined;

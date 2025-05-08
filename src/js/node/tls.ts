@@ -212,6 +212,13 @@ function checkServerIdentity(hostname, cert) {
   }
 }
 
+const TLS_VERSION_MAP = {
+  "TLSv1": 0x0301,
+  "TLSv1.1": 0x0302,
+  "TLSv1.2": 0x0303,
+  "TLSv1.3": 0x0304,
+};
+
 var InternalSecureContext = class SecureContext {
   context;
   key;
@@ -268,45 +275,19 @@ var InternalSecureContext = class SecureContext {
       if (minVersion && typeof minVersion !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
       }
+      if (!(minVersion in TLS_VERSION_MAP)) {
+        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
+      }
+      this.minVersion = TLS_VERSION_MAP[minVersion];
 
       const maxVersion = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
       if (maxVersion && typeof maxVersion !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
       }
-
-      switch (minVersion) {
-        case "TLSv1":
-          this.minVersion = 1.0;
-          break;
-        case "TLSv1.1":
-          this.minVersion = 1.1;
-          break;
-        case "TLSv1.2":
-          this.minVersion = 1.2;
-          break;
-        case "TLSv1.3":
-          this.minVersion = 1.3;
-          break;
-        default:
-          throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
+      if (!(maxVersion in TLS_VERSION_MAP)) {
+        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
       }
-
-      switch (maxVersion) {
-        case "TLSv1":
-          this.maxVersion = 1.0;
-          break;
-        case "TLSv1.1":
-          this.maxVersion = 1.1;
-          break;
-        case "TLSv1.2":
-          this.maxVersion = 1.2;
-          break;
-        case "TLSv1.3":
-          this.maxVersion = 1.3;
-          break;
-        default:
-          throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
-      }
+      this.maxVersion = TLS_VERSION_MAP[maxVersion];
     }
 
     this.context = context;

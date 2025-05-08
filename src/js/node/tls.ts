@@ -293,11 +293,7 @@ var InternalSecureContext = class SecureContext {
       const ticketKeys = options.ticketKeys;
       if (ticketKeys !== undefined) {
         if (!Buffer.isBuffer(ticketKeys)) {
-          const error = new TypeError(
-            `The "options.ticketKeys" property must be an instance of Buffer. Received type ${typeof ticketKeys}`,
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw $ERR_INVALID_ARG_TYPE("options.ticketKeys", "Buffer", ticketKeys);
         }
         if (ticketKeys.length !== 48) {
           throw $ERR_INVALID_ARG_VALUE(
@@ -693,11 +689,7 @@ function Server(options, secureConnectionListener): void {
       const ticketKeys = options.ticketKeys;
       if (ticketKeys !== undefined) {
         if (!Buffer.isBuffer(ticketKeys)) {
-          const error = new TypeError(
-            `The "options.ticketKeys" property must be an instance of Buffer. Received type ${typeof ticketKeys}`,
-          );
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
+          throw $ERR_INVALID_ARG_TYPE("options.ticketKeys", "Buffer", ticketKeys);
         }
         if (ticketKeys.length !== 48) {
           throw $ERR_INVALID_ARG_VALUE(

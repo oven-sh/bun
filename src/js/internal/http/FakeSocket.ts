@@ -36,13 +36,9 @@ var FakeSocket = class Socket extends Duplex {
   };
 
   _destroy(_err, _callback) {
-    this._httpMessage?.destroy?.();
     const socketData = this[kInternalSocketData];
-    if (socketData) {
-      if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
-    }
-
-    _callback?.(_err);
+    if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
+    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
 
   _final(_callback) {}
@@ -127,6 +123,11 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {}
+
+  destroy() {
+    this._httpMessage?.destroy?.();
+    return super.destroy();
+  }
 };
 
 Object.defineProperty(FakeSocket, "name", { value: "Socket" });

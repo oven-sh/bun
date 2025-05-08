@@ -398,19 +398,17 @@ let asyncTest = Promise.resolve();
   target.dispatchEvent(event);
 }
 
-// TODO: error 4: expected code ERR_EVENT_RECURSION, got code 11
-// - bun outputs a real DOMException but we want a node ERR_EVENT_RECURSION exception instead
-// {
-//   const target1 = new EventTarget();
-//   const target2 = new EventTarget();
-//   const event = new Event('foo');
-//   target1.addEventListener('foo', common.mustCall((event) => {
-//     throws(() => target2.dispatchEvent(event), {
-//       code: 'ERR_EVENT_RECURSION',
-//     });
-//   }));
-//   target1.dispatchEvent(event);
-// }
+{
+  const target1 = new EventTarget();
+  const target2 = new EventTarget();
+  const event = new Event('foo');
+  target1.addEventListener('foo', common.mustCall((event) => {
+    throws(() => target2.dispatchEvent(event), {
+      code: 'ERR_EVENT_RECURSION',
+    });
+  }));
+  target1.dispatchEvent(event);
+}
 
 {
   const target = new EventTarget();

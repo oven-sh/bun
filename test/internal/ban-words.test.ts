@@ -59,7 +59,7 @@ for (const source of sources) {
   for (const pattern of paths) {
     const glob = new Glob(pattern);
     for await (const source of glob.scan()) {
-      if (excludes?.some(exlucde => normalize(source) === normalize(exlucde))) continue;
+      if (excludes?.some(exclude => normalize(source) === normalize(exclude))) continue;
       if (!source.endsWith(".zig")) continue;
       if (source.startsWith("src" + path.sep + "deps")) continue;
       if (source.startsWith("src" + path.sep + "codegen")) continue;

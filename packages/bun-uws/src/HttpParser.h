@@ -658,7 +658,12 @@ namespace uWS
                     }
                     break;
                 }
-                
+                if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
+                    return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
+                if (end - postPaddedBuffer < 2) {
+                    return HttpParserResult::shortRead();
+                }
                 /* We fence end[0] with \r, followed by end[1] being something that is "not \n", to signify "not found".
                     * This way we can have this one single check to see if we found \r\n WITHIN our allowed search space. */
                 if (postPaddedBuffer[1] == '\n') {
@@ -695,9 +700,7 @@ namespace uWS
                         }
                     }
                 } else {
-                    if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
-                        return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
-                    }
+                 
                     if(postPaddedBuffer[0] == '\r') {
                         // invalid char after \r
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);

@@ -1147,9 +1147,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-  printf("min_tls_version: %d\n", options.min_tls_version);
-  printf("max_tls_version: %d\n", options.max_tls_version);
-
   if (options.min_tls_version > 0) {
     SSL_CTX_set_min_proto_version(ssl_context, options.min_tls_version);
   } else {

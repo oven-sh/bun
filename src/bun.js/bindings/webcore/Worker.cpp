@@ -532,17 +532,22 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
         auto* pair = jsCast<JSArray*>(deserialized);
         ASSERT(pair->length() == 2);
+        ASSERT(pair->canGetIndexQuickly(0u));
+        ASSERT(pair->canGetIndexQuickly(1u));
         workerData = pair->getIndexQuickly(0);
         RETURN_IF_EXCEPTION(scope, {});
-        environmentData = jsCast<JSMap*>(pair->getIndexQuickly(1));
+        // it might not be a Map if the parent had not set up environmentData yet
+        environmentData = jsDynamicCast<JSMap*>(pair->getIndexQuickly(1));
         RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
-    } else {
+    }
+    if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
         RETURN_IF_EXCEPTION(scope, {});
     }
+    ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
     JSObject* array = constructEmptyArray(globalObject, nullptr, 4);

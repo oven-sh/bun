@@ -277,23 +277,17 @@ var InternalSecureContext = class SecureContext {
       }
       this.secureOptions = secureOptions;
 
-      const minVersion = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
-      if (minVersion && typeof minVersion !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
+      const minVersionName = options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+      if (minVersionName && (typeof minVersionName !== "string" || !(minVersionName in TLS_VERSION_MAP))) {
+        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
       }
-      if (!(minVersion in TLS_VERSION_MAP)) {
-        throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersion);
-      }
-      this.minVersion = TLS_VERSION_MAP[minVersion];
+      this.minVersion = TLS_VERSION_MAP[minVersionName];
 
-      const maxVersion = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
-      if (maxVersion && typeof maxVersion !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
+      const maxVersionName = options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+      if (maxVersionName && (typeof maxVersionName !== "string" || !(maxVersionName in TLS_VERSION_MAP))) {
+        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
       }
-      if (!(maxVersion in TLS_VERSION_MAP)) {
-        throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersion);
-      }
-      this.maxVersion = TLS_VERSION_MAP[maxVersion];
+      this.maxVersion = TLS_VERSION_MAP[maxVersionName];
     }
 
     this.context = context;
@@ -542,6 +536,18 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+
+  const minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
+  if (minVersionName && (typeof minVersionName !== "string" || !(minVersionName in TLS_VERSION_MAP))) {
+    throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
+  }
+  this.minVersion = TLS_VERSION_MAP[minVersionName];
+
+  const maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
+  if (maxVersionName && (typeof maxVersionName !== "string" || !(maxVersionName in TLS_VERSION_MAP))) {
+    throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
+  }
+  this.maxVersion = TLS_VERSION_MAP[maxVersionName];
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 

@@ -689,13 +689,15 @@ pub const ServerConfig = struct {
             ctx_opts.request_cert = this.request_cert;
             ctx_opts.reject_unauthorized = this.reject_unauthorized;
 
-            if (this.min_version != null) {
-                ctx_opts.min_tls_version = this.min_version.?;
+            if (this.min_version) |version| {
+                ctx_opts.min_tls_version = version;
             }
 
-            if (this.max_version != null) {
-                ctx_opts.max_tls_version = this.max_version.?;
+            if (this.max_version) |version| {
+                ctx_opts.max_tls_version = version;
             }
+
+            // std.debug.print("[bun-debug-tls-asUSockets] minVersion: {?}, maxVersion: {?}, min_tls_version: {?}, max_tls_version: {?}\n", .{ this.min_version, this.max_version, ctx_opts.min_tls_version, ctx_opts.max_tls_version });
 
             return ctx_opts;
         }
@@ -1052,18 +1054,18 @@ pub const ServerConfig = struct {
                 any = true;
             }
 
+            // var formatter = JSC.ConsoleObject.Formatter{ .globalThis = global };
+            // defer formatter.deinit();
+            // Output.print("{}\n", .{obj.toFmt(&formatter)});
+
             if (try obj.getTruthy(global, "minVersion")) |min_version| {
-                if (min_version.isNumber()) {
-                    result.min_version = @as(u16, @intCast(min_version.toInt32()));
-                    any = true;
-                }
+                result.min_version = @as(u16, @intCast(min_version.toInt32()));
+                any = true;
             }
 
             if (try obj.getTruthy(global, "maxVersion")) |max_version| {
-                if (max_version.isNumber()) {
-                    result.max_version = @as(u16, @intCast(max_version.toInt32()));
-                    any = true;
-                }
+                result.max_version = @as(u16, @intCast(max_version.toInt32()));
+                any = true;
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {

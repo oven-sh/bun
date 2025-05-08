@@ -697,8 +697,6 @@ pub const ServerConfig = struct {
                 ctx_opts.max_tls_version = version;
             }
 
-            // std.debug.print("[bun-debug-tls-asUSockets] minVersion: {?}, maxVersion: {?}, min_tls_version: {?}, max_tls_version: {?}\n", .{ this.min_version, this.max_version, ctx_opts.min_tls_version, ctx_opts.max_tls_version });
-
             return ctx_opts;
         }
 

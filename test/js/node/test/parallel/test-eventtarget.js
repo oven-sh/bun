@@ -59,7 +59,9 @@ let asyncTest = Promise.resolve();
   ev.preventDefault();
   strictEqual(ev.defaultPrevented, false);
 }
-// TODO: error 1
+// TODO:
+//    Expected: ERR_INVALID_ARG_TYPE / The "options" argument must be of type object. Received type string ('foo')
+//    Actual:     Type error
 // {
 //   [
 //     'foo',
@@ -261,7 +263,9 @@ let asyncTest = Promise.resolve();
   target.dispatchEvent(new Event('foo'));
 }
 
-// TODO: error 2
+// TODO:
+//    Expected: Should trigger uncaughtException handler
+//    Actual: Triggered unhandledRejection handler
 // {
 //   const uncaughtException = common.mustCall((err, origin) => {
 //     strictEqual(err.message, 'boom');

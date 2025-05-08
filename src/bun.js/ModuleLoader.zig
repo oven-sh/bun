@@ -845,6 +845,11 @@ pub fn transpileSourceCode(
 
     switch (loader) {
         .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
+            // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
+            var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
+            ast_scope.enter();
+            defer ast_scope.exit();
+
             jsc_vm.transpiled_count += 1;
             jsc_vm.transpiler.resetStore();
             const hash = bun.Watcher.getHash(path.text);
@@ -2320,9 +2325,8 @@ pub const RuntimeTranspilerStore = struct {
                 };
             }
 
-            ast_memory_store.?.allocator = allocator;
-            ast_memory_store.?.reset();
-            ast_memory_store.?.push();
+            var ast_scope = ast_memory_store.?.enter(allocator);
+            defer ast_scope.exit();
 
             const path = this.path;
             const specifier = this.path.text;

@@ -1426,6 +1426,10 @@ pub const Pipe = extern struct {
     pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
         uv_pipe_pending_instances(this, count);
     }
+
+    pub fn asStream(this: *@This()) *uv_stream_t {
+        return @ptrCast(this);
+    }
 };
 const union_unnamed_416 = extern union {
     fd: c_int,

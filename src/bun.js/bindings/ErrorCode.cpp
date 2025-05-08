@@ -517,7 +517,9 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     WTF::StringBuilder result;
     result.append("The "_s);
     addParameter(result, arg_name);
-    result.append(" must be of type "_s);
+    result.append(" must be"_s);
+    if (expected_type[0] >= 'A' && expected_type[0] <= 'Z') result.append(" an instance"_s);
+    result.append(" of type "_s);
     result.append(expected_type);
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);

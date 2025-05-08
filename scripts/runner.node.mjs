@@ -748,7 +748,8 @@ async function spawnSafe(options) {
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
-    (error = /oh no: Bun has crashed/i.exec(buffer))
+    (error = /oh no: Bun has crashed/i.exec(buffer)) ||
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
@@ -1864,9 +1865,15 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
-  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
+  return (
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("sigtrap") ||
+    error.includes("error: addresssanitizer")
+  );
 }
 
 /**

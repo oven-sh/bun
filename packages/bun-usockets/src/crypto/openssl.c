@@ -770,9 +770,18 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
-  
+  // /* Anything below TLS 1.2 is disabled */
+  // SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+
+  if (options.min_tls_version > 0.0) {
+    unsigned min_version;
+    if (options.min_tls_version >= 1.3) min_version = TLS1_3_VERSION;
+    else if (options.min_tls_version >= 1.2) min_version = TLS1_2_VERSION;
+    else if (options.min_tls_version >= 1.1) min_version = TLS1_1_VERSION;
+    else min_version = TLS1_VERSION;
+    SSL_CTX_set_min_proto_version(ssl_context, min_version);
+  }
+
   if (options.max_tls_version > 0.0) {
     unsigned max_version;
     if (options.max_tls_version >= 1.3) max_version = TLS1_3_VERSION;

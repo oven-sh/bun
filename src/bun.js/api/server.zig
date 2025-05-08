@@ -1,5 +1,7 @@
-const Bun = @This();
-const default_allocator = bun.default_allocator;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const linux = std.os.linux;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const AnyBlob = bun.webcore.Blob.Any;
@@ -8,33 +10,15 @@ const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const MutableString = bun.MutableString;
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const Fs = @import("../../fs.zig");
-const Resolver = @import("../../resolver/resolver.zig");
-const ast = @import("../../import_record.zig");
-const Sys = @import("../../sys.zig");
-
 const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
 const logger = bun.logger;
-const Api = @import("../../api/schema.zig").Api;
-const options = @import("../../options.zig");
 const Transpiler = bun.Transpiler;
 const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../../node_fallbacks.zig");
-const ImportKind = ast.ImportKind;
-const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../../env_loader.zig");
 const ParseResult = bun.transpiler.ParseResult;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
@@ -46,7 +30,6 @@ const JSC = bun.JSC;
 const MarkedArrayBuffer = JSC.MarkedArrayBuffer;
 const JSValue = bun.JSC.JSValue;
 const host_fn = JSC.host_fn;
-
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
@@ -62,16 +45,43 @@ const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
 const VM = bun.JSC.VM;
 const JSFunction = bun.JSC.JSFunction;
-const Config = @import("../config.zig");
-const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const uws = bun.uws;
-const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
 const BoringSSL = bun.BoringSSL.c;
+const Async = bun.Async;
+const S3 = bun.S3;
+const HTMLBundle = JSC.API.HTMLBundle;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+
 const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
+const Analytics = @import("../../analytics/analytics_thread.zig");
+const Api = @import("../../api/schema.zig").Api;
+const DotEnv = @import("../../env_loader.zig");
+const Fs = @import("../../fs.zig");
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+const ast = @import("../../import_record.zig");
+const ImportKind = ast.ImportKind;
+const ImportRecord = ast.ImportRecord;
+const NodeFallbackModules = @import("../../node_fallbacks.zig");
+const options = @import("../../options.zig");
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+const Resolver = @import("../../resolver/resolver.zig");
+const Runtime = @import("../../runtime.zig");
+const Fallback = Runtime.Fallback;
+const Sys = @import("../../sys.zig");
+const URL = @import("../../url.zig").URL;
+const Config = @import("../config.zig");
+pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
+pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
+pub const StaticRoute = @import("./server/StaticRoute.zig");
+const SocketAddress = @import("bun/socket.zig").SocketAddress;
+
+const Bun = @This();
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
     socket_fd: bun.FileDescriptor = bun.invalid_fd,
@@ -81,13 +91,8 @@ const SendfileContext = struct {
     has_set_on_writable: bool = false,
     auto_close: bool = false,
 };
-const linux = std.os.linux;
-const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
-const S3 = bun.S3;
-const SocketAddress = @import("bun/socket.zig").SocketAddress;
-
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -207,10 +212,6 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 }
 
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
-pub const StaticRoute = @import("./server/StaticRoute.zig");
-
-const HTMLBundle = JSC.API.HTMLBundle;
-
 pub const AnyRoute = union(enum) {
     /// Serve a static file
     /// "/robots.txt": new Response(...),
@@ -648,6 +649,9 @@ pub const ServerConfig = struct {
         protos_len: usize = 0,
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
+
+        min_version: ?[*:0]const u8 = null,
+        max_version: ?[*:0]const u8 = null,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -4917,9 +4921,6 @@ pub const WebSocketServer = struct {
     }
 };
 
-pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
-pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
-
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
     state: State,
@@ -7747,8 +7748,6 @@ pub const AnyServer = struct {
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");
 
 extern fn Bun__addInspector(bool, *anyopaque, *JSC.JSGlobalObject) void;
-
-const assert = bun.assert;
 
 pub export fn Server__setIdleTimeout(server: JSC.JSValue, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {

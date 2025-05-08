@@ -780,6 +780,8 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
     else if (options.min_tls_version >= 1.1) min_version = TLS1_1_VERSION;
     else min_version = TLS1_VERSION;
     SSL_CTX_set_min_proto_version(ssl_context, min_version);
+  } else {
+    SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
   }
 
   if (options.max_tls_version > 0.0) {

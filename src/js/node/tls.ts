@@ -7,7 +7,6 @@ const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { constants: cryptoConstants } = require("node:crypto");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 

@@ -23,7 +23,8 @@ server.listen(0, common.mustCall(async () => {
       await once(socket, 'close');
       assert.fail(`close ${testName} should have thrown`);
     } catch (err) {
-      assert.strictEqual(err.toString(), 'AbortError [ABORT_ERR]: The operation was aborted.');
+      assert.strictEqual(err.name, 'AbortError');
+      assert.strictEqual(err.toString(), 'AbortError: The operation was aborted.');
     }
   };
 

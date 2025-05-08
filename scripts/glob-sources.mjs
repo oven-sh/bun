@@ -5,11 +5,14 @@ import { normalize } from "path/posix";
 const root = resolve(import.meta.dirname, "..");
 let total = 0;
 
-async function globSources(output, patterns) {
+async function globSources(output, patterns, exclude = []) {
   const paths = [];
   for (const pattern of patterns) {
     const glob = new Glob(pattern);
     for await (const path of glob.scan()) {
+      if (exclude.some(ex => path.includes(ex))) {
+        continue;
+      }
       paths.push(path);
     }
   }
@@ -33,7 +36,7 @@ await Promise.all([
   ]),
   globSources("JavaScriptSources.txt", ["src/js/**/*.{js,ts}"]),
   globSources("JavaScriptCodegenSources.txt", ["src/codegen/*.ts"]),
-  globSources("BakeRuntimeSources.txt", ["src/bake/*.ts", "src/bake/*/*.{ts,css}"]),
+  globSources("BakeRuntimeSources.txt", ["src/bake/*.ts", "src/bake/*/*.{ts,css}"], ["src/bake/generated.ts"]),
   globSources("BindgenSources.txt", ["src/**/*.bind.ts"]),
   globSources("ZigSources.txt", ["src/**/*.zig"]),
   globSources("CxxSources.txt", [

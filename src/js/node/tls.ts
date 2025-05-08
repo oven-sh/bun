@@ -867,64 +867,20 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(path[, options][, callback])
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
-  try {
-    // First validate checkServerIdentity before anything else
-    // This ensures checkServerIdentity validation errors take precedence
-    // even when the connect call itself would fail for other reasons
-    if (args.length > 0 && typeof args[0] === "object" && args[0] !== null) {
-      const { checkServerIdentity } = args[0];
+  let normal = normalizeConnectArgs(args);
+  const options = normal[0];
 
-      if (
-        checkServerIdentity !== undefined &&
-        checkServerIdentity !== null &&
-        typeof checkServerIdentity !== "function"
-      ) {
-        const error = new TypeError(
-          `The "options.checkServerIdentity" property must be of type function. Received type ${typeof checkServerIdentity}`,
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-    }
-
-    let normal = normalizeConnectArgs(args);
-    const options = normal[0];
-    const { ALPNProtocols } = options;
-
-    if (ALPNProtocols) {
-      convertALPNProtocols(ALPNProtocols, options);
-    }
-    return new TLSSocket(options).connect(normal);
-  } catch (error) {
-    // If we get a missing args error but have checkServerIdentity to validate,
-    // we need to revalidate it to ensure the right error code is thrown
-    if (
-      error?.code === "ERR_MISSING_ARGS" &&
-      args.length > 0 &&
-      typeof args[0] === "object" &&
-      args[0] !== null &&
-      "checkServerIdentity" in args[0]
-    ) {
-      const { checkServerIdentity } = args[0];
-      if (
-        checkServerIdentity !== undefined &&
-        checkServerIdentity !== null &&
-        typeof checkServerIdentity !== "function"
-      ) {
-        // Override the ERR_MISSING_ARGS error with the ERR_INVALID_ARG_TYPE error
-        // that Node.js would throw in this case
-        const typeError = new TypeError(
-          `The "options.checkServerIdentity" property must be of type function. Received type ${typeof checkServerIdentity}`,
-        );
-        typeError.code = "ERR_INVALID_ARG_TYPE";
-        throw typeError;
-      }
-    }
-
-    // If it wasn't a missing args error with invalid checkServerIdentity,
-    // rethrow the original error
-    throw error;
+  if (!$isUndefinedOrNull(options.checkServerIdentity) && typeof options.checkServerIdentity !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", options.checkServerIdentity);
   }
+
+  const { ALPNProtocols } = options;
+
+  if (ALPNProtocols) {
+    convertALPNProtocols(ALPNProtocols, options);
+  }
+
+  return new TLSSocket(options).connect(normal);
 }
 
 function getCiphers() {

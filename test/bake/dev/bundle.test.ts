@@ -198,15 +198,7 @@ devTest("default export same-scope handling", {
 
     // Since fixture7.ts is not marked as accepting, it will bubble the update
     // to `index.ts`, re-evaluate it and some of the dependencies.
-    c.expectMessage(
-      "TWO",
-      "FOUR",
-      "FIVE",
-      "SEVEN",
-      "EIGHT",
-      "NINE",
-      "ELEVEN",
-    );
+    c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
 devTest("directory cache bust case #17576", {
@@ -244,7 +236,7 @@ devTest("directory cache bust case #17576", {
 });
 devTest("deleting imported file shows error then recovers", {
   skip: [
-    'win32', // unlinkSync is having weird behavior
+    "win32", // unlinkSync is having weird behavior
   ],
   files: {
     "index.html": emptyHtmlFile({

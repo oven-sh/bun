@@ -1,13 +1,13 @@
 import { Subprocess, spawn } from "bun";
-import { afterEach, expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles, tmpdirSync } from "harness";
-import { WebSocket } from "ws";
-import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-let inspectee: Subprocess;
-import { SocketFramer } from "./socket-framer";
-import { JUnitReporter, InspectorSession, connect } from "./junit-reporter";
+import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 import stripAnsi from "strip-ansi";
+import { WebSocket } from "ws";
+import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
+import { SocketFramer } from "./socket-framer";
+let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
 

@@ -588,6 +588,7 @@ namespace uWS
 
             /* The request line is different from the field names / field values */
             auto requestLineResult = consumeRequestLine(postPaddedBuffer, end, headers[0], useStrictMethodValidation, maxHeaderSize);
+
             if (requestLineResult.isErrorOrShortRead()) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */

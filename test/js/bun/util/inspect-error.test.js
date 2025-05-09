@@ -1,4 +1,4 @@
-import { expect, test, describe, jest } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -8,7 +8,7 @@ test("error.cause", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"1 | import { expect, test, describe, jest } from "bun:test";
+"1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
@@ -17,7 +17,7 @@ test("error.cause", () => {
 error: error 2
       at <anonymous> ([dir]/inspect-error.test.js:5:16)
 
-1 | import { expect, test, describe, jest } from "bun:test";
+1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");

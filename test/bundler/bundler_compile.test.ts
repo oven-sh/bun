@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
-import { isFlaky, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {

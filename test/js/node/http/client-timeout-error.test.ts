@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { createServer } from "node:http";
-import { request } from "node:http";
 import { once } from "node:events";
+import { createServer, request } from "node:http";
 
 describe("node:http client timeout", () => {
   it("should emit timeout event when timeout is reached", async () => {

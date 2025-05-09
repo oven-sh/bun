@@ -650,6 +650,8 @@ const kConnectPipe = Symbol("kConnectPipe");
 class SocketHandle {
   #promise: Promise<Socket<undefined>> | null;
   #socket: Socket<undefined> | null;
+  #refsOnConnect: number = 0;
+  #unrefsOnConnect: number = 0;
 
   constructor() {
     $debug("new SocketHandle");
@@ -685,6 +687,8 @@ class SocketHandle {
       $debug("Bun.Socket then");
       that.#socket = sock;
       that.#promise = null;
+      for (let i = 0; i < that.#refsOnConnect; i++) sock.ref();
+      for (let i = 0; i < that.#unrefsOnConnect; i++) sock.unref();
     });
     this.#promise.catch(reason => {
       // eat this so there's no unhandledRejection
@@ -707,6 +711,8 @@ class SocketHandle {
     }).then(sock => {
       that.#socket = sock;
       that.#promise = null;
+      for (let i = 0; i < that.#refsOnConnect; i++) sock.ref();
+      for (let i = 0; i < that.#unrefsOnConnect; i++) sock.unref();
     });
     this.#promise.catch(reason => {
       // eat this so there's no unhandledRejection
@@ -765,12 +771,18 @@ class SocketHandle {
   }
   ref() {
     $debug("SocketHandle.ref");
-    if (this.#socket == null) return;
+    if (this.#socket == null) {
+      this.#refsOnConnect += 1;
+      return;
+    }
     return this.#socket.ref();
   }
   unref() {
     $debug("SocketHandle.unref");
-    if (this.#socket == null) return;
+    if (this.#socket == null) {
+      this.#unrefsOnConnect += 1;
+      return;
+    }
     return this.#socket.unref();
   }
   //TLS

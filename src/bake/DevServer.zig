@@ -1917,9 +1917,8 @@ fn startAsyncBundle(
     errdefer heap.deinit();
     const allocator = heap.allocator();
     const ast_memory_allocator = try allocator.create(bun.JSAst.ASTMemoryAllocator);
-    ast_memory_allocator.* = .{ .allocator = allocator };
-    ast_memory_allocator.reset();
-    ast_memory_allocator.push();
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
 
     const bv2 = try BundleV2.init(
         &dev.server_transpiler,

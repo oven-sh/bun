@@ -991,11 +991,9 @@ declare module "bun" {
   function fileURLToPath(url: URL | string): string;
 
   /**
-   * Fast incremental writer that becomes an `ArrayBuffer` on end().
+   * Fast incremental writer that becomes an {@link ArrayBuffer} on end().
    */
   class ArrayBufferSink {
-    constructor();
-
     start(options?: {
       asUint8Array?: boolean;
       /**
@@ -1320,7 +1318,8 @@ declare module "bun" {
    *   }
    * };
    */
-  type SQLOptions = {
+
+  interface SQLOptions {
     /** Connection URL (can be string or URL object) */
     url?: URL | string;
     /** Database server hostname */
@@ -1369,27 +1368,33 @@ declare module "bun" {
     bigint?: boolean;
     /** Automatic creation of prepared statements, defaults to true */
     prepare?: boolean;
-  };
+  }
 
   /**
    * Represents a SQL query that can be executed, with additional control methods
    * Extends Promise to allow for async/await usage
    */
-  interface SQLQuery extends Promise<any> {
+  interface SQLQuery<T = any> extends Promise<T> {
     /** Indicates if the query is currently executing */
     active: boolean;
+
     /** Indicates if the query has been cancelled */
     cancelled: boolean;
+
     /** Cancels the executing query */
-    cancel(): SQLQuery;
+    cancel(): SQLQuery<T>;
+
     /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery;
+    simple(): SQLQuery<T>;
+
     /** Executes the query */
-    execute(): SQLQuery;
+    execute(): SQLQuery<T>;
+
     /** Returns the raw query result */
-    raw(): SQLQuery;
+    raw(): SQLQuery<T>;
+
     /** Returns only the values from the query result */
-    values(): SQLQuery;
+    values(): SQLQuery<T>;
   }
 
   /**
@@ -1407,65 +1412,117 @@ declare module "bun" {
    * Main SQL client interface providing connection and transaction management
    */
   interface SQL {
-    /** Creates a new SQL client instance
-     * @example
-     * const sql = new SQL("postgres://localhost:5432/mydb");
-     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
-     */
-    new (connectionString: string | URL): SQL;
-    /** Creates a new SQL client instance with options
-     * @example
-     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
-     */
-    new (connectionString: string | URL, options: SQLOptions): SQL;
-    /** Creates a new SQL client instance with options
-     * @example
-     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
-     */
-    new (options?: SQLOptions): SQL;
-    /** Executes a SQL query using template literals
-     * @example
-     * const [user] = await sql`select * from users where id = ${1}`;
-     */
-    (strings: string | TemplateStringsArray, ...values: any[]): SQLQuery;
     /**
-     * Helper function to allow easy use to insert values into a query
+     * Executes a SQL query using template literals
      * @example
-     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     * ```ts
+     * const [user] = await sql`select * from users where id = ${1}`;
+     * ```
      */
-    (obj: any): SQLQuery;
-    /** Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+    (strings: string[] | TemplateStringsArray, ...values: any[]): SQLQuery;
+
+    /**
+     * Helper function for inserting an object into a query
+     *
      * @example
+     * ```ts
+     * // Insert an object
+     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
+     *
+     * // Or pick specific columns
+     * const result = await sql`insert into users ${sql(users, "id", "name")} RETURNING *`;
+     *
+     * // Or a single object
+     * const result = await sql`insert into users ${sql(user)} RETURNING *`;
+     * ```
+     */
+    <T extends { [Key in PropertyKey]: unknown }>(obj: T | T[] | readonly T[], ...columns: (keyof T)[]): SQLQuery;
+
+    /**
+     * Helper function for inserting any serializable value into a query
+     *
+     * @example
+     * ```ts
+     * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+     * ```
+     */
+    (obj: unknown): SQLQuery;
+
+    /**
+     * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
+     * @example
+     * ```ts
      * await sql.commitDistributed("my_distributed_transaction");
+     * ```
      */
     commitDistributed(name: string): Promise<void>;
-    /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+
+    /**
+     * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     *
+     * @param name - The name of the distributed transaction
+     *
      * @example
+     * ```ts
      * await sql.rollbackDistributed("my_distributed_transaction");
+     * ```
      */
     rollbackDistributed(name: string): Promise<void>;
+
     /** Waits for the database connection to be established
+     *
      * @example
+     * ```ts
      * await sql.connect();
+     * ```
      */
     connect(): Promise<SQL>;
-    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     *
+     * @param options - The options for the close
+     *
      * @example
+     * ```ts
      * await sql.close({ timeout: 1 });
+     * ```
      */
     close(options?: { timeout?: number }): Promise<void>;
-    /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
-     * @alias close
+
+    /**
+     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * This is an alias of {@link SQL.close}
+     *
+     * @param options - The options for the close
+     *
      * @example
+     * ```ts
      * await sql.end({ timeout: 1 });
+     * ```
      */
     end(options?: { timeout?: number }): Promise<void>;
-    /** Flushes any pending operations */
-    flush(): void;
-    /**  The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
-     *   This can be used for running queries on an isolated connection.
-     *   Calling reserve in a reserved Sql will return a new reserved connection, not the same connection (behavior matches postgres package).
+
+    /**
+     * Flushes any pending operations
+     *
      * @example
+     * ```ts
+     * sql.flush();
+     * ```
+     */
+    flush(): void;
+
+    /**
+     * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     * This can be used for running queries on an isolated connection.
+     * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
+     *
+     * @example
+     * ```ts
      * const reserved = await sql.reserve();
      * await reserved`select * from users`;
      * await reserved.release();
@@ -1476,12 +1533,14 @@ declare module "bun" {
      * } finally {
      *   await reserved.release();
      * }
-     * //To make it simpler bun supportsSymbol.dispose and Symbol.asyncDispose
+     *
+     * // Bun supports Symbol.dispose and Symbol.asyncDispose
      * {
-     * // always release after context (safer)
-     * using reserved = await sql.reserve()
-     * await reserved`select * from users`
+     *  // always release after context (safer)
+     *  using reserved = await sql.reserve()
+     *  await reserved`select * from users`
      * }
+     * ```
      */
     reserve(): Promise<ReservedSQL>;
     /** Begins a new transaction
@@ -1626,6 +1685,45 @@ declare module "bun" {
 
     [Symbol.asyncDispose](): Promise<any>;
   }
+  const SQL: {
+    /**
+     * Creates a new SQL client instance
+     *
+     * @param connectionString - The connection string for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb");
+     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
+     * ```
+     */
+    new (connectionString: string | URL): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param connectionString - The connection string for the SQL client
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
+     * ```
+     */
+    new (connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
+
+    /**
+     * Creates a new SQL client instance with options
+     *
+     * @param options - The options for the SQL client
+     *
+     * @example
+     * ```ts
+     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
+     * ```
+     */
+    new (options?: SQLOptions): SQL;
+  };
 
   /**
    * Represents a reserved connection from the connection pool
@@ -1697,21 +1795,14 @@ declare module "bun" {
    *
    * @category Database
    */
-  var sql: SQL;
+  const sql: SQL;
 
   /**
    * SQL client for PostgreSQL
    *
    * @category Database
    */
-  var postgres: SQL;
-
-  /**
-   * The SQL constructor
-   *
-   * @category Database
-   */
-  var SQL: SQL;
+  const postgres: SQL;
 
   /**
    * Generate and verify CSRF tokens
@@ -6522,9 +6613,10 @@ declare module "bun" {
       ipc?(
         message: any,
         /**
-         * The {@link Subprocess} that sent the message
+         * The {@link Subprocess} that received the message
          */
         subprocess: Subprocess<In, Out, Err>,
+        handle?: unknown,
       ): void;
 
       /**

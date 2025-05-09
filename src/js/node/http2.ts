@@ -12,7 +12,7 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
-
+const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
 const { Readable } = Stream;
 type Http2ConnectOptions = {
@@ -81,6 +81,8 @@ const {
   checkIsHttpToken,
   validateLinkHeaderValue,
   validateUint32,
+  validateBuffer,
+  validateNumber,
 } = require("internal/validators");
 
 let utcCache;
@@ -267,7 +269,19 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
+function assertIsObject(value: any, name: string, types?: string) {
+  if (value !== undefined && (value === null || typeof value !== "object" || ArrayIsArray(value))) {
+    throw $ERR_INVALID_ARG_TYPE(name, types || "Object", value);
+  }
+}
 
+function assertIsArray(value: any, name: string, types?: string) {
+  if (value !== undefined && (value === null || !ArrayIsArray(value))) {
+    throw $ERR_INVALID_ARG_TYPE(name, types || "Array", value);
+  }
+}
+hideFromStack(assertIsObject);
+hideFromStack(assertIsArray);
 hideFromStack(assertValidHeader);
 
 class Http2ServerRequest extends Readable {
@@ -875,8 +889,8 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind.$call(session[prop], session);
       case "destroy":
+        return FunctionPrototypeBind.$call(session[prop], session);
       case "emit":
       case "end":
       case "pause":
@@ -2202,15 +2216,16 @@ class ServerHttp2Stream extends Http2Stream {
       endStream = true;
     }
 
+    if (typeof options === "undefined" || typeof options.sendDate === "undefined" || options.sendDate) {
+      const current_date = headers["date"];
+      if (current_date === null || current_date === undefined) {
+        headers["date"] = utcDate();
+      }
+    }
+
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
-      if (options.sendDate == null || options.sendDate) {
-        const current_date = headers["date"];
-        if (current_date === null || current_date === undefined) {
-          headers["date"] = utcDate();
-        }
-      }
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
     }
     this.headersSent = true;
@@ -2755,8 +2770,15 @@ class ServerHttp2Session extends Http2Session {
     parser.ping(payload);
     return true;
   }
-  goaway(errorCode, lastStreamId, opaqueData) {
-    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
+  goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
+    if (this.destroyed) $ERR_HTTP2_INVALID_SESSION();
+
+    if (opaqueData !== undefined) {
+      validateBuffer(opaqueData, "opaqueData");
+    }
+    validateNumber(code, "code");
+    validateNumber(lastStreamID, "lastStreamID");
+    return this.#parser?.goaway(code, lastStreamID, opaqueData);
   }
 
   setLocalWindowSize(windowSize) {
@@ -2798,7 +2820,7 @@ class ServerHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
-      parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+      parser.sendRSTToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
       this.#parser = null;
     }
@@ -3192,19 +3214,34 @@ class ClientHttp2Session extends Http2Session {
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     super();
 
-    if (typeof url === "string") {
-      url = new URL(url);
-    }
-    if (!(url instanceof URL)) {
-      throw $ERR_INVALID_ARG_TYPE("url", "URL", url);
-    }
     if (typeof options === "function") {
       listener = options;
       options = undefined;
     }
+
+    assertIsObject(options, "options");
+    options = { ...options };
+
+    assertIsArray(options.remoteCustomSettings, "options.remoteCustomSettings");
+    if (options.remoteCustomSettings) {
+      options.remoteCustomSettings = [...options.remoteCustomSettings];
+      if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
+    }
+
+    if (typeof url === "string") url = new URL(url);
+
+    assertIsObject(url, "authority", ["string", "Object", "URL"]);
+
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
+    switch (protocol) {
+      case "http:":
+      case "https:":
+        break;
+      default:
+        throw $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol);
+    }
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
     function onConnect() {
@@ -3474,17 +3511,49 @@ function connectionListener(socket: Socket) {
     }
   }
 }
+
+function initializeOptions(options) {
+  assertIsObject(options, "options");
+  options = { ...options };
+  assertIsObject(options.settings, "options.settings");
+  options.settings = { ...options.settings };
+
+  assertIsArray(options.remoteCustomSettings, "options.remoteCustomSettings");
+  if (options.remoteCustomSettings) {
+    options.remoteCustomSettings = [...options.remoteCustomSettings];
+    if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
+  }
+
+  if (options.maxSessionInvalidFrames !== undefined)
+    validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+
+  if (options.maxSessionRejectedStreams !== undefined) {
+    validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+  }
+
+  if (options.unknownProtocolTimeout !== undefined)
+    validateUint32(options.unknownProtocolTimeout, "unknownProtocolTimeout");
+  // TODO(danbev): is this a good default value?
+  else options.unknownProtocolTimeout = 10000;
+
+  // Used only with allowHTTP1
+  // options.Http1IncomingMessage ||= http.IncomingMessage;
+  // options.Http1ServerResponse ||= http.ServerResponse;
+
+  options.Http2ServerRequest ||= Http2ServerRequest;
+  options.Http2ServerResponse ||= Http2ServerResponse;
+  return options;
+}
+
 class Http2Server extends net.Server {
   timeout = 0;
   constructor(options, onRequestHandler) {
     if (typeof options === "function") {
       onRequestHandler = options;
       options = {};
-    } else if (options == null || typeof options == "object") {
-      options = { ...options };
-    } else {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
+    options = initializeOptions(options);
+
     super(options, connectionListener);
     this.setMaxListeners(0);
 

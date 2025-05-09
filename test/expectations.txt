@@ -108,7 +108,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
 [ ASAN ] test/js/node/test/parallel/test-gc-http-client-connaborted.js [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/BunFrontendDevServer.test.ts [ TIMEOUT ]
-[ ASAN ] test/js/node/test/parallel/test-http-server-keepalive-req-gc.js [ TIMEOUT ]
 
 # Tests failed due to memory leaks
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory

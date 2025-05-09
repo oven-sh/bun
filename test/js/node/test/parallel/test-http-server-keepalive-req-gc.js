@@ -10,14 +10,19 @@ const { connect } = require('net');
 // Refs: https://github.com/nodejs/node/issues/9668
 
 let client;
+
+async function flushGC(times = 10) {
+  for (let i = 0; i < times; i++) {
+    await globalThis.gc({ type: 'major', execution: 'async' });
+  }
+}
 const server = createServer(common.mustCall((req, res) => {
-  onGC(req, { ongc: common.mustCall(() => { server.close(); }) });
+  onGC(req, { ongc: common.mustCall(() => { server.closeAllConnections(); }) });
   req.resume();
   req.on('end', common.mustCall(() => {
     setImmediate(async () => {
       client.end();
-      await globalThis.gc({ type: 'major', execution: 'async' });
-      await globalThis.gc({ type: 'major', execution: 'async' });
+      await flushGC();
     });
   }));
   res.end('hello world');

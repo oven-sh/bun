@@ -87,6 +87,11 @@ namespace uWS {
                         state &= ~STATE_IS_CHUNKED_EXTENSION;
                         break;
                     }
+                    if(data[0] <= 32) {
+                        state = STATE_IS_ERROR;
+                        return;
+                    }
+                    
                     data.remove_prefix(1);
                 }
             }

@@ -708,11 +708,9 @@ class SocketHandle {
       that.#socket = sock;
       that.#promise = null;
     });
-    if ($isPromiseRejected(this.#promise)) {
-      throw Bun.peek(this.#promise).errno;
-    }
     this.#promise.catch(reason => {
-      if (!self.destroyed) destroyNT(self, reason);
+      // eat this so there's no unhandledRejection
+      // we already catch this in connectError and error
     });
     return 0;
   }

@@ -510,6 +510,7 @@ const ServerResponsePrototype = {
       handle.abort();
     }
     this?.socket?.destroy();
+    this.emit("close");
     return this;
   },
 

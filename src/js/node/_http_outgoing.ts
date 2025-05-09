@@ -492,6 +492,16 @@ const OutgoingMessagePrototype = {
   end(_chunk, _encoding, _callback) {
     return this;
   },
+  get writableCorked() {
+    return this.socket.writableCorked;
+  },
+  set writableCorked(value) {},
+  cork() {
+    this.socket.cork();
+  },
+  uncork() {
+    this.socket.uncork();
+  },
   destroy(_err?: Error) {
     if (this.destroyed) return this;
     const handle = this[kHandle];

@@ -35,6 +35,7 @@ pub const FetchHeaders = @import("bindings/FetchHeaders.zig").FetchHeaders;
 pub const ByteBlobLoader = @import("webcore/ByteBlobLoader.zig");
 pub const ByteStream = @import("webcore/ByteStream.zig");
 pub const FileReader = @import("webcore/FileReader.zig");
+pub const ScriptExecutionContext = @import("webcore/ScriptExecutionContext.zig");
 
 pub const streams = @import("webcore/streams.zig");
 pub const NetworkSink = streams.NetworkSink;

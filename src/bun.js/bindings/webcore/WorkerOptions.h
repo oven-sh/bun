@@ -16,7 +16,10 @@ struct WorkerOptions {
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
     // Blob URL.
     bool evalMode { false };
-    RefPtr<SerializedScriptValue> data;
+    // Serialized array containing [workerData, environmentData]
+    // (environmentData is always a Map)
+    RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
+    // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env; // TODO(@190n) allow shared

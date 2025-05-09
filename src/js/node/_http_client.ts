@@ -67,8 +67,6 @@ function emitErrorEventNT(self, err) {
   }
 }
 
-let requests = 0;
-
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);

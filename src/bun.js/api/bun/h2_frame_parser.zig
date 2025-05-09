@@ -1232,7 +1232,7 @@ pub const H2FrameParser = struct {
         stream.state = .CLOSED;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
-        stream.freeResources(this, false);
+        defer stream.freeResources(this, false);
         this.dispatchWith2Extra(.onAborted, identifier, abortReason, JSC.JSValue.jsNumber(@intFromEnum(old_state)));
         _ = this.write(&buffer);
     }
@@ -1259,7 +1259,7 @@ pub const H2FrameParser = struct {
         stream.state = .CLOSED;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
-        stream.freeResources(this, false);
+        defer stream.freeResources(this, false);
         if (rstCode == .NO_ERROR) {
             this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         } else {
@@ -2076,7 +2076,7 @@ pub const H2FrameParser = struct {
             stream.state = .CLOSED;
             const identifier = stream.getIdentifier();
             identifier.ensureStillAlive();
-            stream.freeResources(this, false);
+            defer stream.freeResources(this, false);
             if (rst_code == @intFromEnum(ErrorCode.NO_ERROR)) {
                 this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
             } else {
@@ -3340,7 +3340,7 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
-                        stream.freeResources(this, false);
+                        defer stream.freeResources(this, false);
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                         return .undefined;
@@ -3370,7 +3370,7 @@ pub const H2FrameParser = struct {
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
-                    stream.freeResources(this, false);
+                    defer stream.freeResources(this, false);
                     stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                     this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                     return .undefined;
@@ -3556,7 +3556,7 @@ pub const H2FrameParser = struct {
                 stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
-                stream.freeResources(this, false);
+                defer stream.freeResources(this, false);
                 this.dispatchWith2Extra(.onAborted, identifier, .undefined, JSC.JSValue.jsNumber(@intFromEnum(old_state)));
             }
         }
@@ -3601,7 +3601,7 @@ pub const H2FrameParser = struct {
                 stream.rstCode = args_list.ptr[0].to(u32);
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
-                stream.freeResources(this, false);
+                defer stream.freeResources(this, false);
                 this.dispatchWithExtra(.onStreamError, identifier, args_list.ptr[0]);
             }
         }
@@ -3680,7 +3680,7 @@ pub const H2FrameParser = struct {
                     stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
-                    stream.freeResources(this, false);
+                    defer stream.freeResources(this, false);
                     this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                     return JSC.JSValue.jsNumber(stream_id);
                 }

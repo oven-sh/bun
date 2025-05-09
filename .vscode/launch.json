@@ -1328,6 +1328,9 @@
         "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
         "set substitute-path /webkitbuild/vendor/WebKit ${workspaceFolder}/vendor/WebKit",
         "set substitute-path /webkitbuild/.WTF/Headers ${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // uncomment if you like
+        // "set disassembly-flavor intel",
+        "set print asm-demangle",
       ],
     },
   ],

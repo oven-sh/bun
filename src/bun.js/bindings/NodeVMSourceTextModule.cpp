@@ -264,6 +264,14 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         run();
     }
 
+    if (vm.hasPendingTerminationException()) {
+        scope.clearException();
+        vm.clearHasTerminationRequest();
+        status(Status::Errored);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        return {};
+    }
+
     RETURN_IF_EXCEPTION(scope, (status(Status::Errored), JSValue {}));
     status(Status::Evaluated);
     return result;

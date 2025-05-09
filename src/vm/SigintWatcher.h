@@ -22,6 +22,10 @@ public:
     void signalReceived();
     void registerGlobalObject(NodeVMGlobalObject* globalObject);
     void unregisterGlobalObject(NodeVMGlobalObject* globalObject);
+    /** Installs the signal handler if it's not already installed and increments the ref count. */
+    void ref();
+    /** Decrements the ref count and uninstalls the signal handler if the ref count reaches 0. */
+    void deref();
 
     static SigintWatcher& get();
 
@@ -30,13 +34,18 @@ public:
         GlobalObjectHolder(NodeVMGlobalObject* globalObject)
             : m_globalObject(globalObject)
         {
-            ensureSigintHandler();
-            get().registerGlobalObject(globalObject);
+            if (m_globalObject) {
+                get().ref();
+                get().registerGlobalObject(globalObject);
+            }
         }
 
         ~GlobalObjectHolder()
         {
-            get().unregisterGlobalObject(m_globalObject);
+            if (m_globalObject) {
+                get().unregisterGlobalObject(m_globalObject);
+                get().deref();
+            }
         }
 
         GlobalObjectHolder(const GlobalObjectHolder&) = delete;
@@ -53,7 +62,7 @@ public:
         }
 
     private:
-        NodeVMGlobalObject* m_globalObject;
+        NodeVMGlobalObject* m_globalObject = nullptr;
     };
 
     static GlobalObjectHolder hold(NodeVMGlobalObject* globalObject)
@@ -61,15 +70,14 @@ public:
         return { globalObject };
     }
 
-    static void ensureSigintHandler();
-
 private:
     std::thread m_thread;
     std::atomic_bool m_installed = false;
     std::atomic_flag m_waiting = false;
     Semaphore m_semaphore;
     std::mutex m_globalObjectsMutex;
-    std::vector<NodeVMGlobalObject*> m_globalObjects;
+    WTF::Vector<NodeVMGlobalObject*> m_globalObjects;
+    uint32_t m_refCount = 0;
 
     bool signalAll();
 

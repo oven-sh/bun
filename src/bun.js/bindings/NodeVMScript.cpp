@@ -260,7 +260,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     globalObject->setContextifiedObject(contextifiedObject);
 
     if (options.breakOnSigint) {
-        SigintWatcher::ensureSigintHandler();
+        // TODO(@heimskr): set up a GlobalObjectHolder
         SigintWatcher::get().registerGlobalObject(globalObject);
     }
 
@@ -298,6 +298,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_TYPE(throwScope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
+    // TODO(@heimskr): try to retrieve the NodeVMGlobalObject from the context
+
     RunningScriptOptions options;
     if (!options.fromJS(globalObject, vm, throwScope, contextArg)) {
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -306,7 +308,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     if (options.breakOnSigint) {
         // TODO(@heimskr): register global object as appropriate
-        SigintWatcher::ensureSigintHandler();
     }
 
     NakedPtr<JSC::Exception> exception;

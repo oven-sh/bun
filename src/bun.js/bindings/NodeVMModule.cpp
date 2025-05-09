@@ -211,7 +211,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
-        // return thisObject->link(globalObject, linker);
         // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         //     return thisObject->link(globalObject, specifiers, moduleNatives);
     } else {

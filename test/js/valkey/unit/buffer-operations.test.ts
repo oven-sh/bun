@@ -24,6 +24,7 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(asBuffer.buffer).toBeInstanceOf(ArrayBuffer);
     expect(asBuffer).toBeInstanceOf(Uint8Array);
     expect(asBuffer.length).toBe(binaryData.length);
+    expect(asBuffer).toStrictEqual(binaryData);
 
     for (let i = 0; i < binaryData.length; i++) {
       expect(asBuffer[i]).toBe(binaryData[i]);

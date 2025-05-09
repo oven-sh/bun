@@ -1327,10 +1327,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     JSValue callback = callFrame->uncheckedArgument(4);
 
     Server__setAppFlags(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Server__setMaxHTTPHeaderSize(JSValue::encode(serverValue), maxHeaderSize.toNumber(globalObject), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());
 }

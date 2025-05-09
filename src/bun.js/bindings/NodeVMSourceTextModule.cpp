@@ -5,6 +5,7 @@
 #include "JSModuleRecord.h"
 #include "ModuleAnalyzer.h"
 #include "Parser.h"
+#include "Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 
@@ -250,15 +251,17 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 
-    if (timeout != 0 && breakOnSigint) {
-        // TODO(@heimskr): timeout support
-        auto holder = SigintWatcher::hold(nodeVmGlobalObject);
-        run();
-    } else if (timeout != 0) {
-        // TODO(@heimskr): timeout support
-        run();
-    } else if (breakOnSigint) {
-        auto holder = SigintWatcher::hold(nodeVmGlobalObject);
+    m_terminatedWithSigint = false;
+
+    if (timeout != 0) {
+        JSC::JSLockHolder locker(vm);
+        JSC::Watchdog& dog = vm.ensureWatchdog();
+        dog.enteredVM();
+        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+    }
+
+    if (breakOnSigint) {
+        auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
         run();
     } else {
         run();
@@ -268,13 +271,24 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         scope.clearException();
         vm.clearHasTerminationRequest();
         status(Status::Errored);
-        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        if (m_terminatedWithSigint) {
+            m_terminatedWithSigint = false;
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        } else {
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
+        }
         return {};
     }
 
+    m_terminatedWithSigint = false;
     RETURN_IF_EXCEPTION(scope, (status(Status::Errored), JSValue {}));
     status(Status::Evaluated);
     return result;
+}
+
+void NodeVMSourceTextModule::sigintReceived()
+{
+    m_terminatedWithSigint = true;
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

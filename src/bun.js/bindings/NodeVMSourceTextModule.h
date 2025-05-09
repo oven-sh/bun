@@ -33,6 +33,7 @@ public:
     JSValue createModuleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
+    void sigintReceived();
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -40,6 +41,7 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     SourceCode m_sourceCode;
+    bool m_terminatedWithSigint = false;
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode)
         : Base(vm, structure, WTFMove(identifier), context)

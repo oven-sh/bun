@@ -1,4 +1,5 @@
 #include "NodeVM.h"
+#include "NodeVMSourceTextModule.h"
 #include "SigintWatcher.h"
 
 extern "C" void Bun__onPosixSignal(int signalNumber);
@@ -96,8 +97,7 @@ void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
     }
 
     std::unique_lock lock(m_globalObjectsMutex);
-
-    m_globalObjects.append(globalObject);
+    m_globalObjects.appendIfNotContains(globalObject);
 }
 
 void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
@@ -109,13 +109,35 @@ void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
     std::unique_lock lock(m_globalObjectsMutex);
 
     auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
-
     if (iter == m_globalObjects.end()) {
         return;
     }
 
     std::swap(*iter, m_globalObjects.last());
     m_globalObjects.removeLast();
+}
+
+void SigintWatcher::registerModule(NodeVMSourceTextModule* module)
+{
+    if (module == nullptr) {
+        return;
+    }
+
+    std::unique_lock lock(m_modulesMutex);
+    m_modules.appendIfNotContains(module);
+}
+
+void SigintWatcher::unregisterModule(NodeVMSourceTextModule* module)
+{
+    std::unique_lock lock(m_modulesMutex);
+
+    auto iter = std::find(m_modules.begin(), m_modules.end(), module);
+    if (iter == m_modules.end()) {
+        return;
+    }
+
+    std::swap(*iter, m_modules.last());
+    m_modules.removeLast();
 }
 
 void SigintWatcher::ref()
@@ -140,6 +162,13 @@ SigintWatcher& SigintWatcher::get()
 
 bool SigintWatcher::signalAll()
 {
+    {
+        std::unique_lock lock(m_modulesMutex);
+        for (NodeVMSourceTextModule* module : m_modules) {
+            module->sigintReceived();
+        }
+    }
+
     std::unique_lock lock(m_globalObjectsMutex);
 
     if (m_globalObjects.isEmpty()) {

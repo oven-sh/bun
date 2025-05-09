@@ -225,10 +225,6 @@ pub export fn Bun__onExit() void {
     std.mem.doNotOptimizeAway(&Bun__atexit);
 
     Output.Source.Stdio.restore();
-
-    if (Environment.isWindows) {
-        bun.windows.libuv.uv_library_shutdown();
-    }
 }
 
 comptime {

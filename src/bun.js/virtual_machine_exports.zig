@@ -87,8 +87,10 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     JSC.markBinding(@src());
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
-    const jsc_vm = JSC.VirtualMachine.get();
-    _ = jsc_vm.uncaughtException(globalObject, value, false);
+    const vm = JSC.VirtualMachine.get();
+    if (!value.isTerminationException(vm.jsc)) {
+        _ = vm.uncaughtException(globalObject, value, false);
+    }
     return .undefined;
 }
 

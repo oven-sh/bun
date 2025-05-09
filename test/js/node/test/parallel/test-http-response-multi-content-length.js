@@ -30,12 +30,12 @@ function test(server) {
   test(server);
 }
 
-// // Test adding an extra content-length header using writeHead().
-// {
-//   const server = http.createServer((req, res) => {
-//     res.writeHead(200, { 'content-length': [1, 2] });
-//     res.end('ok');
-//   });
+// Test adding an extra content-length header using writeHead().
+{
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-length': [1, 2] });
+    res.end('ok');
+  });
 
-//   test(server);
-// }
+  test(server);
+}

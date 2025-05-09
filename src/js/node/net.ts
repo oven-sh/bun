@@ -1125,9 +1125,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 Socket.prototype.connect = function connect(...args) {
   {
     const [options, connectListener] =
-      $isArray(args[0]) && args[0][normalizedArgsSymbol]
-        ? ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
-        : normalizeArgs(args);
+      $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session } = options;

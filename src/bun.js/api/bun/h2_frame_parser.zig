@@ -3565,7 +3565,7 @@ pub const H2FrameParser = struct {
 
     pub fn sendRSTToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments_old(1);
+        const args_list = callframe.arguments();
         if (args_list.len < 1) {
             return globalObject.throw("Expected error argument", .{});
         }

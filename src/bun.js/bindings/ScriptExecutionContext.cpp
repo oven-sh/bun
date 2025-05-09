@@ -391,4 +391,17 @@ void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionCont
     postTaskOnTimeout(task, timeout);
 }
 
+// Zig bindings
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
+{
+    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
 }
+
+extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
+{
+    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
+    if (!context) return nullptr;
+    return context->globalObject();
+}
+
+} // namespace WebCore

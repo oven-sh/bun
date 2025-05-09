@@ -847,7 +847,7 @@ indentation"
       `,
     );
   });
-  it.only("#16403", () => {
+  it("#16403", () => {
     tester.test(v =>
       v(
         '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',

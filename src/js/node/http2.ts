@@ -12,7 +12,7 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
-
+const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
 const { Readable } = Stream;
 type Http2ConnectOptions = {
@@ -269,7 +269,19 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
+function assertIsObject(value: any, name: string, types?: string) {
+  if (value !== undefined && (value === null || typeof value !== "object" || ArrayIsArray(value))) {
+    throw $ERR_INVALID_ARG_TYPE(name, types || "Object", value);
+  }
+}
 
+function assertIsArray(value: any, name: string, types?: string) {
+  if (value !== undefined && (value === null || !ArrayIsArray(value))) {
+    throw $ERR_INVALID_ARG_TYPE(name, types || "Array", value);
+  }
+}
+hideFromStack(assertIsObject);
+hideFromStack(assertIsArray);
 hideFromStack(assertValidHeader);
 
 class Http2ServerRequest extends Readable {
@@ -3483,9 +3495,45 @@ function connectionListener(socket: Socket) {
     }
   }
 }
+
+function initializeOptions(options) {
+  assertIsObject(options, "options");
+  options = { ...options };
+  assertIsObject(options.settings, "options.settings");
+  options.settings = { ...options.settings };
+
+  assertIsArray(options.remoteCustomSettings, "options.remoteCustomSettings");
+  if (options.remoteCustomSettings) {
+    options.remoteCustomSettings = [...options.remoteCustomSettings];
+    if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
+  }
+
+  if (options.maxSessionInvalidFrames !== undefined)
+    validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+
+  if (options.maxSessionRejectedStreams !== undefined) {
+    validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+  }
+
+  if (options.unknownProtocolTimeout !== undefined)
+    validateUint32(options.unknownProtocolTimeout, "unknownProtocolTimeout");
+  // TODO(danbev): is this a good default value?
+  else options.unknownProtocolTimeout = 10000;
+
+  // Used only with allowHTTP1
+  // options.Http1IncomingMessage ||= http.IncomingMessage;
+  // options.Http1ServerResponse ||= http.ServerResponse;
+
+  options.Http2ServerRequest ||= Http2ServerRequest;
+  options.Http2ServerResponse ||= Http2ServerResponse;
+  return options;
+}
+
 class Http2Server extends net.Server {
   timeout = 0;
   constructor(options, onRequestHandler) {
+    options = initializeOptions(options);
+
     if (typeof options === "function") {
       onRequestHandler = options;
       options = {};

@@ -31,8 +31,8 @@ const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] 
 );
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler, Socket } from "bun";
-import type { ServerOpts, Server as ServerType } from "node:net";
+import type { Socket, SocketHandler, SocketListener } from "bun";
+import type { ServerOpts } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");

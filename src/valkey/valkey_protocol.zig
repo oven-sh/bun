@@ -262,7 +262,15 @@ pub const RESPValue = union(RESPType) {
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
                     if (options.return_as_buffer) {
-                        return JSC.Node.Buffer.fromUTF8(globalObject, str);
+                        const buf = JSC.Node.Buffer.fromBytes(
+                            bun.default_allocator.dupe(u8, str) catch {
+                                return globalObject.throwOutOfMemory();
+                            },
+                            bun.default_allocator,
+                            .Uint8Array,
+                        );
+
+                        return buf.toJS(globalObject);
                     } else {
                         return bun.String.createUTF8ForJS(globalObject, str);
                     }
@@ -284,7 +292,15 @@ pub const RESPValue = union(RESPType) {
             .BlobError => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidBlobError),
             .VerbatimString => |verbatim| {
                 if (options.return_as_buffer) {
-                    return JSC.Node.Buffer.fromUTF8(globalObject, verbatim.content);
+                    const buf = JSC.Node.Buffer.fromBytes(
+                        bun.default_allocator.dupe(u8, verbatim.content) catch {
+                            return globalObject.throwOutOfMemory();
+                        },
+                        bun.default_allocator,
+                        .Uint8Array,
+                    );
+
+                    return buf.toJS(globalObject);
                 } else {
                     return bun.String.createUTF8ForJS(globalObject, verbatim.content);
                 }

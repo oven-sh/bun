@@ -1,9 +1,9 @@
-import { beforeAll, describe, expect, afterEach, test } from "bun:test";
+import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { bunEnv, bunExe, makeTree, tempDirWithFiles, isWindows } from "harness";
-import source from "./uv-stub-stuff/plugin.c";
-import goodSource from "./uv-stub-stuff/good_plugin.c";
 import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
+import goodSource from "./uv-stub-stuff/good_plugin.c";
+import source from "./uv-stub-stuff/plugin.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 

@@ -2,7 +2,6 @@
 name: Add a peer dependency
 ---
 
-
 To add an npm package as a peer dependency, use the `--peer` flag.
 
 ```sh

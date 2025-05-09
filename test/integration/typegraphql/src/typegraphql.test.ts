@@ -1,8 +1,8 @@
+import { expect, test } from "bun:test";
 import "reflect-metadata";
-import { Entity, Column } from "typeorm";
 import { Field, ObjectType, registerEnumType } from "type-graphql";
+import { Column, Entity } from "typeorm";
 import { Enum1, Enum2 } from "./enum.js";
-import { test, expect } from "bun:test";
 console.log("before run");
 
 export enum Enum3 {

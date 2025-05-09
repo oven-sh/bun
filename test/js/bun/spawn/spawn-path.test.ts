@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { chmodSync } from "fs";
-import { isWindows, tempDirWithFiles, bunEnv } from "harness";
+import { bunEnv, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {

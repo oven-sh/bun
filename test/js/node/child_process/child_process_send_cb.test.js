@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 const ok_repeated = "ok".repeat(16384);

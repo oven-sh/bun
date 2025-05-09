@@ -1,15 +1,14 @@
-import { sql, SQL, randomUUIDv7, password } from "bun";
-const postgres = (...args) => new sql(...args);
-import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
-import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux, tempDirWithFiles } from "harness";
+import { $, randomUUIDv7, sql, SQL } from "bun";
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
+const postgres = (...args) => new sql(...args);
 
 import { exec, execSync } from "child_process";
+import net from "net";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
 const dir = tempDirWithFiles("sql-test", {

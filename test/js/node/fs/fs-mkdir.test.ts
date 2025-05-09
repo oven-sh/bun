@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
-import { tmpdirSync } from "harness";
 
 let dirc = 0;
 function nextdir() {

@@ -1,4 +1,4 @@
-import type { Socket, ServerWebSocket, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,

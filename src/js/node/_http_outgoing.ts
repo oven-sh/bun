@@ -313,14 +313,6 @@ const OutgoingMessagePrototype = {
     if (!headers) return kEmptyObject;
     return headers.toJSON();
   },
-  get [kHighWaterMark]() {
-    return this._readableState.highWaterMark;
-  },
-  set [kHighWaterMark](value) {
-    if (this._readableState) {
-      this._readableState.highWaterMark = value;
-    }
-  },
   set headers(value) {
     this[headersSymbol] = new Headers(value);
   },

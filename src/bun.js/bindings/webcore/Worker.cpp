@@ -389,12 +389,10 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchError(WTF::String message)
+void Worker::dispatchErrorWithMessage(WTF::String message)
 {
-
     auto* ctx = scriptExecutionContext();
-    if (!ctx)
-        return;
+    if (!ctx) return;
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) -> void {
         ErrorEvent::Init init;
@@ -404,6 +402,27 @@ void Worker::dispatchError(WTF::String message)
         protectedThis->dispatchEvent(event);
     });
 }
+
+bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
+{
+    auto* ctx = scriptExecutionContext();
+    if (!ctx) return false;
+    auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    if (!serialized) return false;
+
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) -> void {
+        auto* globalObject = context.globalObject();
+        ErrorEvent::Init init;
+        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+        if (!deserialized) return;
+        init.error = deserialized;
+
+        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+        protectedThis->dispatchEvent(event);
+    });
+    return true;
+}
+
 void Worker::dispatchExit(int32_t exitCode)
 {
     auto* ctx = scriptExecutionContext();
@@ -483,7 +502,16 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.bubbles = false;
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
+    switch (worker->options().kind) {
+    case WorkerOptions::Kind::Web:
+        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+    case WorkerOptions::Kind::Node:
+        if (!worker->dispatchErrorWithValue(globalObject, error)) {
+            // If serialization threw an error, use the string instead
+            worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        }
+        return;
+    }
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);

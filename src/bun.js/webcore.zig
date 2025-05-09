@@ -12,7 +12,7 @@ pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
 pub const Crypto = @import("webcore/Crypto.zig");
 pub const AbortSignal = @import("bindings/AbortSignal.zig").AbortSignal;
-pub const WebWorker = @import("web_worker.zig").WebWorker;
+pub const WebWorker = @import("web_worker.zig");
 pub const AutoFlusher = @import("webcore/AutoFlusher.zig");
 pub const EncodingLabel = @import("webcore/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("webcore/fetch.zig");

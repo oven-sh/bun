@@ -643,7 +643,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             var err: uws.create_bun_socket_error_t = .none;
-            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
+            const socket = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
             if (socket == null) {
                 return switch (err) {
                     .load_ca_file => error.LoadCAFile,
@@ -686,7 +686,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     .reject_unauthorized = 0,
                 };
                 var err: uws.create_bun_socket_error_t = .none;
-                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
+                this.us_socket_context = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
 
                 this.sslCtx().setup();
             } else {

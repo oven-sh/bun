@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, beforeAll, afterAll, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isCI, nodeExe } from "harness";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { once } from "node:events";
 import path from "node:path";
 import tls from "node:tls";
 import { Duplex } from "stream";

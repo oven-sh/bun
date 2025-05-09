@@ -5,13 +5,13 @@
  */
 
 import {
-  isType,
   dictionaryImpl,
+  isFunc,
+  isType,
   oneOfImpl,
   registerFunction,
   TypeImpl,
   type TypeKind,
-  isFunc,
 } from "./bindgen-lib-internal";
 
 /** A type definition for argument parsing. See `bindgen.md` for usage details. */

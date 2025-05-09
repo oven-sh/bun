@@ -1,6 +1,6 @@
+import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { mkdir } from "fs/promises";
-import { test, expect } from "bun:test";
 import { tmpdirSync } from "harness";
 import { join, toNamespacedPath } from "path";
 

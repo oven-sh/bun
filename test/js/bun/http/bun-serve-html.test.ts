@@ -1,5 +1,5 @@
-import type { Subprocess, Server } from "bun";
-import { describe, test, expect } from "bun:test";
+import type { Server, Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 

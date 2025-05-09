@@ -1,6 +1,4 @@
-import assert from "assert";
 import { describe, expect, test } from "bun:test";
-import { spawn } from "child_process";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";

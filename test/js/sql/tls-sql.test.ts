@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { postgres, randomUUIDv7, SQL, sql } from "bun";
+import { describe, expect, test } from "bun:test";
 import { getSecret } from "harness";
-import { SQL, sql, postgres, randomUUIDv7 } from "bun";
 
 const TLS_POSTGRES_DATABASE_URL = getSecret("TLS_POSTGRES_DATABASE_URL");
 const PG_TRANSACTION_POOL_SUPABASE_URL = getSecret("PG_TRANSACTION_POOL_SUPABASE_URL");

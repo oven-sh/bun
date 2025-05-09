@@ -19,9 +19,9 @@
 
 const ENABLE_LOGGING = false;
 
-import { describe, test, afterAll } from "bun:test";
-import { isWindows } from "harness";
+import { afterAll, describe, test } from "bun:test";
 import { EventEmitter } from "events";
+import { isWindows } from "harness";
 var calls = 0,
   constructs = 0,
   subclasses = 0;

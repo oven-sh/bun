@@ -17,12 +17,16 @@ async function flushGC(times = 10) {
   }
 }
 const server = createServer(common.mustCall((req, res) => {
+  
+  function serverStopped() {
+    return server.listening == false;
+  }
   onGC(req, { ongc: common.mustCall(() => { server.closeAllConnections(); }) });
   req.resume();
   req.on('end', common.mustCall(() => {
     setImmediate(async () => {
       client.end();
-      await flushGC();
+      common.gcUntil(serverStopped);
     });
   }));
   res.end('hello world');

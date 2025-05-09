@@ -361,7 +361,6 @@ const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTT
 const kOutHeaders = Symbol("kOutHeaders");
 
 export {
-  kOutHeaders,
   ConnResetException,
   Headers,
   METHODS,
@@ -408,6 +407,7 @@ export {
   kMaxHeadersCount,
   kMethod,
   kOptions,
+  kOutHeaders,
   kParser,
   kPath,
   kPendingCallbacks,

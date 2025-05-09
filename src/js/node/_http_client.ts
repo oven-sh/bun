@@ -372,6 +372,7 @@ function ClientRequest(input, options, cb) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
           handleResponse = undefined;
+
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
           var res = (this.res = new IncomingMessage(response, {
@@ -401,16 +402,16 @@ function ClientRequest(input, options, cb) {
               if (self.aborted || !self.emit("response", res)) {
                 res._dump();
               }
+              maybeEmitClose();
+              if (res.statusCode === 304) {
+                res.complete = true;
+                maybeEmitClose();
+                return;
+              }
             },
             this,
             res,
           );
-          maybeEmitClose();
-          if (res.statusCode === 304) {
-            res.complete = true;
-            maybeEmitClose();
-            return;
-          }
         };
 
         if (!keepOpen) {

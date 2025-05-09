@@ -249,6 +249,7 @@ public:
     }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
+        
         auto* httpContext = HttpContext<SSL>::create(Loop::get(), options);
         if (!httpContext) {
             return nullptr;

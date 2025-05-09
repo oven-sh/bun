@@ -67,7 +67,9 @@ function EventEmitter(opts) {
     this[kCapture] = !!opts.captureRejections;
     this.emit = emitWithRejectionCapture;
   } else {
-    this[kCapture] = EventEmitterPrototype[kCapture];
+    const capture = EventEmitterPrototype[kCapture];
+    this[kCapture] = capture;
+    this.emit = capture ? emitWithRejectionCapture : emitWithoutRejectionCapture;
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });

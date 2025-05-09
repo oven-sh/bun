@@ -509,6 +509,7 @@ const ServerResponsePrototype = {
     if (handle) {
       handle.abort();
     }
+    this?.socket?.destroy();
     return this;
   },
 
@@ -802,7 +803,31 @@ const ServerPrototype = {
     this.listening = false;
     server.stop();
   },
-
+  [EventEmitter.captureRejectionSymbol]: function (err, event, ...args) {
+    switch (event) {
+      case "request": {
+        const { 1: res } = args;
+        if (!res.headersSent && !res.writableEnded) {
+          // Don't leak headers.
+          const names = res.getHeaderNames();
+          for (let i = 0; i < names.length; i++) {
+            res.removeHeader(names[i]);
+          }
+          res.statusCode = 500;
+          res.end(STATUS_CODES[500]);
+        } else {
+          res.destroy();
+        }
+        break;
+      }
+      default:
+        // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
+        //   .apply(this, arguments);
+        const { 1: res } = args;
+        res?.socket?.destroy();
+        break;
+    }
+  },
   [Symbol.asyncDispose]() {
     const { resolve, reject, promise } = Promise.withResolvers();
     this.close(function (err, ...args) {
@@ -1220,7 +1245,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (req && !req.complete && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
-      req.destroy(new ConnResetException("aborted"));
+      if (req.listenerCount("error") > 0) {
+        req.destroy(new ConnResetException("aborted"));
+      } else {
+        req.destroy();
+      }
     }
   }
   #onCloseForDestroy(closeCallback) {

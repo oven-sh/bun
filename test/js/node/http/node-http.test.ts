@@ -1499,8 +1499,8 @@ it("should emit events in the right order", async () => {
     ["req", "response"],
     "STATUS: 200",
     // TODO: not totally right:
-    ["req", "close"],
     ["res", "resume"],
+    ["req", "close"],
     ["res", "readable"],
     ["res", "end"],
     ["res", "close"],

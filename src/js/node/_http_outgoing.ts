@@ -1,6 +1,8 @@
 const { Stream } = require("internal/stream");
 const { validateFunction, isUint8Array, validateString } = require("internal/validators");
-
+const { deprecate } = require("node:util");
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectKeys = Object.keys;
 const {
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -179,6 +181,7 @@ function OutgoingMessage(options) {
   this._header = null;
   this._headerSent = false;
   this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
+  this._headerNames = { __proto__: null };
 }
 const OutgoingMessagePrototype = {
   constructor: OutgoingMessage,
@@ -197,7 +200,7 @@ const OutgoingMessagePrototype = {
   _removedConnection: false,
   usesChunkedEncodingByDefault: true,
   _closed: false,
-
+  _headerNames: undefined,
   appendHeader(name, value) {
     validateString(name, "name");
     var headers = (this[headersSymbol] ??= new Headers());
@@ -513,7 +516,45 @@ const OutgoingMessagePrototype = {
   },
 };
 OutgoingMessage.prototype = OutgoingMessagePrototype;
-
+ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
+  __proto__: null,
+  get: deprecate(
+    function () {
+      const headers = this.getHeaders();
+      if (headers !== null) {
+        const out = { __proto__: null };
+        const keys = ObjectKeys(headers);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const key = keys[i];
+          out[key] = key;
+        }
+        return out;
+      }
+      return null;
+    },
+    "OutgoingMessage.prototype._headerNames is deprecated",
+    "DEP0066",
+  ),
+  set: deprecate(
+    function (val) {
+      if (typeof val === "object" && val !== null) {
+        const headers = this.getHeaders();
+        if (!headers) return;
+        const keys = ObjectKeys(val);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const header = headers[keys[i]];
+          if (header) header[keys[i]] = val[keys[i]];
+        }
+      }
+    },
+    "OutgoingMessage.prototype._headerNames is deprecated",
+    "DEP0066",
+  ),
+});
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
 
 function onTimeout() {

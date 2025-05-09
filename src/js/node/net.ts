@@ -353,9 +353,7 @@ const ServerHandlers: SocketHandler = {
 
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
 
-    console.log(options);
-
-    const _socket = new SClass(options);
+    const _socket = new SClass({});
 
     _socket.isServer = true;
     _socket.server = self;

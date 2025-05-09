@@ -633,7 +633,6 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
     let { self, that, req } = socket.data;
-    $debug(self.fmtState(), socket.listener);
     if (!that) that = SocketHandle[kAttach](socket, self);
     self._handle = that;
     socket[owner_symbol] = self;

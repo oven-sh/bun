@@ -1637,8 +1637,12 @@ fn NewSocket(comptime ssl: bool) type {
             // currently from uSockets we get a boolean 0:success/1:failure for the 'errno' value
             // in the fd case we explicitly pass ENOENT or ECONNREFUSED
             // rework the callers of this to persist errno values correctly
-            bun.assert(errno <= 1); // just to be sure this is called with a negative in the meantime
-            const errno_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) -errno else @as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
+            // on windows, uSockets calls WSAGetLastError for the 'errno' value
+            var errno_ = errno;
+            if (Environment.isWindows) errno_ = @intFromEnum(bun.sys.SystemErrno.init(errno_).?);
+            if (Environment.isWindows) errno_ = -errno_;
+            bun.assert(errno_ <= 1); // just to be sure this is called with a negative in the meantime
+            errno_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) -errno else @as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
             const code_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
 
             const callback = handlers.onConnectError;

@@ -296,7 +296,7 @@ pub fn getErrno(rc: anytype) E {
     return .SUCCESS;
 }
 
-pub const SystemErrno = enum(i16) {
+pub const SystemErrno = enum(u16) {
     SUCCESS = 0,
     EPERM = 1,
     ENOENT = 2,

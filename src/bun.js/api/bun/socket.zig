@@ -1259,7 +1259,7 @@ pub const Listener = struct {
                 SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
-                    socket.handleConnectError(-@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
+                    socket.handleConnectError(-@as(c_int, @intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)));
                     return promise_value;
                 };
 
@@ -1637,13 +1637,13 @@ fn NewSocket(comptime ssl: bool) type {
             // currently from uSockets we get a boolean 0:success/1:failure for the 'errno' value
             // in the fd case we explicitly pass ENOENT or ECONNREFUSED
             // rework the callers of this to persist errno values correctly
-            const errno_ = if (errno == -@intFromEnum(bun.sys.SystemErrno.ENOENT)) errno else -@as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
-            const code_ = if (errno == -@intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            const errno_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) -errno else @as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
+            const code_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
             const err = JSC.SystemError{
-                .errno = errno_,
+                .errno = -errno_,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
                 .code = code_,
@@ -3730,7 +3730,7 @@ pub const DuplexUpgradeContext = struct {
             }
         } else {
             if (this.tls) |tls| {
-                tls.handleConnectError(-@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
+                tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)));
             }
         }
     }
@@ -3763,7 +3763,7 @@ pub const DuplexUpgradeContext = struct {
                                 bun.outOfMemory();
                             },
                             else => {
-                                const errno = -@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+                                const errno = -@as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
                                 if (this.tls) |tls| {
                                     const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
@@ -4131,10 +4131,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(-@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                    tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(-@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                    tcp.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
                 },
                 .none => {},
             }
@@ -4151,10 +4151,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(-@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                    tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(-@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                    tcp.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
                 },
                 .none => {},
             }

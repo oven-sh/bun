@@ -1,8 +1,8 @@
 import { Socket, SocketHandler, TCPSocketConnectOptions, TCPSocketListener } from "bun";
-import type { Mock } from "bun:test";
-import { jest, afterEach, test, expect } from "bun:test";
-import { isLinux } from "harness";
 import jsc from "bun:jsc";
+import type { Mock } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
+import { isLinux } from "harness";
 
 const handlerNames: Set<keyof SocketHandler<any>> = new Set([
   "open",

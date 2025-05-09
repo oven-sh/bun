@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
-import { isFlaky, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -316,7 +316,8 @@ describe("bundler", () => {
       `,
       },
       run: {
-        stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
+        stdout:
+          '<!DOCTYPE html><html><head><link rel="expect" href="#«R»" blocking="render"/></head><body><h1>Hello World</h1><p>This is an example.</p><template id="«R»"></template></body></html>',
         stderr: bytecode
           ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
           : undefined,

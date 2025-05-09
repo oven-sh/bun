@@ -45,7 +45,7 @@ pub fn getEncoding(
     this: *TextDecoder,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
+    return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
 const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -276,9 +276,6 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
             var output = bun.String.fromUTF16(decoded.items);
             return output.toJS(globalThis);
         },
-        else => {
-            return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
-        },
     }
 }
 
@@ -297,7 +294,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             if (EncodingLabel.which(str.slice())) |label| {
                 decoder.encoding = label;
             } else {
-                return globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
+                return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
             }
         } else if (arguments[0].isUndefined()) {
             // default to utf-8
@@ -314,11 +311,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
             }
 
             if (try options.get(globalThis, "fatal")) |fatal| {
-                if (fatal.isBoolean()) {
-                    decoder.fatal = fatal.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
-                }
+                decoder.fatal = fatal.toBoolean();
             }
 
             if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {

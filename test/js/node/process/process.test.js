@@ -1,9 +1,9 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
+import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
-import { familySync } from "detect-libc";
+import { basename, join, resolve } from "path";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -1098,4 +1098,19 @@ it("process.memoryUsage.arrayBuffers", () => {
   const array = new ArrayBuffer(1024 * 1024 * 16);
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+});
+
+it("should handle user assigned `default` properties", async () => {
+  process.default = 1;
+  process.hello = 2;
+  const { promise, resolve } = Promise.withResolvers();
+  import("node:process").then(processModule => {
+    expect(processModule.default).toBe(process);
+    expect(processModule.default.default).toBe(1);
+    expect(processModule.hello).toBe(2);
+    expect(processModule.default.hello).toBe(2);
+    resolve();
+  });
+
+  await promise;
 });

@@ -79,6 +79,8 @@ typedef struct BunString {
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 
+    bool isEmpty() const;
+
 } BunString;
 
 typedef struct ZigErrorType {
@@ -281,7 +283,7 @@ typedef void WebSocketClientTLS;
 
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
-typedef struct Uint8Array_alias Uint8Array_alias;
+typedef struct JSC::JSUint8Array JSC::JSUint8Array;
 #endif
 
 #ifdef __cplusplus
@@ -309,8 +311,6 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
 }
-
-using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;

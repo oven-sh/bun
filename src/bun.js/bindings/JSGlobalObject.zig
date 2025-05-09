@@ -89,6 +89,17 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
     }
 
+    pub fn throwInvalidArgumentValueCustom(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        value: JSValue,
+        message: []const u8,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
+    }
+
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
     /// Message depends on whether `expected` is present.
     /// - "The property "{argname}" is invalid. Received {value}"
@@ -522,7 +533,10 @@ pub const JSGlobalObject = opaque {
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
+        const exception = this.takeException(err);
+        if (!exception.isTerminationException(this.vm())) {
+            _ = this.bunVM().uncaughtException(this, exception, false);
+        }
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -841,6 +855,12 @@ pub const JSGlobalObject = opaque {
     ) JSC.JSValue {
         @branchHint(.cold);
         return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
+    }
+
+    extern fn ScriptExecutionContextIdentifier__forGlobalObject(global: *JSC.JSGlobalObject) u32;
+
+    pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
+        return @enumFromInt(ScriptExecutionContextIdentifier__forGlobalObject(global));
     }
 
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };

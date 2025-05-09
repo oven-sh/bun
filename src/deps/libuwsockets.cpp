@@ -365,6 +365,33 @@ extern "C"
     }
   }
 
+
+  void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      if (handler == nullptr) {
+        uwsApp->setOnClientError(nullptr);
+        return;
+      }
+      uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
+        handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
+      });
+    }
+  }
+
   void uws_app_listen(int ssl, uws_app_t *app, int port,
                       uws_listen_handler handler, void *user_data)
   {
@@ -1755,6 +1782,10 @@ __attribute__((callback (corker, ctx)))
   void us_socket_sendfile_needs_more(us_socket_r s) {
     s->context->loop->data.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  }
+
+  LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
+    return us_poll_fd(&s->p);
   }
 
   // Gets the remote address and port

@@ -455,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {}, Bun::CountdownOverflowBehavior::Clamp);
+    Bun__Timer__sleep(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue));
     return JSC::JSValue::encode(promise);
 }
 
@@ -630,7 +630,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     WTF::URL url;
 
     auto path = JSC::JSValue::encode(arg0);
-    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
+    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(path);
     if (!domURL) {
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));
@@ -914,7 +914,10 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* object = globalObject->bunObject();
 
     // :'(
-    object->reifyAllStaticProperties(lexicalGlobalObject);
+    if (LIKELY(object->hasNonReifiedStaticProperties())) {
+        object->reifyAllStaticProperties(lexicalGlobalObject);
+    }
+
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

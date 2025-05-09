@@ -1,6 +1,8 @@
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
+const { validateFunction } = require("internal/validators");
+
 function defineCustomPromisify(target, callback) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
     value: callback,
@@ -19,12 +21,10 @@ function defineCustomPromisifyArgs(target, args) {
 }
 
 var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
+  validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
-    if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
-    }
+    validateFunction(custom, "custom");
     // ensure that we don't create another promisified function wrapper
     return defineCustomPromisify(custom, custom);
   }
@@ -33,7 +33,7 @@ var promisify = function promisify(original) {
   function fn(...originalArgs) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
-      original.$apply(this, [
+      const maybePromise = original.$apply(this, [
         ...originalArgs,
         function (err, ...values) {
           if (err) {
@@ -57,6 +57,14 @@ var promisify = function promisify(original) {
           }
         },
       ]);
+
+      if ($isPromise(maybePromise)) {
+        process.emitWarning(
+          "Calling promisify on a function that returns a Promise is likely a mistake.",
+          "DeprecationWarning",
+          "DEP0174",
+        );
+      }
     } catch (err) {
       reject(err);
     }

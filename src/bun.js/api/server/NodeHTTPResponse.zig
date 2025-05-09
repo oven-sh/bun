@@ -28,6 +28,7 @@ server: AnyServer,
 /// So we need to buffer that data.
 /// This should be pretty uncommon though.
 buffered_request_body_data_during_pause: bun.ByteList = .{},
+bytes_written: usize = 0,
 
 upgrade_context: UpgradeCTX = .{},
 
@@ -297,6 +298,7 @@ pub fn create(
     if (method.hasRequestBody() or method == HTTP.Method.GET) {
         const req_len: usize = brk: {
             if (request.header("content-length")) |content_length| {
+                log("content-length: {s}", .{content_length});
                 break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
             }
 
@@ -816,6 +818,13 @@ fn writeOrEnd(
         break :brk .undefined;
     };
 
+    const strict_content_length: ?u64 = brk: {
+        if (arguments.len > 3 and arguments[3].isNumber()) {
+            break :brk @max(arguments[3].toInt64(), 0);
+        }
+        break :brk null;
+    };
+
     const string_or_buffer: JSC.Node.StringOrBuffer = brk: {
         if (input_value == .null or input_value == .undefined) {
             break :brk JSC.Node.StringOrBuffer.empty;
@@ -850,8 +859,22 @@ fn writeOrEnd(
     } else {
         log("write('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
     }
+    if (strict_content_length) |content_length| {
+        const bytes_written = this.bytes_written + bytes.len;
 
+        if (is_end) {
+            if (bytes_written != content_length) {
+                return globalObject.ERR(.HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch", .{}).throw();
+            }
+        } else if (bytes_written > content_length) {
+            return globalObject.ERR(.HTTP_CONTENT_LENGTH_MISMATCH, "Content-Length mismatch", .{}).throw();
+        }
+        this.bytes_written = bytes_written;
+    } else {
+        this.bytes_written +|= bytes.len;
+    }
     if (is_end) {
+
         // Discard the body read ref if it's pending and no onData callback is set at this point.
         // This is the equivalent of req._dump().
         if (this.body_read_ref.has and this.body_read_state == .pending and (!this.flags.hasCustomOnData or js.onDataGetCached(this_value) == null)) {
@@ -895,14 +918,12 @@ fn writeOrEnd(
     }
 }
 
-pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (this.isDone() or value == .undefined) {
         js.onWritableSetCached(thisValue, globalObject, .undefined);
     } else {
         js.onWritableSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
-
-    return true;
 }
 
 pub fn getOnWritable(_: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -916,9 +937,9 @@ pub fn getOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlo
     return js.onAbortedGetCached(thisValue) orelse .undefined;
 }
 
-pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (this.flags.socket_closed) {
-        return true;
+        return;
     }
 
     if (this.isDone() or value == .undefined) {
@@ -926,8 +947,6 @@ pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject:
     } else {
         js.onAbortedSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
-
-    return true;
 }
 
 pub fn getOnData(_: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -942,9 +961,8 @@ pub fn getUpgraded(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue 
     return JSC.jsBoolean(this.flags.upgraded);
 }
 
-pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) void {
     this.flags.hasCustomOnData = value.toBoolean();
-    return true;
 }
 
 fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
@@ -960,7 +978,7 @@ fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalOb
     }
 }
 
-pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (value == .undefined or this.flags.ended or this.flags.socket_closed or this.body_read_state == .none or this.flags.is_data_buffered_during_pause_last) {
         js.onDataSetCached(thisValue, globalObject, .undefined);
         defer {
@@ -977,7 +995,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
             },
             .none => {},
         }
-        return true;
+        return;
     }
 
     js.onDataSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
@@ -989,12 +1007,10 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
         this.ref();
         this.body_read_ref.ref(globalObject.bunVM());
     }
-
-    return true;
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments();
 
     return writeOrEnd(this, globalObject, arguments, .zero, false);
 }
@@ -1005,10 +1021,14 @@ pub fn flushHeaders(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.Cal
 }
 
 pub fn end(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments_old(3).slice();
+    const arguments = callframe.arguments();
     //We dont wanna a paused socket when we call end, so is important to resume the socket
     resumeSocket(this);
     return writeOrEnd(this, globalObject, arguments, callframe.this(), true);
+}
+
+pub fn getBytesWritten(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    return JSC.JSValue.jsNumber(this.bytes_written);
 }
 
 fn handleCorked(globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, result: *JSValue, is_exception: *bool) void {

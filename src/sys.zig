@@ -1397,7 +1397,7 @@ pub fn openFileAtWindowsNtPath(
                 bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
                 if (rc == .SUCCESS) {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.toFD(result) });
+                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
                     log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
                 }
@@ -2268,6 +2268,21 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
+}
+
+pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
+    while (true) {
+        const rc = linux.pidfd_open(pid, flags);
+
+        if (Maybe(i32).errnoSys(rc, .pidfd_open)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return Maybe(i32){ .result = @intCast(rc) };
+    }
+
+    unreachable;
 }
 
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
@@ -4124,7 +4139,7 @@ pub const File = struct {
     /// 2. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
+    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         var buf: bun.PathBuffer = undefined;
         const normalized = bun.path.joinAbsStringBufZ(
             bun.fs.FileSystem.instance.top_level_dir,
@@ -4138,7 +4153,7 @@ pub const File = struct {
     /// 1. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, [:0]u8 }) {
+    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
         const ElementType = std.meta.Elem(@TypeOf(path));
 
         const rc = brk: {
@@ -4172,16 +4187,14 @@ pub const File = struct {
             return .{ .result = .{ this, @ptrCast(@constCast("")) } };
         }
 
-        result.bytes.append(0) catch bun.outOfMemory();
-
-        return .{ .result = .{ this, result.bytes.items[0 .. result.bytes.items.len - 1 :0] } };
+        return .{ .result = .{ this, result.bytes.items } };
     }
 
     /// 1. Open a file for reading relative to a directory
     /// 2. Read the file to a buffer
     /// 3. Close the file
     /// 4. Return the buffer
-    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
+    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
         const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
             .err => |err| return .{ .err = err },
             .result => |result| result,
@@ -4191,15 +4204,27 @@ pub const File = struct {
         return .{ .result = bytes };
     }
 
-    pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
-        return switch (readFrom(dir_fd, path, allocator)) {
-            .err => |err| .{ .err = err },
-            .result => |bytes| .{ .result = bun.logger.Source.initPathString(path, bytes) },
+    const ToSourceOptions = struct {
+        convert_bom: bool = false,
+    };
+
+    pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator, opts: ToSourceOptions) Maybe(bun.logger.Source) {
+        var bytes = switch (readFrom(dir_fd, path, allocator)) {
+            .err => |err| return .{ .err = err },
+            .result => |bytes| bytes,
         };
+
+        if (opts.convert_bom) {
+            if (bun.strings.BOM.detect(bytes)) |bom| {
+                bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
+            }
+        }
+
+        return .{ .result = bun.logger.Source.initPathString(path, bytes) };
     }
 
-    pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
-        return toSourceAt(std.fs.cwd(), path, allocator);
+    pub fn toSource(path: anytype, allocator: std.mem.Allocator, opts: ToSourceOptions) Maybe(bun.logger.Source) {
+        return toSourceAt(std.fs.cwd(), path, allocator, opts);
     }
 };
 

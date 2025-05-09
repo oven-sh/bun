@@ -110,7 +110,6 @@ export default [
     noConstructor: true,
     finalize: true,
     configurable: false,
-    hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -165,13 +164,33 @@ export default [
       _destroyed: {
         getter: "getDestroyed",
       },
+      close: {
+        fn: "close",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _onTimeout: {
+        getter: "get_onTimeout",
+        setter: "set_onTimeout",
+        this: true,
+      },
+      _idleTimeout: {
+        getter: "get_idleTimeout",
+        setter: "set_idleTimeout",
+        this: true,
+      },
+      _repeat: {
+        getter: "get_repeat",
+        setter: "set_repeat",
+        this: true,
+      },
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback"],
+    values: ["arguments", "callback", "idleTimeout", "repeat"],
   }),
   define({
     name: "Immediate",

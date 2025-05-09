@@ -1,6 +1,6 @@
-import { describe, expect, test, afterAll } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv } from "harness";
 import path from "path";
-import { bunExe, bunEnv } from "harness";
 
 const original_node_env = bunEnv.NODE_ENV;
 

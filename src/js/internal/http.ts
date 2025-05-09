@@ -6,7 +6,7 @@ const {
   setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
-  setRequireHostHeader,
+  setServerCustomOptions,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -18,7 +18,11 @@ const {
   setRequestTimeout: (req: Request, timeout: number) => boolean;
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
-  setRequireHostHeader: (server: any, requireHostHeader: boolean) => void;
+  setServerCustomOptions: (
+    server: any,
+    requireHostHeader: boolean,
+    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+  ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
@@ -352,11 +356,14 @@ function emitErrorNt(msg, err, callback) {
 }
 
 export {
+  ConnResetException,
+  Headers,
+  METHODS,
+  STATUS_CODES,
   abortedSymbol,
   assignHeadersFast,
   bodyStreamSymbol,
   callCloseCallback,
-  ConnResetException,
   controllerSymbol,
   deferredSymbol,
   drainMicrotasks,
@@ -372,9 +379,8 @@ export {
   getIsNextIncomingMessageHTTPS,
   getRawKeys,
   hasServerResponseFinished,
-  Headers,
-  headersSymbol,
   headerStateSymbol,
+  headersSymbol,
   headersTuple,
   isAbortError,
   isTlsSymbol,
@@ -391,8 +397,8 @@ export {
   kHandle,
   kHost,
   kInternalSocketData,
-  kMaxHeadersCount,
   kMaxHeaderSize,
+  kMaxHeadersCount,
   kMethod,
   kOptions,
   kParser,
@@ -410,7 +416,6 @@ export {
   kTls,
   kUpgradeOrConnect,
   kUseDefaultPort,
-  METHODS,
   noBodySymbol,
   optionsSymbol,
   reqSymbol,
@@ -419,9 +424,8 @@ export {
   setHeader,
   setIsNextIncomingMessageHTTPS,
   setRequestTimeout,
-  setRequireHostHeader,
+  setServerCustomOptions,
   setServerIdleTimeout,
-  STATUS_CODES,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

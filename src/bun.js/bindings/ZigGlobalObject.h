@@ -70,8 +70,8 @@ class SubtleCrypto;
 class EventTarget;
 }
 
-extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
@@ -102,9 +102,10 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
@@ -163,7 +164,6 @@ public:
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
 
-    WebCore::ScriptExecutionContext* scriptExecutionContext();
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
@@ -372,9 +372,9 @@ public:
     };
     static constexpr size_t promiseFunctionsSize = 34;
 
-    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
+    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
-    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1))
     {
         auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
         if (JSFunction* func = barrier.get()) {
@@ -468,6 +468,10 @@ public:
     /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
                                                                                                              \
+    /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
+    /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
+    V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+                                                                                                             \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
     /* We set a default value for this to mimic Node.js behavior It is a */                                  \
@@ -527,6 +531,8 @@ public:
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
+    V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
@@ -567,6 +573,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSCryptoKey)                                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                               \
@@ -596,9 +604,14 @@ public:
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
     T name;
+
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
+
 #undef DECLARE_GLOBALOBJECT_GC_MEMBER
 
+    // Ensure that everything below here has a consistent visibility instead of taking the
+    // visibility of the last thing declared with FOR_EACH_GLOBALOBJECT_GC_MEMBER
+public:
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
 
@@ -657,6 +670,9 @@ public:
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
+    JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
+    void setNodeWorkerEnvironmentData(JSMap* data);
+
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
@@ -696,11 +712,11 @@ private:
 
 class EvalGlobalObject : public GlobalObject {
 public:
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
 
     EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
-        : GlobalObject(vm, structure, &s_globalObjectMethodTable)
+        : GlobalObject(vm, structure, &globalObjectMethodTable())
     {
     }
 };

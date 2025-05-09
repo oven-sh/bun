@@ -1,5 +1,8 @@
-import { type Changes, Database } from "bun:sqlite";
+import { type Changes, Database, constants } from "bun:sqlite";
 import { expectType } from "./utilities";
+
+expectType(constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE).is<number>();
+expectType<Record<string, number>>(constants);
 
 const db = new Database(":memory:");
 const query1 = db.query<

@@ -7,11 +7,30 @@ const EventEmitter = require("node:events");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const { validateObject, validateBoolean } = require("internal/validators");
 
-const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
+const {
+  MessageChannel,
+  BroadcastChannel,
+  Worker: WebWorker,
+} = globalThis as typeof globalThis & {
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
+};
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
+const {
+  0: _workerData,
+  1: _threadId,
+  2: _receiveMessageOnPort,
+  3: environmentData,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
+  unknown,
+  number,
+  (port: unknown) => unknown,
+  Map<unknown, unknown>,
+];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -184,12 +203,16 @@ function fakeParentPort() {
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
-function getEnvironmentData() {
-  return process.env;
+function getEnvironmentData(key: unknown): unknown {
+  return environmentData.get(key);
 }
 
-function setEnvironmentData(env: any) {
-  process.env = env;
+function setEnvironmentData(key: unknown, value: unknown): void {
+  if (value === undefined) {
+    environmentData.delete(key);
+  } else {
+    environmentData.set(key, value);
+  }
 }
 
 function markAsUntransferable() {
@@ -234,7 +257,7 @@ class Worker extends EventEmitter {
       }
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);

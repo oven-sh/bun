@@ -580,8 +580,7 @@ pub const JSValue = enum(i64) {
 
     pub fn toPortNumber(this: JSValue, global: *JSGlobalObject) bun.JSError!u16 {
         if (this.isNumber()) {
-            // const double = try this.toNumber(global);
-            const double = this.coerceToDouble(global);
+            const double = try this.toNumber(global);
             if (std.math.isNan(double)) {
                 return JSC.Error.SOCKET_BAD_PORT.throw(global, "Invalid port number", .{});
             }
@@ -1669,6 +1668,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__eqlCell(this, other);
     }
 
+    /// This must match the enum in C++ in src/bun.js/bindings/bindings.cpp BuiltinNamesMap
     pub const BuiltinName = enum(u8) {
         method,
         headers,
@@ -1693,6 +1693,7 @@ pub const JSValue = enum(i64) {
         ignoreBOM,
         type,
         signal,
+        cmd,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
@@ -2592,7 +2593,7 @@ pub const JSValue = enum(i64) {
         return Bun__JSValue__deserialize(global, bytes.ptr, bytes.len);
     }
 
-    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;
+    extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue, forTransfer: bool) SerializedScriptValue.External;
     extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
 
     pub const SerializedScriptValue = struct {
@@ -2612,8 +2613,8 @@ pub const JSValue = enum(i64) {
 
     /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
-    pub inline fn serialize(this: JSValue, global: *JSGlobalObject) ?SerializedScriptValue {
-        const value = Bun__serializeJSValue(global, this);
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) ?SerializedScriptValue {
+        const value = Bun__serializeJSValue(global, this, forTransfer);
         return if (value.bytes) |bytes|
             .{ .data = bytes[0..value.size], .handle = value.handle.? }
         else

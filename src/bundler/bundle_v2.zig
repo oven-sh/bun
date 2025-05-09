@@ -1089,6 +1089,7 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
+    /// `heap` is not freed when `deinit`ing the BundleV2
     pub fn init(
         transpiler: *Transpiler,
         bake_options: ?BakeOptions,
@@ -1096,7 +1097,7 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
-        heap: ?ThreadlocalArena,
+        heap: ThreadlocalArena,
     ) !*BundleV2 {
         transpiler.env.loadTracy();
 
@@ -1111,7 +1112,7 @@ pub const BundleV2 = struct {
             .framework = null,
             .graph = .{
                 .pool = undefined,
-                .heap = heap orelse try ThreadlocalArena.init(),
+                .heap = heap,
                 .allocator = undefined,
                 .kit_referenced_server_data = false,
                 .kit_referenced_client_data = false,
@@ -1666,7 +1667,15 @@ pub const BundleV2 = struct {
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(
+            transpiler,
+            null,
+            allocator,
+            event_loop,
+            enable_reloading,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -1718,11 +1727,19 @@ pub const BundleV2 = struct {
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
         server_transpiler: *Transpiler,
-        kit_options: BakeOptions,
+        bake_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(server_transpiler, kit_options, allocator, event_loop, false, null, null);
+        var this = try BundleV2.init(
+            server_transpiler,
+            bake_options,
+            allocator,
+            event_loop,
+            false,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -2068,7 +2085,9 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },
@@ -2133,7 +2152,9 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },
@@ -2453,7 +2474,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn deinit(this: *BundleV2) void {
+    pub fn deinitWithoutFreeingArena(this: *BundleV2) void {
         {
             // We do this first to make it harder for any dangling pointers to data to be used in there.
             var on_parse_finalizers = this.finalizers;
@@ -2557,7 +2578,9 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        var ctx: DevServerInput = .{ .css_entry_points = .{} };
+        var ctx: DevServerInput = .{
+            .css_entry_points = .{},
+        };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
@@ -2800,7 +2823,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try dev_server.finalizeBundle(this, .{
+        try dev_server.finalizeBundle(this, &.{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
@@ -3447,7 +3470,7 @@ pub const BundleV2 = struct {
                         graph.input_files.items(.loader)[source.index.get()],
                         parse_result.watcher_data.dir_fd,
                         null,
-                        false,
+                        bun.Environment.isWindows,
                     );
                 }
             }
@@ -3855,7 +3878,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             defer {
                 this.graph.pool.reset();
                 ast_memory_allocator.pop();
-                this.deinit();
+                this.deinitWithoutFreeingArena();
             }
 
             errdefer {
@@ -5163,7 +5186,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
@@ -10765,11 +10788,11 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
@@ -10921,17 +10944,17 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
         } };
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
             if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
                 @breakpoint();
@@ -18012,15 +18035,15 @@ pub const DevServerOutput = struct {
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
 
-    pub fn jsPseudoChunk(out: DevServerOutput) *Chunk {
+    pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];
     }
 
-    pub fn cssChunks(out: DevServerOutput) []Chunk {
+    pub fn cssChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1..][0..out.css_file_list.count()];
     }
 
-    pub fn htmlChunks(out: DevServerOutput) []Chunk {
+    pub fn htmlChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1 + out.css_file_list.count() ..][0..out.html_files.count()];
     }
 };

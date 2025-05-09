@@ -3107,12 +3107,21 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("rejects requests with CR in header field name", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
 
       const msg = ["GET / HTTP/1.1", "Host: localhost", "Bad\rHeader: value", "", ""].join("\r\n");
 
       const response = await sendRequest(msg);
-
       expect(response).toInclude("400 Bad Request");
+      await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
 
@@ -3132,10 +3141,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const msg = ["GET / HTTP/1.1", "Host: localhost", "X-Custom: bad\rvalue", "", ""].join("\r\n");
 
       const response = await sendRequest(msg);
-
       expect(response).toInclude("400 Bad Request");
-      expect(mockHandler).not.toHaveBeenCalled();
       await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -3163,7 +3171,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      await sendRequest(msg);
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
       await promise;
     });
 
@@ -3190,7 +3199,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      await sendRequest(msg);
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
       await promise;
     });
   });
@@ -3221,7 +3231,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      await sendRequest(msg);
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
@@ -3251,7 +3262,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      await sendRequest(msg);
+      const response = await sendRequest(msg);
+      expect(response).toInclude("400 Bad Request");
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
@@ -3286,7 +3298,15 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("rejects requests with missing Host header in HTTP/1.1", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
-
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
       const msg = [
         "GET / HTTP/1.1",
         // Missing Host header
@@ -3295,8 +3315,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       ].join("\r\n");
 
       const response = await sendRequest(msg);
-
       expect(response).toInclude("400 Bad Request");
+      await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
   });

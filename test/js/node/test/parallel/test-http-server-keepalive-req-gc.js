@@ -21,7 +21,7 @@ const server = createServer(common.mustCall((req, res) => {
   req.on('end', common.mustCall(() => {
     setImmediate(async () => {
       client.end();
-      common.gcUntil(serverStopped);
+      await common.gcUntil(serverStopped);
     });
   }));
   res.end('hello world');

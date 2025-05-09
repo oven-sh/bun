@@ -336,8 +336,8 @@ var InternalSecureContext = class SecureContext {
 
       if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
         throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(
-          "options.secureProtocol",
-          hasMinVersionOption ? "options.minVersion" : "options.maxVersion",
+          TLS_VERSION_REVERSE_MAP[hasMinVersionOption ? options.minVersion : options.maxVersion],
+          secureProtocol,
         );
       }
 
@@ -658,8 +658,8 @@ function Server(options, secureConnectionListener): void {
 
   if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
     throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(
-      "options.secureProtocol",
-      hasMinVersionOption ? "options.minVersion" : "options.maxVersion",
+      TLS_VERSION_REVERSE_MAP[hasMinVersionOption ? options.minVersion : options.maxVersion],
+      secureProtocol,
     );
   }
 

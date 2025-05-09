@@ -350,12 +350,12 @@ const ServerHandlers: SocketHandler = {
     const self = this.data;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
+
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
 
-    const _socket = new SClass({
-      minVersion: self.minVersion,
-      maxVersion: self.maxVersion,
-    });
+    console.log(options);
+
+    const _socket = new SClass(options);
 
     _socket.isServer = true;
     _socket.server = self;
@@ -1453,6 +1453,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (typeof bunTLS === "function") {
       [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
       options.servername = tls.serverName;
+      options.minVersion = tls.minVersion;
+      options.maxVersion = tls.maxVersion;
+
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
       if (!tls.requestCert) {

@@ -381,6 +381,7 @@ export {
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
   getIsNextIncomingMessageHTTPS,
+  getMaxHTTPHeaderSize,
   getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -427,6 +428,7 @@ export {
   serverSymbol,
   setHeader,
   setIsNextIncomingMessageHTTPS,
+  setMaxHTTPHeaderSize,
   setRequestTimeout,
   setServerCustomOptions,
   setServerIdleTimeout,
@@ -438,6 +440,4 @@ export {
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,
-  setMaxHTTPHeaderSize,
-  getMaxHTTPHeaderSize,
 };

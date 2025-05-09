@@ -68,7 +68,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopPropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopImmediatePropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_preventDefault);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent);
-static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_customInspect);
 
 // Attributes
 
@@ -233,7 +232,6 @@ void JSEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
-    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), JSC::JSFunction::create(vm, this->globalObject(), 1, "inspect"_s, jsEventPrototypeFunction_customInspect, ImplementationVisibility::Public, NoIntrinsic), PropertyAttribute::Builtin | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -586,92 +584,6 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSEvent>::call<jsEventPrototypeFunction_initEventBody>(*lexicalGlobalObject, *callFrame, "initEvent");
-}
-
-static inline JSC::EncodedJSValue jsEventPrototypeFunction_customInspectBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEvent>::ClassParameter castedThis)
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    if (!castedThis) {
-        return Bun::ERR::INVALID_THIS(throwScope, lexicalGlobalObject, "Event"_s);
-    }
-
-    JSValue depthValue = callFrame->argument(0);
-    JSValue optionsValue = callFrame->argument(1);
-
-    String name;
-    JSObject* thisObject = castedThis;
-    JSValue constructor = thisObject->get(lexicalGlobalObject, vm.propertyNames->constructor);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (constructor.isObject()) {
-        JSValue constructorName = constructor.get(lexicalGlobalObject, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        name = constructorName.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-
-    auto depth = depthValue.toNumber(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (depth < 0) {
-        return JSValue::encode(jsString(vm, name));
-    }
-
-    if (!depthValue.isUndefinedOrNull()) {
-        depthValue = jsNumber(depth - 1);
-    }
-
-    JSObject* options = optionsValue.toObject(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    PropertyNameArray optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    options->getPropertyNames(lexicalGlobalObject, optionsArray, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSObject* newOptions = constructEmptyObject(lexicalGlobalObject);
-    for (size_t i = 0; i < optionsArray.size(); i++) {
-        auto name = optionsArray[i];
-
-        JSValue value = options->get(lexicalGlobalObject, name);
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        newOptions->putDirect(vm, name, value, 0);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-
-    PutPropertySlot slot(newOptions);
-    newOptions->put(newOptions, lexicalGlobalObject, Identifier::fromString(vm, "depth"_s), depthValue, slot);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto& impl = castedThis->wrapped();
-    JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "type"_s), jsString(vm, impl.type()), 0);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "defaultPrevented"_s), jsBoolean(impl.defaultPrevented()), 0);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "cancelable"_s), jsBoolean(impl.cancelable()), 0);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "timeStamp"_s), jsNumber(impl.timeStampForBindings(*castedThis->scriptExecutionContext())), 0);
-
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
-    auto callData = JSC::getCallData(utilInspect);
-    MarkedArgumentBuffer arguments;
-    arguments.append(inputObj);
-    arguments.append(newOptions);
-
-    auto inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, inputObj, arguments);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto inspectStringView = inspectString->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSValue result = jsString(vm, makeString(name, " "_s, inspectStringView.data));
-
-    return JSValue::encode(result);
-}
-JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSEvent>::call<jsEventPrototypeFunction_customInspectBody>(*lexicalGlobalObject, *callFrame, "customInspect");
 }
 
 JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)

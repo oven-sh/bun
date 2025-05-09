@@ -69,6 +69,15 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
       expect(result[i]).toBe(binaryData[i]);
     }
   });
+
+  test("concurrent getBuffer against large blob", async () => {
+    const key = ctx.generateKey("concurrent");
+    const big = new Uint8Array(500_000).map((_, i) => i % 256);
+    await ctx.redis.set(key, big);
+    const readers = Array.from({ length: 20 }, () => ctx.redis.getBuffer(key));
+    const results = await Promise.all(readers);
+    for (const r of results) expect(r).toStrictEqual(big);
+  });
 });
 
 function expectAssert(value: unknown): asserts value {

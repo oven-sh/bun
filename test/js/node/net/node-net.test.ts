@@ -423,7 +423,7 @@ it("should handle connection error", done => {
   let errored = false;
 
   // @ts-ignore
-  const socket = connect(55555, () => {
+  const socket = connect(55555, "127.0.0.1", () => {
     done(new Error("Should not have connected"));
   });
 
@@ -433,8 +433,11 @@ it("should handle connection error", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ECONNREFUSED 127.0.0.1:55555");
     expect((error as any).code).toBe("ECONNREFUSED");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("127.0.0.1");
+    expect((error as any).port).toBe(55555);
   });
 
   socket.on("connect", () => {
@@ -461,8 +464,10 @@ it("should handle connection error (unix)", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ENOENT loser");
     expect((error as any).code).toBe("ENOENT");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("loser");
   });
 
   socket.on("connect", () => {

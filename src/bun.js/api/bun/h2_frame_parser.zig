@@ -3562,6 +3562,27 @@ pub const H2FrameParser = struct {
         }
         return .undefined;
     }
+
+    pub fn sendRSTToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments_old(1);
+        if (args_list.len < 1) {
+            return globalObject.throw("Expected error argument", .{});
+        }
+        var it = StreamResumableIterator.init(this);
+        while (it.next()) |stream| {
+            if (this.isServer) {
+                if (stream.id % 2 == 0) continue;
+            } else if (stream.id % 2 != 0) continue;
+            if (stream.state != .CLOSED) {
+                stream.rstCode = args_list.ptr[0].to(u32);
+                const identifier = stream.getIdentifier();
+                identifier.ensureStillAlive();
+                this.endStream(stream, @enumFromInt(stream.rstCode));
+            }
+        }
+        return .undefined;
+    }
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 

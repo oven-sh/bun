@@ -81,6 +81,8 @@ const {
   checkIsHttpToken,
   validateLinkHeaderValue,
   validateUint32,
+  validateBuffer,
+  validateNumber,
 } = require("internal/validators");
 
 let utcCache;
@@ -2755,8 +2757,15 @@ class ServerHttp2Session extends Http2Session {
     parser.ping(payload);
     return true;
   }
-  goaway(errorCode, lastStreamId, opaqueData) {
-    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
+  goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
+    if (this.destroyed) $ERR_HTTP2_INVALID_SESSION();
+
+    if (opaqueData !== undefined) {
+      validateBuffer(opaqueData, "opaqueData");
+    }
+    validateNumber(code, "code");
+    validateNumber(lastStreamID, "lastStreamID");
+    return this.#parser?.goaway(code, lastStreamID, opaqueData);
   }
 
   setLocalWindowSize(windowSize) {
@@ -2798,7 +2807,7 @@ class ServerHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
-      parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+      parser.sendRSTToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
       this.#parser = null;
     }

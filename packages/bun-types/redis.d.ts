@@ -119,7 +119,7 @@ declare module "bun" {
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a Buffer, or null if the key doesn't exist
      */
-    getBuffer(key: string | ArrayBufferView | Blob): Promise<Buffer | null>;
+    getBuffer(key: string | ArrayBufferView | Blob): Promise<Uint8Array<ArrayBuffer> | null>;
 
     /**
      * Set key to hold the string value

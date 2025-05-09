@@ -103,6 +103,11 @@ namespace uWS
             return 0;
         }
 
+        bool isShortRead() {
+            return parserError == HTTP_PARSER_ERROR_NONE && errorStatusCodeOrConsumedBytes == 0;
+        }
+
+
         /* Returns true if there was an error */    
         bool isError() {
             return parserError != HTTP_PARSER_ERROR_NONE;

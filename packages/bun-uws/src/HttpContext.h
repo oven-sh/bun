@@ -123,11 +123,8 @@ private:
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            if(httpContextData->flags.isParsingHttp) {
-                if(httpContextData->onClientError) {
-                    httpContextData->onClientError(SSL, s,uWS::HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
-                }
-            }
+
+            
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }
@@ -173,7 +170,6 @@ private:
 
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
-
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -203,6 +199,7 @@ private:
 
                 /* Mark pending request and emit it */
                 httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+                
 
                 /* Mark this response as connectionClose if ancient or connection: close */
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -210,7 +207,6 @@ private:
                 }
 
                 httpResponseData->fromAncientRequest = httpRequest->isAncient();
-
 
                 /* Select the router based on SNI (only possible for SSL) */
                 auto *selectedRouter = &httpContextData->router;
@@ -263,7 +259,7 @@ private:
             }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
-
+                    
                     /* Todo: can this handle timeout for non-post as well? */
                     if (fin) {
                         /* If we just got the last chunk (or empty chunk), disable timeout */
@@ -301,7 +297,7 @@ private:
             });
 
             auto httpErrorStatusCode = result.httpErrorStatusCode();
-
+            
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */

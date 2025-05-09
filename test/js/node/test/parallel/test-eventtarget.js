@@ -533,45 +533,44 @@ if (typeof Bun === "undefined") { // Node internal
   target.dispatchEvent(ev);
 }
 
-// TODO: missing AddEventListenerArgumentTypeWarning
-// {
-//   const eventTarget = new EventTarget();
-//   // Single argument throws
-//   throws(() => eventTarget.addEventListener('foo'), TypeError);
-//   // Null events - does not throw
-//   eventTarget.addEventListener('foo', null);
-//   eventTarget.removeEventListener('foo', null);
-//   eventTarget.addEventListener('foo', undefined);
-//   eventTarget.removeEventListener('foo', undefined);
-//   // Strings, booleans
-//   throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
-//   throws(() => eventTarget.addEventListener('foo', false), TypeError);
-//   throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
-//   asyncTest = asyncTest.then(async () => {
-//     const eventTarget = new EventTarget();
-//     // Single argument throws
-//     throws(() => eventTarget.addEventListener('foo'), TypeError);
-//     // Null events - does not throw
-//
-//     eventTarget.addEventListener('foo', null);
-//     eventTarget.removeEventListener('foo', null);
-//
-//     // Warnings always happen after nextTick, so wait for a timer of 0
-//     await delay(0);
-//     strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
-//     strictEqual(lastWarning.target, eventTarget);
-//     lastWarning = null;
-//     eventTarget.addEventListener('foo', undefined);
-//     await delay(0);
-//     strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
-//     strictEqual(lastWarning.target, eventTarget);
-//     eventTarget.removeEventListener('foo', undefined);
-//     // Strings, booleans
-//     throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
-//     throws(() => eventTarget.addEventListener('foo', false), TypeError);
-//     throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
-//   });
-// }
+{
+  const eventTarget = new EventTarget();
+  // Single argument throws
+  throws(() => eventTarget.addEventListener('foo'), TypeError);
+  // Null events - does not throw
+  eventTarget.addEventListener('foo', null);
+  eventTarget.removeEventListener('foo', null);
+  eventTarget.addEventListener('foo', undefined);
+  eventTarget.removeEventListener('foo', undefined);
+  // Strings, booleans
+  throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
+  throws(() => eventTarget.addEventListener('foo', false), TypeError);
+  throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
+  asyncTest = asyncTest.then(async () => {
+    const eventTarget = new EventTarget();
+    // Single argument throws
+    throws(() => eventTarget.addEventListener('foo'), TypeError);
+    // Null events - does not throw
+
+    eventTarget.addEventListener('foo', null);
+    eventTarget.removeEventListener('foo', null);
+
+    // Warnings always happen after nextTick, so wait for a timer of 0
+    await delay(0);
+    strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
+    strictEqual(lastWarning.target, eventTarget);
+    lastWarning = null;
+    eventTarget.addEventListener('foo', undefined);
+    await delay(0);
+    strictEqual(lastWarning.name, 'AddEventListenerArgumentTypeWarning');
+    strictEqual(lastWarning.target, eventTarget);
+    eventTarget.removeEventListener('foo', undefined);
+    // Strings, booleans
+    throws(() => eventTarget.addEventListener('foo', 'hello'), TypeError);
+    throws(() => eventTarget.addEventListener('foo', false), TypeError);
+    throws(() => eventTarget.addEventListener('foo', Symbol()), TypeError);
+  });
+}
 {
   const eventTarget = new EventTarget();
   const event = new Event('foo');

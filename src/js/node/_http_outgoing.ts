@@ -20,6 +20,7 @@ const {
   setHeader,
   Headers,
   getRawKeys,
+  kOutHeaders,
 } = require("internal/http");
 
 const {
@@ -181,7 +182,6 @@ function OutgoingMessage(options) {
   this._header = null;
   this._headerSent = false;
   this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
-  this._headerNames = { __proto__: null };
 }
 const OutgoingMessagePrototype = {
   constructor: OutgoingMessage,
@@ -552,6 +552,34 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
       }
     },
     "OutgoingMessage.prototype._headerNames is deprecated",
+    "DEP0066",
+  ),
+});
+ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
+  __proto__: null,
+  get: deprecate(
+    function () {
+      return this.getHeaders();
+    },
+    "OutgoingMessage.prototype._headers is deprecated",
+    "DEP0066",
+  ),
+  set: deprecate(
+    function (val) {
+      if (val == null) {
+        this[kOutHeaders] = null;
+      } else if (typeof val === "object") {
+        const headers = (this[kOutHeaders] = { __proto__: null });
+        const keys = ObjectKeys(val);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const name = keys[i];
+          headers[name.toLowerCase()] = [name, val[name]];
+        }
+      }
+    },
+    "OutgoingMessage.prototype._headers is deprecated",
     "DEP0066",
   ),
 });

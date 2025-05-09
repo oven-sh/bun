@@ -358,8 +358,10 @@ function emitErrorNt(msg, err, callback) {
 }
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const kOutHeaders = Symbol("kOutHeaders");
 
 export {
+  kOutHeaders,
   ConnResetException,
   Headers,
   METHODS,

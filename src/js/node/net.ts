@@ -1128,10 +1128,33 @@ Socket.prototype.connect = function connect(...args) {
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
     let connection = this[ksocket];
     let upgradeDuplex = false;
-    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session } = options;
+    let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
     this.servername = options.servername;
     if (socket) {
       connection = socket;
+    }
+    if (fd) {
+      Bun.connect({
+        data: this,
+        fd: fd,
+        socket: SocketHandlers,
+        allowHalfOpen: this.allowHalfOpen,
+      }).catch(error => {
+        if (!this.destroyed) {
+          this.emit("error", error);
+          this.emit("close");
+        }
+      });
+    }
+    this.pauseOnConnect = pauseOnConnect;
+    if (!pauseOnConnect) {
+      process.nextTick(() => {
+        this.resume();
+      });
+      this.connecting = true;
+    }
+    if (fd) {
+      return this;
     }
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.

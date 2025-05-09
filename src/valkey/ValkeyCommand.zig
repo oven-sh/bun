@@ -1,3 +1,12 @@
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const Slice = JSC.ZigString.Slice;
+const node = bun.api.node;
+
+const protocol = @import("valkey_protocol.zig");
+
 command: []const u8,
 args: Args,
 meta: Meta = .{},
@@ -81,7 +90,8 @@ pub fn deinit(_: *Command) void {
 pub const Meta = packed struct(u8) {
     return_as_bool: bool = false,
     supports_auto_pipelining: bool = true,
-    _padding: u6 = 0,
+    return_as_buffer: bool = false,
+    _padding: u5 = 0,
 
     const not_allowed_autopipeline_commands = bun.ComptimeStringMap(void, .{
         .{"AUTH"},
@@ -123,7 +133,11 @@ pub const Promise = struct {
     }
 
     pub fn resolve(self: *Promise, globalObject: *JSC.JSGlobalObject, value: *protocol.RESPValue) void {
-        const js_value = value.toJS(globalObject) catch |err| {
+        const options = protocol.RESPValue.ToJSOptions{
+            .return_as_buffer = self.meta.return_as_buffer,
+        };
+
+        const js_value = value.toJSWithOptions(globalObject, options) catch |err| {
             self.reject(globalObject, globalObject.takeError(err));
             return;
         };
@@ -152,11 +166,3 @@ pub const PromisePair = struct {
 };
 
 const Command = @This();
-
-const bun = @import("bun");
-const JSC = bun.JSC;
-const protocol = @import("valkey_protocol.zig");
-const std = @import("std");
-const Slice = JSC.ZigString.Slice;
-
-const node = bun.api.node;

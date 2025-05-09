@@ -1,3 +1,16 @@
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const valkey = bun.valkey;
+const protocol = valkey.protocol;
+const JSValue = JSC.JSValue;
+const Command = valkey.Command;
+const Slice = JSC.ZigString.Slice;
+const JSArgument = JSC.Node.BlobOrStringOrBuffer;
+
+const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
+
 pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const command = try callframe.argument(0).toBunString(globalObject);
     defer command.deref();
@@ -53,6 +66,26 @@ pub fn get(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: 
         &.{
             .command = "GET",
             .args = .{ .args = &.{key} },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
+    };
+    return promise.asValue(globalObject);
+}
+
+pub fn getBuffer(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("getBuffer", "key", "string or buffer");
+    };
+    defer key.deinit();
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "GET",
+            .args = .{ .args = &.{key} },
+            .meta = .{ .return_as_buffer = true },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
@@ -774,18 +807,6 @@ const compile = struct {
         };
     }
 };
-
-const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const bun = @import("bun");
-const JSC = bun.JSC;
-const valkey = bun.valkey;
-const protocol = valkey.protocol;
-const JSValue = JSC.JSValue;
-const Command = valkey.Command;
-const std = @import("std");
-const Slice = JSC.ZigString.Slice;
-
-const JSArgument = JSC.Node.BlobOrStringOrBuffer;
 
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
     if (value == .undefined or value == .null) {

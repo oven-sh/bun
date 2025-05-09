@@ -1644,6 +1644,8 @@ fn NewSocket(comptime ssl: bool) type {
             bun.assert(errno_ <= 1); // just to be sure this is called with a negative in the meantime
             errno_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) -errno else @as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
             const code_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
+            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;

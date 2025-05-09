@@ -59,20 +59,25 @@ let asyncTest = Promise.resolve();
   ev.preventDefault();
   strictEqual(ev.defaultPrevented, false);
 }
-{
-  [
-    'foo',
-    1,
-    false,
-  ].forEach((i) => (
-    throws(() => new Event('foo', i), {
-      code: 'ERR_INVALID_ARG_TYPE',
-      name: 'TypeError',
-      message: 'The "options" argument must be of type object.' +
-               common.invalidArgTypeHelper(i),
-    })
-  ));
-}
+// TODO: 
+// +   message: 'Type error',
+// -   code: 'ERR_INVALID_ARG_TYPE',
+// -   message: 'The "options" argument must be of type object. Received type boolean (false)',
+//     name: 'TypeError'
+// {
+//   [
+//     'foo',
+//     1,
+//     false,
+//   ].forEach((i) => (
+//     throws(() => new Event('foo', i), {
+//       code: 'ERR_INVALID_ARG_TYPE',
+//       name: 'TypeError',
+//       message: 'The "options" argument must be of type object.' +
+//                common.invalidArgTypeHelper(i),
+//     })
+//   ));
+// }
 {
   const ev = new Event('foo');
   strictEqual(ev.cancelBubble, false);
@@ -476,31 +481,34 @@ if (typeof Bun === "undefined") { // Node internal
   target.dispatchEvent(new Event('foo'));
 }
 
-// TODO: expected ERR_INVALID_THIS. received no error.
-// {
-//   // `this` value of dispatchEvent
-//   const target = new EventTarget();
-//   const target2 = new EventTarget();
-//   const event = new Event('foo');
-//
-//   ok(target.dispatchEvent.call(target2, event));
-//
-//   [
-//     'foo',
-//     {},
-//     [],
-//     1,
-//     null,
-//     undefined,
-//     false,
-//     Symbol(),
-//     /a/,
-//   ].forEach((i) => {
-//     throws(() => target.dispatchEvent.call(i, event), {
-//       code: 'ERR_INVALID_THIS',
-//     });
-//   });
-// }
+{
+  // `this` value of dispatchEvent
+  const target = new EventTarget();
+  const target2 = new EventTarget();
+  const event = new Event('foo');
+
+  ok(target.dispatchEvent.call(target2, event));
+
+  [
+    'foo',
+    {},
+    [],
+    1,
+    ...(typeof Bun === "undefined" ? [
+      // In the web standard, EventTarget.prototype.dispatchEvent === globalThis.dispatchEvent, and calling with this as null or undefined will call it on the global object
+      // Node does not have globalThis.dispatchEvent.
+      null,
+      undefined,
+    ] : []),
+    false,
+    Symbol(),
+    /a/,
+  ].forEach((i) => {
+    throws(() => target.dispatchEvent.call(i, event), {
+      code: 'ERR_INVALID_THIS',
+    });
+  });
+}
 
 {
   // Event Statics

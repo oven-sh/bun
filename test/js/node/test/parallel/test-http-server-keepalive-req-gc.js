@@ -11,11 +11,6 @@ const { connect } = require('net');
 
 let client;
 
-async function flushGC(times = 10) {
-  for (let i = 0; i < times; i++) {
-    await globalThis.gc({ type: 'major', execution: 'async' });
-  }
-}
 const server = createServer(common.mustCall((req, res) => {
   
   function serverStopped() {

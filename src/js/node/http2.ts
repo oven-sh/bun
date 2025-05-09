@@ -889,8 +889,8 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind.$call(session[prop], session);
       case "destroy":
+        return FunctionPrototypeBind.$call(session[prop], session);
       case "emit":
       case "end":
       case "pause":
@@ -2216,15 +2216,16 @@ class ServerHttp2Stream extends Http2Stream {
       endStream = true;
     }
 
+    if (typeof options === "undefined" || typeof options.sendDate === "undefined" || options.sendDate) {
+      const current_date = headers["date"];
+      if (current_date === null || current_date === undefined) {
+        headers["date"] = utcDate();
+      }
+    }
+
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
-      if (options.sendDate) {
-        const current_date = headers["date"];
-        if (current_date === null || current_date === undefined) {
-          headers["date"] = utcDate();
-        }
-      }
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
     }
     this.headersSent = true;
@@ -3234,6 +3235,13 @@ class ClientHttp2Session extends Http2Session {
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
+    switch (protocol) {
+      case "http:":
+      case "https:":
+        break;
+      default:
+        throw $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol);
+    }
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
     function onConnect() {

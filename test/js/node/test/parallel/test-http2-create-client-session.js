@@ -57,7 +57,7 @@ server.on('listening', common.mustCall(() => {
     req.on('response', common.mustCall(function(headers) {
       assert.strictEqual(headers[':status'], 200);
       assert.strictEqual(headers['content-type'], 'text/html');
-      // assert(headers.date);
+      assert(headers.date);
     }));
 
     let data = '';

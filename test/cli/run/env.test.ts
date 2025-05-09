@@ -106,14 +106,14 @@ describe(".env file is loaded", () => {
     const { stdout } = bunTest(`${dir}/index.test.ts`, {});
     expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "a b c undefined");
   });
-  test(".env.local ignored when bun test", () => {
+  test(".env.local when bun test", () => {
     const dir = tempDirWithFiles("dotenv", {
-      ".env": "FAILED=false\n",
-      ".env.local": "FAILED=true\n",
-      "index.test.ts": "console.log(process.env.FAILED);",
+      ".env": "ENV=true\n",
+      ".env.local": "LOCAL=true\n",
+      "index.test.ts": "console.log(process.env.LOCAL);",
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`, {});
-    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "false");
+    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "true");
   });
   test(".env.development and .env.production ignored when bun test", () => {
     const dir = tempDirWithFiles("dotenv", {
@@ -191,7 +191,7 @@ describe("dotenv priority", () => {
     expect(stdout_prod).toBe(".env.local");
     // .env.local is "not checked when `NODE_ENV` is `test`"
     const { stdout: stdout_test } = bunTest(`${dir}/index.test.ts`, {});
-    expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.test");
+    expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.local");
   });
   test(".env.{NODE_ENV} overrides .env", () => {
     const dir = tempDirWithFiles("dotenv", {

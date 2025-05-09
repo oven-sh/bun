@@ -1,13 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { once } from "events";
 import { tls as COMMON_CERT_ } from "harness";
 import net from "net";
 import { join } from "path";
-import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 import stream from "stream";
-import { once } from "events";
+import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
 
-import { Duplex } from "node:stream";
 import type { AddressInfo } from "net";
+import { Duplex } from "node:stream";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 

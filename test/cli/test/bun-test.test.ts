@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { describe, beforeAll, expect, test, it } from "bun:test";
+import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

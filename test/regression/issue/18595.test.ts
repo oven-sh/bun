@@ -1,6 +1,6 @@
-import { createServer } from "node:http";
+import { expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { test, expect } from "bun:test";
+import { createServer } from "node:http";
 
 test("18595", () => {
   const als = new AsyncLocalStorage();

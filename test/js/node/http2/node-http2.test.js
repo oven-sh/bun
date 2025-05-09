@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, nodeExe, isCI } from "harness";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isCI, nodeExe } from "harness";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
@@ -6,7 +7,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { Duplex } from "stream";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 

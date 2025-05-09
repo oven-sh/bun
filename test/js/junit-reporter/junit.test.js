@@ -1,6 +1,6 @@
-import { it, describe, expect } from "bun:test";
 import { file, spawn } from "bun";
-import { tempDirWithFiles, bunEnv, bunExe } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const xml2js = require("xml2js");
 

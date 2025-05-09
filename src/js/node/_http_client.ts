@@ -60,6 +60,13 @@ const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
+function emitErrorEventNT(self, err) {
+  if (self.destroyed) return;
+  if (self.listenerCount("error") > 0) {
+    self.emit("error", err);
+  }
+}
+
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -399,6 +406,14 @@ function ClientRequest(input, options, cb) {
               // If the user did not listen for the 'response' event, then they
               // can't possibly read the data, so we ._dump() it into the void
               // so that the socket doesn't hang there in a paused state.
+              const contentLength = res.headers["content-length"];
+              if (contentLength && isNaN(Number(contentLength))) {
+                emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
+
+                res.complete = true;
+                maybeEmitClose();
+                return;
+              }
               if (self.aborted || !self.emit("response", res)) {
                 res._dump();
               }

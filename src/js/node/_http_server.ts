@@ -1,5 +1,6 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
+const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -429,7 +430,7 @@ const ServerResponsePrototype = {
   },
 
   get writableLength() {
-    return 16 * 1024;
+    return this.writableFinished ? 0 : (this[kHandle]?.bufferedAmount ?? 0);
   },
 
   get writableHighWaterMark() {
@@ -1481,6 +1482,8 @@ function _writeHead(statusCode, reason, obj, response) {
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
     obj ??= reason;
   }
+  if (checkInvalidHeaderChar(response.statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
+
   response.statusCode = statusCode;
 
   {

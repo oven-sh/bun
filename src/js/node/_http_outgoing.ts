@@ -95,6 +95,9 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
 
     msg[kBytesWritten] += len;
+  } else {
+    len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+    msg[kBytesWritten] += len;
   }
 
   function connectionUnCorkNT(conn) {
@@ -157,7 +160,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   } else {
     ret = msg._send(chunk, encoding, callback, len);
   }
-
   return ret;
 }
 
@@ -172,7 +174,7 @@ function OutgoingMessage(options) {
   this.finished = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kAbortController] = null;
-
+  this[kBytesWritten] = 0;
   this.writable = true;
   this.destroyed = false;
   this._hasBody = true;
@@ -311,6 +313,14 @@ const OutgoingMessagePrototype = {
     if (!headers) return kEmptyObject;
     return headers.toJSON();
   },
+  get [kHighWaterMark]() {
+    return this._readableState.highWaterMark;
+  },
+  set [kHighWaterMark](value) {
+    if (this._readableState) {
+      this._readableState.highWaterMark = value;
+    }
+  },
   set headers(value) {
     this[headersSymbol] = new Headers(value);
   },
@@ -416,7 +426,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableLength() {
-    return 0;
+    return this.finished ? 0 : this[kBytesWritten] || 0;
   },
 
   get writableHighWaterMark() {

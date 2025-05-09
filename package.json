@@ -19,7 +19,7 @@
     "eslint-config-prettier": "^9.1.0",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
-    "prettier": "^3.2.5",
+    "prettier": "^3.5.3",
     "prettier-plugin-organize-imports": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -78,11 +78,7 @@
     "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
     "zig-format": "bun run analysis:no-llvm --target zig-format",
     "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
-    "zig-format:diff": "bun run analysis:no-llvm --target zig-format-diff",
-    "prettier": "bun run analysis:no-llvm --target prettier",
-    "prettier:check": "bun run analysis:no-llvm --target prettier-check",
-    "prettier:extra": "bun run analysis:no-llvm --target prettier-extra",
-    "prettier:diff": "bun run analysis:no-llvm --target prettier-diff",
+    "prettier": "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true"
   }

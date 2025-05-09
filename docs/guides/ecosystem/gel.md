@@ -103,4 +103,4 @@ Type \help for help, \quit to quit.
 cube:main>
 ```
 
-You now have a dbschema to work with in the future. On the [Gel Docs](https://docs.geldata.com/) website you can study very convenient documentation written by the Gel authors.
+Now you have a dbschema to work with in the future. On the [Gel Docs](https://docs.geldata.com/) website you can study very convenient documentation written by the Gel authors.

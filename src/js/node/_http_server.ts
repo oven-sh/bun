@@ -462,7 +462,7 @@ const ServerResponsePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("writeHead");
     }
     _writeHead(statusCode, statusMessage, headers, this);
-    updateHasBody(this, statusCode);
+
     this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 
     return this;
@@ -1437,6 +1437,7 @@ function _normalizeArgs(args) {
 
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
+  let hasContentLength = response.hasHeader("content-length");
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
@@ -1472,7 +1473,10 @@ function _writeHead(statusCode, reason, obj, response) {
         // message will be terminated by the first empty line after the
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
-        if (response.chunkedEncoding !== true && response._trailer) {
+        if (
+          (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
+          (response._trailer || response.hasHeader("trailer"))
+        ) {
           throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
         }
         // Headers in obj should override previous headers but still
@@ -1498,6 +1502,18 @@ function _writeHead(statusCode, reason, obj, response) {
         k = keys[i];
         if (k) response.setHeader(k, obj[k]);
       }
+    }
+    if (
+      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
+      (response._trailer || response.hasHeader("trailer"))
+    ) {
+      // remove the invalid content-length or trailer header
+      if (hasContentLength) {
+        response.removeHeader("trailer");
+      } else {
+        response.removeHeader("content-length");
+      }
+      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
 

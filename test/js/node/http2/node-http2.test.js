@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, beforeAll, afterAll, test } from "bun:test";
 import { bunEnv, bunExe, isCI, nodeExe } from "harness";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import { tmpdir } from "node:os";
+import { once } from "node:events";
 import path from "node:path";
 import tls from "node:tls";
 import { Duplex } from "stream";
@@ -1333,4 +1334,73 @@ it("sensitive headers should work", async () => {
     server.close();
     client?.close?.();
   }
+});
+
+describe("HTTP/2 Session goaway parameter validation", () => {
+  let server;
+  let port;
+
+  const invalidTypes = [true, {}, [], null, new Date()];
+
+  beforeAll(async () => {
+    server = http2.createServer();
+
+    server.on("stream", stream => {
+      const session = stream.session;
+
+      // Test each invalid type
+      invalidTypes.forEach(input => {
+        // Test invalid code argument
+        expect(() => session.goaway(input)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining('The "code" argument must be of type number'),
+          }),
+        );
+
+        // Test invalid lastStreamID argument
+        expect(() => session.goaway(0, input)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining('The "lastStreamID" argument must be of type number'),
+          }),
+        );
+
+        // Test invalid opaqueData argument
+        expect(() => session.goaway(0, 0, input)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining(
+              'The "opaqueData" argument must be of type Buffer, TypedArray, or DataView',
+            ),
+          }),
+        );
+      });
+      stream.destroy();
+    });
+
+    // Start server and wait for listening event
+    server.listen(0);
+    await once(server, "listening");
+    port = server.address().port;
+  });
+
+  afterAll(async () => {
+    if (server) {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
+  test("should handle invalid arguments properly", async () => {
+    const client = http2.connect(`http://localhost:${port}`);
+    const req = client.request();
+    req.resume();
+
+    await once(req, "close");
+    client.close();
+  });
 });

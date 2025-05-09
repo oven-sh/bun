@@ -149,6 +149,7 @@ private:
 
         /* Handle HTTP data streams */
         us_socket_context_on_data(SSL, getSocketContext(), [](us_socket_t *s, char *data, int length) {
+
             // ref the socket to make sure we process it entirely before it is closed
             us_socket_ref(s);
 

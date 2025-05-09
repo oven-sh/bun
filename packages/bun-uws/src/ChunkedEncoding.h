@@ -31,7 +31,8 @@ namespace uWS {
 
     constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x80000000;
     constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x40000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(3ull << (sizeof(uint64_t) * 8 - 2));//0x3FFFFFFF;
+    constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x20000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION);//0x3FFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFF;
     constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F000000;
 
@@ -39,42 +40,67 @@ namespace uWS {
         return state & STATE_SIZE_MASK;
     }
 
+    inline bool isParsingChunkedExtension(uint64_t state) {
+        return (state & STATE_IS_CHUNKED_EXTENSION) != 0;
+    }
+
     /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
     inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
-        /* Consume everything higher than 32 */
-        while (data.length() && data[0] > 32) {
+        if(!isParsingChunkedExtension(state)){
+            /* Consume everything higher than 32 and not ; (extension)*/
+            while (data.length() && data[0] > 32 && data[0] != ';') {
 
-            unsigned char digit = (unsigned char)data[0];
-            if (digit >= 'a') {
-                digit = (unsigned char) (digit - ('a' - ':'));
-            } else if (digit >= 'A') {
-                digit = (unsigned char) (digit - ('A' - ':'));
+                unsigned char digit = (unsigned char)data[0];
+                if (digit >= 'a') {
+                    digit = (unsigned char) (digit - ('a' - ':'));
+                } else if (digit >= 'A') {
+                    digit = (unsigned char) (digit - ('A' - ':'));
+                }
+
+                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
+
+                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
+                    state = STATE_IS_ERROR;
+                    return;
+                }
+
+                // extract state bits
+                uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
+
+                state = (state & STATE_SIZE_MASK) * 16ull + number;
+
+                state |= bits;
+                data.remove_prefix(1);
             }
-
-            unsigned int number = ((unsigned int) digit - (unsigned int) '0');
-
-            if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
-                state = STATE_IS_ERROR;
-                return;
-            }
-
-            // extract state bits
-            uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
-
-            state = (state & STATE_SIZE_MASK) * 16ull + number;
-
-            state |= bits;
-            data.remove_prefix(1);
         }
-        if(data.length() >= 2) {
-            /* Consume \r\n */
-            if((data[0] != '\r' || data[1] != '\n')) {
-                state = STATE_IS_ERROR;
-                return;
+        
+        auto len = data.length();
+        if(len) {
+            // consume extension
+            if(data[0] == ';' || isParsingChunkedExtension(state)) {
+                // mark that we are parsing chunked extension
+                state |= STATE_IS_CHUNKED_EXTENSION;
+                /* we got chunk extension lets remove it*/
+                while(data.length()) {
+                    if(data[0] == '\r') {
+                        // we are done parsing extension
+                        state &= ~STATE_IS_CHUNKED_EXTENSION;
+                        break;
+                    }
+                    data.remove_prefix(1);
+                }
             }
-            state += 2; // include the two last /r/n
-            state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
-            data.remove_prefix(2);
+            if(data.length() >= 2) {
+                /* Consume \r\n */
+                if((data[0] != '\r' || data[1] != '\n')) {
+                    state = STATE_IS_ERROR;
+                    return;
+                }
+                state += 2; // include the two last /r/n
+                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
+
+                data.remove_prefix(2);
+            }
         }
         // short read
     }

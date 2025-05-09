@@ -467,7 +467,10 @@ namespace uWS
                 data++;
 
             }
-            if (&data[1] == end) [[unlikely]] {
+            if(start == data)  [[unlikely]] {
+                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
+            }
+            if (data - start < 2) [[unlikely]] {
                 return ConsumeRequestLineResult::shortRead();
             }
 
@@ -557,7 +560,6 @@ namespace uWS
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
         static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
-
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
                 ProxyParser *pp = (ProxyParser *) reserved;

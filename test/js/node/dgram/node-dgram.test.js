@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { isIPv6, isMacOS, isWindows } from "harness";
 import * as dgram from "node:dgram";
-import { isWindows, isMacOS, isIPv6 } from "harness";
 
 describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {

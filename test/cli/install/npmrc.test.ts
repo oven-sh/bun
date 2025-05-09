@@ -1,8 +1,8 @@
 import { write } from "bun";
-import { expect, test, it, beforeAll, afterAll, describe } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { rm } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall } from "harness";
 import { join } from "path";
-import { rm } from "fs/promises";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 

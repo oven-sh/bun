@@ -1,8 +1,8 @@
 import { spawn } from "bun";
-import { describe, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tmpdirSync, readdirSorted } from "harness";
-import { readdirSync, copyFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 

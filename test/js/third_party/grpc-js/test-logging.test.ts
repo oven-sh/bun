@@ -17,9 +17,9 @@
 
 import * as logging from "@grpc/grpc-js/build/src/logging";
 
-import assert from "node:assert";
 import grpc from "@grpc/grpc-js";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterEach, describe, it } from "bun:test";
+import assert from "node:assert";
 
 describe("Logging", () => {
   afterEach(() => {

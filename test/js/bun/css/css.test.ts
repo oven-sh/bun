@@ -4,18 +4,17 @@
 
 import { describe, test } from "bun:test";
 import "harness";
+import { join } from "path";
 import {
-  attrTest,
   cssTest,
   indoc,
-  minify_test,
-  prefix_test,
-  minifyTestWithOptions as minify_test_with_options,
   minify_error_test_with_options,
+  minify_test,
+  minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
   ParserOptions,
+  prefix_test,
 } from "./util";
-import { join } from "path";
 
 function Some(n: number): number {
   return n;

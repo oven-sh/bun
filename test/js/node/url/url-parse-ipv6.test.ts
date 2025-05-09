@@ -1,24 +1,19 @@
 // prettier-ignore
+import { beforeAll,describe,expect,it } from "bun:test";
 import url from "node:url";
-import { describe, beforeAll, it, expect } from "bun:test";
 
 // url.parse is deprecated.
 process.emitWarning = () => {};
 
 describe("Invalid IPv6 addresses", () => {
-  it.each([
-      "https://[::1",
-      "https://[:::1]",
-      "https://[\n::1]",
-      "http://[::banana]",
-    ])("Invalid hostnames - parsing '%s' fails", input => {
-    expect(() => url.parse(input)).toThrowError(TypeError);
-  });
+  it.each(["https://[::1", "https://[:::1]", "https://[\n::1]", "http://[::banana]"])(
+    "Invalid hostnames - parsing '%s' fails",
+    input => {
+      expect(() => url.parse(input)).toThrowError(TypeError);
+    },
+  );
 
-  it.each([
-    "https://[::1]::",
-    "https://[::1]:foo"
-  ])("Invalid ports - parsing '%s' fails", input => {
+  it.each(["https://[::1]::", "https://[::1]:foo"])("Invalid ports - parsing '%s' fails", input => {
     expect(() => url.parse(input)).toThrowError(TypeError);
   });
 }); // </Invalid IPv6 addresses>
@@ -26,15 +21,15 @@ describe("Invalid IPv6 addresses", () => {
 describe("Valid spot checks", () => {
   it.each([
     // ports
-    ["http://[::1]:",  { host: "[::1]", hostname: "::1", port: null, path: "/", href: "http://[::1]/" }], // trailing colons are ignored
-    ["http://[::1]:1", { host: "[::1]", hostname: "::1", port: "1", path: "/", href: "http://[::1]/"  }],
+    ["http://[::1]:", { host: "[::1]", hostname: "::1", port: null, path: "/", href: "http://[::1]/" }], // trailing colons are ignored
+    ["http://[::1]:1", { host: "[::1]", hostname: "::1", port: "1", path: "/", href: "http://[::1]/" }],
 
     // unicast
     ["http://[::0]", { host: "[::0]", path: "/" }],
     ["http://[::f]", { host: "[::f]", path: "/" }],
     ["http://[::F]", { host: "[::F]", path: "/" }],
     // these are technically invalid unicast addresses but url.parse allows them
-    ["http://[::7]",       { host: "[::7]",       path: "/" }],
+    ["http://[::7]", { host: "[::7]", path: "/" }],
     // ["http://[::z]",       { host: "[::7]",       path: "/" }],
     // ["http://[::😩]",      { host: "[::😩]",      path: "/" }],
 

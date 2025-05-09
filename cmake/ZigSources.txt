@@ -164,6 +164,7 @@ src/bun.js/node/node_http_binding.zig
 src/bun.js/node/node_net_binding.zig
 src/bun.js/node/node_os.zig
 src/bun.js/node/node_process.zig
+src/bun.js/node/node_tls_binding.zig
 src/bun.js/node/node_util_binding.zig
 src/bun.js/node/node_zlib_binding.zig
 src/bun.js/node/nodejs_error_code.zig
@@ -580,6 +581,7 @@ src/system_timer.zig
 src/test/fixtures.zig
 src/test/recover.zig
 src/thread_pool.zig
+src/tls.zig
 src/tmp.zig
 src/toml/toml_lexer.zig
 src/toml/toml_parser.zig

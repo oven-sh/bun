@@ -1,7 +1,6 @@
 // Hardcoded module "node:tls"
 import type { SecureVersion } from "node:tls";
 
-const { mirrorObject } = require("internal/util/types");
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
@@ -218,7 +217,12 @@ const TLS_VERSION_MAP: Record<SecureVersion, number> = {
   "TLSv1.3": 0x0304,
 };
 
-const TLS_VERSION_REVERSE_MAP = mirrorObject(TLS_VERSION_MAP);
+const TLS_VERSION_REVERSE_MAP: Record<number, SecureVersion> = {
+  0x0301: "TLSv1",
+  0x0302: "TLSv1.1",
+  0x0303: "TLSv1.2",
+  0x0304: "TLSv1.3",
+};
 
 var InternalSecureContext = class SecureContext {
   context;

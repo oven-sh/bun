@@ -601,10 +601,21 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_customInspectBody(JSC
     JSValue depthValue = callFrame->argument(0);
     JSValue optionsValue = callFrame->argument(1);
 
+    String name;
+    JSObject* thisObject = castedThis;
+    JSValue constructor = thisObject->get(lexicalGlobalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (constructor.isObject()) {
+        JSValue constructorName = constructor.get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        name = constructorName.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
     auto depth = depthValue.toNumber(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (depth < 0) {
-        return JSValue::encode(jsString(vm, makeString("Event"_s)));
+        return JSValue::encode(jsString(vm, name));
     }
 
     if (!depthValue.isUndefinedOrNull()) {
@@ -654,7 +665,7 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_customInspectBody(JSC
     auto inspectStringView = inspectString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue result = jsString(vm, makeString("Event "_s, inspectStringView.data));
+    JSValue result = jsString(vm, makeString(name, " "_s, inspectStringView.data));
 
     return JSValue::encode(result);
 }

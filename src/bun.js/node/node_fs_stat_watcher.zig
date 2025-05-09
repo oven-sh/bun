@@ -71,7 +71,9 @@ pub const StatWatcherScheduler = struct {
         bun.assert(watcher.closed == false);
         bun.assert(watcher.next == null);
 
+        watcher.ref();
         this.watchers.push(watcher);
+        log("push watcher {x} -> {d} watchers", .{ @intFromPtr(watcher), this.watchers.count });
         const current = this.getInterval();
         if (current == 0 or current > watcher.interval) {
             // we are not running or the new watcher has a smaller interval
@@ -155,12 +157,14 @@ pub const StatWatcherScheduler = struct {
         const now = std.time.Instant.now() catch unreachable;
 
         var batch = this.watchers.popBatch();
+        log("pop batch of {d} -> {d} watchers", .{ batch.count, this.watchers.count });
         var iter = batch.iterator();
         var min_interval: i32 = std.math.maxInt(i32);
         var closest_next_check: u64 = @intCast(min_interval);
         var contain_watchers = false;
         while (iter.next()) |watcher| {
             if (watcher.closed) {
+                watcher.deref();
                 continue;
             }
             contain_watchers = true;
@@ -176,6 +180,7 @@ pub const StatWatcherScheduler = struct {
             }
             min_interval = @min(min_interval, watcher.interval);
             this.watchers.push(watcher);
+            log("reinsert {x} -> {d} watchers", .{ @intFromPtr(watcher), this.watchers.count });
         }
 
         if (contain_watchers) {
@@ -196,7 +201,9 @@ pub const StatWatcher = struct {
 
     ctx: *VirtualMachine,
 
-    /// Closed is set to true to tell the scheduler to remove from list and mark `used_by_scheduler_thread` as false.
+    ref_count: RefCount,
+
+    /// Closed is set to true to tell the scheduler to remove from list and deref.
     closed: bool,
     path: [:0]u8,
     persistent: bool,
@@ -214,6 +221,10 @@ pub const StatWatcher = struct {
 
     scheduler: bun.ptr.RefPtr(StatWatcherScheduler),
 
+    const RefCount = bun.ptr.ThreadSafeRefCount(StatWatcher, "ref_count", deinit, .{ .debug_name = "StatWatcher" });
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     pub const js = JSC.Codegen.JSStatWatcher;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
@@ -228,8 +239,7 @@ pub const StatWatcher = struct {
     }
 
     pub fn deinit(this: *StatWatcher) void {
-        log("deinit\n", .{});
-        this.scheduler.deref();
+        log("deinit {x}", .{@intFromPtr(this)});
 
         if (this.persistent) {
             this.persistent = false;
@@ -343,7 +353,9 @@ pub const StatWatcher = struct {
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
     pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
-        this.deinit();
+        this.closed = true;
+        this.scheduler.deref();
+        this.deref(); // but don't deinit until the scheduler drops its reference
     }
 
     pub const InitialStatTask = struct {
@@ -485,6 +497,7 @@ pub const StatWatcher = struct {
             .last_stat = std.mem.zeroes(bun.Stat),
             .last_jsvalue = .empty,
             .scheduler = vm.rareData().nodeFSStatWatcherScheduler(vm),
+            .ref_count = .init(),
         };
         errdefer this.deinit();
 

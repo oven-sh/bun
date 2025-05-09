@@ -53,7 +53,7 @@ $ bun init -y
 
 ---
 
-We'll use the Gel CLI to initialize an Gel DataBase instance for our project. This creates an `gel.toml` file in our project root.
+We'll use the Gel CLI to initialize a Gel DataBase instance for our project. This creates an `gel.toml` file in our project root.
 
 ```sh
 $ bunx gel project init

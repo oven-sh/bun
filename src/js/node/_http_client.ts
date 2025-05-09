@@ -228,6 +228,7 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
+        this.socket?.emit?.("close");
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -236,6 +237,7 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
+      this.socket?.emit?.("close");
     }
   };
 
@@ -444,6 +446,10 @@ function ClientRequest(input, options, cb) {
         // This is for the happy eyeballs implementation.
         this[kFetchRequest]
           .catch(err => {
+            if (err.code === "ConnectionRefused") {
+              err = new Error("ECONNREFUSED");
+              err.code = "ECONNREFUSED";
+            }
             // Node treats AbortError separately.
             // The "abort" listener on the abort controller should have called this
             if (isAbortError(err)) {

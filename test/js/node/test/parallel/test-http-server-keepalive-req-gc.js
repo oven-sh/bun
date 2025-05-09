@@ -11,7 +11,7 @@ const { connect } = require('net');
 
 let client;
 const server = createServer(common.mustCall((req, res) => {
-  onGC(req, { ongc: common.mustCall(() => { server.closeAllConnections(); }) });
+  onGC(req, { ongc: common.mustCall(() => { server.close(); }) });
   req.resume();
   req.on('end', common.mustCall(() => {
     setImmediate(async () => {

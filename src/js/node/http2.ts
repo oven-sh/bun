@@ -3532,16 +3532,12 @@ function initializeOptions(options) {
 class Http2Server extends net.Server {
   timeout = 0;
   constructor(options, onRequestHandler) {
-    options = initializeOptions(options);
-
     if (typeof options === "function") {
       onRequestHandler = options;
       options = {};
-    } else if (options == null || typeof options == "object") {
-      options = { ...options };
-    } else {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
+    options = initializeOptions(options);
+
     super(options, connectionListener);
     this.setMaxListeners(0);
 

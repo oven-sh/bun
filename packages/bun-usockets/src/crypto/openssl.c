@@ -1146,7 +1146,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* we should always accept moving write buffer so we can retry writes with a
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
- 
   if (options.min_tls_version > 0) {
     if (!SSL_CTX_set_min_proto_version(ssl_context, options.min_tls_version)) {
       free_ssl_context(ssl_context);

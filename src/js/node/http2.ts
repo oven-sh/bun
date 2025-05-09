@@ -3213,16 +3213,24 @@ class ClientHttp2Session extends Http2Session {
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     super();
 
-    if (typeof url === "string") {
-      url = new URL(url);
-    }
-    if (!(url instanceof URL)) {
-      throw $ERR_INVALID_ARG_TYPE("url", "URL", url);
-    }
     if (typeof options === "function") {
       listener = options;
       options = undefined;
     }
+
+    assertIsObject(options, "options");
+    options = { ...options };
+
+    assertIsArray(options.remoteCustomSettings, "options.remoteCustomSettings");
+    if (options.remoteCustomSettings) {
+      options.remoteCustomSettings = [...options.remoteCustomSettings];
+      if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
+    }
+
+    if (typeof url === "string") url = new URL(url);
+
+    assertIsObject(url, "authority", ["string", "Object", "URL"]);
+
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";

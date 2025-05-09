@@ -414,14 +414,17 @@ function ClientRequest(input, options, cb) {
                 maybeEmitClose();
                 return;
               }
-              if (self.aborted || !self.emit("response", res)) {
-                res._dump();
-              }
-              maybeEmitClose();
-              if (res.statusCode === 304) {
-                res.complete = true;
+              try {
+                if (self.aborted || !self.emit("response", res)) {
+                  res._dump();
+                }
+              } finally {
                 maybeEmitClose();
-                return;
+                if (res.statusCode === 304) {
+                  res.complete = true;
+                  maybeEmitClose();
+                  return;
+                }
               }
             },
             this,

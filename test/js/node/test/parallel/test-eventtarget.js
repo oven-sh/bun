@@ -645,19 +645,18 @@ if (typeof Bun === "undefined") { // Node internal
   et.dispatchEvent(new Event('foo'));
 }
 
-// TODO: expected inspect(ev) to be 'Event', got '[Event]'
-// {
-//   const ev = new Event('test');
-//   const evConstructorName = inspect(ev, {
-//     depth: -1,
-//   });
-//   strictEqual(evConstructorName, 'Event');
-//
-//   const inspectResult = inspect(ev, {
-//     depth: 1,
-//   });
-//   ok(inspectResult.includes('Event'));
-// }
+{
+  const ev = new Event('test');
+  const evConstructorName = inspect(ev, {
+    depth: -1,
+  });
+  strictEqual(evConstructorName, 'Event');
+
+  const inspectResult = inspect(ev, {
+    depth: 1,
+  });
+  ok(inspectResult.includes('Event'));
+}
 
 {
   const et = new EventTarget();

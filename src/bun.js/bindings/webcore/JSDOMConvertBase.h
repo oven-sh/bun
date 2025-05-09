@@ -48,13 +48,17 @@ template<typename T> inline T& getPtrOrRef(const Ref<T>& p) { return p.get(); }
 struct DefaultExceptionThrower {
     void operator()(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
     {
-        throwTypeError(&lexicalGlobalObject, scope);
+        // If the converter already threw a more specific exception, don't override it
+        if (!scope.exception()) {
+            throwTypeError(&lexicalGlobalObject, scope);
+        }
     }
 };
 
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue);
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&);
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&);
+template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral functionName, ASCIILiteral argumentName);
 template<typename T, typename ExceptionThrower> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, ExceptionThrower&&);
 template<typename T, typename ExceptionThrower> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&, ExceptionThrower&&);
 template<typename T, typename ExceptionThrower> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&, ExceptionThrower&&);
@@ -72,6 +76,11 @@ template<typename T> inline typename Converter<T>::ReturnType convert(JSC::JSGlo
 template<typename T> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
 {
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
+}
+
+template<typename T> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ASCIILiteral functionName, ASCIILiteral argumentName)
+{
+    return Converter<T>::convert(lexicalGlobalObject, value, functionName, argumentName);
 }
 
 template<typename T, typename ExceptionThrower> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)

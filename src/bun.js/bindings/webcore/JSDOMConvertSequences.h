@@ -60,6 +60,21 @@ struct GenericSequenceConverter {
         return WTFMove(result);
     }
 
+    template<typename ExceptionThrower = DefaultExceptionThrower>
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    {
+        ReturnType result;
+        forEachInIterable(&lexicalGlobalObject, object, [&result, &exceptionThrower](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+
+            auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, exceptionThrower);
+            if (UNLIKELY(scope.exception()))
+                return;
+            result.append(WTFMove(convertedValue));
+        });
+        return WTFMove(result);
+    }
+
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
     {
         return convert(lexicalGlobalObject, object, method, ReturnType());
@@ -240,13 +255,58 @@ struct SequenceConverter {
         return result;
     }
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    template<typename ExceptionThrower = DefaultExceptionThrower>
+    static ReturnType convertArray(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSArray* array, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    {
+        auto& vm = lexicalGlobalObject.vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        unsigned length = array->length();
+
+        ReturnType result;
+        if (!result.tryReserveCapacity(length)) {
+            // FIXME: Is the right exception to throw?
+            throwTypeError(&lexicalGlobalObject, scope);
+            return {};
+        }
+
+        JSC::IndexingType indexingType = array->indexingType() & JSC::IndexingShapeMask;
+
+        if (indexingType == JSC::ContiguousShape) {
+            for (unsigned i = 0; i < length; i++) {
+                auto indexValue = array->butterfly()->contiguous().at(array, i).get();
+                if (!indexValue)
+                    indexValue = JSC::jsUndefined();
+
+                auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, exceptionThrower);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                result.append(convertedValue);
+            }
+            return result;
+        }
+
+        for (unsigned i = 0; i < length; i++) {
+            auto indexValue = array->getDirectIndex(&lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!indexValue)
+                indexValue = JSC::jsUndefined();
+
+            auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, exceptionThrower);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            result.append(convertedValue);
+        }
+        return result;
+    }
+
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ASCIILiteral functionName = {}, ASCIILiteral argumentName = {})
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (!value.isObject()) {
-            throwSequenceTypeError(lexicalGlobalObject, scope);
+            throwSequenceTypeError(lexicalGlobalObject, scope, functionName, argumentName);
             return {};
         }
 
@@ -262,6 +322,33 @@ struct SequenceConverter {
             RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object)));
 
         RELEASE_AND_RETURN(scope, (convertArray(lexicalGlobalObject, array)));
+    }
+
+    template<typename ExceptionThrower = DefaultExceptionThrower>
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject,
+        JSC::JSValue value,
+        ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        if (!value.isObject()) {
+            throwSequenceTypeError(lexicalGlobalObject, scope);
+            return {};
+        }
+
+        JSC::JSObject* object = JSC::asObject(value);
+        if (Converter<IDLType>::conversionHasSideEffects)
+            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, exceptionThrower)));
+
+        if (!JSC::isJSArray(object))
+            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, exceptionThrower)));
+
+        JSC::JSArray* array = JSC::asArray(object);
+        if (!array->isIteratorProtocolFastAndNonObservable())
+            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, exceptionThrower)));
+
+        RELEASE_AND_RETURN(scope, (convertArray(lexicalGlobalObject, array, exceptionThrower)));
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
@@ -360,14 +447,19 @@ struct SequenceConverter<IDLUnrestrictedDouble> {
 template<typename T> struct Converter<IDLSequence<T>> : DefaultConverter<IDLSequence<T>> {
     using ReturnType = typename Detail::SequenceConverter<T>::ReturnType;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ASCIILiteral functionName = {}, ASCIILiteral argumentName = {})
     {
-        return Detail::SequenceConverter<T>::convert(lexicalGlobalObject, value);
+        return Detail::SequenceConverter<T>::convert(lexicalGlobalObject, value, functionName, argumentName);
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
     {
         return Detail::SequenceConverter<T>::convert(lexicalGlobalObject, object, method);
+    }
+
+    template<typename ExceptionThrower> static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
+    {
+        return Detail::SequenceConverter<T>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
     }
 };
 

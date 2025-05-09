@@ -278,9 +278,13 @@ JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::
     return throwVMError(&lexicalGlobalObject, scope, createReferenceError(&lexicalGlobalObject, makeString(interfaceName, " constructor associated execution context is unavailable"_s)));
 }
 
-void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
+void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral functionName, ASCIILiteral argumentName)
 {
-    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    if (functionName && argumentName) {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, makeString(functionName, ": "_s, argumentName, " is not iterable."_s));
+    } else {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    }
 }
 
 void throwNonFiniteTypeError(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)

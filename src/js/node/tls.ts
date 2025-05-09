@@ -383,7 +383,6 @@ var InternalSecureContext = class SecureContext {
           throw $ERR_TLS_INVALID_PROTOCOL_VERSION(minVersionName, "minimum");
         }
       }
-      console.log("minVersionName", minVersionName, new Error().stack);
       this.minVersion = TLS_VERSION_MAP[minVersionName];
 
       if (maxVersionName) {

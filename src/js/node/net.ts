@@ -352,14 +352,10 @@ const ServerHandlers: SocketHandler = {
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
 
-    const _socket = new SClass(
-      SClass === require("node:tls").TLSSocket
-        ? {
-            minVersion: self.minVersion,
-            maxVersion: self.maxVersion,
-          }
-        : {},
-    );
+    const _socket = new SClass({
+      minVersion: self.minVersion,
+      maxVersion: self.maxVersion,
+    });
 
     _socket.isServer = true;
     _socket.server = self;

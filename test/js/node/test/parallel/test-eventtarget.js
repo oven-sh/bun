@@ -260,36 +260,33 @@ let asyncTest = Promise.resolve();
   target.dispatchEvent(new Event('foo'));
 }
 
-// TODO:
-//    Expected: Should trigger uncaughtException handler
-//    Actual: Triggered unhandledRejection handler
-// {
-//   const uncaughtException = common.mustCall((err, origin) => {
-//     strictEqual(err.message, 'boom');
-//     strictEqual(origin, 'uncaughtException');
-//   }, 4);
-//
-//   // Make sure that we no longer call 'error' on error.
-//   process.on('error', common.mustNotCall());
-//   // Don't call rejection even for async handlers.
-//   process.on('unhandledRejection', common.mustNotCall());
-//   process.on('uncaughtException', uncaughtException);
-//
-//   const eventTarget = new EventTarget();
-//
-//   const ev1 = async () => { throw new Error('boom'); };
-//   const ev2 = () => { throw new Error('boom'); };
-//   const ev3 = { handleEvent() { throw new Error('boom'); } };
-//   const ev4 = { async handleEvent() { throw new Error('boom'); } };
-//
-//   // Errors in a handler won't stop calling the others.
-//   eventTarget.addEventListener('foo', ev1, { once: true });
-//   eventTarget.addEventListener('foo', ev2, { once: true });
-//   eventTarget.addEventListener('foo', ev3, { once: true });
-//   eventTarget.addEventListener('foo', ev4, { once: true });
-//
-//   eventTarget.dispatchEvent(new Event('foo'));
-// }
+{
+  const uncaughtException = common.mustCall((err, origin) => {
+    strictEqual(err.message, 'boom');
+    strictEqual(origin, 'uncaughtException');
+  }, 4);
+
+  // Make sure that we no longer call 'error' on error.
+  process.on('error', common.mustNotCall());
+  // Don't call rejection even for async handlers.
+  process.on('unhandledRejection', common.mustNotCall());
+  process.on('uncaughtException', uncaughtException);
+
+  const eventTarget = new EventTarget();
+
+  const ev1 = async () => { throw new Error('boom'); };
+  const ev2 = () => { throw new Error('boom'); };
+  const ev3 = { handleEvent() { throw new Error('boom'); } };
+  const ev4 = { async handleEvent() { throw new Error('boom'); } };
+
+  // Errors in a handler won't stop calling the others.
+  eventTarget.addEventListener('foo', ev1, { once: true });
+  eventTarget.addEventListener('foo', ev2, { once: true });
+  eventTarget.addEventListener('foo', ev3, { once: true });
+  eventTarget.addEventListener('foo', ev4, { once: true });
+
+  eventTarget.dispatchEvent(new Event('foo'));
+}
 
 {
   const eventTarget = new EventTarget();

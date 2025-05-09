@@ -533,7 +533,10 @@ pub const JSGlobalObject = opaque {
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
+        const exception = this.takeException(err);
+        if (!exception.isTerminationException(this.vm())) {
+            _ = this.bunVM().uncaughtException(this, exception, false);
+        }
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -852,6 +855,12 @@ pub const JSGlobalObject = opaque {
     ) JSC.JSValue {
         @branchHint(.cold);
         return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
+    }
+
+    extern fn ScriptExecutionContextIdentifier__forGlobalObject(global: *JSC.JSGlobalObject) u32;
+
+    pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
+        return @enumFromInt(ScriptExecutionContextIdentifier__forGlobalObject(global));
     }
 
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };

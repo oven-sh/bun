@@ -46,6 +46,9 @@ namespace uWS {
 
     /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
     inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
+
+        /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed \r, \n ; depending on context)*/
+
         if(!isParsingChunkedExtension(state)){
             /* Consume everything higher than 32 and not ; (extension)*/
             while (data.length() && data[0] > 32 && data[0] != ';') {
@@ -87,6 +90,9 @@ namespace uWS {
                         state &= ~STATE_IS_CHUNKED_EXTENSION;
                         break;
                     }
+                    /* RFC 9110: Token format (TLDR; anything bellow 32 is not allowed)
+                    * TODO: add support for quoted-strings values
+                    */
                     if(data[0] <= 32) {
                         state = STATE_IS_ERROR;
                         return;

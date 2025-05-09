@@ -3119,6 +3119,15 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("rejects requests with CR in header field value", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
 
       const msg = ["GET / HTTP/1.1", "Host: localhost", "X-Custom: bad\rvalue", "", ""].join("\r\n");
 
@@ -3126,6 +3135,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
       expect(response).toInclude("400 Bad Request");
       expect(mockHandler).not.toHaveBeenCalled();
+      await promise;
     });
   });
 
@@ -3189,7 +3199,15 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("rejects requests with both Content-Length and Transfer-Encoding", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
-
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
       const msg = [
         "POST / HTTP/1.1",
         "Host: localhost",
@@ -3203,19 +3221,23 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      const response = await sendRequest(msg);
-
-      // Note: Node.js HTTP parser behavior varies by version
-      // Some versions might process this rather than reject
-      if (response.includes("400 Bad Request")) {
-        expect(mockHandler).not.toHaveBeenCalled();
-      }
+      await sendRequest(msg);
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
     });
 
     test("rejects requests with obfuscated Transfer-Encoding header", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
-
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
       const msg = [
         "POST / HTTP/1.1",
         "Host: localhost",
@@ -3229,12 +3251,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
         "",
       ].join("\r\n");
 
-      const response = await sendRequest(msg);
-
-      // Node's behavior might vary, so check for either case
-      if (response.includes("400 Bad Request")) {
-        expect(mockHandler).not.toHaveBeenCalled();
-      }
+      await sendRequest(msg);
+      await promise;
+      expect(mockHandler).not.toHaveBeenCalled();
     });
   });
 
@@ -3242,7 +3261,15 @@ describe("HTTP Server Security Tests - Advanced", () => {
     test("rejects requests with invalid HTTP version", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
-
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("clientError", (err: any) => {
+        try {
+          expect(err.code).toBe("HPE_INTERNAL");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
       const msg = [
         "GET / HTTP/9.9", // Invalid HTTP version
         "Host: localhost",
@@ -3251,8 +3278,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       ].join("\r\n");
 
       const response = await sendRequest(msg);
-
       expect(response).toInclude("505 HTTP Version Not Supported");
+      await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
 

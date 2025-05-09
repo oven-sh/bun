@@ -10,14 +10,18 @@ const { connect } = require('net');
 // Refs: https://github.com/nodejs/node/issues/9668
 
 let client;
+
 const server = createServer(common.mustCall((req, res) => {
+  
+  function serverStopped() {
+    return server.listening == false;
+  }
   onGC(req, { ongc: common.mustCall(() => { server.closeAllConnections(); }) });
   req.resume();
   req.on('end', common.mustCall(() => {
     setImmediate(async () => {
       client.end();
-      await globalThis.gc({ type: 'major', execution: 'async' });
-      await globalThis.gc({ type: 'major', execution: 'async' });
+      await common.gcUntil(serverStopped);
     });
   }));
   res.end('hello world');

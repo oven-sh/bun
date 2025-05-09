@@ -23,6 +23,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Configure Git
+        run: |
+          git config --global core.autocrlf true
+          git config --global core.ignorecase true
+          git config --global core.precomposeUnicode true
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

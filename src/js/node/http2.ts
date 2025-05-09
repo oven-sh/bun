@@ -2219,7 +2219,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
-      if (options.sendDate == null || options.sendDate) {
+      if (options.sendDate) {
         const current_date = headers["date"];
         if (current_date === null || current_date === undefined) {
           headers["date"] = utcDate();

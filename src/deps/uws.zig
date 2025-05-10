@@ -1,16 +1,6 @@
-const std = @import("std");
-pub const LIBUS_SOCKET_DESCRIPTOR = std.posix.socket_t;
-
 const bun = @import("bun");
+const std = @import("std");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
-const BoringSSL = bun.BoringSSL.c;
-
-const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const EventLoopTimer = @import("../bun.js/api/Timer.zig").EventLoopTimer;
-const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
-pub const Socket = @import("uws/socket.zig").Socket;
-
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
@@ -19,13 +9,20 @@ pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
 
+pub const Socket = @import("uws/socket.zig").Socket;
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
+const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
+const JSC = bun.JSC;
+const EventLoopTimer = @import("../bun.js/api/Timer.zig").EventLoopTimer;
 const WriteResult = union(enum) {
     want_more: usize,
     backpressure: usize,
 };
+
+const BoringSSL = bun.BoringSSL.c;
 
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
@@ -4091,6 +4088,8 @@ pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);
+pub const LIBUS_SOCKET_DESCRIPTOR = std.posix.socket_t;
+
 pub const _COMPRESSOR_MASK: i32 = 255;
 pub const _DECOMPRESSOR_MASK: i32 = 3840;
 pub const DISABLED: i32 = 0;

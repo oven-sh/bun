@@ -424,14 +424,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
     CString utf8;
-    {
-        auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
-        if (UNLIKELY(!utf8_filename)) {
-            JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
-            return {};
-        }
-        utf8 = *utf8_filename;
-    }
 
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
@@ -486,6 +478,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
 #endif
     };
+
+    {
+        auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
+        if (UNLIKELY(!utf8_filename)) {
+            JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
+            return {};
+        }
+        utf8 = *utf8_filename;
+    }
 
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);

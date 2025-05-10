@@ -278,10 +278,47 @@ pub const WebWorker = struct {
         assert(this.status.load(.acquire) == .start);
         assert(this.vm == null);
 
+        var transform_options = this.parent.transpiler.options.transform_options;
+
+        if (this.execArgv) |exec_argv| parse_new_args: {
+            var new_args: std.ArrayList([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
+            defer {
+                for (new_args.items) |arg| {
+                    bun.default_allocator.free(arg);
+                }
+                new_args.deinit();
+            }
+
+            for (exec_argv) |arg| {
+                try new_args.append(arg.toOwnedSliceZ(bun.default_allocator));
+            }
+
+            var diag: bun.clap.Diagnostic = .{};
+            var iter: bun.clap.args.SliceIterator = .init(new_args.items);
+
+            var args = bun.clap.parseEx(bun.clap.Help, bun.CLI.Command.Tag.RunCommand.params(), &iter, .{
+                .diagnostic = &diag,
+                .allocator = bun.default_allocator,
+
+                // just one for executable
+                .stop_after_positional_at = 1,
+            }) catch {
+                // ignore param parsing errors
+                break :parse_new_args;
+            };
+            defer args.deinit();
+
+            // override the existing even if it was set
+            transform_options.allow_addons = !args.flag("--no-addons");
+
+            // TODO: currently this only checks for --no-addons. I think
+            // this should go through most flags and update the options.
+        }
+
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.?.allocator(),
-            .args = this.parent.transpiler.options.transform_options,
+            .args = transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });

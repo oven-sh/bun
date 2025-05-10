@@ -244,10 +244,9 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
-
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
         clap.parseParam("--tls-max-v1.2                    Set the maximum TLS version to 1.2") catch unreachable,
         clap.parseParam("--tls-max-v1.3                    Set the maximum TLS version to 1.3") catch unreachable,
-
         clap.parseParam("--tls-min-v1.0                    Set the minimum TLS version to 1") catch unreachable,
         clap.parseParam("--tls-min-v1.1                    Set the minimum TLS version to 1.1") catch unreachable,
         clap.parseParam("--tls-min-v1.2                    Set the minimum TLS version to 1.2") catch unreachable,
@@ -719,6 +718,12 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {

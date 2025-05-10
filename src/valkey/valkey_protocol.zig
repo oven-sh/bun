@@ -291,7 +291,6 @@ pub const RESPValue = union(RESPType) {
             .Map => |entries| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
                 for (entries) |*entry| {
-                    // Keys are always strings, even in buffer mode
                     const js_key = try entry.key.toJSWithOptions(globalObject, .{});
                     var key_str = try js_key.toBunString(globalObject);
                     defer key_str.deref();

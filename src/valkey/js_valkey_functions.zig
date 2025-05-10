@@ -1,16 +1,3 @@
-const std = @import("std");
-
-const bun = @import("bun");
-const JSC = bun.JSC;
-const valkey = bun.valkey;
-const protocol = valkey.protocol;
-const JSValue = JSC.JSValue;
-const Command = valkey.Command;
-const Slice = JSC.ZigString.Slice;
-const JSArgument = JSC.Node.BlobOrStringOrBuffer;
-
-const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-
 pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     const command = try callframe.argument(0).toBunString(globalObject);
     defer command.deref();
@@ -807,6 +794,18 @@ const compile = struct {
         };
     }
 };
+
+const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
+const bun = @import("bun");
+const JSC = bun.JSC;
+const valkey = bun.valkey;
+const protocol = valkey.protocol;
+const JSValue = JSC.JSValue;
+const Command = valkey.Command;
+const std = @import("std");
+const Slice = JSC.ZigString.Slice;
+
+const JSArgument = JSC.Node.BlobOrStringOrBuffer;
 
 fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) !?JSArgument {
     if (value == .undefined or value == .null) {

@@ -1,12 +1,3 @@
-const std = @import("std");
-
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Slice = JSC.ZigString.Slice;
-const node = bun.api.node;
-
-const protocol = @import("valkey_protocol.zig");
-
 command: []const u8,
 args: Args,
 meta: Meta = .{},
@@ -166,3 +157,11 @@ pub const PromisePair = struct {
 };
 
 const Command = @This();
+
+const bun = @import("bun");
+const JSC = bun.JSC;
+const protocol = @import("valkey_protocol.zig");
+const std = @import("std");
+const Slice = JSC.ZigString.Slice;
+
+const node = bun.api.node;

@@ -167,7 +167,7 @@ function onConnectEnd() {
   }
 }
 
-const SocketHandlers: SocketHandler = {
+const SocketHandlers = {
   close(socket, err) {
     const self = socket.data;
     if (!self || self[kclosed]) return;
@@ -210,7 +210,7 @@ const SocketHandlers: SocketHandler = {
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
   },
-  error(socket, error, ignoreHadError) {
+  error(socket, error, ignoreHadError?: boolean) {
     const self = socket.data;
     if (!self) return;
     if (self._hadError && !ignoreHadError) return;
@@ -279,6 +279,7 @@ const SocketHandlers: SocketHandler = {
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
+        // TODO: authorizationError should be error instance?
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
           self.destroy(verifyError);
@@ -300,7 +301,8 @@ const SocketHandlers: SocketHandler = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
-};
+  // TODO: We can improve the type of the socket here
+} satisfies SocketHandler<import("node:tls").TLSSocket & { [Key in PropertyKey]: unknown }, "buffer">;
 
 const SocketEmitEndNT = (self, _err?) => {
   if (!self[kended]) {
@@ -571,6 +573,10 @@ function Socket(options?) {
       signal.addEventListener("abort", destroyWhenAborted.bind(this));
     }
   }
+
+  if (options && typeof options.timeout === "number") {
+    this.setTimeout(options.timeout);
+  }
 }
 $toClass(Socket, "Socket", Duplex);
 
@@ -707,7 +713,7 @@ Socket.prototype.connect = function connect(...args) {
       allowHalfOpen: this.allowHalfOpen,
     }).catch(error => {
       if (!this.destroyed) {
-        this.emit("error", error);
+        SocketHandlers.error(this, error, true);
         this.emit("close");
       }
     });
@@ -875,7 +881,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          this.emit("error", error);
+          SocketHandlers.error(this, error, true);
           this.emit("close");
         }
       });
@@ -890,7 +896,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
         if (!this.destroyed) {
-          this.emit("error", error);
+          SocketHandlers.error(this, error, true);
           this.emit("close");
         }
       });

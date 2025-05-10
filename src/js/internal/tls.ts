@@ -130,7 +130,7 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
         break;
       case "TLS_method":
       case "SSLv23_method":
-        minVersionName = DEFAULT_MIN_VERSION;
+        minVersionName = "TLSv1";
         maxVersionName = DEFAULT_MAX_VERSION;
         break;
       default:
@@ -164,4 +164,4 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
   return [minVersion, maxVersion];
 }
 
-export { VALID_TLS_ERROR_MESSAGE_TYPES, isValidTLSArray, isValidTLSItem, resolveTLSVersions, throwOnInvalidTLSArray };
+export { isValidTLSArray, isValidTLSItem, resolveTLSVersions, throwOnInvalidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES };

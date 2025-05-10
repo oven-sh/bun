@@ -1,6 +1,3 @@
-const std = @import("std");
-const builtin = @import("builtin");
-
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -11,65 +8,44 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
+
+const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
+const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const RegularExpression = bun.RegularExpression;
-const File = bun.sys.File;
-const clap = bun.clap;
-const transpiler = bun.transpiler;
-const OOM = bun.OOM;
-
-const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
-const BunJS = @import("./bun_js.zig");
-const Bunfig = @import("./bunfig.zig").Bunfig;
-pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
-const AddCompletions = @import("./cli/add_completions.zig");
-pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
-const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
-pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
-pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
-const FilterRun = @import("./cli/filter_run.zig");
-pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
-pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
-pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
-pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
-pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
-pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
-pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
-pub const ShellCompletions = @import("./cli/shell_completions.zig");
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
-pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-const DotEnv = @import("./env_loader.zig");
-const Install = @import("./install/install.zig");
-const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Router = @import("./router.zig");
-const sync = @import("./sync.zig");
-const Api = @import("api/schema.zig").Api;
-const fs = @import("fs.zig");
 const linker = @import("linker.zig");
-const options = @import("options.zig");
+const RegularExpression = bun.RegularExpression;
+const builtin = @import("builtin");
+const File = bun.sys.File;
 
 const debug = Output.scoped(.CLI, true);
 
+const sync = @import("./sync.zig");
+const Api = @import("api/schema.zig").Api;
+const resolve_path = @import("./resolver/resolve_path.zig");
+const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
+const clap = bun.clap;
+const BunJS = @import("./bun_js.zig");
+const Install = @import("./install/install.zig");
+const transpiler = bun.transpiler;
+const DotEnv = @import("./env_loader.zig");
+const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const FilterRun = @import("./cli/filter_run.zig");
+
+const fs = @import("fs.zig");
+const Router = @import("./router.zig");
+
+const MacroMap = @import("./resolver/package_json.zig").MacroMap;
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
+const Bunfig = @import("./bunfig.zig").Bunfig;
+const OOM = bun.OOM;
+
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
@@ -128,6 +104,7 @@ pub const debug_flags = if (Environment.show_crash_trace) struct {
 } else @compileError("Do not access this namespace in a release build");
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
+const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
@@ -137,6 +114,31 @@ fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
+
+pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
+pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const ShellCompletions = @import("./cli/shell_completions.zig");
+pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
+pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
+pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -199,12 +201,12 @@ pub const Arguments = struct {
     };
 
     const transpiler_params_ = [_]ParamType{
-        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--preserve-symlinks               Preserve symlinks when resolving files") catch unreachable,
         clap.parseParam("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-        clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
-        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
@@ -242,7 +244,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
         clap.parseParam("--tls-max-v1.2                    Set the maximum TLS version to 1.2") catch unreachable,
@@ -718,12 +720,6 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
-            }
-
-            if (args.flag("--no-addons")) {
-                // used for disabling process.dlopen and
-                // for disabling export condition "node-addons"
-                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1494,6 +1490,8 @@ pub const ReservedCommand = struct {
         std.process.exit(1);
     }
 };
+
+const AddCompletions = @import("./cli/add_completions.zig");
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.

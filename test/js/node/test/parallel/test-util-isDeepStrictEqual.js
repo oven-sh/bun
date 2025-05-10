@@ -31,7 +31,7 @@ function notUtilIsDeepStrict(a, b) {
   utilIsDeepStrict(Object(2), Object(2));
   utilIsDeepStrict(boxedString, Object('test'));
   boxedString.slow = true;
-  // notUtilIsDeepStrict(boxedString, Object('test')); // TODO
+  notUtilIsDeepStrict(boxedString, Object('test'));
   boxedSymbol.slow = true;
   notUtilIsDeepStrict(boxedSymbol, {});
   utilIsDeepStrict(Object(BigInt(1)), Object(BigInt(1)));

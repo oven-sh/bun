@@ -398,9 +398,9 @@ const ServerHandlers: SocketHandler = {
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
     if (!success && verifyError?.code === "ECONNRESET") {
-      const err = new ConnResetException("socket hang up");
-      self.emit("_tlsError", err);
-      self.server.emit("tlsClientError", err, self);
+      // const err = new ConnResetException("socket hang up");
+      // self.emit("_tlsError", err);
+      // self.server.emit("tlsClientError", err, self);
       self._hadError = true;
 
       // error before handshake on the server side will only be emitted using tlsClientError

@@ -599,6 +599,7 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const HTTPThread = @import("./http.zig").HTTPThread;
 pub const http = @import("./http.zig");
+pub const tls = @import("./tls.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 

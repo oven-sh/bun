@@ -467,7 +467,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             auto span = filename.span16();
             auto dupeZ = new wchar_t[span.size() + 1];
             if (dupeZ) {
-                memcpy(dupeZ, span.data(), span.size() * sizeof(wchar_t));
+                memcpy(dupeZ, span.data(), span.size_bytes());
                 dupeZ[span.size()] = L'\0';
 
                 // We can't immediately delete the file on Windows.

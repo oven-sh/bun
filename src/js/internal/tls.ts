@@ -164,4 +164,12 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
   return [minVersion, maxVersion];
 }
 
-export { isValidTLSArray, isValidTLSItem, resolveTLSVersions, throwOnInvalidTLSArray, VALID_TLS_ERROR_MESSAGE_TYPES };
+export default {
+  isValidTLSArray,
+  isValidTLSItem,
+  resolveTLSVersions,
+  throwOnInvalidTLSArray,
+  VALID_TLS_ERROR_MESSAGE_TYPES,
+  DEFAULT_MIN_VERSION,
+  DEFAULT_MAX_VERSION,
+};

@@ -3,39 +3,39 @@
 //
 // Generated bindings are available in `bun.generated.<basename>.*` in Zig,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
-import * as path from "node:path";
+import assert from "node:assert";
 import fs from "node:fs";
+import * as path from "node:path";
 import {
+  ArgStrategyChildItem,
   CodeWriter,
+  Func,
+  NodeValidator,
+  Struct,
   TypeImpl,
+  alignForward,
+  cAbiIntegerLimits,
   cAbiTypeName,
   cap,
   extDispatchVariant,
+  extInternalDispatchVariant,
   extJsFunction,
   files,
+  inspect,
+  isFunc,
+  pascal,
   snake,
   src,
   str,
-  Struct,
+  typeHashToNamespace,
+  typeHashToReachableType,
+  zid,
   type CAbiType,
   type DictionaryField,
   type ReturnStrategy,
   type TypeKind,
   type Variant,
-  typeHashToNamespace,
-  typeHashToReachableType,
-  zid,
-  ArgStrategyChildItem,
-  inspect,
-  pascal,
-  alignForward,
-  isFunc,
-  Func,
-  NodeValidator,
-  cAbiIntegerLimits,
-  extInternalDispatchVariant,
 } from "./bindgen-lib-internal";
-import assert from "node:assert";
 import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
 
 // arg parsing
@@ -1485,7 +1485,7 @@ zigInternal.line("};");
 zigInternal.line();
 zigInternal.line("comptime {");
 zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
-zigInternal.line("        for (@typeInfo(binding_internals).@\"struct\".decls) |decl| {");
+zigInternal.line('        for (@typeInfo(binding_internals).@"struct".decls) |decl| {');
 zigInternal.line("            _ = &@field(binding_internals, decl.name);");
 zigInternal.line("        }");
 zigInternal.line("    }");

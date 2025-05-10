@@ -1,6 +1,6 @@
-import { $, spawnSync } from "bun";
-import { readFileSync, writeFileSync } from "fs";
+import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}

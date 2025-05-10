@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunExe, isPosix } from "harness";
-import { bunEnv } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {

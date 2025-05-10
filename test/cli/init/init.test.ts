@@ -214,5 +214,7 @@ test("bun init twice", async () => {
       "type": "module",
     }
   `);
-  expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(`"my edited tsconfig.json"`);
+  expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(
+    `"my edited tsconfig.json"`,
+  );
 });

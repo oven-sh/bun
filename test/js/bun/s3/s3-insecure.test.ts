@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
 import { S3Client } from "bun";
+import { describe, expect, it } from "bun:test";
 
 describe("s3", async () => {
   it("should not fail to connect when endpoint is http and not https", async () => {

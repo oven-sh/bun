@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
 
 const requestOptions = [
   ["http://localhost:3000/"],

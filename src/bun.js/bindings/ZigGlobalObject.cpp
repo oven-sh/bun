@@ -233,8 +233,6 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
-
 #ifndef BUN_WEBKIT_VERSION
 #ifndef ASSERT_ENABLED
 #warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
@@ -1300,11 +1298,6 @@ GlobalObject::~GlobalObject()
 void GlobalObject::destroy(JSCell* cell)
 {
     static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject();
-}
-
-WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
-{
-    return m_scriptExecutionContext;
 }
 
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
@@ -4381,6 +4374,8 @@ bool GlobalObject::hasNapiFinalizers() const
 
     return false;
 }
+
+void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {

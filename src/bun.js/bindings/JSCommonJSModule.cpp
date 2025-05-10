@@ -128,18 +128,23 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject->requireResolveFunctionUnbound(),
             moduleObject->filename(),
             ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+        RETURN_IF_EXCEPTION(scope, );
         requireFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireFunctionUnbound(),
             moduleObject,
             ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+        RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
+        RETURN_IF_EXCEPTION(scope, );
         moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+        RETURN_IF_EXCEPTION(scope, );
         moduleObject->hasEvaluated = true;
     };
 
     if (UNLIKELY(Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))) {
         initializeModuleObject();
+        scope.assertNoExceptionExceptTermination();
 
         // Using same approach as node, `arguments` in the entry point isn't defined
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
@@ -148,15 +153,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
-        scope.assertNoException();
 
-        WTF::NakedPtr<Exception> returnedException;
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
-        if (UNLIKELY(returnedException)) {
-            scope.throwException(globalObject, returnedException.get());
-            return false;
-        }
-        ASSERT(!scope.exception());
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, false);
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
@@ -164,13 +163,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RELEASE_AND_RETURN(scope, true);
     }
 
-    WTF::NakedPtr<Exception> returnedException;
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
-    if (UNLIKELY(returnedException)) {
-        scope.throwException(globalObject, returnedException.get());
-        RELEASE_AND_RETURN(scope, false);
-    }
-    ASSERT(!scope.exception());
+    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, false);
     ASSERT(fnValue);
 
     JSObject* fn = fnValue.getObject();
@@ -209,13 +203,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
-    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args, returnedException);
-    if (UNLIKELY(returnedException)) {
-        scope.throwException(globalObject, returnedException.get());
-        return false;
-    }
-    ASSERT(!scope.exception());
-    RELEASE_AND_RETURN(scope, true);
+    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -1313,7 +1303,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
         if (res.success)
             return JSC::JSValue::encode(result);
     }
-    ASSERT_WITH_MESSAGE(false, "Failed to fetch builtin module %s", specifier.utf8().data());
+    throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
 }
 

@@ -647,10 +647,10 @@ fn NewLexer_(
             }
         }
 
-        pub const InnerStringLiteral = packed struct { suffix_len: u8, needs_decode: bool };
+        pub const InnerStringLiteral = packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 };
 
         fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
-            var suffix_len: u8 = if (comptime quote == 0) 0 else 1;
+            var suffix_len: u2 = if (comptime quote == 0) 0 else 1;
             var needs_decode = false;
             stringLiteral: while (true) {
                 switch (lexer.code_point) {

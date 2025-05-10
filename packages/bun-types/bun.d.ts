@@ -400,7 +400,7 @@ declare module "bun" {
     /**
      * In Bun, this does nothing.
      */
-    type?: Bun.WorkerType | undefined;
+    type?: Bun.WorkerType;
 
     /**
      * List of arguments which would be stringified and appended to
@@ -408,20 +408,20 @@ declare module "bun" {
      * but the values will be available on the global `Bun.argv` as if they
      * were passed as CLI options to the script.
      */
-    argv?: any[] | undefined;
+    argv?: any[];
 
     /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
-    // eval?: boolean | undefined;
+    // eval?: boolean ;
 
     /**
      * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
-    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
+    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"];
 
     /**
      * In Bun, this does nothing.
      */
-    credentials?: import("undici-types").RequestCredentials | undefined;
+    credentials?: import("undici-types").RequestCredentials;
 
     /**
      * @default true
@@ -436,7 +436,7 @@ declare module "bun" {
      *
      * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
      */
-    preload?: string[] | string | undefined;
+    preload?: string[] | string;
   }
 
   interface Worker extends EventTarget, AbstractWorker {
@@ -778,10 +778,10 @@ declare module "bun" {
   ): Promise<number>;
 
   interface SystemError extends Error {
-    errno?: number | undefined;
-    code?: string | undefined;
-    path?: string | undefined;
-    syscall?: string | undefined;
+    errno?: number;
+    code?: string;
+    path?: string;
+    syscall?: string;
   }
 
   /**
@@ -3660,7 +3660,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3672,7 +3672,7 @@ declare module "bun" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3683,13 +3683,25 @@ declare module "bun" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
-    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+    secureOptions?: number; // Value is a numeric bitmask of the `SSL_OP_*` options
+
+    keyFile?: string;
+
+    certFile?: string;
+
+    ALPNProtocols?: string | BufferSource;
+
+    ciphers?: string;
+
+    clientRenegotiationLimit?: number;
+
+    clientRenegotiationWindow?: number;
   }
 
   // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
@@ -3772,7 +3784,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.ca` instead
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3786,7 +3798,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.cert` instead
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3799,7 +3811,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.key` instead
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
@@ -3807,7 +3819,7 @@ declare module "bun" {
      *
      * @deprecated `Use .tls.secureOptions` instead
      */
-    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+    secureOptions?: number; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
   interface SocketAddress {
@@ -5605,7 +5617,7 @@ declare module "bun" {
       callback: {
         napiModule: unknown;
         symbol: string;
-        external?: unknown | undefined;
+        external?: unknown;
       },
     ): this;
     /**
@@ -6022,7 +6034,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(): import("tls").PeerCertificate;
+    getPeerCertificate(abbreviated?: boolean): import("tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**
@@ -6127,6 +6139,34 @@ declare module "bun" {
      * The number of bytes written to the socket.
      */
     readonly bytesWritten: number;
+
+    resume(): void;
+
+    pause(): void;
+
+    renegotiate(): void;
+
+    setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
+
+    getSession(): void;
+
+    setSession(session: string | Buffer | BufferSource): void;
+
+    exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
+
+    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [Socket<Data>, Socket<Data>];
+
+    close(): void;
+
+    getServername(): string;
+
+    setServername(name: string): void;
+  }
+
+  interface TLSUpgradeOptions<Data> {
+    data?: Data;
+    tls: TLSOptions | boolean;
+    socket: SocketHandler<Data>;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -6227,6 +6267,22 @@ declare module "bun" {
      * The per-instance data context
      */
     data?: Data;
+    /**
+     * Whether to allow half-open connections.
+     *
+     * A half-open connection occurs when one end of the connection has called `close()`
+     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     *
+     * - The socket won't automatically send FIN when the remote side closes its end
+     * - The local side can continue sending data even after the remote side has closed
+     * - The application must explicitly call `end()` to fully close the connection
+     *
+     * When `false`, the socket automatically closes both ends of the connection when
+     * either side closes.
+     *
+     * @default false
+     */
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6241,7 +6297,7 @@ declare module "bun" {
     /**
      * The TLS configuration object with which to create the server
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6287,7 +6343,7 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: boolean;
+    tls?: TLSOptions | boolean;
     /**
      * Whether to use exclusive mode.
      *
@@ -6303,22 +6359,8 @@ declare module "bun" {
      * @default false
      */
     exclusive?: boolean;
-    /**
-     * Whether to allow half-open connections.
-     *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
-     *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
-     *
-     * When `false` (default), the socket automatically closes both ends of the connection
-     * when either side closes.
-     *
-     * @default false
-     */
-    allowHalfOpen?: boolean;
+    reusePort?: boolean;
+    ipv6Only?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6329,14 +6371,14 @@ declare module "bun" {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
      * TLS Configuration with which to create the socket
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions | boolean;
     /**
      * The file descriptor to connect to
      */

@@ -1659,6 +1659,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn close(this: ThisSocket, code: Socket.CloseCode) void {
             return this.socket.close(comptime is_ssl, code);
         }
+
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.localPort(is_ssl),

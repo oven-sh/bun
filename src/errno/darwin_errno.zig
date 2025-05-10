@@ -2,7 +2,7 @@ pub const Mode = std.posix.mode_t;
 pub const E = std.posix.E;
 pub const S = std.posix.S;
 
-pub const SystemErrno = enum(u8) {
+pub const SystemErrno = enum(u16) {
     SUCCESS = 0,
     EPERM = 1,
     ENOENT = 2,

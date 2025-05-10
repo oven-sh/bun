@@ -1615,7 +1615,7 @@ pub extern fn ares_set_servers_ports_csv(channel: *Channel, servers: [*c]const u
 pub extern fn ares_get_servers(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 pub extern fn ares_get_servers_ports(channel: *Channel, servers: *?*struct_ares_addr_port_node) c_int;
 /// https://c-ares.org/docs/ares_inet_ntop.html
-pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: ares_socklen_t) ?[*:0]const u8;
+pub extern fn ares_inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*]u8, size: ares_socklen_t) ?[*:0]const u8;
 /// https://c-ares.org/docs/ares_inet_pton.html
 ///
 /// ## Returns

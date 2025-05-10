@@ -402,33 +402,38 @@ interface Timer {
  * @param id timer id
  */
 declare function clearInterval(id?: number | Timer): void;
+
 /**
  * Cancel a delayed function call by its timer ID.
  * @param id timer id
  */
 declare function clearTimeout(id?: number | Timer): void;
+
 /**
  * Cancel an immediate function call by its immediate ID.
  * @param id immediate id
  */
 declare function clearImmediate(id?: number | Timer): void;
+
 /**
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
  */
-declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
+declare function setImmediate(handler: Function, ...arguments: any[]): Timer;
+
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
  */
-declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
+declare function setInterval(handler: Function, interval?: number, ...arguments: any[]): Timer;
+
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
  * @param timeout milliseconds to wait between calls
  */
-declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
+declare function setTimeout(handler: Function, timeout?: number, ...arguments: any[]): Timer;
 
 declare function addEventListener<K extends keyof EventMap>(
   type: K,

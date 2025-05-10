@@ -722,6 +722,12 @@ pub const Arguments = struct {
                 ctx.runtime_options.redis_preconnect = true;
             }
 
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
+            }
+
             if (args.option("--port")) |port_str| {
                 if (comptime cmd == .RunAsNodeCommand) {
                     // TODO: prevent `node --port <script>` from working

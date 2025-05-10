@@ -21,10 +21,10 @@ function notUtilIsDeepStrict(a, b) {
 {
   const boxedString = new String('test');
   const boxedSymbol = Object(Symbol());
-  // notUtilIsDeepStrict(new Boolean(true), Object(false)); // TODO
+  notUtilIsDeepStrict(new Boolean(true), Object(false));
   notUtilIsDeepStrict(Object(true), new Number(1));
-  // notUtilIsDeepStrict(new Number(2), new Number(1)); // TODO
-  // notUtilIsDeepStrict(boxedSymbol, Object(Symbol())); // TODO
+  notUtilIsDeepStrict(new Number(2), new Number(1));
+  notUtilIsDeepStrict(boxedSymbol, Object(Symbol()));
   notUtilIsDeepStrict(boxedSymbol, {});
   utilIsDeepStrict(boxedSymbol, boxedSymbol);
   utilIsDeepStrict(Object(true), Object(true));
@@ -35,7 +35,7 @@ function notUtilIsDeepStrict(a, b) {
   boxedSymbol.slow = true;
   notUtilIsDeepStrict(boxedSymbol, {});
   utilIsDeepStrict(Object(BigInt(1)), Object(BigInt(1)));
-  // notUtilIsDeepStrict(Object(BigInt(1)), Object(BigInt(2))); // TODO
+  notUtilIsDeepStrict(Object(BigInt(1)), Object(BigInt(2)));
 
   const booleanish = new Boolean(true);
   Object.defineProperty(booleanish, Symbol.toStringTag, { value: 'String' });

@@ -102,7 +102,12 @@ describe("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
+            if (process.platform !== "win32") {
+              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
+            } else {
+              // On Windows, we have to mark it for deletion on reboot.
+              // Not clear how to test for that.
+            }
           },
           10 * 1000,
         );

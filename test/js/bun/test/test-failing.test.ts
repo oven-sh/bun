@@ -1,7 +1,7 @@
-import path from "path";
-import { bunExe } from "harness";
-import { $ } from "bun";
 import { fail } from "assert";
+import { $ } from "bun";
+import { bunExe } from "harness";
+import path from "path";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures");
 describe("test.failing", () => {

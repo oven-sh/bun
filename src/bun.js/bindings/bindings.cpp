@@ -3201,6 +3201,11 @@ JSC::EncodedJSValue ZigString__toTypeErrorInstance(const ZigString* str, JSC::JS
     return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
 }
 
+JSC::EncodedJSValue ZigString__toDOMExceptionInstance(const ZigString* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
+{
+    return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
+}
+
 JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(Zig::getSyntaxErrorInstance(str, globalObject));

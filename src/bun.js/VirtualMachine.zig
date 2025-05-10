@@ -17,6 +17,7 @@ comptime {
     @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+    @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
 }
 
 global: *JSGlobalObject,
@@ -191,6 +192,10 @@ pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
+
+pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
+    return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
+}
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {
     return .init(body, &this.body_value_hive_allocator);

@@ -1,6 +1,5 @@
+import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { isBroken, isMacOS } from "harness";
-import type { Server, ServeOptions, BunRequest } from "bun";
 
 describe("path parameters", () => {
   let server: Server;

@@ -1,5 +1,5 @@
 // Hardcoded module "node:fs"
-import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
+import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");

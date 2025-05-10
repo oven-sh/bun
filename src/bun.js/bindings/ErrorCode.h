@@ -134,6 +134,7 @@ JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCII
 JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
 JSC::EncodedJSValue CLOSED_MESSAGE_PORT(JSC::ThrowScope&, JSC::JSGlobalObject*);
 JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType);
+JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
 
 // URL
 

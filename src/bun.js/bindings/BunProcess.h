@@ -19,6 +19,7 @@ class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
 
     LazyProperty<Process, Structure> m_cpuUsageStructure;
+    LazyProperty<Process, Structure> m_resourceUsageStructure;
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
@@ -119,6 +120,7 @@ public:
     }
 
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
+    inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }

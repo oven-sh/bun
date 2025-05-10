@@ -1,6 +1,5 @@
-import { spawn } from "bun";
-import { test, expect, it } from "bun:test";
-import { bunExe, nodeExe } from "harness";
+import { expect, test } from "bun:test";
+import { bunExe } from "harness";
 import path from "path";
 
 test("ipc with json serialization still works when bun is not the parent and the child", async () => {

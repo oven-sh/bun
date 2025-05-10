@@ -157,7 +157,7 @@ it("should remove existing package", async () => {
   );
 });
 
-it("should not reject missing package", async () => {
+it("should reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -191,7 +191,7 @@ it("should not reject missing package", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await rmExited).toBe(0);
+  expect(await rmExited).toBe(1);
 });
 
 it("should not affect if package is not installed", async () => {

@@ -69,6 +69,7 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
+#include <mimalloc.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -361,6 +362,9 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
+// "Fire and forget" wrapper around unlink for c usage that handles EINTR
+extern "C" void Bun__unlink(const char*, size_t);
+
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
@@ -408,10 +412,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     Strong<JSC::JSObject> strongModule = { vm, moduleObject };
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
-    if (filename.isEmpty()) {
+
+    if (filename.isEmpty() && !scope.exception()) {
         JSC::throwTypeError(globalObject, scope, "dlopen requires a non-empty string as the second argument"_s);
-        return {};
     }
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (filename.startsWith("file://"_s)) {
         WTF::URL fileURL = WTF::URL(filename);
@@ -423,6 +429,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         filename = fileURL.fileSystemPath();
     }
 
+    CString utf8;
+
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
 #if OS(WINDOWS)
@@ -430,22 +438,73 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
+    bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.toWTFString(BunString::ZeroCopy);
+            deleteAfter = !filename.startsWith("/proc/"_s);
         }
     }
 
     RETURN_IF_EXCEPTION(scope, {});
+
+    // For bun build --compile, we copy the .node file to a temp directory.
+    // It's best to delete it as soon as we can.
+    // https://github.com/oven-sh/bun/issues/19550
+    const auto tryToDeleteIfNecessary = [&]() {
+#if OS(WINDOWS)
+        if (deleteAfter) {
+            // Only call it once
+            deleteAfter = false;
+            if (filename.is8Bit()) {
+                filename.convertTo16Bit();
+            }
+
+            // Convert to 16-bit with a sentinel zero value.
+            auto span = filename.span16();
+            auto dupeZ = new wchar_t[span.size() + 1];
+            if (dupeZ) {
+                memcpy(dupeZ, span.data(), span.size_bytes());
+                dupeZ[span.size()] = L'\0';
+
+                // We can't immediately delete the file on Windows.
+                // Instead, we mark it for deletion on reboot.
+                MoveFileExW(
+                    dupeZ,
+                    NULL, // NULL destination means delete
+                    MOVEFILE_DELAY_UNTIL_REBOOT);
+                delete[] dupeZ;
+            }
+        }
+#else
+        if (deleteAfter) {
+            deleteAfter = false;
+            Bun__unlink(utf8.data(), utf8.length());
+        }
+#endif
+    };
+
+    {
+        auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
+        if (UNLIKELY(!utf8_filename)) {
+            JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
+            return {};
+        }
+        utf8 = *utf8_filename;
+    }
+
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
+
+// On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
-    CString utf8 = filename.utf8();
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
+
+    tryToDeleteIfNecessary();
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
@@ -482,11 +541,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         WTF::String msg = errorBuilder.toString();
         if (messageBuffer)
             LocalFree(messageBuffer); // Free the buffer allocated by FormatMessageW
+
+        // Since we're relying on LastError(), we have to delete after checking for errors
+        tryToDeleteIfNecessary();
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
+
+#if OS(WINDOWS)
+    tryToDeleteIfNecessary();
+#endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
@@ -528,7 +594,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         dlclose(handle);
 #endif
 
-        JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
+        if (LIKELY(!scope.exception())) {
+            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
+        }
         return {};
     }
 
@@ -542,7 +610,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    char* filename_cstr = toFileURI(filename.utf8().span());
+    char* filename_cstr = toFileURI(utf8.span());
 
     napi_module nmodule {
         .nm_version = module_version,

@@ -1114,6 +1114,17 @@
       },
     },
     {
+      "type": "bun",
+      "name": "[JS] bun run [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["run", "${file}"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+    },
+    {
       "type": "midas-rr",
       "request": "attach",
       "name": "rr",

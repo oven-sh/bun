@@ -185,6 +185,9 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::CryptoOperationFailedError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);
 
+    case ExceptionCode::EVENT_RECURSION:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
+
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:

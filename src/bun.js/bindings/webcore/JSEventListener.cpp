@@ -20,6 +20,7 @@
 #include "config.h"
 #include "JSEventListener.h"
 
+#include "BunProcess.h"
 // #include "BeforeUnloadEvent.h"
 // #include "ContentSecurityPolicy.h"
 #include "EventNames.h"
@@ -122,6 +123,22 @@ void JSEventListener::visitJSFunction(SlotVisitor& visitor) { visitJSFunctionImp
 //     if (event.returnValue().isEmpty())
 //         event.setReturnValue(returnValue);
 // }
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto exception = callFrame->argument(0);
+    reportException(lexicalGlobalObject, exception);
+    return JSValue::encode(JSC::jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Bun::Process* process = jsCast<Bun::Process*>(globalObject->processObject());
+    auto exception = callFrame->argument(0);
+    auto func = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
+    process->queueNextTick(lexicalGlobalObject, func, exception);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext, Event& event)
 {
@@ -233,6 +250,32 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     if (handleExceptionIfNeeded(uncaughtException))
         return;
+
+    // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
+    // See event_target.js function addCatch in node
+    if (retval.isObject()) {
+        auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
+        if (UNLIKELY(scope.exception())) {
+            auto* exception = scope.exception();
+            scope.clearException();
+            event.target()->uncaughtExceptionInEventHandler();
+            reportException(lexicalGlobalObject, exception);
+            return;
+        }
+        if (then.isCallable()) {
+            MarkedArgumentBuffer arglist;
+            arglist.append(JSValue(JSC::jsUndefined()));
+            arglist.append(JSValue(JSC::JSFunction::create(vm, lexicalGlobalObject, 1, String(), jsFunctionEmitUncaughtExceptionNextTick, ImplementationVisibility::Public, NoIntrinsic))); // err => process.nextTick(() => throw err)
+            JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
+            if (UNLIKELY(scope.exception())) {
+                auto* exception = scope.exception();
+                scope.clearException();
+                event.target()->uncaughtExceptionInEventHandler();
+                reportException(lexicalGlobalObject, exception);
+                return;
+            }
+        }
+    }
 
     if (!m_isAttribute) {
         // This is an EventListener and there is therefore no need for any return value handling.

@@ -56,6 +56,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 
@@ -231,8 +232,12 @@ bool EventTarget::hasActiveEventListeners(const AtomString& eventType) const
 
 ExceptionOr<bool> EventTarget::dispatchEventForBindings(Event& event)
 {
-    if (!event.isInitialized() || event.isBeingDispatched())
+    if (!event.isInitialized())
         return Exception { InvalidStateError };
+
+    if (event.isBeingDispatched()) {
+        return Exception { EVENT_RECURSION, makeString("The event \""_s, event.type(), "\" is already being dispatched"_s) };
+    }
 
     if (!scriptExecutionContext())
         return false;

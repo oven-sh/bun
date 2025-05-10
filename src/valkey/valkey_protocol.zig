@@ -254,15 +254,9 @@ pub const RESPValue = union(RESPType) {
         return_as_buffer: bool = false,
     };
 
-    fn strToJS(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *ToJSOptions) bun.JSError!JSC.JSValue {
+    fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *ToJSOptions) bun.JSError!JSC.JSValue {
         if (options.return_as_buffer) {
-            const buf = JSC.Node.Buffer.fromBytes(
-                bun.default_allocator.dupe(u8, str) catch {
-                    return globalObject.throwOutOfMemory();
-                },
-                bun.default_allocator,
-                .Uint8Array,
-            );
+            const buf = JSC.ArrayBuffer.createBuffer(globalObject, str);
             return buf.toJS(globalObject);
         } else {
             return bun.String.createUTF8ForJS(globalObject, str);
@@ -271,12 +265,12 @@ pub const RESPValue = union(RESPType) {
 
     pub fn toJSWithOptions(self: *RESPValue, globalObject: *JSC.JSGlobalObject, options: ToJSOptions) bun.JSError!JSC.JSValue {
         switch (self.*) {
-            .SimpleString => |str| return strToJS(globalObject, str, &options),
+            .SimpleString => |str| return valkeyStrToJSValue(globalObject, str, &options),
             .Error => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidResponse),
             .Integer => |int| return JSC.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
-                    return strToJS(globalObject, str, &options);
+                    return valkeyStrToJSValue(globalObject, str, &options);
                 } else {
                     return JSC.JSValue.jsNull();
                 }
@@ -293,7 +287,7 @@ pub const RESPValue = union(RESPType) {
             .Double => |d| return JSC.JSValue.jsNumber(d),
             .Boolean => |b| return JSC.JSValue.jsBoolean(b),
             .BlobError => |str| return valkeyErrorToJS(globalObject, str, RedisError.InvalidBlobError),
-            .VerbatimString => |verbatim| return strToJS(globalObject, verbatim.content, &options),
+            .VerbatimString => |verbatim| return valkeyStrToJSValue(globalObject, verbatim.content, &options),
             .Map => |entries| {
                 var js_obj = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
                 for (entries) |*entry| {

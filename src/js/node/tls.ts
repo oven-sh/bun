@@ -10,6 +10,7 @@ const {
   resolveTLSVersions,
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,
+  validateTLSOptions,
 } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
@@ -231,93 +232,20 @@ var InternalSecureContext = class SecureContext {
     const context = {};
 
     if (options) {
+      validateTLSOptions(options);
       let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
+      if (cert) this.cert = cert;
 
       let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
+      if (key) this.key = key;
 
       const ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
+      if (ca) this.ca = ca;
 
-      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine)) {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        } else if (typeof options.privateKeyEngine !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
-        }
-
-        if (typeof options.privateKeyIdentifier !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
-        }
-      }
-
-      const ciphers = options.ciphers;
-      if (ciphers !== undefined) {
-        if (typeof ciphers !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
-        }
-        this.ciphers = ciphers;
-      }
-
-      const passphrase = options.passphrase;
-      if (passphrase !== undefined && typeof passphrase !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-      }
-      this.passphrase = passphrase;
-
-      const servername = options.servername;
-      if (servername !== undefined && typeof servername !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
-      }
-      this.servername = servername;
-
-      const ecdhCurve = options.ecdhCurve;
-      if (ecdhCurve !== undefined && typeof ecdhCurve !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.ecdhCurve", "string", ecdhCurve);
-      }
-
-      const handshakeTimeout = options.handshakeTimeout;
-      if (handshakeTimeout !== undefined && typeof handshakeTimeout !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.handshakeTimeout", "number", handshakeTimeout);
-      }
-
-      const sessionTimeout = options.sessionTimeout;
-      if (sessionTimeout !== undefined && typeof sessionTimeout !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-      }
-
-      const ticketKeys = options.ticketKeys;
-      if (ticketKeys !== undefined) {
-        if (!Buffer.isBuffer(ticketKeys)) {
-          throw $ERR_INVALID_ARG_TYPE("options.ticketKeys", "Buffer", ticketKeys);
-        }
-        if (ticketKeys.length !== 48) {
-          throw $ERR_INVALID_ARG_VALUE(
-            "options.ticketsKeys",
-            ticketKeys.length,
-            "The property 'options.ticketKeys' must be exactly 48 bytes",
-          );
-        }
-      }
-
-      const secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-      }
-      this.secureOptions = secureOptions;
+      this.ciphers = options.ciphers;
+      this.passphrase = options.passphrase;
+      this.servername = options.servername;
+      this.secureOptions = options.secureOptions || 0;
 
       const [minVersion, maxVersion] = resolveTLSVersions(options);
       this.minVersion = minVersion;
@@ -605,6 +533,7 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      validateTLSOptions(options);
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
@@ -612,85 +541,25 @@ function Server(options, secureConnectionListener): void {
       }
 
       let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
+      if (cert) this.cert = cert;
 
       let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
+      if (key) this.key = key;
 
       let ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
+      if (ca) this.ca = ca;
 
-      const ciphers = options.ciphers;
-      if (ciphers !== undefined) {
-        if (typeof ciphers !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
-        }
-        this.ciphers = ciphers;
-      }
-
-      const ecdhCurve = options.ecdhCurve;
-      if (ecdhCurve !== undefined && typeof ecdhCurve !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.ecdhCurve", "string", ecdhCurve);
-      }
-
-      let passphrase = options.passphrase;
-      if (passphrase !== undefined && typeof passphrase !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername !== undefined && typeof servername !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
-      }
-      this.servername = servername;
-
-      const handshakeTimeout = options.handshakeTimeout;
-      if (handshakeTimeout !== undefined && typeof handshakeTimeout !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.handshakeTimeout", "number", handshakeTimeout);
-      }
-
-      const sessionTimeout = options.sessionTimeout;
-      if (sessionTimeout !== undefined && typeof sessionTimeout !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-      }
-
-      const ticketKeys = options.ticketKeys;
-      if (ticketKeys !== undefined) {
-        if (!Buffer.isBuffer(ticketKeys)) {
-          throw $ERR_INVALID_ARG_TYPE("options.ticketKeys", "Buffer", ticketKeys);
-        }
-        if (ticketKeys.length !== 48) {
-          throw $ERR_INVALID_ARG_VALUE(
-            "options.ticketKeys",
-            ticketKeys.length,
-            "The property 'options.ticketKeys' must be exactly 48 bytes",
-          );
-        }
-      }
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-      }
-      this.secureOptions = secureOptions;
+      this.ciphers = options.ciphers;
+      this.ecdhCurve = options.ecdhCurve;
+      this.passphrase = options.passphrase;
+      this.servername = options.servername;
+      this.secureOptions = options.secureOptions || 0;
 
       const requestCert = options.requestCert || false;
-
       if (requestCert) this._requestCert = requestCert;
       else this._requestCert = undefined;
 
       const rejectUnauthorized = options.rejectUnauthorized;
-
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;

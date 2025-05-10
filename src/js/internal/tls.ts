@@ -164,6 +164,97 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
   return [minVersion, maxVersion];
 }
 
+function validateTLSOptions(options: any) {
+  if (!options || typeof options !== "object") return;
+
+  let cert = options.cert;
+  if (cert) throwOnInvalidTLSArray("options.cert", cert);
+
+  let key = options.key;
+  if (key) throwOnInvalidTLSArray("options.key", key);
+
+  let ca = options.ca;
+  if (ca) throwOnInvalidTLSArray("options.ca", ca);
+
+  if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
+    if ($isUndefinedOrNull(options.privateKeyEngine)) {
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
+    } else if (typeof options.privateKeyEngine !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyEngine",
+        ["string", "null", "undefined"],
+        options.privateKeyEngine,
+      );
+    }
+    if (typeof options.privateKeyIdentifier !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyIdentifier",
+        ["string", "null", "undefined"],
+        options.privateKeyIdentifier,
+      );
+    }
+  }
+
+  const ciphers = options.ciphers;
+  if (ciphers !== undefined && typeof ciphers !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
+  }
+
+  const passphrase = options.passphrase;
+  if (passphrase !== undefined && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+
+  const servername = options.servername;
+  if (servername !== undefined && typeof servername !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
+  }
+
+  const ecdhCurve = options.ecdhCurve;
+  if (ecdhCurve !== undefined && typeof ecdhCurve !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.ecdhCurve", "string", ecdhCurve);
+  }
+
+  const handshakeTimeout = options.handshakeTimeout;
+  if (handshakeTimeout !== undefined && typeof handshakeTimeout !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.handshakeTimeout", "number", handshakeTimeout);
+  }
+
+  const sessionTimeout = options.sessionTimeout;
+  if (sessionTimeout !== undefined && typeof sessionTimeout !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
+  }
+
+  const ticketKeys = options.ticketKeys;
+  if (ticketKeys !== undefined) {
+    if (!Buffer.isBuffer(ticketKeys)) {
+      throw $ERR_INVALID_ARG_TYPE("options.ticketKeys", "Buffer", ticketKeys);
+    }
+    if (ticketKeys.length !== 48) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.ticketKeys",
+        ticketKeys.length,
+        "The property 'options.ticketKeys' must be exactly 48 bytes",
+      );
+    }
+  }
+
+  const secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
+
+  const requestCert = options.requestCert;
+  if (requestCert !== undefined && typeof requestCert !== "boolean") {
+    throw $ERR_INVALID_ARG_TYPE("options.requestCert", "boolean", requestCert);
+  }
+
+  const rejectUnauthorized = options.rejectUnauthorized;
+  if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
+    throw $ERR_INVALID_ARG_TYPE("options.rejectUnauthorized", "boolean", rejectUnauthorized);
+  }
+}
+
 export default {
   isValidTLSArray,
   isValidTLSItem,
@@ -172,4 +263,5 @@ export default {
   VALID_TLS_ERROR_MESSAGE_TYPES,
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,
+  validateTLSOptions,
 };

@@ -290,12 +290,14 @@ function Install-Bun {
 
   if(!$hasExistingOther) {
     # Only try adding to path if there isn't already a bun.exe in the path
-    $Path = (Get-Env -Key "Path") -split ';'
+    $Path = (Get-Env -Key "Path") -split [System.IO.Path]::PathSeparator
     if ($Path -notcontains $BunBin) {
       if (-not $NoPathUpdate) {
         $Path += $BunBin
-        Write-Env -Key 'Path' -Value ($Path -join ';')
-        $env:PATH = $Path;
+        Write-Env -Key 'Path' -Value ($Path -join [System.IO.Path]::PathSeparator)
+        if (-not $env:PATH.Contains($BunBin)) {
+		  $env:PATH = ($Path -join [System.IO.Path]::PathSeparator)
+        }
       } else {
         Write-Output "Skipping adding '${BunBin}' to the user's %PATH%`n"
       }

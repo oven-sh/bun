@@ -476,7 +476,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                     dupeZ,
                     NULL, // NULL destination means delete
                     MOVEFILE_DELAY_UNTIL_REBOOT);
-                mi_free(dupeZ);
+                delete[] dupeZ;
             }
         }
 #else

@@ -465,7 +465,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
             // Convert to 16-bit with a sentinel zero value.
             auto span = filename.span16();
-            auto dupeZ = reinterpret_cast<wchar_t*>(mi_malloc_aligned(span.size() * sizeof(wchar_t) + sizeof(wchar_t), alignof(wchar_t)));
+            auto dupeZ = new wchar_t[span.size() + 1];
             if (dupeZ) {
                 memcpy(dupeZ, span.data(), span.size() * sizeof(wchar_t));
                 dupeZ[span.size()] = L'\0';

@@ -423,14 +423,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         filename = fileURL.fileSystemPath();
     }
 
+    CString utf8;
+    {
+        auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
+        if (UNLIKELY(!utf8_filename)) {
+            JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
+            return {};
+        }
+        utf8 = *utf8_filename;
+    }
+
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
 #if OS(WINDOWS)
 #define StandaloneModuleGraph__base_path "B:/~BUN/"_s
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
-    // Declare this earlier so we can use it in the lambda
-    CString utf8;
 #endif
     bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
@@ -485,7 +493,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
-    utf8 = filename.utf8();
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
@@ -596,7 +603,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
-    char* filename_cstr = toFileURI(filename.utf8().span());
+    char* filename_cstr = toFileURI(utf8.span());
 
     napi_module nmodule {
         .nm_version = module_version,

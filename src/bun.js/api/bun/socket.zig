@@ -1259,7 +1259,7 @@ pub const Listener = struct {
                 SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
-                    socket.handleConnectError(-@as(c_int, @intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)));
+                    socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
                     return promise_value;
                 };
 
@@ -1633,17 +1633,9 @@ fn NewSocket(comptime ssl: bool) type {
                 return;
             }
 
-            // TODO(meghan):
-            // currently from uSockets we get a boolean 0:success/1:failure for the 'errno' value
-            // in the fd case we explicitly pass ENOENT or ECONNREFUSED
-            // rework the callers of this to persist errno values correctly
-            // on windows, uSockets calls WSAGetLastError for the 'errno' value
-            var errno_ = errno;
-            if (Environment.isWindows) errno_ = @intFromEnum(bun.sys.SystemErrno.init(errno_).?);
-            if (Environment.isWindows) errno_ = -errno_;
-            bun.assert(errno_ <= 1); // just to be sure this is called with a negative in the meantime
-            errno_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) -errno else @as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
-            const code_ = if (-errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            bun.assert(errno >= 0);
+            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+            const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 
@@ -3737,7 +3729,7 @@ pub const DuplexUpgradeContext = struct {
             }
         } else {
             if (this.tls) |tls| {
-                tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)));
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
             }
         }
     }
@@ -3770,7 +3762,7 @@ pub const DuplexUpgradeContext = struct {
                                 bun.outOfMemory();
                             },
                             else => {
-                                const errno = -@as(c_int, @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
+                                const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
                                 if (this.tls) |tls| {
                                     const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
@@ -4138,10 +4130,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
+                    tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
+                    tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
                 },
                 .none => {},
             }
@@ -4158,10 +4150,10 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         errdefer {
             switch (socket) {
                 .tls => |tls| {
-                    tls.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
+                    tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
                 },
                 .tcp => |tcp| {
-                    tcp.handleConnectError(-@as(c_int, @intFromEnum(bun.sys.SystemErrno.ENOENT)));
+                    tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
                 },
                 .none => {},
             }

@@ -2083,8 +2083,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
-    JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     SystemError err = *arg0;
@@ -2122,24 +2121,21 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     if (err.fd >= 0) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
-        result->putDirect(vm, names.fdPublicName(), fd,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.fdPublicName(), fd, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
         JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
-        result->putDirect(vm, names.syscallPublicName(), syscall,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.syscallPublicName(), syscall, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.hostname.tag != BunStringTag::Empty) {
         JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
-        result->putDirect(vm, names.hostnamePublicName(), hostname,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
+    // ASSERT(err.errno_ <= 0); // TODO: aspirational; come back to this
+    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
     scope.release();
@@ -2147,8 +2143,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
     return JSC::JSValue::encode(JSC::JSValue(result));
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0,
-    JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     SystemError err = *arg0;
@@ -2169,34 +2164,23 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     auto clientData = WebCore::clientData(vm);
 
-    result->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(jsString(vm, String("SystemError"_s))),
-        JSC::PropertyAttribute::DontEnum | 0);
-    result->putDirect(
-        vm, clientData->builtinNames().codePublicName(),
-        JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))),
-        JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, vm.propertyNames->name, JSC::JSValue(jsString(vm, String("SystemError"_s))), JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, clientData->builtinNames().codePublicName(), JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))), JSC::PropertyAttribute::DontEnum | 0);
 
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
 
     result->putDirect(vm, JSC::Identifier::fromString(vm, "info"_s), info, JSC::PropertyAttribute::DontDelete | 0);
 
     auto syscallJsString = jsString(vm, syscallString);
-    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
-        JSC::PropertyAttribute::DontDelete | 0);
-    info->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
-        JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString, JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString, JSC::PropertyAttribute::DontDelete | 0);
 
-    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString),
-        JSC::PropertyAttribute::DontDelete | 0);
-    info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString),
-        JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString), JSC::PropertyAttribute::DontDelete | 0);
 
-    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
-    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
+    // ASSERT(err.errno_ <= 0); // TODO: aspirational; come back to this
+    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(result)));
 }

@@ -60,6 +60,13 @@ const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
+function emitErrorEventNT(self, err) {
+  if (self.destroyed) return;
+  if (self.listenerCount("error") > 0) {
+    self.emit("error", err);
+  }
+}
+
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -221,6 +228,7 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
+        this.socket?.emit?.("close");
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -229,6 +237,7 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
+      this.socket?.emit?.("close");
     }
   };
 
@@ -372,6 +381,7 @@ function ClientRequest(input, options, cb) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
           handleResponse = undefined;
+
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
           var res = (this.res = new IncomingMessage(response, {
@@ -398,19 +408,30 @@ function ClientRequest(input, options, cb) {
               // If the user did not listen for the 'response' event, then they
               // can't possibly read the data, so we ._dump() it into the void
               // so that the socket doesn't hang there in a paused state.
-              if (self.aborted || !self.emit("response", res)) {
-                res._dump();
+              const contentLength = res.headers["content-length"];
+              if (contentLength && isNaN(Number(contentLength))) {
+                emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
+
+                res.complete = true;
+                maybeEmitClose();
+                return;
+              }
+              try {
+                if (self.aborted || !self.emit("response", res)) {
+                  res._dump();
+                }
+              } finally {
+                maybeEmitClose();
+                if (res.statusCode === 304) {
+                  res.complete = true;
+                  maybeEmitClose();
+                  return;
+                }
               }
             },
             this,
             res,
           );
-          maybeEmitClose();
-          if (res.statusCode === 304) {
-            res.complete = true;
-            maybeEmitClose();
-            return;
-          }
         };
 
         if (!keepOpen) {
@@ -425,6 +446,10 @@ function ClientRequest(input, options, cb) {
         // This is for the happy eyeballs implementation.
         this[kFetchRequest]
           .catch(err => {
+            if (err.code === "ConnectionRefused") {
+              err = new Error("ECONNREFUSED");
+              err.code = "ECONNREFUSED";
+            }
             // Node treats AbortError separately.
             // The "abort" listener on the abort controller should have called this
             if (isAbortError(err)) {

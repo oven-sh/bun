@@ -162,3 +162,12 @@ pub const Method = enum(u8) {
 
     const JSC = bun.JSC;
 };
+
+export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {
+    const method: Method = Method.find(str[0..len]) orelse return -1;
+    return @intFromEnum(method);
+}
+
+comptime {
+    _ = Bun__HTTPMethod__from;
+}

@@ -1,5 +1,6 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
+const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -40,6 +41,7 @@ const {
   drainMicrotasks,
   setServerIdleTimeout,
   setServerCustomOptions,
+  getMaxHTTPHeaderSize,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -428,7 +430,7 @@ const ServerResponsePrototype = {
   },
 
   get writableLength() {
-    return 16 * 1024;
+    return this.writableFinished ? 0 : (this[kHandle]?.bufferedAmount ?? 0);
   },
 
   get writableHighWaterMark() {
@@ -461,7 +463,7 @@ const ServerResponsePrototype = {
       throw $ERR_HTTP_HEADERS_SENT("writeHead");
     }
     _writeHead(statusCode, statusMessage, headers, this);
-    updateHasBody(this, statusCode);
+
     this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 
     return this;
@@ -508,6 +510,8 @@ const ServerResponsePrototype = {
     if (handle) {
       handle.abort();
     }
+    this?.socket?.destroy();
+    this.emit("close");
     return this;
   },
 
@@ -711,6 +715,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_HTTP_VERSION = 7,
   HTTP_PARSER_ERROR_INVALID_EOF = 8,
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
+  HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
 }
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
@@ -726,14 +731,27 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       err = $HPE_INVALID_EOF_STATE("Parse Error");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
-      err = $HPE_INVALID_METHOD("Parse Error");
+      err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
+      err.bytesParsed = 1; // always 1 for now because is the first byte of the request line
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN:
+      err = $HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
+      err = $HPE_HEADER_OVERFLOW("Parse Error: Header overflow");
+      err.bytesParsed = rawPacket.byteLength;
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");
       break;
   }
   err.rawPacket = rawPacket;
-  self.emit("clientError", err, new NodeHTTPServerSocket(self, socket, ssl));
+  const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
+  self.emit("connection", nodeSocket);
+  self.emit("clientError", err, nodeSocket);
+  if (nodeSocket.listenerCount("error") > 0) {
+    nodeSocket.emit("error", err);
+  }
 }
 const ServerPrototype = {
   constructor: Server,
@@ -787,7 +805,31 @@ const ServerPrototype = {
     this.listening = false;
     server.stop();
   },
-
+  [EventEmitter.captureRejectionSymbol]: function (err, event, ...args) {
+    switch (event) {
+      case "request": {
+        const { 1: res } = args;
+        if (!res.headersSent && !res.writableEnded) {
+          // Don't leak headers.
+          const names = res.getHeaderNames();
+          for (let i = 0; i < names.length; i++) {
+            res.removeHeader(names[i]);
+          }
+          res.statusCode = 500;
+          res.end(STATUS_CODES[500]);
+        } else {
+          res.destroy();
+        }
+        break;
+      }
+      default:
+        // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
+        //   .apply(this, arguments);
+        const { 1: res } = args;
+        res?.socket?.destroy();
+        break;
+    }
+  },
   [Symbol.asyncDispose]() {
     const { resolve, reject, promise } = Promise.withResolvers();
     this.close(function (err, ...args) {
@@ -1120,7 +1162,14 @@ const ServerPrototype = {
       });
       getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
       isHTTPS = this[serverSymbol].protocol === "https";
-      setServerCustomOptions(this[serverSymbol], this.requireHostHeader, onServerClientError.bind(this));
+      // always set strict method validation to true for node.js compatibility
+      setServerCustomOptions(
+        this[serverSymbol],
+        this.requireHostHeader,
+        true,
+        typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
+        onServerClientError.bind(this),
+      );
 
       if (this?._unref) {
         this[serverSymbol]?.unref?.();
@@ -1198,7 +1247,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (req && !req.complete && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
-      req.destroy(new ConnResetException("aborted"));
+      if (req.listenerCount("error") > 0) {
+        req.destroy(new ConnResetException("aborted"));
+      } else {
+        req.destroy();
+      }
     }
   }
   #onCloseForDestroy(closeCallback) {
@@ -1415,6 +1468,7 @@ function _normalizeArgs(args) {
 
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
+  let hasContentLength = response.hasHeader("content-length");
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
@@ -1428,6 +1482,8 @@ function _writeHead(statusCode, reason, obj, response) {
     if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
     obj ??= reason;
   }
+  if (checkInvalidHeaderChar(response.statusMessage)) throw $ERR_INVALID_CHAR("statusMessage");
+
   response.statusCode = statusCode;
 
   {
@@ -1450,7 +1506,10 @@ function _writeHead(statusCode, reason, obj, response) {
         // message will be terminated by the first empty line after the
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
-        if (response.chunkedEncoding !== true && response._trailer) {
+        if (
+          (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
+          (response._trailer || response.hasHeader("trailer"))
+        ) {
           throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
         }
         // Headers in obj should override previous headers but still
@@ -1476,6 +1535,18 @@ function _writeHead(statusCode, reason, obj, response) {
         k = keys[i];
         if (k) response.setHeader(k, obj[k]);
       }
+    }
+    if (
+      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
+      (response._trailer || response.hasHeader("trailer"))
+    ) {
+      // remove the invalid content-length or trailer header
+      if (hasContentLength) {
+        response.removeHeader("trailer");
+      } else {
+        response.removeHeader("content-length");
+      }
+      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
 

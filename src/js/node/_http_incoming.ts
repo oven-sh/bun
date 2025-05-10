@@ -328,7 +328,7 @@ const IncomingMessagePrototype = {
         stream?.cancel?.().catch(nop);
       }
 
-      const socket = this[fakeSocketSymbol];
+      const socket = this.socket;
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }

@@ -361,6 +361,7 @@ static char* toFileURI(std::span<const char> span)
 extern "C" size_t Bun__process_dlopen_count;
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" bool Bun__VM__allowAddons(void* vm);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -368,6 +369,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto& vm = JSC::getVM(globalObject);
+
+    if (!Bun__VM__allowAddons(globalObject->bunVM())) {
+        return ERR::DLOPEN_DISABLED(scope, globalObject, "Cannot load native addon because loading addons is disabled."_s);
+    }
 
     auto argCount = callFrame->argumentCount();
     if (argCount < 2) {

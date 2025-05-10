@@ -88,14 +88,14 @@ pub const Start = union(Tag) {
                     }
                 }
 
-                if (value.fastGet(globalThis, .stream)) |val| {
+                if (try value.fastGet(globalThis, .stream)) |val| {
                     if (val.isBoolean()) {
                         stream = val.toBoolean();
                         empty = false;
                     }
                 }
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
@@ -115,12 +115,12 @@ pub const Start = union(Tag) {
             .FileSink => {
                 var chunk_size: Blob.SizeType = 0;
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber())
                         chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
-                if (value.fastGet(globalThis, .path)) |path| {
+                if (try value.fastGet(globalThis, .path)) |path| {
                     if (!path.isString()) {
                         return .{
                             .err = Syscall.Error{
@@ -174,7 +174,7 @@ pub const Start = union(Tag) {
                 var empty = true;
                 var chunk_size: Blob.SizeType = 2048;
 
-                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
+                if (try value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));

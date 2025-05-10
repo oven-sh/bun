@@ -1986,7 +1986,7 @@ pub const Arguments = struct {
     };
 
     fn getEncoding(object: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!Encoding {
-        if (object.fastGet(globalObject, .encoding)) |value| {
+        if (try object.fastGet(globalObject, .encoding)) |value| {
             return Encoding.assert(value, globalObject, default);
         }
 

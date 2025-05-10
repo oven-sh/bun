@@ -1705,7 +1705,7 @@ pub const JSValue = enum(i64) {
     };
 
     pub fn fastGetOrElse(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName, alternate: ?JSC.JSValue) ?JSValue {
-        return this.fastGet(global, builtin_name) orelse {
+        return (try this.fastGet(global, builtin_name)) orelse {
             if (alternate) |alt| return alt.fastGet(global, builtin_name);
 
             return null;
@@ -1714,24 +1714,13 @@ pub const JSValue = enum(i64) {
 
     // `this` must be known to be an object
     // intended to be more lightweight than ZigString.
-    pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
-        if (bun.Environment.isDebug)
-            bun.assert(this.isObject());
-
-        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
-            .zero, .undefined, .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
-    }
-
-    pub fn fastGetWithError(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
+    pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
 
         return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
             .zero => error.JSError,
-            .undefined => null,
-            .property_does_not_exist_on_object => null,
+            .undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1837,7 +1826,7 @@ pub const JSValue = enum(i64) {
         // This call requires `get` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
             if (comptime BuiltinName.get(property_slice)) |builtin_name| {
-                return target.fastGetWithError(global, builtin_name);
+                return target.fastGet(global, builtin_name);
             }
         }
 
@@ -1883,7 +1872,7 @@ pub const JSValue = enum(i64) {
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
         if (!this.isObject())
             return false;
-        const function = this.fastGet(global, BuiltinName.toString) orelse
+        const function = (try this.fastGet(global, BuiltinName.toString)) orelse
             return false;
         return function.isCell() and function.isCallable();
     }

@@ -462,7 +462,7 @@ pub const SocketConfig = struct {
 
         var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero);
 
-        if (opts.fastGet(globalObject, .data)) |default_data_value| {
+        if (try opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -3385,7 +3385,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.fastGet(globalObject, .data)) |default_data_value| {
+            if (try opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }
@@ -4242,7 +4242,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     }
 
     var default_data = JSValue.zero;
-    if (opts.fastGet(globalObject, .data)) |default_data_value| {
+    if (try opts.fastGet(globalObject, .data)) |default_data_value| {
         default_data = default_data_value;
         default_data.ensureStillAlive();
     }

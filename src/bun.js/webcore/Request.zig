@@ -126,7 +126,7 @@ pub fn getContentType(
     }
 
     if (this._headers) |headers| {
-        if (headers.fastGet(.ContentType)) |value| {
+        if (try headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
         }
     }
@@ -243,7 +243,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 
 pub fn mimeType(this: *const Request) string {
     if (this._headers) |headers| {
-        if (headers.fastGet(.ContentType)) |content_type| {
+        if (try headers.fastGet(.ContentType)) |content_type| {
             return content_type.slice();
         }
     }
@@ -629,7 +629,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         }
 
         if (!fields.contains(.body)) {
-            if (value.fastGet(globalThis, .body)) |body_| {
+            if (try value.fastGet(globalThis, .body)) |body_| {
                 fields.insert(.body);
                 req.body.value = try Body.Value.fromJS(globalThis, body_);
             }
@@ -638,7 +638,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         }
 
         if (!fields.contains(.url)) {
-            if (value.fastGet(globalThis, .url)) |url| {
+            if (try value.fastGet(globalThis, .url)) |url| {
                 req.url = try bun.String.fromJS(url, globalThis);
                 if (!req.url.isEmpty())
                     fields.insert(.url);
@@ -677,7 +677,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (!fields.contains(.method) or !fields.contains(.headers)) {
             if (globalThis.hasException()) return error.JSError;
             if (try Response.Init.init(globalThis, value)) |response_init| {
-                if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
+                if (!explicit_check or (explicit_check and (try value.fastGet(globalThis, .headers)) != null)) {
                     if (response_init.headers) |headers| {
                         if (!fields.contains(.headers)) {
                             req._headers = headers;
@@ -690,7 +690,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
                 if (globalThis.hasException()) return error.JSError;
 
-                if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                if (!explicit_check or (explicit_check and (try value.fastGet(globalThis, .method)) != null)) {
                     if (!fields.contains(.method)) {
                         req.method = response_init.method;
                         fields.insert(.method);

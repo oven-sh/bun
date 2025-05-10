@@ -170,7 +170,7 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
 
     const stream = stream: {
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].fastGet(globalThis, .stream)) |stream_value| {
+            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
                 const stream_bool = stream_value.coerce(bool, globalThis);
                 if (globalThis.hasException()) {
                     return .zero;

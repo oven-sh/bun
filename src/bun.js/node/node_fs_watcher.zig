@@ -376,7 +376,7 @@ pub const FSWatcher = struct {
                         verbose = verbose_.toBoolean();
                     }
 
-                    if (options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
+                    if (try options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
                         encoding = try JSC.Node.Encoding.assert(encoding_, ctx, encoding);
                     }
 

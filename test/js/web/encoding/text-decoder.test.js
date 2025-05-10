@@ -563,3 +563,13 @@ describe("stream", () => {
     });
   }
 });
+
+it("should not crash with a getter that throws", () => {
+  expect(() =>
+    new TextDecoder().decode(new Uint8Array(32), {
+      get stream() {
+        throw new Error("stream get error");
+      },
+    }),
+  ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
+});

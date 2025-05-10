@@ -223,3 +223,7 @@ declare function $newZigFunction<T = (...args: any) => any>(
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+
+declare module "node:net" {
+  export function _normalizeArgs(args: any[]): unknown[];
+}

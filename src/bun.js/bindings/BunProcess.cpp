@@ -41,6 +41,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
+#include <JavaScriptCore/StructureCache.h>
 
 #include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
@@ -2586,6 +2587,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_execArgv);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
+    thisObject->m_resourceUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
@@ -2594,9 +2596,11 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(Process);
 
+constexpr uint32_t cpuUsageStructureInlineCapacity = std::min<uint32_t>(JSFinalObject::maxInlineCapacity, std::max<uint32_t>(2, JSFinalObject::defaultInlineCapacity));
+
 static Structure* constructCPUUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 2);
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), cpuUsageStructureInlineCapacity);
     PropertyOffset offset;
     structure = structure->addPropertyTransition(
         vm,
@@ -2612,9 +2616,37 @@ static Structure* constructCPUUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* g
         offset);
     return structure;
 }
+
+constexpr uint32_t resourceUsageStructureInlineCapacity = std::min<uint32_t>(JSFinalObject::maxInlineCapacity, std::max<uint32_t>(16, JSFinalObject::defaultInlineCapacity));
+
+static Structure* constructResourceUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), resourceUsageStructureInlineCapacity);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "userCPUTime"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "systemCPUTime"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "maxRSS"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "sharedMemorySize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "unsharedDataSize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "unsharedStackSize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "minorPageFault"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "majorPageFault"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "swappedOut"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "fsRead"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "fsWrite"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ipcSent"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ipcReceived"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "signalsCount"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "voluntaryContextSwitches"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "involuntaryContextSwitches"_s), 0, offset);
+    return structure;
+}
+
+constexpr uint32_t memoryUsageStructureInlineCapacity = std::min<uint32_t>(JSFinalObject::maxInlineCapacity, std::max<uint32_t>(5, JSFinalObject::defaultInlineCapacity));
+
 static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), memoryUsageStructureInlineCapacity);
     PropertyOffset offset;
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "rss"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "heapTotal"_s), 0, offset);
@@ -2644,6 +2676,50 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+#if !OS(WINDOWS)
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get resource usage"_s, "getrusage"_s, errno);
+        return {};
+    }
+#else
+    uv_rusage_t rusage;
+    int err = uv_getrusage(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "uv_getrusage"_s, err);
+        return {};
+    }
+#endif
+    Process* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    Structure* resourceUsageStructure = process->resourceUsageStructure();
+    JSObject* result = JSC::constructEmptyObject(vm, resourceUsageStructure);
+
+    result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
+    result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
+    result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
+    result->putDirectOffset(vm, 3, jsNumber(rusage.ru_ixrss));
+    result->putDirectOffset(vm, 4, jsNumber(rusage.ru_idrss));
+    result->putDirectOffset(vm, 5, jsNumber(rusage.ru_isrss));
+    result->putDirectOffset(vm, 6, jsNumber(rusage.ru_minflt));
+    result->putDirectOffset(vm, 7, jsNumber(rusage.ru_majflt));
+    result->putDirectOffset(vm, 8, jsNumber(rusage.ru_nswap));
+    result->putDirectOffset(vm, 9, jsNumber(rusage.ru_inblock));
+    result->putDirectOffset(vm, 10, jsNumber(rusage.ru_oublock));
+    result->putDirectOffset(vm, 11, jsNumber(rusage.ru_msgsnd));
+    result->putDirectOffset(vm, 12, jsNumber(rusage.ru_msgrcv));
+    result->putDirectOffset(vm, 13, jsNumber(rusage.ru_nsignals));
+    result->putDirectOffset(vm, 14, jsNumber(rusage.ru_nvcsw));
+    result->putDirectOffset(vm, 15, jsNumber(rusage.ru_nivcsw));
+
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2656,8 +2732,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     }
 #else
     uv_rusage_t rusage;
-    if (uv_getrusage(&rusage) != 0) {
-        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, errno);
+    int err = uv_getrusage(&rusage);
+    if (err) {
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "uv_getrusage"_s, err);
         return {};
     }
 #endif
@@ -2666,10 +2743,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 
     Structure* cpuUsageStructure = process->cpuUsageStructure();
 
-    constexpr double MICROS_PER_SEC = 1000000.0;
-
-    double user = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
-    double system = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+    double user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
@@ -3429,6 +3504,18 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 
 /* Source for Process.lut.h
 @begin processObjectTable
+  _debugEnd                        Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _fatalException                  Process_stubEmptyFunction                           Function 1
+  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
+  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
+  _kill                            Process_functionReallyKill                          Function 2
+  _linkedBinding                   Process_stubEmptyFunction                           Function 0
+  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
+  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
+  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
+  _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
   arch                             constructArch                                       PropertyCallback
@@ -3438,8 +3525,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
-  chdir                            Process_functionChdir                               Function 1
   channel                          constructProcessChannel                             PropertyCallback
+  chdir                            Process_functionChdir                               Function 1
   config                           constructProcessConfigObject                        PropertyCallback
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
@@ -3456,6 +3543,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
@@ -3473,10 +3561,11 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback
   report                           constructProcessReportObject                        PropertyCallback
+  resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
+  send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
-  send                             constructProcessSend                                PropertyCallback
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
@@ -3487,19 +3576,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   uptime                           Process_functionUptime                              Function 1
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback
-  _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
-  _fatalException                  Process_stubEmptyFunction                           Function 1
-  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
-  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
-  _linkedBinding                   Process_stubEmptyFunction                           Function 0
-  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                           Function 0
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
-  _tickCallback                    Process_stubEmptyFunction                           Function 0
-  _kill                            Process_functionReallyKill                          Function 2
-  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0
@@ -3530,6 +3606,10 @@ void Process::finishCreation(JSC::VM& vm)
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
+    });
+
+    m_resourceUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
+        init.set(constructResourceUsageStructure(init.vm, init.owner->globalObject()));
     });
 
     m_memoryUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {

@@ -269,7 +269,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -283,7 +283,7 @@ pub const Async = struct {
                 this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, req, @intFromEnum(req.result));
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -323,7 +323,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -385,7 +385,7 @@ pub const Async = struct {
                 this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
-                    this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                    this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
@@ -433,7 +433,7 @@ pub const Async = struct {
 
             pub fn deinit(this: *Task) void {
                 if (this.result == .err) {
-                    bun.default_allocator.free(this.result.err.path);
+                    this.result.err.deinit();
                 }
 
                 this.ref.unref(this.globalObject.bunVM());
@@ -472,7 +472,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         /// When each task is finished, decrement.
         /// The maintask thread starts this at 1 and decrements it at the end, to avoid the promise being resolved while new tasks may be added.
         subtask_count: std.atomic.Value(usize),
-        deinitialized: bool = false,
 
         shelltask: ShellTaskT,
 
@@ -648,7 +647,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.result = result;
 
             if (this.result == .err) {
-                this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+                this.result.err = this.result.err.clone(bun.default_allocator) catch bun.outOfMemory();
             }
 
             if (this.evtloop == .js) {
@@ -681,6 +680,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     break :brk out;
                 },
             };
+
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             promise_value.ensureStillAlive();
@@ -701,8 +701,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn deinit(this: *ThisAsyncCpTask) void {
-            bun.assert(!this.deinitialized);
-            this.deinitialized = true;
+            if (this.result == .err) {
+                this.result.err.deinit();
+            }
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
             this.promise.deinit();
@@ -1261,7 +1262,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     pub fn deinit(this: *AsyncReaddirRecursiveTask) void {
         bun.assert(this.root_fd == bun.invalid_fd); // should already have closed it
         if (this.pending_err) |*err| {
-            bun.default_allocator.free(err.path);
+            err.deinit();
         }
 
         this.ref.unref(this.globalObject.bunVM());
@@ -5964,11 +5965,7 @@ pub const NodeFS = struct {
     pub fn watch(_: *NodeFS, args: Arguments.Watch, _: Flavor) Maybe(Return.Watch) {
         return switch (args.createFSWatcher()) {
             .result => |result| .{ .result = result.js_this },
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .syscall = err.syscall,
-                .path = if (err.path.len > 0) args.path.slice() else "",
-            } },
+            .err => |err| .{ .err = err },
         };
     }
 

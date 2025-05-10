@@ -445,7 +445,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     // For bun build --compile, we copy the .node file to a temp directory.
     // It's best to delete it as soon as we can.
-    // https://github.com/oven-sh/bun/pull/19551
+    // https://github.com/oven-sh/bun/issues/19550
     const auto tryToDeleteIfNecessary = [&]() {
 #if OS(WINDOWS)
         if (deleteAfter) {

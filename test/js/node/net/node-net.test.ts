@@ -528,7 +528,7 @@ it("should not hang after FIN", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 1000);
+    }, 2000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {

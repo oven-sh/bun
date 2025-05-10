@@ -254,7 +254,7 @@ pub const RESPValue = union(RESPType) {
         return_as_buffer: bool = false,
     };
 
-    fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *ToJSOptions) bun.JSError!JSC.JSValue {
+    fn valkeyStrToJSValue(globalObject: *JSC.JSGlobalObject, str: []const u8, options: *const ToJSOptions) bun.JSError!JSC.JSValue {
         if (options.return_as_buffer) {
             const buf = JSC.ArrayBuffer.createBuffer(globalObject, str);
             return buf.toJS(globalObject);

@@ -649,6 +649,9 @@ pub const ServerConfig = struct {
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
 
+        min_version: ?u16 = null,
+        max_version: ?u16 = null,
+
         const log = Output.scoped(.SSLConfig, false);
 
         pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
@@ -684,6 +687,14 @@ pub const ServerConfig = struct {
             }
             ctx_opts.request_cert = this.request_cert;
             ctx_opts.reject_unauthorized = this.reject_unauthorized;
+
+            if (this.min_version) |version| {
+                ctx_opts.min_tls_version = version;
+            }
+
+            if (this.max_version) |version| {
+                ctx_opts.max_tls_version = version;
+            }
 
             return ctx_opts;
         }
@@ -1037,6 +1048,16 @@ pub const ServerConfig = struct {
 
             if (try obj.getBooleanStrict(global, "rejectUnauthorized")) |reject_unauthorized| {
                 result.reject_unauthorized = if (reject_unauthorized) 1 else 0;
+                any = true;
+            }
+
+            if (try obj.getTruthy(global, "minVersion")) |min_version| {
+                result.min_version = @as(u16, @intCast(min_version.toInt32()));
+                any = true;
+            }
+
+            if (try obj.getTruthy(global, "maxVersion")) |max_version| {
+                result.max_version = @as(u16, @intCast(max_version.toInt32()));
                 any = true;
             }
 

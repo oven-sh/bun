@@ -1140,14 +1140,31 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
+
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   /* we should always accept moving write buffer so we can retry writes with a
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  if (options.min_tls_version > 0) {
+    if (!SSL_CTX_set_min_proto_version(ssl_context, options.min_tls_version)) {
+      free_ssl_context(ssl_context);
+      return NULL; 
+    }
+  } else {
+     
+    if (!SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION)) {
+      free_ssl_context(ssl_context);
+      return NULL;
+    }
+  }
 
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  if (options.max_tls_version > 0) {
+    if (!SSL_CTX_set_max_proto_version(ssl_context, options.max_tls_version)) {
+      free_ssl_context(ssl_context);
+      return NULL;
+    }
+  }
 
   /* The following are helpers. You may easily implement whatever you want by
    * using the native handle directly */

@@ -350,8 +350,11 @@ const ServerHandlers: SocketHandler = {
     const self = this.data;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
+
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+
     const _socket = new SClass({});
+
     _socket.isServer = true;
     _socket.server = self;
     _socket._requestCert = requestCert;
@@ -399,6 +402,7 @@ const ServerHandlers: SocketHandler = {
       self.emit("_tlsError", err);
       self.server.emit("tlsClientError", err, self);
       self._hadError = true;
+
       // error before handshake on the server side will only be emitted using tlsClientError
       self.destroy();
       return;
@@ -1447,6 +1451,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (typeof bunTLS === "function") {
       [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
       options.servername = tls.serverName;
+      options.minVersion = tls.minVersion;
+      options.maxVersion = tls.maxVersion;
+
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
       if (!tls.requestCert) {

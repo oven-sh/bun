@@ -718,6 +718,12 @@ pub const Listener = struct {
             return globalObject.throwValue(err);
         };
 
+        if (ssl_enabled and create_err != .none) {
+            const js_err = create_err.toJS(globalObject);
+            uws.us_socket_context_free(1, socket_context);
+            return globalObject.throwValue(js_err);
+        }
+
         if (ssl_enabled) {
             if (ssl.?.protos) |p| {
                 protos = p[0..ssl.?.protos_len];
@@ -1219,6 +1225,12 @@ pub const Listener = struct {
             connection.deinit();
             return globalObject.throwValue(err.toErrorInstance(globalObject));
         };
+
+        if (ssl_enabled and create_err != .none) {
+            const js_err = create_err.toJS(globalObject);
+            uws.us_socket_context_free(1, socket_context);
+            return globalObject.throwValue(js_err);
+        }
 
         if (ssl_enabled) {
             if (ssl.?.protos) |p| {

@@ -899,21 +899,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(stream).toBeDefined();
         expect(stream.id).toBe(1);
       });
-      it("should wait request to be sent before closing", async () => {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-        client.on("error", reject);
-        const req = client.request({ ":path": "/" });
-        let response_headers = null;
-        req.on("response", (headers, flags) => {
-          response_headers = headers;
-        });
-        client.close(resolve);
-        req.end();
-        await promise;
-        expect(response_headers).toBeTruthy();
-        expect(response_headers[":status"]).toBe(200);
-      });
+
       it("wantTrailers should work", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);

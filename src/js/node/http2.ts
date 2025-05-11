@@ -1551,6 +1551,15 @@ function assertSession(session) {
 hideFromStack(assertSession);
 
 function pushToStream(stream, data) {
+  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
+    if (!stream._readableState.ended) {
+      // closed, but not ended, so resume and push null to end the stream
+      stream.resume();
+      stream.push(null);
+    }
+    return;
+  }
+
   stream.push(data);
 }
 
@@ -1581,7 +1590,11 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+function rstNextTick(id: number, rstCode: number) {
+  const session = this as Http2Session;
 
+  session[bunHTTP2Native]?.rstStream(id, rstCode);
+}
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
@@ -1734,21 +1747,21 @@ class Http2Stream extends Duplex {
       const session = this[bunHTTP2Session];
       assertSession(session);
       code = code || 0;
-      validateInteger(code, "code", 0, 13);
+      validateInteger(code, "code", 0, 4294967295);
+
+      if (typeof callback !== "undefined") {
+        validateFunction(callback, "callback");
+        this.once("close", callback);
+      }
       this.rstCode = code;
       markStreamClosed(this);
 
       session[bunHTTP2Native]?.rstStream(this.#id, code);
     }
-
-    if (typeof callback === "function") {
-      this.once("close", callback);
-    }
   }
   _destroy(err, callback) {
     const { ending } = this._writableState;
     this.push(null);
-
     if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
       // 'aborted' event and set the aborted flag.
@@ -1779,10 +1792,22 @@ class Http2Stream extends Duplex {
         rstCode = this.rstCode = 0;
       }
     }
+    // RST code 8 not emitted as an error as its used by clients to signify
+    // abort and is already covered by aborted event, also allows more
+    // seamless compatibility with http1
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
+      err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     markStreamClosed(this);
-    session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
     this[bunHTTP2Session] = null;
+    // This notifies the session that this stream has been destroyed and
+    // gives the session the opportunity to clean itself up. The session
+    // will destroy if it has been closed and there are no other open or
+    // pending streams. Delay with setImmediate so we don't do it on the
+    // nghttp2 stack.
+    if (session) {
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    }
     callback(err);
   }
 
@@ -2261,7 +2286,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       error_instance = error;
     }
 
-    if (stream.readable) {
+    if (stream.readabled) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
     }
@@ -2926,7 +2951,7 @@ class ClientHttp2Session extends Http2Session {
       sensitiveHeadersValue: string[] | undefined,
       flags: number,
     ) {
-      if (!self || typeof stream !== "object") return;
+      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
       const header_status = headers[HTTP2_HEADER_STATUS];

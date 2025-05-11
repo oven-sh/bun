@@ -3041,9 +3041,6 @@ pub const H2FrameParser = struct {
         }
 
         const error_code = error_arg.toU32();
-        if (error_code > 13) {
-            return globalObject.throw("Invalid ErrorCode", .{});
-        }
 
         this.endStream(stream, @enumFromInt(error_code));
 

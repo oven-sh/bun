@@ -2310,7 +2310,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       error_instance = error;
     }
 
-    if (stream.readabled) {
+    if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
     }

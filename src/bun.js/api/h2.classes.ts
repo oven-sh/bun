@@ -113,6 +113,10 @@ export default [
         fn: "emitErrorToAllStreams",
         length: 1,
       },
+      sendRSTToAllStreams: {
+        fn: "sendRSTToAllStreams",
+        length: 1,
+      },
       emitAbortToAllStreams: {
         fn: "emitAbortToAllStreams",
         length: 0,

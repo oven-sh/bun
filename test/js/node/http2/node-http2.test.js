@@ -1354,7 +1354,8 @@ it("http2 session.goaway() validates input types", async () => {
         );
       }
 
-      stream.session.destroy();
+      session.destroy();
+      stream.destroy();
     });
 
     server.listen(0, () => {

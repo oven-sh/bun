@@ -3469,6 +3469,21 @@ pub const H2FrameParser = struct {
         return stream_id;
     }
 
+    pub fn setNextStreamID(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments();
+        if (args_list.len < 1) {
+            return globalObject.throw("Expected stream_id argument", .{});
+        }
+
+        const stream_id_arg = args_list.ptr[0];
+        if (!stream_id_arg.isNumber()) {
+            return globalObject.throw("Expected stream_id to be a number", .{});
+        }
+        this.lastStreamID = stream_id_arg.to(u32);
+        return .undefined;
+    }
+
     pub fn hasNativeRead(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSC.JSValue.jsBoolean(this.native_socket == .tcp or this.native_socket == .tls);
     }

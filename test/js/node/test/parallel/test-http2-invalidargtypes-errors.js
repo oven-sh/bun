@@ -33,7 +33,7 @@ server.on('stream', common.mustCall((stream) => {
       {
         code: 'ERR_OUT_OF_RANGE',
         name: 'RangeError',
-        message: `The value of "code" is out of range. It must be >= 0 and <= 13. Received ${code}`,
+        message: `The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received ${code}`,
       }
     );
   });

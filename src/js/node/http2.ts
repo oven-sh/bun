@@ -73,6 +73,7 @@ const kAppendHeader = Symbol("appendHeader");
 const kAborted = Symbol("aborted");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
+const kMaxStreams = 2 ** 32 - 1;
 const {
   validateInteger,
   validateString,
@@ -3195,6 +3196,13 @@ class ClientHttp2Session extends Http2Session {
   }
   ref() {
     return this[bunHTTP2Socket]?.ref();
+  }
+  setNextStreamID(id) {
+    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
+
+    validateNumber(id, "id");
+    if (id <= 0 || id > kMaxStreams) throw $ERR_OUT_OF_RANGE("id", `> 0 and <= ${kMaxStreams}`, id);
+    this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
     return this[bunHTTP2Socket]?.setTimeout(msecs, callback);

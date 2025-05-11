@@ -2,7 +2,7 @@
 
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-
+const { STATUS_CODES } = require("internal/http");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -1526,6 +1526,17 @@ type Settings = {
 class Http2Session extends EventEmitter {
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+  [EventEmitter.captureRejectionSymbol](err, event, ...args) {
+    switch (event) {
+      case "stream": {
+        const stream = args[0];
+        stream.destroy(err);
+        break;
+      }
+      default:
+        this.destroy(err);
+    }
+  }
 }
 
 function streamErrorFromCode(code: number) {
@@ -1904,6 +1915,18 @@ class Http2Stream extends Duplex {
     }
     if (typeof callback == "function") {
       callback();
+    }
+  }
+
+  [EventEmitter.captureRejectionSymbol](err, event, ...args) {
+    switch (event) {
+      case "stream": {
+        const stream = args[0];
+        stream.destroy(err);
+        break;
+      }
+      default:
+        this.destroy(err);
     }
   }
 }
@@ -3603,6 +3626,41 @@ class Http2Server extends net.Server {
     }
   }
 }
+
+Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ...args) {
+  switch (event) {
+    case "stream": {
+      // TODO(mcollina): we might want to match this with what we do on
+      // the compat side.
+      const { 0: stream } = args;
+      if (stream.sentHeaders) {
+        stream.destroy(err);
+      } else {
+        stream.respond({ [HTTP2_HEADER_STATUS]: 500 });
+        stream.end();
+      }
+      break;
+    }
+    case "request": {
+      const { 1: res } = args;
+      if (!res.headersSent && !res.finished) {
+        // Don't leak headers.
+        for (const name of res.getHeaderNames()) {
+          res.removeHeader(name);
+        }
+        res.statusCode = 500;
+        res.end(STATUS_CODES[500]);
+      } else {
+        res.destroy();
+      }
+      break;
+    }
+    default:
+      // args.unshift(err, event);
+      // ReflectApply(net.Server.prototype[EventEmitter.captureRejectionSymbol], this, args);
+      break;
+  }
+};
 
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);

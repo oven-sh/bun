@@ -43,6 +43,9 @@
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "never",
+    },
   },
 
   // lldb

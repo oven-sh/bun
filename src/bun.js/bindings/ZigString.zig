@@ -863,6 +863,11 @@ pub const ZigString = extern struct {
         return ZigString__toTypeErrorInstance(this, global);
     }
 
+    extern fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: u8) JSValue;
+    pub fn toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode) JSValue {
+        return ZigString__toDOMExceptionInstance(this, global, @intFromEnum(code));
+    }
+
     extern fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return ZigString__toSyntaxErrorInstance(this, global);

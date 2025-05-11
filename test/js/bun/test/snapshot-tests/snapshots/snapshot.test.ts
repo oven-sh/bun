@@ -847,6 +847,21 @@ indentation"
       `,
     );
   });
+  it("#16403", () => {
+    tester.test(v =>
+      v(
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "ab",\n\t\t    "cd",\n\t\t  ]\n\t\t`);\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "C2",\n\t\t    "B2",\n\t\t  ]\n\t\t`);\n\t});\n',
+      ),
+    );
+    tester.testUpdateOnly(v =>
+      v(
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "ab",\n\t\t\t  "cd",\n\t\t\t]\n\t\t`);\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "C2",\n\t\t\t  "B2",\n\t\t\t]\n\t\t`);\n\t});\n',
+      ),
+    );
+  });
 });
 test("indented inline snapshots", () => {
   expect("a\nb").toMatchInlineSnapshot(`

@@ -648,6 +648,7 @@ pub const JSValkeyClient = struct {
     pub const expire = fns.expire;
     pub const expiretime = fns.expiretime;
     pub const get = fns.get;
+    pub const getBuffer = fns.getBuffer;
     pub const getdel = fns.getdel;
     pub const getex = fns.getex;
     pub const getset = fns.getset;

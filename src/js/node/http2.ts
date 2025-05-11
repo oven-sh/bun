@@ -2860,7 +2860,7 @@ class ServerHttp2Session extends Http2Session {
 
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
-    if (this.#closed) return;
+    if (!this.#connected) return;
     this.#closed = true;
     this.#connected = false;
     if (socket) {

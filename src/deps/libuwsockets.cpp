@@ -497,13 +497,22 @@ extern "C"
       uwsApp->domain(server_name);
     }
   }
-  void uws_app_set_require_host_header(int ssl, uws_app_t *app, bool require_host_header) {
+  void uws_app_set_max_http_header_size(int ssl, uws_app_t *app, uint64_t max_header_size) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->setRequireHostHeader(require_host_header);
+      uwsApp->setMaxHTTPHeaderSize(max_header_size);
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->setRequireHostHeader(require_host_header);
+      uwsApp->setMaxHTTPHeaderSize(max_header_size);
+    }
+  }
+  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setFlags(require_host_header, use_strict_method_validation);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setFlags(require_host_header, use_strict_method_validation);
     }
   }
 

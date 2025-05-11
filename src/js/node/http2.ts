@@ -1604,7 +1604,6 @@ function markStreamClosed(stream: Http2Stream) {
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
-
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 class Http2Stream extends Duplex {
@@ -2510,7 +2509,7 @@ class ServerHttp2Session extends Http2Session {
       sensitiveHeadersValue: string[] | undefined,
       flags: number,
     ) {
-      if (!self || typeof stream !== "object") return;
+      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         stream[kHeadRequest] = true;
@@ -2861,7 +2860,7 @@ class ServerHttp2Session extends Http2Session {
 
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
-
+    if (this.#closed) return;
     this.#closed = true;
     this.#connected = false;
     if (socket) {

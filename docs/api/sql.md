@@ -321,6 +321,22 @@ const db = new SQL({
 });
 ```
 
+## Preconnect at startup
+
+The `--sql-preconnect` flag automatically connects to the database at startup before any other code is executed. This works by reading the existing connection URL from the environment variables.
+
+```bash
+bun --sql-preconnect my-script.ts
+```
+
+If your app takes some time to load or your database is slow to connect, you can use the `--sql-preconnect` flag to preconnect to speed up the first query.
+
+Internally, this is equivalent to:
+
+```ts
+Bun.sql.connect().then(() => {});
+```
+
 ## Dynamic passwords
 
 When clients need to use alternative authentication schemes such as access tokens or connections to databases with rotating passwords, provide either a synchronous or asynchronous function that will resolve the dynamic password value at connection time.

@@ -321,6 +321,36 @@ pub const Run = struct {
             }
         }
 
+        // This does the equivalent of:
+        // ```ts
+        // try {
+        //     Bun.sql.connect();
+        // } catch (err) {
+        //     reportError(err);
+        // }
+        // ```
+        do_postgres_preconnect: {
+            if (this.ctx.runtime_options.sql_preconnect) {
+                const global = vm.global;
+                const bun_object = vm.global.toJSValue().get(global, "Bun") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                const sql_object = bun_object.get(global, "sql") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                const connect_fn = sql_object.get(global, "connect") catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                } orelse break :do_postgres_preconnect;
+                _ = connect_fn.call(global, sql_object, &.{}) catch |err| {
+                    vm.global.reportActiveExceptionAsUnhandled(err);
+                    break :do_postgres_preconnect;
+                };
+            }
+        }
+
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
             .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),

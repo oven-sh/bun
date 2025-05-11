@@ -245,6 +245,7 @@ pub const Arguments = struct {
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--sql-preconnect                  Preconnect to $DATABASE_URL at startup") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
@@ -714,6 +715,10 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--sql-preconnect")) {
+                ctx.runtime_options.sql_preconnect = true;
             }
 
             if (args.flag("--no-addons")) {
@@ -1546,6 +1551,7 @@ pub const Command = struct {
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
         redis_preconnect: bool = false,
+        sql_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,

@@ -1792,6 +1792,7 @@ class Http2Stream extends Duplex {
         rstCode = this.rstCode = 0;
       }
     }
+    this.rstCode = rstCode;
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
     // seamless compatibility with http1

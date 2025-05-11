@@ -651,6 +651,7 @@ The generated bundle will contain the following code:
 
 ```js
 console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
 console.log(process.env.BAZ);
 ```
 

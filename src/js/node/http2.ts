@@ -2869,7 +2869,7 @@ class ServerHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
-      parser.sendRSTToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+      parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
       this.#parser = null;
     }
@@ -3044,10 +3044,8 @@ class ClientHttp2Session extends Http2Session {
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
-      if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
-      }
-      self.close();
+      if (self.closed) return;
+      self.destroy(undefined, errorCode);
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

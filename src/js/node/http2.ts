@@ -74,6 +74,7 @@ const kAborted = Symbol("aborted");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kMaxStreams = 2 ** 32 - 1;
+const kMaxInt = 4294967295;
 const {
   validateInteger,
   validateString,
@@ -270,14 +271,14 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
-function assertIsObject(value: any, name: string, types?: string) {
-  if (value !== undefined && (value === null || typeof value !== "object" || ArrayIsArray(value))) {
+function assertIsObject(value: any, name: string, types?: string): asserts value is object {
+  if (value !== undefined && (!$isObject(value) || $isArray(value))) {
     throw $ERR_INVALID_ARG_TYPE(name, types || "Object", value);
   }
 }
 
-function assertIsArray(value: any, name: string, types?: string) {
-  if (value !== undefined && (value === null || !ArrayIsArray(value))) {
+function assertIsArray(value: any, name: string, types?: string): asserts value is any[] {
+  if (value !== undefined && !$isArray(value)) {
     throw $ERR_INVALID_ARG_TYPE(name, types || "Array", value);
   }
 }
@@ -1758,7 +1759,7 @@ class Http2Stream extends Duplex {
       const session = this[bunHTTP2Session];
       assertSession(session);
       code = code || 0;
-      validateInteger(code, "code", 0, 4294967295);
+      validateInteger(code, "code", 0, kMaxInt);
 
       if (typeof callback !== "undefined") {
         validateFunction(callback, "callback");

@@ -1574,12 +1574,16 @@ it("http2.createServer validates input options", () => {
 
       // Note: Bun's expect doesn't have the same detailed error matching as Node's assert,
       // so we're just checking that it throws an error with the expected name
+      let error;
       try {
         http2.createServer({ [opt]: val });
-      } catch (error) {
-        expect(error.name).toBe(err.name);
-        expect(error.code).toBe(err.code);
+      } catch (e) {
+        error = e;
       }
+
+      expect(error).toBeTruthy();
+      expect(error?.name).toBe(err.name);
+      expect(error?.code).toBe(err.code);
     });
   });
 });

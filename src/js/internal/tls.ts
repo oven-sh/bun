@@ -96,17 +96,16 @@ const TLS_VERSION_REVERSE_MAP: {
 
 function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min: number, max: number] {
   const secureProtocol = options?.secureProtocol;
-
   const maybeConflictVersion = options.minVersion || options.maxVersion;
   if (secureProtocol && maybeConflictVersion) {
     throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(maybeConflictVersion, secureProtocol);
   }
 
-  let minVersionName: import("node:tls").SecureVersion | 0 = DEFAULT_MIN_VERSION;
-  let maxVersionName: import("node:tls").SecureVersion | number = DEFAULT_MAX_VERSION;
+  let minVersionName: import("node:tls").SecureVersion = DEFAULT_MIN_VERSION;
+  let maxVersionName: import("node:tls").SecureVersion = DEFAULT_MAX_VERSION;
 
+  // Node's C++ logic: https://github.com/nodejs/node/blob/main/src/crypto/crypto_context.cc
   if (typeof secureProtocol === "string") {
-    // --- Node's C++ if/else chain ---
     if (
       secureProtocol === "SSLv2_method" ||
       secureProtocol === "SSLv2_server_method" ||
@@ -131,15 +130,15 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
       maxVersionName = "TLSv1.2";
       // method = TLS_client_method();
     } else if (secureProtocol === "TLS_method") {
-      minVersionName = 0;
-      maxVersionName = 0x0304;
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.3";
     } else if (secureProtocol === "TLS_server_method") {
-      minVersionName = 0;
-      maxVersionName = 0x0304;
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.3";
       // method = TLS_server_method();
     } else if (secureProtocol === "TLS_client_method") {
-      minVersionName = 0;
-      maxVersionName = 0x0304;
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.3";
       // method = TLS_client_method();
     } else if (secureProtocol === "TLSv1_method") {
       minVersionName = maxVersionName = "TLSv1";
@@ -181,11 +180,10 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
     maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
   }
 
-  // Convert 0 (any) to the lowest supported version (TLSv1)
   let minVersion: number;
-  if (minVersionName === 0) {
-    minVersion = TLS_VERSION_MAP["TLSv1"];
-  } else if (typeof minVersionName === "string") {
+  let maxVersion: number;
+
+  if (typeof minVersionName === "string") {
     if (!(minVersionName in TLS_VERSION_MAP)) {
       throw $ERR_TLS_INVALID_PROTOCOL_VERSION(minVersionName, "minimum");
     }
@@ -194,11 +192,7 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
     throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
   }
 
-  // kMaxSupportedVersion is TLSv1.3 (0x0304)
-  let maxVersion: number;
-  if (maxVersionName === 0x0304) {
-    maxVersion = 0x0304;
-  } else if (typeof maxVersionName === "string") {
+  if (typeof maxVersionName === "string") {
     if (!(maxVersionName in TLS_VERSION_MAP)) {
       throw $ERR_TLS_INVALID_PROTOCOL_VERSION(maxVersionName, "maximum");
     }

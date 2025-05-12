@@ -44,7 +44,8 @@ function test(cmin, cmax, cprot, smin, smax, sprot, proto, cerr, serr) {
       minVersion: cmin,
       maxVersion: cmax,
       secureProtocol: cprot,
-      ciphers: ciphers
+      ciphers: ciphers,
+      host: '127.0.0.1', // Required because Bun implements happy eyeballs
     },
     server: {
       cert: keys.agent6.cert,
@@ -52,7 +53,8 @@ function test(cmin, cmax, cprot, smin, smax, sprot, proto, cerr, serr) {
       minVersion: smin,
       maxVersion: smax,
       secureProtocol: sprot,
-      ciphers: ciphers
+      ciphers: ciphers,
+      host: '127.0.0.1', // Required because Bun implements happy eyeballs
     },
   }, common.mustCall((err, pair, cleanup) => {
     function u(_) { return _ === undefined ? 'U' : _; }

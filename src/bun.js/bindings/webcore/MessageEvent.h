@@ -50,8 +50,8 @@ public:
     };
     // using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
     using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<ArrayBuffer>>;
-    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = {}, Vector<RefPtr<MessagePort>>&& = {});
-    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = {}, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     static Ref<MessageEvent> createForBindings();
 
@@ -69,9 +69,9 @@ public:
         JSC::Strong<JSC::JSObject> strongWrapper; // Keep the wrapper alive until the event is fired, since it is what keeps `data` alive.
     };
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = {}, Vector<RefPtr<MessagePort>>&& = {});
+    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = {}, Vector<RefPtr<MessagePort>>&& = {});
+    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     virtual ~MessageEvent();
 
@@ -93,7 +93,7 @@ public:
 private:
     MessageEvent();
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
-    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = {}, Vector<RefPtr<MessagePort>>&& = {});
+    MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     EventInterface eventInterface() const final;
 

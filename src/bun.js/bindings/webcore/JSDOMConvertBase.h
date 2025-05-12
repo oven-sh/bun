@@ -48,10 +48,7 @@ template<typename T> inline T& getPtrOrRef(const Ref<T>& p) { return p.get(); }
 struct DefaultExceptionThrower {
     void operator()(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
     {
-        // If the converter already threw a more specific exception, don't override it
-        if (!scope.exception()) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
+        throwTypeError(&lexicalGlobalObject, scope);
     }
 };
 

@@ -588,6 +588,8 @@ function Server(options, secureConnectionListener): void {
         passphrase: this.passphrase,
         minVersion: this.minVersion,
         maxVersion: this.maxVersion,
+        minVersionName: this.minVersionName,
+        maxVersionName: this.maxVersionName,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,

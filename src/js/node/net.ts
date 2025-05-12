@@ -100,6 +100,7 @@ const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
+const kSocketOptions = Symbol("kSocketOptions");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -351,9 +352,16 @@ const ServerHandlers: SocketHandler = {
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
 
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const {
+      pauseOnConnect,
+      connectionListener,
+      [kSocketClass]: SClass,
+      [kSocketOptions]: socketOptions = {},
+      requestCert,
+      rejectUnauthorized,
+    } = options;
 
-    const _socket = new SClass({});
+    const _socket = new SClass(socketOptions);
 
     _socket.isServer = true;
     _socket.server = self;
@@ -1455,6 +1463,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options.maxVersion = tls.maxVersion;
 
       options[kSocketClass] = TLSSocketClass;
+      options[kSocketOptions] = {
+        minVersion: tls.minVersionName,
+        maxVersion: tls.maxVersionName,
+      };
+
       contexts = tls.contexts;
       if (!tls.requestCert) {
         tls.rejectUnauthorized = false;

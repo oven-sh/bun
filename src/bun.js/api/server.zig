@@ -5341,9 +5341,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn setRequireHostHeader(this: *ThisServer, require_host_header: bool) void {
+        pub fn setFlags(this: *ThisServer, require_host_header: bool, use_strict_method_validation: bool) void {
             if (this.app) |app| {
-                app.setRequireHostHeader(require_host_header);
+                app.setFlags(require_host_header, use_strict_method_validation);
+            }
+        }
+
+        pub fn setMaxHTTPHeaderSize(this: *ThisServer, max_header_size: u64) void {
+            if (this.app) |app| {
+                app.setMaxHTTPHeaderSize(max_header_size);
             }
         }
 
@@ -7801,15 +7807,8 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 }
-pub export fn Server__setOnClientError(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
-    Server__setOnClientError_(server, callback, globalThis) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-        },
-    };
-}
-pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+
+pub fn Server__setOnClientError_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, callback: JSC.JSValue) bun.JSError!JSC.JSValue {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set clientError: The 'this' value is not a Server.", .{});
     }
@@ -7845,39 +7844,52 @@ pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, glo
     } else {
         bun.debugAssert(false);
     }
-}
-pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) void {
-    Server__setRequireHostHeader_(server, require_host_header, globalThis) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-        },
-    };
+    return .undefined;
 }
 
-pub fn Server__setRequireHostHeader_(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+pub fn Server__setAppFlags_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, require_host_header: bool, use_strict_method_validation: bool) bun.JSError!JSC.JSValue {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set requireHostHeader: The 'this' value is not a Server.", .{});
     }
 
     if (server.as(HTTPServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(HTTPSServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(DebugHTTPServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(DebugHTTPSServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else {
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
+    return .undefined;
 }
 
+pub fn Server__setMaxHTTPHeaderSize_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, max_header_size: u64) bun.JSError!JSC.JSValue {
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
+    }
+
+    if (server.as(HTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(HTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else {
+        return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
+    }
+    return .undefined;
+}
 comptime {
     _ = Server__setIdleTimeout;
-    _ = Server__setRequireHostHeader;
     _ = NodeHTTPResponse.create;
-    _ = Server__setOnClientError;
+    @export(&JSC.host_fn.wrap4(Server__setAppFlags_), .{ .name = "Server__setAppFlags" });
+    @export(&JSC.host_fn.wrap3(Server__setOnClientError_), .{ .name = "Server__setOnClientError" });
+    @export(&JSC.host_fn.wrap3(Server__setMaxHTTPHeaderSize_), .{ .name = "Server__setMaxHTTPHeaderSize" });
 }
 
 extern fn NodeHTTPServer__onRequest_http(

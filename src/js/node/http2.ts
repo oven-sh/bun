@@ -2820,7 +2820,7 @@ class ServerHttp2Session extends Http2Session {
     return true;
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
-    if (this.destroyed) $ERR_HTTP2_INVALID_SESSION();
+    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
 
     if (opaqueData !== undefined) {
       validateBuffer(opaqueData, "opaqueData");

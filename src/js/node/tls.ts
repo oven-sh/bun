@@ -1,9 +1,10 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
+const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
-const { addServerName } = require("internal/net");
+const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -37,17 +38,6 @@ function parseCertString() {
 
 const rejectUnauthorizedDefault =
   process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
-function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
-  if (Array.isArray(obj)) {
-    for (var i = 0; i < obj.length; i++) {
-      const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
-    }
-    return true;
-  }
-  return false;
-}
 
 function unfqdn(host) {
   return RegExpPrototypeSymbolReplace.$call(/[.]$/, host, "");
@@ -215,33 +205,23 @@ var InternalSecureContext = class SecureContext {
 
   constructor(options) {
     const context = {};
+
     if (options) {
-      let key = options.key;
-      if (key) {
-        if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.key = key;
-      }
       let cert = options.cert;
       if (cert) {
-        if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.cert", cert);
         this.cert = cert;
+      }
+
+      let key = options.key;
+      if (key) {
+        throwOnInvalidTLSArray("options.key", key);
+        this.key = key;
       }
 
       let ca = options.ca;
       if (ca) {
-        if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;
       }
 
@@ -261,8 +241,25 @@ var InternalSecureContext = class SecureContext {
       if (secureOptions && typeof secureOptions !== "number") {
         throw new TypeError("secureOptions argument must be an number");
       }
+
       this.secureOptions = secureOptions;
+
+      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
+        if ($isUndefinedOrNull(options.privateKeyEngine)) {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
+        } else if (typeof options.privateKeyEngine !== "string") {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
+        }
+
+        if (typeof options.privateKeyIdentifier !== "string") {
+          // prettier-ignore
+          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
+        }
+      }
     }
+
     this.context = context;
   }
 };
@@ -308,14 +305,19 @@ function TLSSocket(socket?, options?) {
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
-  NetSocket.$call(this, socket instanceof NetSocket || socket instanceof Duplex ? options : options || socket);
-  options = options || socket || {};
+  const isNetSocketOrDuplex = socket instanceof Duplex;
+
+  options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
+
+  NetSocket.$call(this, options);
+
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
-    if (socket instanceof NetSocket || socket instanceof Duplex) {
+
+    if (isNetSocketOrDuplex) {
       this._handle = socket;
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;
@@ -531,50 +533,39 @@ function Server(options, secureConnectionListener): void {
         convertALPNProtocols(ALPNProtocols, this);
       }
 
-      let key = options.key;
-      if (key) {
-        if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.key = key;
-      }
       let cert = options.cert;
       if (cert) {
-        if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.cert", cert);
         this.cert = cert;
+      }
+
+      let key = options.key;
+      if (key) {
+        throwOnInvalidTLSArray("options.key", key);
+        this.key = key;
       }
 
       let ca = options.ca;
       if (ca) {
-        if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
+        throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;
       }
 
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
       this.passphrase = passphrase;
 
       let servername = options.servername;
       if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
       this.servername = servername;
 
       let secureOptions = options.secureOptions || 0;
       if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
       }
       this.secureOptions = secureOptions;
 
@@ -732,5 +723,7 @@ export default {
   Server,
   TLSSocket,
   checkServerIdentity,
-  rootCertificates,
+  get rootCertificates() {
+    return rootCertificates;
+  },
 } as any as typeof import("node:tls");

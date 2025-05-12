@@ -10,6 +10,7 @@
 #include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
+#include "KeyObject.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -121,9 +122,10 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         }
     }
 
-    WTF::Vector<uint8_t> keyData;
-    prepareSecretKey(globalObject, scope, keyData, keyValue, encodingValue);
+    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    auto keyData = keyObject.symmetricKey().span();
 
     JSArrayBufferView* ivView = nullptr;
     if (!ivValue.isNull()) {
@@ -136,14 +138,13 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         JSValue authTagLengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "authTagLength"_s));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        double authTagLengthNumber = authTagLengthValue.toNumber(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        if (!authTagLengthValue.isUndefinedOrNull()) {
+            std::optional<int32_t> maybeAuthTagLength = authTagLengthValue.tryGetAsInt32();
+            if (!maybeAuthTagLength || *maybeAuthTagLength < 0) {
+                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.authTagLength"_s, authTagLengthValue);
+            }
 
-        authTagLength = JSC::toInt32(authTagLengthNumber);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-        if (authTagLengthNumber != authTagLength) {
-            return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.authTagLength"_s, authTagLengthValue);
+            authTagLength = *maybeAuthTagLength;
         }
     }
 

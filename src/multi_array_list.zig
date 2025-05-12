@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;

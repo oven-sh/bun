@@ -1364,7 +1364,7 @@ void us_internal_ssl_socket_context_add_server_name(
   if (ssl_context) {
     /* Attach the user data to this context */
     if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
       printf("CANNOT SET EX DATA!\n");
       abort();
 #endif
@@ -1392,7 +1392,7 @@ int us_bun_internal_ssl_socket_context_add_server_name(
 
   /* Attach the user data to this context */
   if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     printf("CANNOT SET EX DATA!\n");
     abort();
 #endif
@@ -1535,10 +1535,9 @@ us_internal_bun_create_ssl_socket_context(
   /* Otherwise ee continue by creating a non-SSL context, but with larger ext to
    * hold our SSL stuff */
   struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_create_bun_socket_context(
-          0, loop,
-          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options, err);
+      (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
+          loop,
+          sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size);
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;
@@ -1617,7 +1616,7 @@ struct us_socket_t *us_internal_ssl_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size, is_connecting);
-  if (*is_connecting) {
+  if (*is_connecting && s) {
     us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
   }
 
@@ -2080,8 +2079,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   us_socket_context_ref(0,old_context);
 
   enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  struct us_socket_context_t *context = us_create_bun_socket_context(
-      1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
+  struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
+      old_context->loop, sizeof(struct us_wrapped_socket_context_t),
       options, &err);
   
   // Handle SSL context creation failure

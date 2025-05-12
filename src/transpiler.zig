@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -151,7 +151,7 @@ pub const PluginRunner = struct {
             bun.String.init(namespace_slice)
         else
             bun.String.empty;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             namespace,
             bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
             bun.String.init(importer),
@@ -241,7 +241,7 @@ pub const PluginRunner = struct {
 
     pub fn onResolveJSC(this: *const PluginRunner, namespace: bun.String, specifier: bun.String, importer: bun.String, target: JSC.JSGlobalObject.BunPluginTarget) bun.JSError!?JSC.ErrorableString {
         var global = this.global_object;
-        const on_resolve_plugin = global.runOnResolvePlugins(
+        const on_resolve_plugin = try global.runOnResolvePlugins(
             if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
@@ -704,7 +704,7 @@ pub const Transpiler = struct {
                         );
                 }
 
-                const buffer_writer = try js_printer.BufferWriter.init(transpiler.allocator);
+                const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {
@@ -796,12 +796,14 @@ pub const Transpiler = struct {
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (transpiler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
                         .pathname = pathname,
-                        .dir = dir,
+                        .dir = if (transpiler.options.output_dir_handle) |output_handle|
+                            .fromStdDir(output_handle)
+                        else
+                            .invalid,
                         .is_outdir = true,
                     },
                 };
@@ -822,7 +824,10 @@ pub const Transpiler = struct {
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
-        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        const tracer = if (enable_source_map)
+            bun.perf.trace("JSPrinter.printWithSourceMap")
+        else
+            bun.perf.trace("JSPrinter.print");
         defer tracer.end();
 
         const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
@@ -1097,8 +1102,10 @@ pub const Transpiler = struct {
             return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
         }
 
-        if (loader != .wasm and source.contents.len == 0 and source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0) {
-            return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+        if (source.contents.len == 0 or (source.contents.len < 33 and std.mem.trim(u8, source.contents, "\n\r ").len == 0)) {
+            if (!loader.handlesEmptyFile()) {
+                return ParseResult{ .source = source, .input_fd = input_fd, .loader = loader, .empty = true, .ast = js_ast.Ast.empty };
+            }
         }
 
         switch (loader) {
@@ -1202,7 +1209,7 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator, .{}).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }

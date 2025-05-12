@@ -150,6 +150,14 @@ function generate(ssl) {
         length: 0,
       },
 
+      localFamily: {
+        getter: "getLocalFamily",
+        cache: true,
+      },
+      localAddress: {
+        getter: "getLocalAddress",
+        cache: true,
+      },
       localPort: {
         getter: "getLocalPort",
       },
@@ -170,9 +178,16 @@ function generate(ssl) {
       //   getter: "getTopics",
       // },
 
+      remoteFamily: {
+        getter: "getRemoteFamily",
+        cache: true,
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,
+      },
+      remotePort: {
+        getter: "getRemotePort",
       },
 
       reload: {
@@ -265,6 +280,11 @@ export default [
       data: {
         getter: "getData",
         setter: "setData",
+      },
+
+      getsockname: {
+        fn: "getsockname",
+        length: 1,
       },
     },
     finalize: true,
@@ -425,6 +445,43 @@ export default [
         this: true,
         enumerable: false,
         configurable: true,
+      },
+    },
+  }),
+  define({
+    name: "BlockList",
+    construct: true,
+    call: false,
+    finalize: true,
+    estimatedSize: true,
+    // customInspect: true,
+    structuredClone: { transferable: false, tag: 251 },
+    JSType: "0b11101110",
+    klass: {
+      isBlockList: {
+        fn: "isBlockList",
+        length: 1,
+      },
+    },
+    proto: {
+      addAddress: {
+        fn: "addAddress",
+        length: 1,
+      },
+      addRange: {
+        fn: "addRange",
+        length: 2,
+      },
+      addSubnet: {
+        fn: "addSubnet",
+        length: 2,
+      },
+      check: {
+        fn: "check",
+        length: 1,
+      },
+      rules: {
+        getter: "rules",
       },
     },
   }),

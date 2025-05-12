@@ -1,8 +1,8 @@
 import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
-import jsclasses from "./../bun.js/bindings/js_classes";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -169,7 +169,9 @@ export const function_replacements = [
   "$newZigFunction",
   "$cpp",
   "$newCppFunction",
-  "$isPromiseResolved",
+  "$isPromiseFulfilled",
+  "$isPromiseRejected",
+  "$isPromisePending",
   "$bindgenFn",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
@@ -254,7 +256,7 @@ export function applyReplacements(src: string, length: number) {
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : undefined);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
-    } else if (name === "isPromiseResolved") {
+    } else if (name === "isPromiseFulfilled") {
       const inner = sliceSourceCode(rest, true);
       let args;
       if (debug) {
@@ -262,6 +264,26 @@ export function applyReplacements(src: string, length: number) {
         args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateFulfilled))`;
       } else {
         args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateFulfilled)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "isPromiseRejected") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStateRejected))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStateRejected)`;
+      }
+      return [slice.slice(0, match.index) + args, inner.rest, true];
+    } else if (name === "isPromisePending") {
+      const inner = sliceSourceCode(rest, true);
+      let args;
+      if (debug) {
+        // use a property on @lazy as a temporary holder for the expression. only in debug!
+        args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),(__intrinsic__getPromiseInternalField(__intrinsic__lazy.temp, __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === (__intrinsic__lazy.temp = undefined, __intrinsic__promiseStatePending))`;
+      } else {
+        args = `((__intrinsic__getPromiseInternalField(${inner.result.slice(0, -1)}), __intrinsic__promiseFieldFlags) & __intrinsic__promiseStateMask) === __intrinsic__promiseStatePending)`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
     } else if (name === "bindgenFn") {

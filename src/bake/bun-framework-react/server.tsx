@@ -1,8 +1,8 @@
 import type { Bake } from "bun";
-import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
 import { PassThrough } from "node:stream";
+import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {

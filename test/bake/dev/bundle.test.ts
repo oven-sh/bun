@@ -198,15 +198,7 @@ devTest("default export same-scope handling", {
 
     // Since fixture7.ts is not marked as accepting, it will bubble the update
     // to `index.ts`, re-evaluate it and some of the dependencies.
-    c.expectMessage(
-      "TWO",
-      "FOUR",
-      "FIVE",
-      "SEVEN",
-      "EIGHT",
-      "NINE",
-      "ELEVEN",
-    );
+    c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
 devTest("directory cache bust case #17576", {
@@ -244,7 +236,7 @@ devTest("directory cache bust case #17576", {
 });
 devTest("deleting imported file shows error then recovers", {
   skip: [
-    'win32', // unlinkSync is having weird behavior
+    "win32", // unlinkSync is having weird behavior
   ],
   files: {
     "index.html": emptyHtmlFile({
@@ -297,6 +289,24 @@ devTest("importing html file", {
     await using c = await dev.client("/", {
       errors: ["index.ts:1:18: error: Browser builds cannot import HTML files."],
     });
+  },
+});
+devTest("importing html file with text loader (#18154)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>hello world</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("<div>hello world</div>");
   },
 });
 devTest("importing bun on the client", {

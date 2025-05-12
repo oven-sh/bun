@@ -4,7 +4,7 @@ const fs = std.fs;
 const io = std.io;
 const macho = std.macho;
 const Allocator = mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const SEGNAME_BUN = "__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
 pub const SECTNAME = "__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".*;
@@ -149,14 +149,14 @@ pub const MachoFile = struct {
 
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
-            @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
-        else
-            null;
+                @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+            else
+                null;
         const linkedit_seg: *align(1) macho.segment_command_64 =
             if (linkedit_seg_idx) |idx|
-            @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
-        else
-            return error.MissingLinkeditSegment;
+                @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
+            else
+                return error.MissingLinkeditSegment;
 
         // Handle code signature specially
         var sig_data: ?[]u8 = null;
@@ -171,7 +171,7 @@ pub const MachoFile = struct {
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         const after_bun_slice = self.data.items[original_data_end + @as(usize, @intCast(size_diff)) ..];
         const prev_after_bun_slice = prev_data_slice[original_segsize..];
-        bun.C.move(after_bun_slice, prev_after_bun_slice);
+        bun.move(after_bun_slice, prev_after_bun_slice);
 
         // Now we copy the u32 size header
         std.mem.writeInt(u32, self.data.items[original_fileoff..][0..4], @intCast(data.len), .little);

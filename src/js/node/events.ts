@@ -64,10 +64,15 @@ function EventEmitter(opts) {
   if (opts?.captureRejections) {
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
-    this[kCapture] = Boolean(opts.captureRejections);
+    this[kCapture] = !!opts.captureRejections;
     this.emit = emitWithRejectionCapture;
   } else {
     this[kCapture] = EventEmitterPrototype[kCapture];
+    const capture = EventEmitterPrototype[kCapture];
+    this[kCapture] = capture;
+    if (capture) {
+      this.emit = emitWithRejectionCapture;
+    }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
@@ -107,10 +112,10 @@ function emitError(emitter, args) {
     }
   }
 
-  let er;
+  let er: Error | undefined;
   if (args.length > 0) er = args[0];
 
-  if (er instanceof Error) {
+  if (Error.isError(er)) {
     throw er; // Unhandled 'error' event
   }
 
@@ -122,7 +127,7 @@ function emitError(emitter, args) {
   }
 
   // At least give some kind of context to the user
-  const err = $ERR_UNHANDLED_ERROR(stringifiedEr);
+  const err = $ERR_UNHANDLED_ERROR(stringifiedEr) as Error & { context: unknown };
   err.context = er;
   throw err; // Unhandled 'error' event
 }

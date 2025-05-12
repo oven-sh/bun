@@ -455,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {}, Bun::CountdownOverflowBehavior::Clamp);
+    Bun__Timer__sleep(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue));
     return JSC::JSValue::encode(promise);
 }
 
@@ -630,7 +630,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     WTF::URL url;
 
     auto path = JSC::JSValue::encode(arg0);
-    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
+    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(path);
     if (!domURL) {
         if (arg0.isString()) {
             url = WTF::URL(arg0.toWTFString(globalObject));
@@ -788,6 +788,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
+    RedisClient                                   BunObject_getter_wrap_ValkeyClient                                  DontDelete|PropertyCallback
+    redis                                         BunObject_getter_wrap_valkey                                        DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
 @end
 */
@@ -912,7 +914,10 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* object = globalObject->bunObject();
 
     // :'(
-    object->reifyAllStaticProperties(lexicalGlobalObject);
+    if (LIKELY(object->hasNonReifiedStaticProperties())) {
+        object->reifyAllStaticProperties(lexicalGlobalObject);
+    }
+
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

@@ -101,7 +101,7 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 );
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "javascript.zig",
+  "virtual_machine_exports.zig",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
@@ -184,3 +184,5 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
+export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);

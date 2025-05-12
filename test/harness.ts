@@ -31,6 +31,7 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
+export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -44,9 +45,14 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+  BUN_DEBUG_linkerctx: "0",
 };
 
 const ciEnv = { ...bunEnv };
+
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+}
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -209,7 +215,7 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string>) {
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -553,6 +559,9 @@ export function ospath(path: string) {
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
   function shouldSkip(pkg: any, dep: any): boolean {
+    // Band-aid as toMatchNodeModulesAt will sometimes ask this function
+    // if a package depends on itself
+    if (pkg?.name === dep?.name) return true;
     return (
       !pkg ||
       !pkg.resolution ||
@@ -871,6 +880,7 @@ export function osSlashes(path: string) {
 }
 
 import * as child_process from "node:child_process";
+import { basename } from "node:path";
 
 class WriteBlockedError extends Error {
   constructor(time) {
@@ -1217,7 +1227,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
-  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
 
 declare module "bun:test" {
@@ -1491,7 +1501,7 @@ export class VerdaccioRegistry {
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun") || bunExe(),
+      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
     });
 
     this.process.stderr?.on("data", data => {

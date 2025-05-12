@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const picohttp = bun.picohttp;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -9,7 +9,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
-const C = bun.C;
+
 const Loc = bun.logger.Loc;
 const Log = bun.logger.Log;
 const DotEnv = @import("./env_loader.zig");
@@ -34,7 +34,8 @@ const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-
+const Blob = bun.webcore.Blob;
+const FetchHeaders = bun.webcore.FetchHeaders;
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
@@ -177,7 +178,7 @@ pub const Sendfile = struct {
                 std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
             this.offset = @as(u64, @intCast(signed_offset));
 
-            const errcode = bun.C.getErrno(val);
+            const errcode = bun.sys.getErrno(val);
 
             this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
@@ -191,7 +192,7 @@ pub const Sendfile = struct {
         } else if (Environment.isPosix) {
             var sbytes: std.posix.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
-            const errcode = bun.C.getErrno(std.c.sendfile(
+            const errcode = bun.sys.getErrno(std.c.sendfile(
                 this.fd.cast(),
                 socket.fd().cast(),
                 signed_offset,
@@ -222,6 +223,10 @@ pub const Sendfile = struct {
 };
 
 const ProxyTunnel = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
+    pub const ref = ProxyTunnel.RefCount.ref;
+    pub const deref = ProxyTunnel.RefCount.deref;
+
     wrapper: ?ProxyTunnelWrapper = null,
     shutdown_err: anyerror = error.ConnectionClosed,
     // active socket is the socket that is currently being used
@@ -231,11 +236,9 @@ const ProxyTunnel = struct {
         none: void,
     } = .{ .none = {} },
     write_buffer: bun.io.StreamBuffer = .{},
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
-
-    usingnamespace bun.NewRefCounted(ProxyTunnel, _deinit, null);
 
     fn onOpen(this: *HTTPClient) void {
         this.state.response_stage = .proxy_handshake;
@@ -436,7 +439,9 @@ const ProxyTunnel = struct {
     }
 
     fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
-        const proxy_tunnel = ProxyTunnel.new(.{});
+        const proxy_tunnel = bun.new(ProxyTunnel, .{
+            .ref_count = .init(),
+        });
 
         var custom_options = ssl_options;
         // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
@@ -520,14 +525,14 @@ const ProxyTunnel = struct {
         this.deref();
     }
 
-    fn _deinit(this: *ProxyTunnel) void {
+    fn deinit(this: *ProxyTunnel) void {
         this.socket = .{ .none = {} };
         if (this.wrapper) |*wrapper| {
             wrapper.deinit();
             this.wrapper = null;
         }
         this.write_buffer.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 
@@ -638,7 +643,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             var err: uws.create_bun_socket_error_t = .none;
-            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
+            const socket = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
             if (socket == null) {
                 return switch (err) {
                     .load_ca_file => error.LoadCAFile,
@@ -681,7 +686,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     .reject_unauthorized = 0,
                 };
                 var err: uws.create_bun_socket_error_t = .none;
-                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
+                this.us_socket_context = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
 
                 this.sslCtx().setup();
             } else {
@@ -1063,7 +1068,8 @@ pub const HTTPThread = struct {
         buffer: [512 * 1024]u8 = undefined,
         fixed_buffer_allocator: std.heap.FixedBufferAllocator,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
+        pub const deinit = bun.TrivialDeinit(@This());
 
         pub fn init() *@This() {
             var this = HeapRequestBodyBuffer.new(.{
@@ -1081,10 +1087,6 @@ pub const HTTPThread = struct {
             } else {
                 this.deinit();
             }
-        }
-
-        pub fn deinit(this: *@This()) void {
-            this.destroy();
         }
     };
 
@@ -1124,9 +1126,10 @@ pub const HTTPThread = struct {
     const WriteMessage = struct {
         data: []const u8,
         async_http_id: u32,
-        flags: packed struct {
+        flags: packed struct(u8) {
             is_tls: bool,
             ended: bool,
+            _: u6 = 0,
         },
     };
     const ShutdownMessage = struct {
@@ -1138,7 +1141,7 @@ pub const HTTPThread = struct {
         decompressor: *bun.libdeflate.Decompressor = undefined,
         shared_buffer: [512 * 1024]u8 = undefined,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
     };
 
     const request_body_send_stack_buffer_size = 32 * 1024;
@@ -1777,8 +1780,6 @@ pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
 
-pub const Headers = JSC.WebCore.Headers;
-
 pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
     SOCK.CLOEXEC | posix.MSG.NOSIGNAL
 else
@@ -2031,13 +2032,14 @@ pub const InternalState = struct {
     response_stage: HTTPStage = .pending,
     certificate_info: ?CertificateInfo = null,
 
-    pub const InternalStateFlags = packed struct {
+    pub const InternalStateFlags = packed struct(u8) {
         allow_keepalive: bool = true,
         received_last_chunk: bool = false,
         did_set_content_encoding: bool = false,
         is_redirect_pending: bool = false,
         is_libdeflate_fast_path_disabled: bool = false,
         resend_request_body_on_redirect: bool = false,
+        _padding: u2 = 0,
     };
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
@@ -2220,7 +2222,7 @@ pub const HTTPVerboseLevel = enum {
     curl,
 };
 
-pub const Flags = packed struct {
+pub const Flags = packed struct(u16) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
     disable_decompression: bool = false,
@@ -2232,6 +2234,7 @@ pub const Flags = packed struct {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
+    _padding: u5 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -2523,7 +2526,7 @@ pub const AsyncHTTP = struct {
         url: bun.URL,
         is_url_owned: bool,
 
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         pub fn onResult(this: *Preconnect, _: *AsyncHTTP, _: HTTPClientResult) void {
             this.response_buffer.deinit();
@@ -2533,7 +2536,7 @@ pub const AsyncHTTP = struct {
                 bun.default_allocator.free(this.url.href);
             }
 
-            this.destroy();
+            bun.destroy(this);
         }
     };
 
@@ -2847,7 +2850,7 @@ pub const AsyncHTTP = struct {
             {
                 this.client.deinit();
                 var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
-                defer threadlocal_http.destroy();
+                defer threadlocal_http.deinit();
                 log("onAsyncHTTPCallback: {any}", .{std.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
@@ -2893,6 +2896,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_header = false;
     var override_host_header = false;
     var override_user_agent = false;
+    var original_content_length: ?string = null;
 
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
@@ -2903,7 +2907,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
-            => continue,
+            => {
+                original_content_length = this.headerStr(header_values[i]);
+                continue;
+            },
             hashHeaderConst("Connection") => {
                 if (!this.flags.disable_keepalive) {
                     continue;
@@ -2988,6 +2995,12 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
         }
+        header_count += 1;
+    } else if (original_content_length) |content_length| {
+        request_headers_buf[header_count] = .{
+            .name = content_length_header_name,
+            .value = content_length,
+        };
         header_count += 1;
     }
 
@@ -4665,6 +4678,172 @@ const assert = bun.assert;
 
 // Exists for heap stats reasons.
 const ThreadlocalAsyncHTTP = struct {
+    pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
+
     async_http: AsyncHTTP,
-    pub usingnamespace bun.New(@This());
+};
+
+pub const Headers = struct {
+    pub const Entry = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+
+        pub const List = bun.MultiArrayList(Entry);
+    };
+
+    entries: Entry.List = .{},
+    buf: std.ArrayListUnmanaged(u8) = .{},
+    allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
+
+    pub fn deinit(this: *Headers) void {
+        this.entries.deinit(this.allocator);
+        this.buf.clearAndFree(this.allocator);
+    }
+    pub fn getContentType(this: *const Headers) ?[]const u8 {
+        if (this.entries.len == 0 or this.buf.items.len == 0) {
+            return null;
+        }
+        const header_entries = this.entries.slice();
+        const header_names = header_entries.items(.name);
+        const header_values = header_entries.items(.value);
+
+        for (header_names, 0..header_names.len) |name, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+                return this.asStr(header_values[i]);
+            }
+        }
+        return null;
+    }
+    pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
+        return if (ptr.offset + ptr.length <= this.buf.items.len)
+            this.buf.items[ptr.offset..][0..ptr.length]
+        else
+            "";
+    }
+
+    pub const Options = struct {
+        body: ?*const Blob.Any = null,
+    };
+
+    pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.Allocator) !Headers {
+        const header_count = headers.len;
+        var result = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+
+        var buf_len: usize = 0;
+        for (headers) |header| {
+            buf_len += header.name.len + header.value.len;
+        }
+        result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        result.entries.len = headers.len;
+        result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        result.buf.items.len = buf_len;
+        var offset: u32 = 0;
+        for (headers, 0..headers.len) |header, i| {
+            const name_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.name.len], header.name);
+            offset += @truncate(header.name.len);
+            const value_offset = offset;
+            bun.copy(u8, result.buf.items[offset..][0..header.value.len], header.value);
+            offset += @truncate(header.value.len);
+
+            result.entries.set(i, .{
+                .name = .{
+                    .offset = name_offset,
+                    .length = @truncate(header.name.len),
+                },
+                .value = .{
+                    .offset = value_offset,
+                    .length = @truncate(header.value.len),
+                },
+            });
+        }
+        return result;
+    }
+
+    pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, options: Options) !Headers {
+        var header_count: u32 = 0;
+        var buf_len: u32 = 0;
+        if (fetch_headers_ref) |headers_ref|
+            headers_ref.count(&header_count, &buf_len);
+        var headers = Headers{
+            .entries = .{},
+            .buf = .{},
+            .allocator = allocator,
+        };
+        const buf_len_before_content_type = buf_len;
+        const needs_content_type = brk: {
+            if (options.body) |body| {
+                if (body.hasContentTypeFromUser() and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
+                    header_count += 1;
+                    buf_len += @as(u32, @truncate(body.contentType().len + "Content-Type".len));
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+        headers.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+        headers.entries.len = header_count;
+        headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+        headers.buf.items.len = buf_len;
+        var sliced = headers.entries.slice();
+        var names = sliced.items(.name);
+        var values = sliced.items(.value);
+        if (fetch_headers_ref) |headers_ref|
+            headers_ref.copyTo(names.ptr, values.ptr, headers.buf.items.ptr);
+
+        // TODO: maybe we should send Content-Type header first instead of last?
+        if (needs_content_type) {
+            bun.copy(u8, headers.buf.items[buf_len_before_content_type..], "Content-Type");
+            names[header_count - 1] = .{
+                .offset = buf_len_before_content_type,
+                .length = "Content-Type".len,
+            };
+
+            bun.copy(u8, headers.buf.items[buf_len_before_content_type + "Content-Type".len ..], options.body.?.contentType());
+            values[header_count - 1] = .{
+                .offset = buf_len_before_content_type + @as(u32, "Content-Type".len),
+                .length = @as(u32, @truncate(options.body.?.contentType().len)),
+            };
+        }
+
+        return headers;
+    }
 };

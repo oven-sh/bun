@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
@@ -11,7 +11,7 @@ const Glob = bun.glob;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
@@ -2556,7 +2556,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     else
         std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
-    const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
+    const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
             Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
@@ -4539,7 +4539,7 @@ pub const Package = extern struct {
                                 var local_buf: bun.PathBuffer = undefined;
                                 const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
 
-                                const source = bun.sys.File.toSource(package_json_path, allocator).unwrap() catch {
+                                const source = bun.sys.File.toSource(package_json_path, allocator, .{}).unwrap() catch {
                                     // Can't guarantee this workspace still exists
                                     break :brk false;
                                 };
@@ -5841,7 +5841,7 @@ pub const Package = extern struct {
                                 if (strings.eqlLong(value.name, entry.name, true)) {
                                     const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
-                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
+                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 
                                     notes[i] = .{
                                         .text = "Package name is also declared here",
@@ -5855,7 +5855,7 @@ pub const Package = extern struct {
 
                         const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
 
-                        const src = bun.sys.File.toSource(abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(abs_path);
+                        const src = bun.sys.File.toSource(abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(abs_path);
 
                         log.addRangeErrorFmtWithNotes(
                             &src,

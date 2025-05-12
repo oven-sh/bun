@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
@@ -119,7 +119,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             log("deinit", .{});
             var it = store.firstBlock().next; // do not free `store.head`
             while (it) |next| {
-                if (Environment.isDebug)
+                if (Environment.isDebug or Environment.enable_asan)
                     @memset(next.buffer, undefined);
                 it = next.next;
                 backing_allocator.destroy(next);
@@ -133,7 +133,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         pub fn reset(store: *Store) void {
             log("reset", .{});
 
-            if (Environment.isDebug) {
+            if (Environment.isDebug or Environment.enable_asan) {
                 var it: ?*Block = store.firstBlock();
                 while (it) |next| : (it = next.next) {
                     next.bytes_used = undefined;
@@ -1410,7 +1410,7 @@ pub const Symbol = struct {
         }
 
         pub fn followAll(symbols: *Map) void {
-            const trace = bun.tracy.traceNamed(@src(), "Symbols.followAll");
+            const trace = bun.perf.trace("Symbols.followAll");
             defer trace.end();
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
@@ -1566,7 +1566,7 @@ pub const E = struct {
 
     pub const Boolean = struct {
         value: bool,
-        pub fn toJS(this: @This(), ctx: JSC.C.JSContextRef) JSC.C.JSValueRef {
+        pub fn toJS(this: @This(), ctx: *JSC.JSGlobalObject) JSC.C.JSValueRef {
             return JSC.C.JSValueMakeBoolean(ctx, this.value);
         }
     };
@@ -2407,12 +2407,6 @@ pub const E = struct {
         }
 
         pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
-            if (Expr.Data.Store.memory_allocator) |mem| {
-                if (mem == GlobalStoreHandle.global_store_ast) {
-                    return str.string(allocator);
-                }
-            }
-
             if (str.isUTF8()) {
                 return allocator.dupe(u8, str.string(allocator) catch unreachable);
             }
@@ -3218,6 +3212,18 @@ pub const Stmt = struct {
                 }
 
                 instance = StoreType.init();
+            }
+
+            /// create || reset
+            pub fn begin() void {
+                if (memory_allocator != null) return;
+                if (instance == null) {
+                    create();
+                    return;
+                }
+
+                if (!disable_reset)
+                    instance.?.reset();
             }
 
             pub fn reset() void {
@@ -6328,10 +6334,22 @@ pub const Expr = struct {
             }
 
             pub inline fn assert() void {
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.isDebug or Environment.enable_asan) {
                     if (instance == null and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
+            }
+
+            /// create || reset
+            pub fn begin() void {
+                if (memory_allocator != null) return;
+                if (instance == null) {
+                    create();
+                    return;
+                }
+
+                if (!disable_reset)
+                    instance.?.reset();
             }
 
             pub fn append(comptime T: type, value: T) *T {
@@ -7910,13 +7928,11 @@ pub fn printmem(comptime format: string, args: anytype) void {
 
 pub const Macro = struct {
     const JavaScript = bun.JSC;
-    const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
     const ResolveResult = @import("./resolver/resolver.zig").Result;
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
-    const Zig = @import("./bun.js/bindings/exports.zig");
     const Transpiler = bun.Transpiler;
     const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
@@ -7975,7 +7991,7 @@ pub const Macro = struct {
             bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
-                if (JSC.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
                     break :brk replacement.path;
                 }
 
@@ -8139,7 +8155,7 @@ pub const Macro = struct {
         const VisitMap = std.AutoHashMapUnmanaged(JSC.JSValue, Expr);
 
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
-        threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
+        threadlocal var exception_holder: JSC.ZigException.Holder = undefined;
         pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
         pub const Run = struct {
@@ -8258,7 +8274,7 @@ pub const Macro = struct {
                             } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
-                            } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
+                            } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
                                 _ = this.macro.vm.uncaughtException(this.global, value, false);
                                 return error.MacroFailed;
                             }
@@ -8468,7 +8484,7 @@ pub const Macro = struct {
         ) MacroError!Expr {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
-            exception_holder = Zig.ZigException.Holder.init();
+            exception_holder = JSC.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
             var js_processed_args_len: usize = 0;
             defer {
@@ -8562,6 +8578,48 @@ pub const ASTMemoryAllocator = struct {
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
+    pub fn enter(this: *ASTMemoryAllocator, allocator: std.mem.Allocator) ASTMemoryAllocator.Scope {
+        this.allocator = allocator;
+        this.stack_allocator = SFA{
+            .buffer = undefined,
+            .fallback_allocator = allocator,
+            .fixed_buffer_allocator = undefined,
+        };
+        this.bump_allocator = this.stack_allocator.get();
+        this.previous = null;
+        var ast_scope = ASTMemoryAllocator.Scope{
+            .current = this,
+            .previous = Stmt.Data.Store.memory_allocator,
+        };
+        ast_scope.enter();
+        return ast_scope;
+    }
+    pub const Scope = struct {
+        current: ?*ASTMemoryAllocator = null,
+        previous: ?*ASTMemoryAllocator = null,
+
+        pub fn enter(this: *@This()) void {
+            bun.debugAssert(Expr.Data.Store.memory_allocator == Stmt.Data.Store.memory_allocator);
+
+            this.previous = Expr.Data.Store.memory_allocator;
+
+            const current = this.current;
+
+            Expr.Data.Store.memory_allocator = current;
+            Stmt.Data.Store.memory_allocator = current;
+
+            if (current == null) {
+                Stmt.Data.Store.begin();
+                Expr.Data.Store.begin();
+            }
+        }
+
+        pub fn exit(this: *const @This()) void {
+            Expr.Data.Store.memory_allocator = this.previous;
+            Stmt.Data.Store.memory_allocator = this.previous;
+        }
+    };
+
     pub fn reset(this: *ASTMemoryAllocator) void {
         this.stack_allocator = SFA{
             .buffer = undefined,
@@ -8588,6 +8646,16 @@ pub const ASTMemoryAllocator = struct {
         const ptr = this.bump_allocator.create(ValueType) catch unreachable;
         ptr.* = value;
         return ptr;
+    }
+
+    /// Initialize ASTMemoryAllocator as `undefined`, and call this.
+    pub fn initWithoutStack(this: *ASTMemoryAllocator, arena: std.mem.Allocator) void {
+        this.stack_allocator = SFA{
+            .buffer = undefined,
+            .fallback_allocator = arena,
+            .fixed_buffer_allocator = .init(&.{}),
+        };
+        this.bump_allocator = this.stack_allocator.get();
     }
 };
 
@@ -8762,32 +8830,6 @@ pub const ServerComponentBoundary = struct {
             }
         };
     };
-};
-
-pub const GlobalStoreHandle = struct {
-    prev_memory_allocator: ?*ASTMemoryAllocator = null,
-
-    var global_store_ast: ?*ASTMemoryAllocator = null;
-    var global_store_threadsafe: std.heap.ThreadSafeAllocator = undefined;
-
-    pub fn get() ?*ASTMemoryAllocator {
-        if (global_store_ast == null) {
-            var global = bun.default_allocator.create(ASTMemoryAllocator) catch unreachable;
-            global.allocator = bun.default_allocator;
-            global.bump_allocator = bun.default_allocator;
-            global_store_ast = global;
-        }
-
-        const prev = Stmt.Data.Store.memory_allocator;
-        Stmt.Data.Store.memory_allocator = global_store_ast;
-        Expr.Data.Store.memory_allocator = global_store_ast;
-        return prev;
-    }
-
-    pub fn unget(handle: ?*ASTMemoryAllocator) void {
-        Stmt.Data.Store.memory_allocator = handle;
-        Expr.Data.Store.memory_allocator = handle;
-    }
 };
 
 extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;

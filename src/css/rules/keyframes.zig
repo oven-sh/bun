@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -181,7 +181,7 @@ pub const KeyframeSelector = union(enum) {
     to,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
 
     // pub fn parse(input: *css.Parser) Result(KeyframeSelector) {
     //     _ = input; // autofix
@@ -263,12 +263,8 @@ pub const KeyframesRule = struct {
 
         var first_rule = true;
 
-        const PREFIXES = .{ "webkit", "moz", "ms", "o", "none" };
-
-        inline for (PREFIXES) |prefix_name| {
-            const prefix = css.VendorPrefix.fromName(prefix_name);
-
-            if (this.vendor_prefix.contains(prefix)) {
+        inline for (.{ "webkit", "moz", "ms", "o", "none" }) |prefix_name| {
+            if (@field(this.vendor_prefix, prefix_name)) {
                 if (first_rule) {
                     first_rule = false;
                 } else {
@@ -279,7 +275,7 @@ pub const KeyframesRule = struct {
                 }
 
                 try dest.writeChar('@');
-                try prefix.toCss(W, dest);
+                try css.VendorPrefix.fromName(prefix_name).toCss(W, dest);
                 try dest.writeStr("keyframes ");
                 try this.name.toCss(W, dest);
                 try dest.whitespace();

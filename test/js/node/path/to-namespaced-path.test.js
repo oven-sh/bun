@@ -1,8 +1,8 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 import fixtures from "./common/fixtures.js";
-import { isWindows } from "harness";
 
 describe("path.toNamespacedPath", () => {
   const emptyObj = {};

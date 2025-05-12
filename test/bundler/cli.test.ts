@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
-import { isWindows } from "harness";
 
 describe("bun build", () => {
   test("warnings dont return exit code 1", () => {
@@ -219,5 +218,57 @@ test("some log cases", () => {
     cwd: tmpdir,
   });
   expect(exitCode).toBe(0);
-  expect(stdout.toString()).toMatchInlineSnapshot();
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
+});
+
+test("log case 1", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const inputFile2 = path.join(tmpdir, "input-twooo.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+  writeFileSync(inputFile2, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile, inputFile2],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      input.js        42 bytes  (entry point)
+      input-twooo.js  48 bytes  (entry point)
+
+    "
+  `);
+});
+
+test("log case 2", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      input.js  42 bytes  (entry point)
+
+    "
+  `);
 });

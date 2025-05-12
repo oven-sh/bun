@@ -77,11 +77,6 @@ template<typename T> inline typename Converter<T>::ReturnType convert(JSC::JSGlo
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
 }
 
-template<typename T> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ASCIILiteral functionName, ASCIILiteral argumentName)
-{
-    return Converter<T>::convert(lexicalGlobalObject, value, functionName, argumentName);
-}
-
 template<typename T, typename ExceptionThrower> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
 {
     return Converter<T>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));

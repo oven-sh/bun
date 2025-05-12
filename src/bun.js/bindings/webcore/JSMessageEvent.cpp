@@ -244,17 +244,6 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstru
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<MessageEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (!argument1.value().isUndefinedOrNull() && !eventInitDict.source) {
-        // if argument 1 is not an object, we have already thrown an error
-        JSObject* options = argument1.value().getObject();
-        ASSERT(options);
-        JSValue sourceValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "source"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        if (!sourceValue.isUndefinedOrNull()) {
-            return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "eventInitDict.source"_s, "MessagePort"_s, sourceValue);
-        }
-    }
     auto object = MessageEvent::create(WTFMove(type), WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

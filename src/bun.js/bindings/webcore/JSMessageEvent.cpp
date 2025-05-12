@@ -152,9 +152,16 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!portsValue.isUndefined()) {
-        result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(lexicalGlobalObject, portsValue, [](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-            Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort."_s);
-        });
+        result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(
+            lexicalGlobalObject,
+            portsValue,
+            [](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
+                Bun::ERR::INVALID_ARG_TYPE(throwScope,
+                    &lexicalGlobalObject,
+                    "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort."_s);
+            },
+            "MessageEvent constructor"_s,
+            "eventInitDict.ports"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.ports = Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {};

@@ -4611,6 +4611,11 @@ export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
     return @tagName(SystemErrno.init(err) orelse return null);
 }
 
+/// Small "fire and forget" wrapper around unlink for c usage that handles EINTR, windows path conversion, etc.
+export fn Bun__unlink(ptr: [*:0]const u8, len: usize) void {
+    _ = unlink(ptr[0..len :0]);
+}
+
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
 const Stat = std.fs.File.Stat;

@@ -255,15 +255,15 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
 // TODO(@190n) this may need to be noreturn
 pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
-    if (vm.worker) |worker| {
-        vm.exit_handler.exit_code = code;
-        worker.requestTerminate();
-        return;
-    }
-
     vm.exit_handler.exit_code = code;
-    vm.onExit();
-    vm.globalExit();
+    if (vm.worker) |worker| {
+        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
+        // instead to terminate the worker sooner
+        worker.exit();
+    } else {
+        vm.onExit();
+        vm.globalExit();
+    }
 }
 
 // TODO: switch this to using *bun.wtf.String when it is added

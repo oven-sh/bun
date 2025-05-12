@@ -1,8 +1,8 @@
+import { write } from "bun";
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { write } from "bun";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);

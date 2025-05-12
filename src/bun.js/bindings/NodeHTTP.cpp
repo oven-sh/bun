@@ -533,8 +533,10 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" void Server__setRequireHostHeader(EncodedJSValue, bool, JSC::JSGlobalObject*);
-extern "C" void Server__setOnClientError(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
+extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
+extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1316,15 +1318,25 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 3);
+    ASSERT(callFrame->argumentCount() == 5);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
-    JSValue callback = callFrame->uncheckedArgument(2);
+    JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
+    JSValue maxHeaderSize = callFrame->uncheckedArgument(3);
+    JSValue callback = callFrame->uncheckedArgument(4);
 
-    Server__setRequireHostHeader(JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), globalObject);
+    double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setOnClientError(JSValue::encode(serverValue), JSValue::encode(callback), globalObject);
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());
 }

@@ -1,29 +1,28 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, mkdir, readlink, rm, writeFile, lstat } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  isFlaky,
+  isMacOS,
   isWindows,
   mergeWindowEnvs,
+  readdirSorted,
   runBunInstall,
   runBunUpdate,
-  pack,
+  stderrForInstall,
   tempDirWithFiles,
+  tls,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  writeShebangScript,
-  stderrForInstall,
-  tls,
-  isFlaky,
-  isMacOS,
-  readdirSorted,
   VerdaccioRegistry,
+  writeShebangScript,
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;

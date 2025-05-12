@@ -726,7 +726,7 @@ pub const ServerConfig = struct {
 
             {
                 //numbers
-                const fields = .{ "secure_options", "request_cert", "reject_unauthorized", "low_memory_mode" };
+                const fields = .{ "secure_options", "request_cert", "reject_unauthorized", "low_memory_mode", "min_version", "max_version" };
 
                 inline for (fields) |field| {
                     const lhs = @field(thisConfig, field);

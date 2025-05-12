@@ -1,5 +1,31 @@
 // Hardcoded module "node:http2"
-
+/*
+ * Portions of this code are derived from the Node.js project (https://nodejs.org/),
+ * originally developed by Node.js contributors and Joyent, Inc.
+ *
+ * Copyright Node.js contributors. All rights reserved.
+ * Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Modifications were made to the original code.
+ */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
@@ -3588,7 +3614,6 @@ function initializeOptions(options) {
 
   if (options.unknownProtocolTimeout !== undefined)
     validateUint32(options.unknownProtocolTimeout, "unknownProtocolTimeout");
-  // TODO(danbev): is this a good default value?
   else options.unknownProtocolTimeout = 10000;
 
   // Used only with allowHTTP1
@@ -3636,8 +3661,6 @@ class Http2Server extends net.Server {
 Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ...args) {
   switch (event) {
     case "stream": {
-      // TODO(mcollina): we might want to match this with what we do on
-      // the compat side.
       const { 0: stream } = args;
       if (stream.sentHeaders) {
         stream.destroy(err);

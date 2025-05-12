@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("MessageEvent constructor", () => {
   test("returns an Event instance", () => {

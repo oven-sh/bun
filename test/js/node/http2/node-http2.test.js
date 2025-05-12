@@ -1330,33 +1330,39 @@ it("sensitive headers should work", async () => {
   }
 });
 
-it("http2 session.goaway() validates input types", async () => {
-  const server = http2.createServer();
+it("http2 session.goaway() validates input types", async done => {
+  const { mustCall } = createCallCheckCtx(done);
+  const server = http2.createServer((req, res) => {
+    res.end();
+  });
   const types = [true, {}, [], null, new Date()];
   return await new Promise(resolve => {
-    server.on("stream", stream => {
-      const session = stream.session;
+    server.on(
+      "stream",
+      mustCall(stream => {
+        const session = stream.session;
 
-      for (const input of types) {
-        const received = invalidArgTypeHelper(input);
+        for (const input of types) {
+          const received = invalidArgTypeHelper(input);
 
-        // Test code argument
-        expect(() => session.goaway(input)).toThrow('The "code" argument must be of type number.' + received);
+          // Test code argument
+          expect(() => session.goaway(input)).toThrow('The "code" argument must be of type number.' + received);
 
-        // Test lastStreamID argument
-        expect(() => session.goaway(0, input)).toThrow(
-          'The "lastStreamID" argument must be of type number.' + received,
-        );
+          // Test lastStreamID argument
+          expect(() => session.goaway(0, input)).toThrow(
+            'The "lastStreamID" argument must be of type number.' + received,
+          );
 
-        // Test opaqueData argument
-        expect(() => session.goaway(0, 0, input)).toThrow(
-          'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
-        );
-      }
+          // Test opaqueData argument
+          expect(() => session.goaway(0, 0, input)).toThrow(
+            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+          );
+        }
 
-      session.destroy();
-      stream.destroy();
-    });
+        server.close();
+        resolve();
+      }),
+    );
 
     server.listen(0, () => {
       const port = server.address().port;
@@ -1364,11 +1370,7 @@ it("http2 session.goaway() validates input types", async () => {
       const req = client.request();
 
       req.resume();
-      req.on("close", () => {
-        client.close();
-        server.close();
-        resolve();
-      });
+      req.end();
     });
   });
 });

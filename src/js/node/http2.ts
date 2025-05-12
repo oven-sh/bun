@@ -2291,10 +2291,10 @@ class ServerHttp2Stream extends Http2Stream {
       options = { ...options, endStream: true };
       endStream = true;
     }
-
-    if (typeof options === "undefined" || typeof options.sendDate === "undefined" || options.sendDate) {
+    const sendDate = options?.sendDate;
+    if (sendDate == null || sendDate) {
       const current_date = headers["date"];
-      if (current_date === null || current_date === undefined) {
+      if (current_date == null) {
         headers["date"] = utcDate();
       }
     }

@@ -156,6 +156,17 @@ function writeAfterFIN(chunk, encoding, cb) {
 function onConnectEnd() {
   if (!this._hadError && this.secureConnecting) {
     const options = this[kConnectOptions];
+    console.log("[DEBUG] onConnectEnd triggered:", {
+      hadError: this._hadError,
+      secureConnecting: this.secureConnecting,
+      options: {
+        path: options.path,
+        host: options.host,
+        port: options.port,
+        localAddress: options.localAddress,
+      },
+      stack: new Error().stack,
+    });
     this._hadError = true;
     const error = new ConnResetException(
       "Client network socket disconnected before secure TLS connection was established",
@@ -164,6 +175,7 @@ function onConnectEnd() {
     error.host = options.host;
     error.port = options.port;
     error.localAddress = options.localAddress;
+    console.log("[DEBUG] onConnectEnd destroying socket with error:", error);
     this.destroy(error);
   }
 }
@@ -260,9 +272,40 @@ const SocketHandlers: SocketHandler = {
   },
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
-    if (!self) return;
-    if (!success && verifyError?.code === "ECONNRESET") {
-      // will be handled in onConnectEnd
+    console.log("[DEBUG] SocketHandlers.handshake", {
+      success,
+      verifyError,
+      self: {
+        _hadError: self._hadError,
+        secureConnecting: self.secureConnecting,
+        _securePending: self._securePending,
+        _secureEstablished: self._secureEstablished,
+        authorized: self.authorized,
+        authorizationError: self.authorizationError,
+        servername: self.servername,
+      },
+    });
+
+    if (verifyError && !(verifyError instanceof Error)) {
+      const err = new Error(verifyError.reason || verifyError.message || "TLS handshake failed");
+      err.code = verifyError.code || "ERR_TLS_HANDSHAKE_ERROR";
+      err.errno = verifyError.error;
+      verifyError = err;
+    }
+
+    if (!success) {
+      self._hadError = true;
+      if (verifyError) {
+        console.log("[DEBUG] handshake failed, emitting error and destroying", verifyError);
+        self.emit("error", verifyError);
+        self.destroy(verifyError);
+      } else {
+        const genericError = new Error("TLS handshake failed");
+        genericError.code = "ERR_TLS_HANDSHAKE_ERROR";
+        console.log("[DEBUG] handshake failed, emitting generic error and destroying", genericError);
+        self.emit("error", genericError);
+        self.destroy(genericError);
+      }
       return;
     }
 
@@ -273,25 +316,25 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
+
     if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
       const cert = self.getPeerCertificate(true);
       verifyError = checkServerIdentity(self.servername, cert);
     }
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          return;
-        }
       } else {
         self.authorized = true;
       }
     } else {
       self.authorized = true;
     }
-    self.emit("secureConnect", verifyError);
+    if (success) {
+      self.emit("secureConnect", verifyError);
+    }
     self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
@@ -405,7 +448,38 @@ const ServerHandlers: SocketHandler = {
 
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
-    if (!success && verifyError?.code === "ECONNRESET") {
+
+    console.log("VERIFY ERROR", verifyError);
+
+    if (verifyError && !(verifyError instanceof Error)) {
+      const err = new Error(verifyError.reason || verifyError.message || "TLS handshake failed");
+      err.code = verifyError.code || "ERR_TLS_HANDSHAKE_ERROR";
+      err.errno = verifyError.error;
+      verifyError = err;
+    }
+
+    if (!success) {
+      self._hadError = true;
+
+      const errToEmit = verifyError || new Error("TLS handshake failed");
+
+      self.emit("_tlsError", errToEmit);
+      self.server.emit("tlsClientError", errToEmit, self);
+
+      if (self._rejectUnauthorized) {
+        self.emit("secure", self);
+        self.emit("error", errToEmit);
+        self.destroy(errToEmit);
+      } else {
+        // If not rejecting unauthorized, just destroy the socket.
+        // The tlsClientError event was already emitted.
+        self.destroy();
+      }
+
+      return;
+    }
+
+    if (verifyError?.code === "ECONNRESET") {
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
       self.server.emit("tlsClientError", err, self);
@@ -415,23 +489,20 @@ const ServerHandlers: SocketHandler = {
       self.destroy();
       return;
     }
+
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
+        // verifyError is now guaranteed to be an Error if it exists, or was null
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server.emit("tlsClientError", verifyError, self);
-        if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          self.emit("secure", self);
-          self.destroy(verifyError);
-          return;
-        }
+        // tlsClientError emitted in the !success block if rejection occurred
       } else {
         self.authorized = true;
       }
@@ -442,12 +513,15 @@ const ServerHandlers: SocketHandler = {
     if (typeof connectionListener === "function") {
       connectionListener.$call(server, self);
     }
-    server.emit("secureConnection", self);
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
-    if (!server.pauseOnConnect) {
-      self.resume();
+
+    if (success) {
+      server.emit("secureConnection", self);
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+
+      if (!server.pauseOnConnect) {
+        self.resume();
+      }
     }
   },
   error(socket, error) {

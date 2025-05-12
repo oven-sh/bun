@@ -55,7 +55,6 @@ struct DefaultExceptionThrower {
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue);
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&);
 template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&);
-template<typename T> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral functionName, ASCIILiteral argumentName);
 template<typename T, typename ExceptionThrower> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, ExceptionThrower&&);
 template<typename T, typename ExceptionThrower> typename Converter<T>::ReturnType convert(JSC::JSGlobalObject&, JSC::JSValue, ExceptionThrower&&, ASCIILiteral functionName, ASCIILiteral argumentName);
 

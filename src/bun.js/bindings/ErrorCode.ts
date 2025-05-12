@@ -116,6 +116,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_STREAM_ERROR", Error],
   ["ERR_HTTP2_TRAILERS_ALREADY_SENT", Error],
   ["ERR_HTTP2_TRAILERS_NOT_READY", Error],
+  ["ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS", Error],
+  ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_INVALID_ADDRESS", Error],
@@ -277,5 +279,7 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
   ["HPE_INTERNAL", Error],
+  ["HPE_INVALID_HEADER_TOKEN", Error],
+  ["HPE_HEADER_OVERFLOW", Error],
 ];
 export default errors;

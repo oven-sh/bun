@@ -97,69 +97,115 @@ const TLS_VERSION_REVERSE_MAP: {
 function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min: number, max: number] {
   const secureProtocol = options?.secureProtocol;
 
-  const hasSecureProtocol = secureProtocol !== undefined;
-  const hasMinVersionOption = options && options.minVersion !== undefined;
-  const hasMaxVersionOption = options && options.maxVersion !== undefined;
-
-  if (hasSecureProtocol && (hasMinVersionOption || hasMaxVersionOption)) {
-    throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(
-      TLS_VERSION_REVERSE_MAP[hasMinVersionOption ? options.minVersion : options.maxVersion],
-      secureProtocol,
-    );
+  const maybeConflictVersion = options.minVersion || options.maxVersion;
+  if (secureProtocol && maybeConflictVersion) {
+    throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(maybeConflictVersion, secureProtocol);
   }
 
-  let minVersionName: import("node:tls").SecureVersion;
-  let maxVersionName: import("node:tls").SecureVersion;
+  let minVersionName: import("node:tls").SecureVersion | 0 = DEFAULT_MIN_VERSION;
+  let maxVersionName: import("node:tls").SecureVersion | number = DEFAULT_MAX_VERSION;
 
-  if (hasSecureProtocol) {
-    if (typeof secureProtocol !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
-    }
-    switch (secureProtocol) {
-      case "TLSv1_method":
-        minVersionName = maxVersionName = "TLSv1";
-        break;
-      case "TLSv1_1_method":
-        minVersionName = maxVersionName = "TLSv1.1";
-        break;
-      case "TLSv1_2_method":
-        minVersionName = maxVersionName = "TLSv1.2";
-        break;
-      case "TLSv1_3_method":
-        minVersionName = maxVersionName = "TLSv1.3";
-        break;
-      case "TLS_method":
-      case "SSLv23_method":
-        minVersionName = "TLSv1";
-        maxVersionName = DEFAULT_MAX_VERSION;
-        break;
-      default:
-        throw $ERR_TLS_INVALID_PROTOCOL_METHOD(secureProtocol);
+  if (typeof secureProtocol === "string") {
+    // --- Node's C++ if/else chain ---
+    if (
+      secureProtocol === "SSLv2_method" ||
+      secureProtocol === "SSLv2_server_method" ||
+      secureProtocol === "SSLv2_client_method"
+    ) {
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD("SSLv2 methods disabled");
+    } else if (
+      secureProtocol === "SSLv3_method" ||
+      secureProtocol === "SSLv3_server_method" ||
+      secureProtocol === "SSLv3_client_method"
+    ) {
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD("SSLv3 methods disabled");
+    } else if (secureProtocol === "SSLv23_method") {
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.2";
+    } else if (secureProtocol === "SSLv23_server_method") {
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.2";
+      // method = TLS_server_method();
+    } else if (secureProtocol === "SSLv23_client_method") {
+      minVersionName = "TLSv1";
+      maxVersionName = "TLSv1.2";
+      // method = TLS_client_method();
+    } else if (secureProtocol === "TLS_method") {
+      minVersionName = 0;
+      maxVersionName = 0x0304;
+    } else if (secureProtocol === "TLS_server_method") {
+      minVersionName = 0;
+      maxVersionName = 0x0304;
+      // method = TLS_server_method();
+    } else if (secureProtocol === "TLS_client_method") {
+      minVersionName = 0;
+      maxVersionName = 0x0304;
+      // method = TLS_client_method();
+    } else if (secureProtocol === "TLSv1_method") {
+      minVersionName = maxVersionName = "TLSv1";
+    } else if (secureProtocol === "TLSv1_server_method") {
+      minVersionName = maxVersionName = "TLSv1";
+      // method = TLS_server_method();
+    } else if (secureProtocol === "TLSv1_client_method") {
+      minVersionName = maxVersionName = "TLSv1";
+      // method = TLS_client_method();
+    } else if (secureProtocol === "TLSv1_1_method") {
+      minVersionName = maxVersionName = "TLSv1.1";
+    } else if (secureProtocol === "TLSv1_1_server_method") {
+      minVersionName = maxVersionName = "TLSv1.1";
+      // method = TLS_server_method();
+    } else if (secureProtocol === "TLSv1_1_client_method") {
+      minVersionName = maxVersionName = "TLSv1.1";
+      // method = TLS_client_method();
+    } else if (secureProtocol === "TLSv1_2_method") {
+      minVersionName = maxVersionName = "TLSv1.2";
+    } else if (secureProtocol === "TLSv1_2_server_method") {
+      minVersionName = maxVersionName = "TLSv1.2";
+      // method = TLS_server_method();
+    } else if (secureProtocol === "TLSv1_2_client_method") {
+      minVersionName = maxVersionName = "TLSv1.2";
+      // method = TLS_client_method();
+    } else if (secureProtocol === "TLSv1_3_method") {
+      minVersionName = maxVersionName = "TLSv1.3";
+    } else if (secureProtocol === "TLSv1_3_server_method") {
+      minVersionName = maxVersionName = "TLSv1.3";
+      // method = TLS_server_method();
+    } else if (secureProtocol === "TLSv1_3_client_method") {
+      minVersionName = maxVersionName = "TLSv1.3";
+      // method = TLS_client_method();
+    } else {
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD(`Unknown method: ${secureProtocol}`);
     }
   } else {
     minVersionName = options && options.minVersion !== undefined ? options.minVersion : DEFAULT_MIN_VERSION;
     maxVersionName = options && options.maxVersion !== undefined ? options.maxVersion : DEFAULT_MAX_VERSION;
   }
 
-  if (minVersionName) {
-    if (typeof minVersionName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
-    }
+  // Convert 0 (any) to the lowest supported version (TLSv1)
+  let minVersion: number;
+  if (minVersionName === 0) {
+    minVersion = TLS_VERSION_MAP["TLSv1"];
+  } else if (typeof minVersionName === "string") {
     if (!(minVersionName in TLS_VERSION_MAP)) {
       throw $ERR_TLS_INVALID_PROTOCOL_VERSION(minVersionName, "minimum");
     }
+    minVersion = TLS_VERSION_MAP[minVersionName];
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options.minVersion", "string", minVersionName);
   }
-  const minVersion = TLS_VERSION_MAP[minVersionName];
 
-  if (maxVersionName) {
-    if (typeof maxVersionName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
-    }
+  // kMaxSupportedVersion is TLSv1.3 (0x0304)
+  let maxVersion: number;
+  if (maxVersionName === 0x0304) {
+    maxVersion = 0x0304;
+  } else if (typeof maxVersionName === "string") {
     if (!(maxVersionName in TLS_VERSION_MAP)) {
       throw $ERR_TLS_INVALID_PROTOCOL_VERSION(maxVersionName, "maximum");
     }
+    maxVersion = TLS_VERSION_MAP[maxVersionName];
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options.maxVersion", "string", maxVersionName);
   }
-  const maxVersion = TLS_VERSION_MAP[maxVersionName];
 
   return [minVersion, maxVersion];
 }

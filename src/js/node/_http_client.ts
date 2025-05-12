@@ -799,8 +799,9 @@ function ClientRequest(input, options, cb) {
   this[kHost] = host;
   this[kProtocol] = protocol;
 
-  const timeout = options.timeout;
-  if (timeout !== undefined && timeout !== 0) {
+  if (options.timeout !== undefined) {
+    const timeout = getTimerDuration(options.timeout, "timeout");
+    this.timeout = timeout;
     this.setTimeout(timeout, undefined);
   }
 

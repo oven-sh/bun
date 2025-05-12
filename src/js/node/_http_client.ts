@@ -4,6 +4,7 @@ const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } =
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
+const { getTimerDuration } = require("internal/timers");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -918,17 +919,18 @@ function ClientRequest(input, options, cb) {
       this.removeAllListeners("timeout");
     }
   };
+}
 
-  const onTimeout = () => {
-    this[kTimeoutTimer] = undefined;
-    this[kAbortController]?.abort();
-    this.emit("timeout");
-  };
+const ClientRequestPrototype = {
+  constructor: ClientRequest,
+  __proto__: OutgoingMessage.prototype,
 
-  this.setTimeout = (msecs, callback) => {
-    if (this.destroyed) return this;
+  setTimeout(msecs, callback) {
+    if (this.destroyed) {
+      return this;
+    }
 
-    this.timeout = msecs = validateMsecs(msecs, "timeout");
+    this.timeout = msecs = getTimerDuration(msecs, "msecs");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.
@@ -942,7 +944,11 @@ function ClientRequest(input, options, cb) {
 
       this[kTimeoutTimer] = undefined;
     } else {
-      this[kTimeoutTimer] = setTimeout(onTimeout, msecs).unref();
+      this[kTimeoutTimer] = setTimeout(() => {
+        this[kTimeoutTimer] = undefined;
+        this[kAbortController]?.abort();
+        this.emit("timeout");
+      }, msecs).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -951,12 +957,11 @@ function ClientRequest(input, options, cb) {
     }
 
     return this;
-  };
-}
+  },
 
-const ClientRequestPrototype = {
-  constructor: ClientRequest,
-  __proto__: OutgoingMessage.prototype,
+  clearTimeout(cb) {
+    this.setTimeout(0, cb);
+  },
 
   get path() {
     return this[kPath];

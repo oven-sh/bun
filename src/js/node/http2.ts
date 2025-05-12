@@ -917,8 +917,8 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-      case "destroy":
         return FunctionPrototypeBind.$call(session[prop], session);
+      case "destroy":
       case "emit":
       case "end":
       case "pause":

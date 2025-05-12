@@ -265,7 +265,6 @@ const SocketHandlers: SocketHandler = {
       // will be handled in onConnectEnd
       return;
     }
-
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
@@ -273,10 +272,12 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
+
     if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
       const cert = self.getPeerCertificate(true);
       verifyError = checkServerIdentity(self.servername, cert);
     }
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
@@ -291,7 +292,9 @@ const SocketHandlers: SocketHandler = {
     } else {
       self.authorized = true;
     }
-    self.emit("secureConnect", verifyError);
+    if (success) {
+      self.emit("secureConnect", verifyError);
+    }
     self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
@@ -405,7 +408,9 @@ const ServerHandlers: SocketHandler = {
 
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
+
     if (!success && verifyError?.code === "ECONNRESET") {
+      if (self._hadError) return;
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
       self.server.emit("tlsClientError", err, self);
@@ -415,23 +420,20 @@ const ServerHandlers: SocketHandler = {
       self.destroy();
       return;
     }
+
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
+        // verifyError is now guaranteed to be an Error if it exists, or was null
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server.emit("tlsClientError", verifyError, self);
-        if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          self.emit("secure", self);
-          self.destroy(verifyError);
-          return;
-        }
+        // tlsClientError emitted in the !success block if rejection occurred
       } else {
         self.authorized = true;
       }
@@ -442,12 +444,15 @@ const ServerHandlers: SocketHandler = {
     if (typeof connectionListener === "function") {
       connectionListener.$call(server, self);
     }
-    server.emit("secureConnection", self);
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
-    if (!server.pauseOnConnect) {
-      self.resume();
+
+    if (success) {
+      server.emit("secureConnection", self);
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+
+      if (!server.pauseOnConnect) {
+        self.resume();
+      }
     }
   },
   error(socket, error) {

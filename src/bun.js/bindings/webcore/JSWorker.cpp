@@ -138,13 +138,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
+
+    WorkerOptions options {};
     JSValue nodeWorkerObject {};
     if (callFrame->argumentCount() == 3) {
         nodeWorkerObject = callFrame->argument(2);
+        options.kind = WorkerOptions::Kind::Node;
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto options = WorkerOptions {};
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 

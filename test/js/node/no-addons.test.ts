@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
+import { expect, test } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 
 test("--no-addons throws an error on process.dlopen", () => {

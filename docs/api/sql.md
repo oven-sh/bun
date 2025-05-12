@@ -649,7 +649,6 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 There's still some things we haven't finished yet.
 
-- Connection preloading via `--db-preconnect` Bun CLI flag
 - MySQL support: [we're working on it](https://github.com/oven-sh/bun/pull/15274)
 - SQLite support: planned, but not started. Ideally, we implement it natively instead of wrapping `bun:sqlite`.
 - Column name transforms (e.g. `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.

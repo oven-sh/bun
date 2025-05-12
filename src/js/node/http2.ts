@@ -2885,7 +2885,12 @@ class ServerHttp2Session extends Http2Session {
     }
   }
 
-  destroy(error?: Error, code?: number) {
+  destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
+    if (typeof error === "number") {
+      code = error;
+      error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+    }
+
     const socket = this[bunHTTP2Socket];
     if (!this.#connected) return;
     this.#closed = true;

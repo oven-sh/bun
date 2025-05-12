@@ -226,18 +226,18 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
     RETURN_IF_EXCEPTION(throwScope, {});
     // Emit a warning if listener is null, as it has no effect
     if (!listener) {
-        auto& vm = JSC::getVM(lexicalGlobalObject);
         String warningMessage;
         if (argument1.value().isNull()) {
-            warningMessage = makeString("addEventListener called with null listener, which has no effect."_s);
+            warningMessage = "addEventListener called with null listener, which has no effect."_s;
         } else {
-            warningMessage = makeString("addEventListener called with undefined listener, which has no effect."_s);
+            warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
         }
         auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
-        errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, makeString("AddEventListenerArgumentTypeWarning"_s)));
-        errorInstance->putDirect(vm, vm.propertyNames->target, &static_cast<JSObject&>(*castedThis));
+        errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
+        JSObject& target = *castedThis;
+        errorInstance->putDirect(vm, vm.propertyNames->target, &target);
         RETURN_IF_EXCEPTION(throwScope, {});
-        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, type));
+        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTFMove(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
         RETURN_IF_EXCEPTION(throwScope, {});
     }

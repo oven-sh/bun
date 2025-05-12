@@ -1,5 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
+import { readdirSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -90,18 +91,23 @@ describe("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-
+            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
-              env: bunEnv,
+              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
               stdin: "inherit",
               stderr: "inherit",
               stdout: "pipe",
             });
             const stdout = result.stdout.toString().trim();
-
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
+            if (process.platform !== "win32") {
+              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
+            } else {
+              // On Windows, we have to mark it for deletion on reboot.
+              // Not clear how to test for that.
+            }
           },
           10 * 1000,
         );

@@ -1122,7 +1122,7 @@ pub const ESMConditions = struct {
     require: ConditionsMap,
     style: ConditionsMap,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string) bun.OOM!ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
@@ -1176,7 +1176,7 @@ pub const ESMConditions = struct {
         };
     }
 
-    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) bun.OOM!void {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
@@ -1188,6 +1188,13 @@ pub const ESMConditions = struct {
             self.require.putAssumeCapacity(condition, {});
             self.style.putAssumeCapacity(condition, {});
         }
+    }
+
+    pub fn append(self: *ESMConditions, condition: string) bun.OOM!void {
+        try self.default.put(condition, {});
+        try self.import.put(condition, {});
+        try self.require.put(condition, {});
+        try self.style.put(condition, {});
     }
 };
 
@@ -1993,10 +2000,26 @@ pub const BundleOptions = struct {
             opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
+        {
+            // conditions:
+            // 1. defaults
+            // 2. node-addons
+            // 3. user conditions
+            opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
-        if (transform.conditions.len > 0) {
-            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+            dont_append_node_addons: {
+                if (transform.allow_addons) |allow_addons| {
+                    if (!allow_addons) {
+                        break :dont_append_node_addons;
+                    }
+                }
+
+                try opts.conditions.append("node-addons");
+            }
+
+            if (transform.conditions.len > 0) {
+                try opts.conditions.appendSlice(transform.conditions);
+            }
         }
 
         switch (opts.target) {

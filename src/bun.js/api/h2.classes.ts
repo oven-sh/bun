@@ -101,10 +101,6 @@ export default [
         fn: "hasNativeRead",
         length: 1,
       },
-      setNextStreamID: {
-        fn: "setNextStreamID",
-        length: 1,
-      },
       getAllStreams: {
         fn: "getAllStreams",
         length: 0,

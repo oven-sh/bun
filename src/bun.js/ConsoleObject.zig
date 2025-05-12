@@ -1237,7 +1237,7 @@ pub const Formatter = struct {
 
             if (js_type.canGet() and js_type != .ProxyObject and !opts.disable_inspect_custom) {
                 // Attempt to get custom formatter
-                if (try value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                if (value.fastGet(globalThis, .inspectCustom) catch return .{ .tag = .RevokedProxy }) |callback_value| {
                     if (callback_value.isCallable()) {
                         return .{
                             .tag = .{
@@ -1250,7 +1250,6 @@ pub const Formatter = struct {
                         };
                     }
                 }
-                if (globalThis.hasException()) return .{ .tag = .RevokedProxy };
             }
 
             if (js_type == .DOMWrapper) {

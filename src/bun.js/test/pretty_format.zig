@@ -1480,7 +1480,7 @@ pub const JestPrettyFormat = struct {
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
+                                const data = (try value.fastGet(this.globalThis, .data)) orelse JSValue.undefined;
                                 const tag = Tag.get(data, this.globalThis);
 
                                 if (tag.cell.isStringLike()) {
@@ -1491,7 +1491,7 @@ pub const JestPrettyFormat = struct {
                                 writer.writeAll(", \n");
                             },
                             .ErrorEvent => {
-                                if (value.fastGet(this.globalThis, .@"error")) |data| {
+                                if (try value.fastGet(this.globalThis, .@"error")) |data| {
                                     this.writeIndent(Writer, writer_) catch unreachable;
                                     writer.print(
                                         comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),

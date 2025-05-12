@@ -2217,7 +2217,7 @@ pub fn Bun__fetch_(
         }
 
         if (fetch_headers) |headers_| {
-            if (try headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
+            if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                 if (hostname) |host| {
                     hostname = null;
                     allocator.free(host);
@@ -2225,7 +2225,7 @@ pub fn Bun__fetch_(
                 hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
             }
             if (url.isS3()) {
-                if (try headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
+                if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
                     if (range) |range_| {
                         range = null;
                         allocator.free(range_);
@@ -2590,7 +2590,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.options,
                 credentialsWithOptions.acl,
                 credentialsWithOptions.storage_class,
-                if (headers) |h| (try h.getContentType()) else null,
+                if (headers) |h| (h.getContentType()) else null,
                 proxy_url,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
@@ -2630,7 +2630,7 @@ pub fn Bun__fetch_(
             result.url = ""; // fetch now owns this
         }
 
-        const content_type = if (headers) |h| (try h.getContentType()) else null;
+        const content_type = if (headers) |h| (h.getContentType()) else null;
         var header_buffer: [10]picohttp.Header = undefined;
 
         if (range) |range_| {

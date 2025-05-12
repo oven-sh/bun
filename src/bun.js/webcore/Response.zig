@@ -27,8 +27,8 @@ pub const getBlob = ResponseMixin.getBlob;
 pub const getBlobWithoutCallFrame = ResponseMixin.getBlobWithoutCallFrame;
 pub const getFormData = ResponseMixin.getFormData;
 
-pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncFormData {
+    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
@@ -345,7 +345,7 @@ pub fn getContentType(
     this: *Response,
 ) bun.JSError!?ZigString.Slice {
     if (this.init.headers) |headers| {
-        if (try headers.fastGet(.ContentType)) |value| {
+        if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
         }
     }

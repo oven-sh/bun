@@ -122,7 +122,7 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
 
     const content_type: MimeType = brk: {
         if (headers) |headers_| {
-            if (try headers_.fastGet(.ContentType)) |content| {
+            if (headers_.fastGet(.ContentType)) |content| {
                 needs_content_type = false;
 
                 var content_slice = content.toSlice(allocator);
@@ -3555,7 +3555,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const globalThis = server.globalThis;
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
-                if (try headers.fastGet(.TransferEncoding)) |transfer_encoding| {
+                if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
                     const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
                     defer transfer_encoding_str.deinit();
                     this.renderMetadata();
@@ -3564,7 +3564,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     return;
                 }
-                if (try headers.fastGet(.ContentLength)) |content_length| {
+                if (headers.fastGet(.ContentLength)) |content_length| {
                     const content_length_str = content_length.toSlice(server.allocator);
                     defer content_length_str.deinit();
                     this.renderMetadata();
@@ -5452,11 +5452,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 return error.JSError;
                             }
 
-                            if (try fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                                 sec_websocket_protocol = protocol;
                             }
 
-                            if (try fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                            if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                                 sec_websocket_extensions = protocol;
                             }
 
@@ -5497,9 +5497,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var sec_websocket_extensions = ZigString.Empty;
 
             if (request.getFetchHeaders()) |head| {
-                sec_websocket_key_str = (try head.fastGet(.SecWebSocketKey)) orelse ZigString.Empty;
-                sec_websocket_protocol = (try head.fastGet(.SecWebSocketProtocol)) orelse ZigString.Empty;
-                sec_websocket_extensions = (try head.fastGet(.SecWebSocketExtensions)) orelse ZigString.Empty;
+                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
+                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
+                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
             if (upgrader.req) |req| {
@@ -5580,11 +5580,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (try fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
                         }
 
-                        if (try fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                             sec_websocket_extensions = protocol;
                         }
 

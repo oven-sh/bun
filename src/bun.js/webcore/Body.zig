@@ -724,7 +724,7 @@ pub const Value = union(Tag) {
                         var blob = Blob.new(new.use());
                         blob.allocator = bun.default_allocator;
                         if (headers) |fetch_headers| {
-                            if (try fetch_headers.fastGet(.ContentType)) |content_type| {
+                            if (fetch_headers.fastGet(.ContentType)) |content_type| {
                                 var content_slice = content_type.toSlice(bun.default_allocator);
                                 defer content_slice.deinit();
                                 var allocated = false;
@@ -1260,7 +1260,7 @@ pub fn Mixin(comptime Type: type) type {
                 value.toBlobIfPossible();
             }
 
-            var encoder = this.getFormDataEncoding() orelse {
+            var encoder = (try this.getFormDataEncoding()) orelse {
                 // TODO: catch specific errors from getFormDataEncoding
                 return globalObject.ERR(.FORMDATA_PARSE_ERROR, "Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
@@ -1331,7 +1331,7 @@ pub fn Mixin(comptime Type: type) type {
             blob.allocator = bun.default_allocator;
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
-                    if (try fetch_headers.fastGet(.ContentType)) |content_type| {
+                    if (fetch_headers.fastGet(.ContentType)) |content_type| {
                         var content_slice = content_type.toSlice(blob.allocator.?);
                         defer content_slice.deinit();
                         var allocated = false;
@@ -1357,7 +1357,7 @@ pub fn Mixin(comptime Type: type) type {
         pub fn getBlobWithoutCallFrame(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             return getBlobWithThisValue(this, globalObject, .zero);
         }
     };

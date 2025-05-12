@@ -126,7 +126,7 @@ pub fn getContentType(
     }
 
     if (this._headers) |headers| {
-        if (try headers.fastGet(.ContentType)) |value| {
+        if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
         }
     }
@@ -139,11 +139,11 @@ pub fn getContentType(
     return null;
 }
 
-pub fn getFormDataEncoding(this: *Request) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormData {
+    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
+    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);
 }
 
 pub fn estimatedSize(this: *Request) callconv(.C) usize {
@@ -645,7 +645,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
                 // first value
             } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
-                value.implementsToString(globalThis))
+                try value.implementsToString(globalThis))
             {
                 const str = try bun.String.fromJS(value, globalThis);
                 req.url = str;

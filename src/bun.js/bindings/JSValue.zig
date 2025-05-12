@@ -1866,8 +1866,8 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    /// Safe to use on any JSValue
-    pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
+    /// Safe to use on any JSValue, can error.
+    pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bun.JSError!bool {
         if (!this.isObject())
             return false;
         const function = (try this.fastGet(global, BuiltinName.toString)) orelse
@@ -1910,7 +1910,7 @@ pub const JSValue = enum(i64) {
     // TODO: replace calls to this function with `getOptional`
     pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime BuiltinName.has(property)) {
-            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)) orelse return null);
+            return truthyPropertyValue(try fastGet(this, global, @field(BuiltinName, property)) orelse return null);
         }
 
         return getTruthy(this, global, property);
@@ -1999,7 +1999,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) JSError!?Enum {
         if (comptime BuiltinName.has(property_name)) {
-            if (fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+            if (try fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
                 if (prop.isEmptyOrUndefinedOrNull())
                     return null;
                 return try toEnum(prop, globalThis, property_name, Enum);

@@ -67,7 +67,7 @@ struct GenericSequenceConverter {
         forEachInIterable(&lexicalGlobalObject, object, [&result, &exceptionThrower](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, exceptionThrower);
+            auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, std::forward<ExceptionThrower>(exceptionThrower));
             if (UNLIKELY(scope.exception()))
                 return;
             result.append(WTFMove(convertedValue));
@@ -277,7 +277,7 @@ struct SequenceConverter {
                 if (!indexValue)
                     indexValue = JSC::jsUndefined();
 
-                auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, exceptionThrower);
+                auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
                 RETURN_IF_EXCEPTION(scope, {});
 
                 result.append(convertedValue);
@@ -292,7 +292,7 @@ struct SequenceConverter {
             if (!indexValue)
                 indexValue = JSC::jsUndefined();
 
-            auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, exceptionThrower);
+            auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
             RETURN_IF_EXCEPTION(scope, {});
 
             result.append(convertedValue);

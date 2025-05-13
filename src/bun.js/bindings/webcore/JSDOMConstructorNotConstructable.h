@@ -24,12 +24,22 @@
 
 namespace WebCore {
 
-template<typename JSClass, Bun::ErrorCode templateErrorCode = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR> class JSDOMConstructorNotConstructable final : public JSDOMConstructorBase {
+template<typename JSClass, Bun::ErrorCode templateErrorCode = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR>
+class JSDOMConstructorNotConstructable final : public JSDOMConstructorBase {
 public:
     using Base = JSDOMConstructorBase;
 
-    static JSDOMConstructorNotConstructable* create(JSC::VM&, JSC::Structure*, JSDOMGlobalObject&);
-    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject&, JSC::JSValue prototype);
+    static JSDOMConstructorNotConstructable* create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
+    {
+        JSDOMConstructorNotConstructable* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructorNotConstructable>(vm)) JSDOMConstructorNotConstructable(vm, structure);
+        constructor->finishCreation(vm, globalObject);
+        return constructor;
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
 
     DECLARE_INFO;
 
@@ -42,29 +52,15 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&, JSDOMGlobalObject&);
+    void finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+        initializeProperties(vm, globalObject);
+    }
 
     // Usually defined for each specialization class.
     void initializeProperties(JSC::VM&, JSDOMGlobalObject&) {}
 };
-
-template<typename JSClass, Bun::ErrorCode errorCode> inline JSDOMConstructorNotConstructable<JSClass, errorCode>* JSDOMConstructorNotConstructable<JSClass, errorCode>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
-{
-    JSDOMConstructorNotConstructable* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructorNotConstructable>(vm)) JSDOMConstructorNotConstructable(vm, structure);
-    constructor->finishCreation(vm, globalObject);
-    return constructor;
-}
-
-template<typename JSClass, Bun::ErrorCode errorCode> inline JSC::Structure* JSDOMConstructorNotConstructable<JSClass, errorCode>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
-{
-    return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-}
-
-template<typename JSClass, Bun::ErrorCode errorCode> inline void JSDOMConstructorNotConstructable<JSClass, errorCode>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-    initializeProperties(vm, globalObject);
-}
 
 } // namespace WebCore

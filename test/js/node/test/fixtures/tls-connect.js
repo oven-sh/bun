@@ -70,10 +70,6 @@ exports.connect = function connect(options, callback) {
           .on('error', function(err) {
             client.err = err;
             client.conn = this;
-
-            console.log(err);
-            process.exit(0)
-
             maybeCallback();
           });
       } catch (err) {

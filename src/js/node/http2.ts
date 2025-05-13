@@ -3007,7 +3007,7 @@ class ClientHttp2Session extends Http2Session {
       sensitiveHeadersValue: string[] | undefined,
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.rstCode) return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
       const header_status = headers[HTTP2_HEADER_STATUS];

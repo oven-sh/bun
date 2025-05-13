@@ -13,8 +13,6 @@ const {
   kEmitState,
   ClientRequestEmitState,
   kEmptyObject,
-  validateMsecs,
-  timeoutTimerSymbol,
   kHandle,
   getHeader,
   setHeader,
@@ -362,28 +360,16 @@ const OutgoingMessagePrototype = {
   },
 
   setTimeout(msecs, callback) {
-    if (this.destroyed) return this;
+    if (this.callback) {
+      this.emit("timeout", callback);
+    }
 
-    this.timeout = msecs = validateMsecs(msecs, "timeout");
-
-    // Attempt to clear an existing timer in both cases -
-    //  even if it will be rescheduled we don't want to leak an existing timer.
-    clearTimeout(this[timeoutTimerSymbol]);
-
-    if (msecs === 0) {
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.removeListener("timeout", callback);
-      }
-
-      this[timeoutTimerSymbol] = undefined;
+    if (!this[fakeSocketSymbol]) {
+      this.once("socket", function socketSetTimeoutOnConnect(socket) {
+        socket.setTimeout(msecs, callback);
+      });
     } else {
-      this[timeoutTimerSymbol] = setTimeout(onTimeout.bind(this), msecs).unref();
-
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.once("timeout", callback);
-      }
+      this.socket.setTimeout(msecs);
     }
 
     return this;
@@ -586,17 +572,6 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
   ),
 });
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
-
-function onTimeout() {
-  this[timeoutTimerSymbol] = undefined;
-  this[kAbortController]?.abort();
-  const handle = this[kHandle];
-
-  this.emit("timeout");
-  if (handle) {
-    handle.abort();
-  }
-}
 
 export default {
   OutgoingMessage,

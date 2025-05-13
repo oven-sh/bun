@@ -1,7 +1,7 @@
-import { parseArgs } from "node:util";
 import fs from "node:fs";
-import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { parseArgs } from "node:util";
 
 // usage: bun debug-coredump.ts
 // -p <PID of the test that crashed> (buildkite should show this)

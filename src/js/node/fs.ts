@@ -1,5 +1,5 @@
 // Hardcoded module "node:fs"
-import type { Stats as StatsType, Dirent as DirentType, PathLike } from "fs";
+import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const types = require("node:util/types");
@@ -619,7 +619,12 @@ var access = function access(path, mode, callback) {
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
+{
+  const existsCb = exists;
+  exists[kCustomPromisifiedSymbol] = function exists(path) {
+    return new Promise(resolve => existsCb(path, resolve));
+  };
+}
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);

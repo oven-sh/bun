@@ -133,7 +133,7 @@
 #include "wtf-bindings.h"
 
 #if OS(DARWIN)
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
@@ -2530,6 +2530,16 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
+{
+    JSC::JSLockHolder locker(vm);
+    if (vm->watchdog()) {
+        return vm->watchdog()->hasTimeLimit();
+    }
+
+    return false;
+}
+
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
@@ -2654,7 +2664,7 @@ JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef
 
     JSC::JSLockHolder lock(vm);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 #endif
@@ -3189,6 +3199,11 @@ JSC::EncodedJSValue ZigString__toErrorInstance(const ZigString* str, JSC::JSGlob
 JSC::EncodedJSValue ZigString__toTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
+}
+
+JSC::EncodedJSValue ZigString__toDOMExceptionInstance(const ZigString* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
+{
+    return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
 }
 
 JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -5331,6 +5346,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
+// This enum must match the zig enum in src/bun.js/bindings/JSValue.zig JSValue.BuiltinName
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -5355,6 +5371,7 @@ enum class BuiltinNamesMap : uint8_t {
     ignoreBOM,
     type,
     signal,
+    cmd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5430,6 +5447,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::signal: {
         return clientData->builtinNames().signalPublicName();
+    }
+    case BuiltinNamesMap::cmd: {
+        return clientData->builtinNames().cmdPublicName();
     }
     default: {
         ASSERT_NOT_REACHED();
@@ -6431,7 +6451,7 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {
     return callFrame->describeFrame();

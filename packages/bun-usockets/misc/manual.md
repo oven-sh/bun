@@ -1,15 +1,19 @@
 # libusockets.h
+
 This is the only header you include. Following documentation has been extracted from this header. It may be outdated, go read the header directly for up-to-date documentation.
 
 These interfaces are "beta" and subject to smaller changes. Last updated **2019-06-11**.
 
 # A quick note on compilation
+
 Major differences in performance can be seen based solely on compiler and/or linker options. Important is to compile with some kind of link-time-optimization mode, preferably with static linking of this library such as including all C source files in the user program build step itself. Proper compilation and linking can lead to over 25% performance increase (in my case, YMMV).
 
 # Cross-platform benchmarks
+
 While the library is compatible with many platforms, Linux in particular is the preferred production system. Benchmarking has been done on Windows, Linux and macOS where Linux clearly stood out as significant winner. Windows performed about half that of Linux and macOS was not much better than Windows. Do run your production systems on Linux.
 
 # us_loop_t - The root per-thread resource and callback emitter
+
 ```c
 /* Returns a new event loop with user data extension */
 WIN32_EXPORT struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size);
@@ -35,6 +39,7 @@ WIN32_EXPORT long long us_loop_iteration_number(struct us_loop_t *loop);
 ```
 
 # us_socket_context_t - The per-behavior group of networking sockets
+
 ```c
 struct us_socket_context_options_t {
     const char *key_file_name;
@@ -87,6 +92,7 @@ WIN32_EXPORT struct us_socket_context_t *us_create_child_socket_context(int ssl,
 ```
 
 # us_socket_t - The network connection (SSL or non-SSL)
+
 ```c
 /* Write up to length bytes of data. Returns actual bytes written. Will call the on_writable callback of active socket context on failure to write everything off in one go.
  * Set hint msg_more if you have more immediate data to write. */
@@ -145,6 +151,7 @@ WIN32_EXPORT struct us_loop_t *us_timer_loop(struct us_timer_t *t);
 ```
 
 ## us_poll_t - The eventing foundation of a socket or anything that has a file descriptor
+
 ```c
 /* A fallthrough poll does not keep the loop running, it falls through */
 WIN32_EXPORT struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsigned int ext_size);

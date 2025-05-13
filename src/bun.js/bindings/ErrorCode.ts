@@ -68,6 +68,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
+  ["ERR_ENCODING_NOT_SUPPORTED", RangeError],
   ["ERR_EXECUTION_ENVIRONMENT_NOT_AVAILABLE", Error],
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
   ["ERR_FS_CP_DIR_TO_NON_DIR", Error],
@@ -126,6 +127,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_CURSOR_POS", TypeError],
   ["ERR_INVALID_FILE_URL_HOST", TypeError],
   ["ERR_INVALID_FILE_URL_PATH", TypeError],
+  ["ERR_INVALID_HANDLE_TYPE", TypeError],
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_INVALID_IP_ADDRESS", TypeError],
   ["ERR_INVALID_MIME_SYNTAX", TypeError],
@@ -275,5 +277,7 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
   ["HPE_INTERNAL", Error],
+  ["HPE_INVALID_HEADER_TOKEN", Error],
+  ["HPE_HEADER_OVERFLOW", Error],
 ];
 export default errors;

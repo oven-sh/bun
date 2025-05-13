@@ -243,6 +243,7 @@ enum SerializationTag {
     // bun types start at 254 and decrease with each addition
     Bun__X509CertificateTag = 253,
     Bun__KeyObjectTag = 252,
+    Bun__nodenet_BlockList = 251,
 
     ErrorTag = 255
 };
@@ -5725,8 +5726,15 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
-        if (!uniqueTransferables.add(transferable.get()).isNewEntry)
-            return Exception { DataCloneError, "Duplicate transferable for structured clone"_s };
+        if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
+            if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
+                return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
+            } else if (JSMessagePort::toWrapped(vm, transferable.get())) {
+                return Exception { DataCloneError, "Transfer list contains duplicate MessagePort"_s };
+            } else {
+                return Exception { DataCloneError, "Duplicate transferable for structured clone"_s };
+            }
+        }
 
         if (auto arrayBuffer = toPossiblySharedArrayBuffer(vm, transferable.get())) {
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())

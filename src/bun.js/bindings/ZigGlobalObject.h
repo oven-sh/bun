@@ -102,9 +102,10 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
@@ -163,7 +164,6 @@ public:
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
 
-    WebCore::ScriptExecutionContext* scriptExecutionContext();
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
@@ -468,6 +468,10 @@ public:
     /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
                                                                                                              \
+    /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
+    /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
+    V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+                                                                                                             \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
     /* We set a default value for this to mimic Node.js behavior It is a */                                  \
@@ -600,9 +604,14 @@ public:
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
     T name;
+
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
+
 #undef DECLARE_GLOBALOBJECT_GC_MEMBER
 
+    // Ensure that everything below here has a consistent visibility instead of taking the
+    // visibility of the last thing declared with FOR_EACH_GLOBALOBJECT_GC_MEMBER
+public:
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
 
@@ -661,6 +670,9 @@ public:
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
+    JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
+    void setNodeWorkerEnvironmentData(JSMap* data);
+
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
@@ -700,11 +712,11 @@ private:
 
 class EvalGlobalObject : public GlobalObject {
 public:
-    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
 
     EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
-        : GlobalObject(vm, structure, &s_globalObjectMethodTable)
+        : GlobalObject(vm, structure, &globalObjectMethodTable())
     {
     }
 };

@@ -25,6 +25,43 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+/// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
+pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug)
+    debug_allocator_data.allocator
+else
+    default_allocator;
+pub const debug_allocator_data = struct {
+    comptime {
+        if (!Environment.isDebug) @compileError("only available in debug");
+    }
+    pub var backing: ?std.heap.DebugAllocator(.{}) = null;
+    pub const allocator: std.mem.Allocator = .{
+        .ptr = undefined,
+        .vtable = &.{
+            .alloc = &alloc,
+            .resize = &resize,
+            .remap = &remap,
+            .free = &free,
+        },
+    };
+
+    fn alloc(_: *anyopaque, new_len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
+    }
+
+    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    }
+};
+
 pub extern "c" fn powf(x: f32, y: f32) f32;
 pub extern "c" fn pow(x: f64, y: f64) f64;
 
@@ -2848,7 +2885,7 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 
     if (!cheap_value_only_plz) {
-        unreachable;
+        unreachable; // ASSERTION FAILURE
     }
 }
 
@@ -2875,7 +2912,8 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
     }
 
     if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailure();
     }
 }
@@ -2925,7 +2963,8 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
     }
 
     if (!value) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug)
+            unreachable; // ASSERTION FAILURE
         assertionFailureAtLocation(src);
     }
 }
@@ -2953,7 +2992,8 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
 }
 
 pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) unreachable;
+    if (!condition)
+        unreachable; // ASSERTION FAILURE
 }
 
 pub const dns = @import("./dns.zig");
@@ -3328,7 +3368,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f);
+                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 

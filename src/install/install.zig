@@ -2958,7 +2958,7 @@ pub const PackageManager = struct {
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             entry.key_ptr.* = key;
 
-            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| {
+            const source = bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
                 _ = this.map.remove(key);
                 allocator.free(key);
                 return .{ .read_err = err };
@@ -7618,7 +7618,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (cli.global or cli.ignore_scripts) {
+                if (cli.ignore_scripts) {
                     this.do.run_scripts = false;
                 }
 
@@ -9323,7 +9323,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -9504,7 +9504,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -10384,14 +10384,14 @@ pub const PackageManager = struct {
                     allocator,
                 ) orelse return .zero;
                 if (input_str.len > 0)
-                    all_positionals.append(input_str.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
                 var iter = input.arrayIterator(globalThis);
                 while (iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;
-                    all_positionals.append(slice.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(slice.slice());
                 }
                 if (globalThis.hasException()) return .zero;
             } else {
@@ -10405,12 +10405,12 @@ pub const PackageManager = struct {
             var array = Array{};
 
             const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
-                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
 
             if (log.msgs.items.len > 0) {
-                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             }
 
             if (update_requests[0].failed) {
@@ -11484,7 +11484,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :src s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
@@ -11895,7 +11895,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = brk: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :brk s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
@@ -15310,7 +15310,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.do.run_scripts and install_root_dependencies) {
+        if (manager.options.do.run_scripts and install_root_dependencies and !manager.options.global) {
             if (manager.root_lifecycle_scripts) |scripts| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(scripts.total > 0);

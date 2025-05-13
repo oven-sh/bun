@@ -1,7 +1,7 @@
 import assert from "assert";
-import path from "path";
 import { describe, expect } from "bun:test";
 import { osSlashes } from "harness";
+import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // Tests ported from:

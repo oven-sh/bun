@@ -845,6 +845,11 @@ pub fn transpileSourceCode(
 
     switch (loader) {
         .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
+            // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
+            var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
+            ast_scope.enter();
+            defer ast_scope.exit();
+
             jsc_vm.transpiled_count += 1;
             jsc_vm.transpiler.resetStore();
             const hash = bun.Watcher.getHash(path.text);
@@ -2283,6 +2288,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
+
             this.promise.deinit();
             this.deinit();
 
@@ -2319,25 +2325,27 @@ pub const RuntimeTranspilerStore = struct {
                 };
             }
 
-            ast_memory_store.?.allocator = allocator;
-            ast_memory_store.?.reset();
-            ast_memory_store.?.push();
+            var ast_scope = ast_memory_store.?.enter(allocator);
+            defer ast_scope.exit();
 
             const path = this.path;
             const specifier = this.path.text;
             const loader = this.loader;
-            this.log = logger.Log.init(bun.default_allocator);
 
             var cache = JSC.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
             };
-
+            var log = logger.Log.init(allocator);
+            defer {
+                this.log = logger.Log.init(bun.default_allocator);
+                log.cloneToWithRecycled(&this.log, true) catch bun.outOfMemory();
+            }
             var vm = this.vm;
             var transpiler: bun.Transpiler = undefined;
             transpiler = vm.transpiler;
             transpiler.setAllocator(allocator);
-            transpiler.setLog(&this.log);
+            transpiler.setLog(&log);
             transpiler.resolver.opts = transpiler.options;
             transpiler.macro_context = null;
             transpiler.linker.resolver = &transpiler.resolver;
@@ -2450,6 +2458,7 @@ pub const RuntimeTranspilerStore = struct {
                 }
 
                 this.parse_error = error.ParseError;
+
                 return;
             };
 

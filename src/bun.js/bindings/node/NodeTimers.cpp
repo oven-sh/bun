@@ -13,7 +13,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue job = callFrame->argument(0);
     JSC::JSValue num = callFrame->argument(1);
-    JSC::JSValue arguments = {};
+    JSC::JSValue arguments = jsUndefined();
     size_t argumentCount = callFrame->argumentCount();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     switch (argumentCount) {
@@ -59,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments), Bun::CountdownOverflowBehavior::OneMs);
+    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -68,7 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue job = callFrame->argument(0);
     JSC::JSValue num = callFrame->argument(1);
-    JSC::JSValue arguments = {};
+    JSC::JSValue arguments = jsUndefined();
     size_t argumentCount = callFrame->argumentCount();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -77,10 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval requires 1 argument (a function)"_s);
         return {};
     }
-    case 1: {
-        num = jsNumber(0);
-        break;
-    }
+    case 1:
     case 2: {
         break;
     }
@@ -118,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 #endif
 
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
+    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num));
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -141,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
         return {};
     }
 
-    JSC::JSValue arguments = {};
+    JSC::JSValue arguments = jsUndefined();
     switch (argCount) {
     case 0:
     case 1: {

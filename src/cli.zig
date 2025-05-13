@@ -77,7 +77,7 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
-pub const debug_flags = if (Environment.isDebug) struct {
+pub const debug_flags = if (Environment.show_crash_trace) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
     var print_breakpoints: []const []const u8 = &.{};
 
@@ -183,7 +183,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
+    const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -246,6 +246,7 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -713,6 +714,12 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1280,7 +1287,7 @@ pub const Arguments = struct {
             }
         }
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
             debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }

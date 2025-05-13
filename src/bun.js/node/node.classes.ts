@@ -110,7 +110,6 @@ export default [
     noConstructor: true,
     finalize: true,
     configurable: false,
-    hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -180,13 +179,18 @@ export default [
         setter: "set_idleTimeout",
         this: true,
       },
+      _repeat: {
+        getter: "get_repeat",
+        setter: "set_repeat",
+        this: true,
+      },
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback", "idleTimeout"],
+    values: ["arguments", "callback", "idleTimeout", "repeat"],
   }),
   define({
     name: "Immediate",

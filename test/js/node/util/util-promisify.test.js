@@ -24,7 +24,7 @@ import fs from "node:fs";
 // TODO: vm module not implemented by bun yet
 // import vm from 'node:vm';
 import assert from "assert";
-import { promisify } from "util";
+import { inspect, promisify } from "util";
 
 const stat = promisify(fs.stat);
 
@@ -294,7 +294,7 @@ describe("util.promisify", () => {
       [undefined, null, true, 0, "str", {}, [], Symbol()].forEach(input => {
         expect(() => {
           promisify(input);
-        }).toThrow('The "original" argument must be of type Function');
+        }).toThrow('The "original" argument must be of type function.' + invalidArgTypeHelper(input));
       });
     });
   });

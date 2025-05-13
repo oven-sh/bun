@@ -749,7 +749,8 @@ async function spawnSafe(options) {
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
     (error = /oh no: Bun has crashed/i.exec(buffer)) ||
-    (error = /(ERROR: AddressSanitizer)/.exec(buffer))
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer)) ||
+    (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";

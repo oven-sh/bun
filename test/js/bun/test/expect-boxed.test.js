@@ -5,3 +5,30 @@ test("boxed number", () => {
 test("boxed symbol", () => {
   expect(Object(Symbol())).not.toEqual(Object(Symbol()));
 });
+const util = require("util");
+const sym = Symbol();
+const obj1 = { [sym]: 1 };
+const obj4 = {};
+Object.defineProperty(obj4, sym, { value: 1 }); // non-enumerable
+test("symbol key", () => {
+  expect(obj1).not.toEqual(obj4);
+  expect(util.isDeepStrictEqual(obj1, obj4)).toBe(false);
+  expect(Bun.deepEquals(obj1, obj4)).toBe(false);
+  expect(Bun.deepEquals(obj1, obj4, false)).toBe(false);
+  expect(Bun.deepEquals(obj1, obj4, true)).toBe(false);
+  expect(obj4).not.toEqual(obj1);
+  expect(util.isDeepStrictEqual(obj4, obj1)).toBe(false);
+  expect(Bun.deepEquals(obj4, obj1)).toBe(false);
+  expect(Bun.deepEquals(obj4, obj1, false)).toBe(false);
+  expect(Bun.deepEquals(obj4, obj1, true)).toBe(false);
+});
+test("symbol key 2", () => {
+  const obj1 = {};
+  const obj2 = {};
+  Object.defineProperty(obj2, sym, { value: 1 });
+  expect(util.isDeepStrictEqual(obj1, obj2)).toBe(true);
+  expect(util.isDeepStrictEqual(obj2, obj1)).toBe(true);
+  obj1[sym] = 1;
+  expect(util.isDeepStrictEqual(obj1, obj2)).toBe(false);
+  expect(util.isDeepStrictEqual(obj2, obj1)).toBe(false);
+});

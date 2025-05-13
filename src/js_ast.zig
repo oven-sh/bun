@@ -8449,7 +8449,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue(this.global));
+                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

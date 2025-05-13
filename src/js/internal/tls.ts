@@ -320,4 +320,7 @@ export default {
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,
   validateTLSOptions,
+
+  TLS_VERSION_REVERSE_MAP,
+  TLS_VERSION_MAP,
 };

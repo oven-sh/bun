@@ -267,6 +267,7 @@ const SocketHandlers: SocketHandler = {
       // will be handled in onConnectEnd
       return;
     }
+
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
@@ -764,7 +765,13 @@ Socket.prototype.connect = function connect(...args) {
   const bunTLS = this[bunTlsSymbol];
   var tls = undefined;
   if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(this, port, host, true);
+    tls = bunTLS.$call(
+      this,
+      port,
+      host,
+      true, // isClient
+    );
+
     // Client always request Cert
     this._requestCert = true;
     if (tls) {

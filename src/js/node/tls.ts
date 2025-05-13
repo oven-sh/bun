@@ -1,12 +1,10 @@
-import type { SecureVersion } from "node:tls";
-
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const {
-  throwOnInvalidTLSArray,
+  TLS_VERSION_REVERSE_MAP,
   resolveTLSVersions,
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,
@@ -200,20 +198,6 @@ function checkServerIdentity(hostname, cert) {
     return $ERR_TLS_CERT_ALTNAME_INVALID(reason, hostname, cert);
   }
 }
-
-const TLS_VERSION_MAP: Record<SecureVersion, number> = {
-  "TLSv1": 0x0301,
-  "TLSv1.1": 0x0302,
-  "TLSv1.2": 0x0303,
-  "TLSv1.3": 0x0304,
-};
-
-const TLS_VERSION_REVERSE_MAP: Record<number, SecureVersion> = {
-  0x0301: "TLSv1",
-  0x0302: "TLSv1.1",
-  0x0303: "TLSv1.2",
-  0x0304: "TLSv1.3",
-};
 
 var InternalSecureContext = class SecureContext {
   context;
@@ -473,7 +457,9 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
-  return {
+  const { minVersion, maxVersion } = this[ksecureContext];
+
+  const options = {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
     serverName: this.servername || host || "localhost",
@@ -481,10 +467,12 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
-    minVersion: this.minVersion,
-    maxVersion: this.maxVersion,
+    minVersionName: TLS_VERSION_REVERSE_MAP[minVersion],
+    maxVersionName: TLS_VERSION_REVERSE_MAP[maxVersion],
     ...this[ksecureContext],
   };
+  console.log("BUN TLS", options);
+  return options;
 };
 
 let CLIENT_RENEG_LIMIT = 3,
@@ -588,8 +576,8 @@ function Server(options, secureConnectionListener): void {
         passphrase: this.passphrase,
         minVersion: this.minVersion,
         maxVersion: this.maxVersion,
-        minVersionName: this.minVersionName,
-        maxVersionName: this.maxVersionName,
+        minVersionName: TLS_VERSION_REVERSE_MAP[this.minVersion],
+        maxVersionName: TLS_VERSION_REVERSE_MAP[this.maxVersion],
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,

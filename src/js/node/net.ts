@@ -22,6 +22,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
+const { getAllowUnauthorized } = require("internal/tls");
 const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
   "socket.zig",
   "createNodeTLSBinding",
@@ -284,6 +285,9 @@ const SocketHandlers: SocketHandler = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
+          self.emit("secure", self);
+          self.emit("_tlsError", verifyError);
+          self.server.emit("tlsClientError", verifyError, self);
           self.destroy(verifyError);
           return;
         }
@@ -425,7 +429,7 @@ const ServerHandlers: SocketHandler = {
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
-    self.servername = socket.getServername();
+    self.servername = socket.getServername() || socket.host || socket.servername;
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
 
@@ -437,6 +441,8 @@ const ServerHandlers: SocketHandler = {
         if (self._rejectUnauthorized) {
           // if we reject we still need to emit secure
           self.emit("secure", self);
+          self.emit("_tlsError", verifyError);
+          self.server.emit("tlsClientError", verifyError, self);
           self.destroy(verifyError);
           return;
         }
@@ -766,7 +772,9 @@ Socket.prototype.connect = function connect(...args) {
         this._rejectUnauthorized = rejectUnauthorized;
         tls.rejectUnauthorized = rejectUnauthorized;
       } else {
-        this._rejectUnauthorized = tls.rejectUnauthorized;
+        const allowUnauth = getAllowUnauthorized();
+        this._rejectUnauthorized = !allowUnauth;
+        tls.rejectUnauthorized = !allowUnauth;
       }
       tls.requestCert = true;
       tls.session = session || tls.session;

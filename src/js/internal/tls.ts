@@ -295,7 +295,23 @@ function validateTLSOptions(options: any) {
   }
 }
 
+let warnOnAllowUnauthorized = true;
+
+function getAllowUnauthorized(): boolean {
+  const allowUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
+
+  if (allowUnauthorized && warnOnAllowUnauthorized) {
+    warnOnAllowUnauthorized = false;
+    process.emitWarning(
+      "Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS " +
+        "connections and HTTPS requests insecure by disabling certificate verification.",
+    );
+  }
+  return allowUnauthorized;
+}
+
 export default {
+  getAllowUnauthorized,
   isValidTLSArray,
   isValidTLSItem,
   resolveTLSVersions,

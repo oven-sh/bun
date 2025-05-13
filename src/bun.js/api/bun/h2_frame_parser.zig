@@ -3041,6 +3041,9 @@ pub const H2FrameParser = struct {
         }
 
         const error_code = error_arg.toU32();
+        if (error_code > 13) {
+            return globalObject.throw("Invalid ErrorCode", .{});
+        }
 
         this.endStream(stream, @enumFromInt(error_code));
 
@@ -3469,16 +3472,6 @@ pub const H2FrameParser = struct {
         return stream_id;
     }
 
-    pub fn setNextStreamID(this: *H2FrameParser, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        JSC.markBinding(@src());
-        const args_list = callframe.arguments();
-        bun.debugAssert(args_list.len >= 1);
-        const stream_id_arg = args_list.ptr[0];
-        bun.debugAssert(stream_id_arg.isNumber());
-        this.lastStreamID = stream_id_arg.to(u32);
-        return .undefined;
-    }
-
     pub fn hasNativeRead(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSC.JSValue.jsBoolean(this.native_socket == .tcp or this.native_socket == .tls);
     }
@@ -3569,7 +3562,6 @@ pub const H2FrameParser = struct {
         }
         return .undefined;
     }
-
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 

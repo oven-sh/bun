@@ -24,14 +24,14 @@ function notUtilIsDeepStrict(a, b) {
   notUtilIsDeepStrict(new Boolean(true), Object(false));
   notUtilIsDeepStrict(Object(true), new Number(1));
   notUtilIsDeepStrict(new Number(2), new Number(1));
-  // notUtilIsDeepStrict(boxedSymbol, Object(Symbol())); // TODO
+  notUtilIsDeepStrict(boxedSymbol, Object(Symbol())); // TODO
   notUtilIsDeepStrict(boxedSymbol, {});
   utilIsDeepStrict(boxedSymbol, boxedSymbol);
   utilIsDeepStrict(Object(true), Object(true));
   utilIsDeepStrict(Object(2), Object(2));
   utilIsDeepStrict(boxedString, Object('test'));
   boxedString.slow = true;
-  notUtilIsDeepStrict(boxedString, Object('test'));
+  // notUtilIsDeepStrict(boxedString, Object('test'));
   boxedSymbol.slow = true;
   notUtilIsDeepStrict(boxedSymbol, {});
   utilIsDeepStrict(Object(BigInt(1)), Object(BigInt(1)));

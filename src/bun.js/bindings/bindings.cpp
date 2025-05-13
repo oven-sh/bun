@@ -11,7 +11,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
 #include "JavaScriptCore/BigIntObject.h"
-// #include "JavaScriptCore/SymbolObject.h"
+#include "JavaScriptCore/SymbolObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSPromiseConstructor.h"
@@ -804,8 +804,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     // Handle boxed primitives
-    auto v1IsPrimitive = v1.inherits<NumberObject>() || v1.inherits<StringObject>() || v1.inherits<BooleanObject>() || v1.inherits<BigIntObject>(); // || v1.inherits<SymbolObject>();
-    auto v2IsPrimitive = v2.inherits<NumberObject>() || v2.inherits<StringObject>() || v2.inherits<BooleanObject>() || v2.inherits<BigIntObject>(); // || v2.inherits<SymbolObject>();
+    auto v1IsPrimitive = v1.inherits<NumberObject>() || v1.inherits<StringObject>() || v1.inherits<BooleanObject>() || v1.inherits<BigIntObject>() || v1.inherits<SymbolObject>();
+    auto v2IsPrimitive = v2.inherits<NumberObject>() || v2.inherits<StringObject>() || v2.inherits<BooleanObject>() || v2.inherits<BigIntObject>() || v2.inherits<SymbolObject>();
     if (v1IsPrimitive != v2IsPrimitive) {
         return false; // one is a boxed primitive, the other is not
     }

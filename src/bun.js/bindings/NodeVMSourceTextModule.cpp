@@ -12,109 +12,6 @@
 
 #include "../vm/SigintWatcher.h"
 
-#include <print>
-
-extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
-
-template<>
-struct std::formatter<WTF::ASCIILiteral> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const WTF::ASCIILiteral& literal, std::format_context& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", literal.characters());
-    }
-};
-
-template<>
-struct std::formatter<WTF::String> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const WTF::String& string, std::format_context& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", string.utf8().data());
-    }
-};
-
-template<>
-struct std::formatter<JSC::Identifier> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const JSC::Identifier& identifier, std::format_context& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", identifier.utf8().data());
-    }
-};
-
-template<>
-struct std::formatter<WTF::StringPrintStream> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const WTF::StringPrintStream& stream, std::format_context& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}", stream.toString());
-    }
-};
-
-template<>
-struct std::formatter<JSC::JSValue> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const JSC::JSValue& value, std::format_context& ctx) const
-    {
-        auto* global = defaultGlobalObject();
-        if (auto* error = jsDynamicCast<JSC::ErrorInstance*>(value)) {
-            return std::format_to(ctx.out(), "{}", error->sanitizedMessageString(global));
-        }
-        return std::format_to(ctx.out(), "{}", Bun__inspect(global, JSC::JSValue::encode(value)).transferToWTFString());
-    }
-};
-
-template<>
-struct std::formatter<WTF::Vector<JSC::StackFrame>> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(const WTF::Vector<JSC::StackFrame>& frames, std::format_context& ctx) const
-    {
-        for (unsigned i = 0; const JSC::StackFrame& frame : frames) {
-            std::format_to(ctx.out(), "{: 2} | {}\n", i++, frame.toString(defaultGlobalObject()->vm()));
-        }
-
-        return ctx.out();
-    }
-};
-
-template<>
-struct std::formatter<JSC::Exception*> {
-    constexpr auto parse(std::format_parse_context& ctx)
-    {
-        return ctx.begin();
-    }
-
-    auto format(JSC::Exception* exception, std::format_context& ctx) const
-    {
-        return std::format_to(ctx.out(), "{}\n{}", exception->value(), exception->stack());
-    }
-};
-
 namespace Bun {
 using namespace NodeVM;
 
@@ -344,11 +241,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
     Synchronousness sync = record->link(globalObject, scriptFetcher);
 
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        std::println("Exception: {}", exception);
-        scope.throwException(globalObject, exception);
-    }
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
         ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");

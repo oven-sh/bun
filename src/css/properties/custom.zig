@@ -356,14 +356,14 @@ pub const TokenList = struct {
                             .{ .color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (input.tryParse(UnresolvedColor.parse, .{ f, options }).asValue()) |color| {
                         tokens.append(
                             input.allocator(),
                             .{ .unresolved_color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (bun.strings.eql(f, "url")) {
                         input.reset(&state);
                         tokens.append(

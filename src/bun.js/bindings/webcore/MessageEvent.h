@@ -39,9 +39,6 @@
 
 namespace WebCore {
 
-class MessageEventSource {
-};
-
 class MessageEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(MessageEvent);
 

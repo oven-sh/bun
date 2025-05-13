@@ -1047,7 +1047,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        return true;
+        return std::nullopt;
     }
     case JSMapType: {
         if (c2Type != JSMapType) {
@@ -1093,7 +1093,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        return true;
+        return std::nullopt;
     }
     case ArrayBufferType: {
         if (c2Type != ArrayBufferType) {
@@ -1113,7 +1113,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (byteLength == 0)
-            return true;
+            return std::nullopt;
 
         if (UNLIKELY(right->isDetached() || left->isDetached())) {
             return false;
@@ -1126,7 +1126,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (UNLIKELY(vector == rightVector))
-            return true;
+            return std::nullopt;
 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }
@@ -1304,7 +1304,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (byteLength == 0)
-            return true;
+            return std::nullopt;
 
         if (UNLIKELY(right->isDetached() || left->isDetached())) {
             return false;
@@ -1317,7 +1317,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (UNLIKELY(vector == rightVector))
-            return true;
+            return std::nullopt;
 
         // For Float32Array and Float64Array, when not in strict mode, we need to
         // handle +0 and -0 as equal, and NaN as not equal to itself.
@@ -1332,7 +1332,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return std::nullopt;
             } else if (c1Type == Float32ArrayType) {
                 auto* leftFloat = static_cast<const float*>(vector);
                 auto* rightFloat = static_cast<const float*>(rightVector);
@@ -1343,7 +1343,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return std::nullopt;
             } else { // Float64Array
                 auto* leftDouble = static_cast<const double*>(vector);
                 auto* rightDouble = static_cast<const double*>(rightVector);
@@ -1354,11 +1354,15 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return std::nullopt;
             }
         }
 
-        return (memcmp(vector, rightVector, byteLength) == 0);
+        if (memcmp(vector, rightVector, byteLength) == 0) {
+            return std::nullopt;
+        }
+
+        return false;
     }
     case JSFunctionType: {
         return false;
@@ -1380,7 +1384,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             } else {
                 if ((url1 == nullptr) != (url2 == nullptr)) {
-                    goto compareAsNormalValue;
+                    return std::nullopt;
                 }
             }
 
@@ -1393,7 +1397,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
 
-                goto compareAsNormalValue;
+                return std::nullopt;
             }
 
             // TODO: FormData.
@@ -1419,7 +1423,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     }
 
-                    goto compareAsNormalValue;
+                    return std::nullopt;
                 } else {
                     if constexpr (isStrict) {
                         // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
@@ -1428,7 +1432,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     } else {
                         if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
-                            goto compareAsNormalValue;
+                            return std::nullopt;
                         }
                     }
                 }
@@ -1458,7 +1462,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     }
 
-                    goto compareAsNormalValue;
+                    return std::nullopt;
                 } else {
                     if constexpr (isStrict) {
                         // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
@@ -1467,17 +1471,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     } else {
                         if ((headers1 == nullptr) != (headers2 == nullptr)) {
-                            goto compareAsNormalValue;
+                            return std::nullopt;
                         }
                     }
                 }
             }
         }
-
-        goto compareAsNormalValue;
-
-    compareAsNormalValue:
-        break;
     }
     // globalThis is only equal to globalThis
     // NOTE: Zig::GlobalObject is tagged as GlobalProxyType

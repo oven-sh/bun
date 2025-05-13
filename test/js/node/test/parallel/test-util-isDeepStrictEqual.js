@@ -81,7 +81,7 @@ function notUtilIsDeepStrict(a, b) {
   const b = new Uint8Array(4);
   a[symbol1] = true;
   b[symbol1] = false;
-  // notUtilIsDeepStrict(a, b); // TODO
+  notUtilIsDeepStrict(a, b);
   b[symbol1] = true;
   utilIsDeepStrict(a, b);
   // The same as TypedArrays is valid for boxed primitives

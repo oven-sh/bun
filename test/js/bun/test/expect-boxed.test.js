@@ -34,8 +34,6 @@ for (const key of [Symbol(), "abc"]) {
       obj1[sym] = 1;
       expect(util.isDeepStrictEqual(obj1, obj2)).toBe(false);
       expect(util.isDeepStrictEqual(obj2, obj1)).toBe(false);
-
-      // handle check hasNonReifiedStaticProperties/!canPerformFastPropertyEnumeration case
     });
   });
 }

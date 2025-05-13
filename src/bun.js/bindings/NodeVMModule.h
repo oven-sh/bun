@@ -2,6 +2,8 @@
 
 #include "NodeVM.h"
 
+#include "JavaScriptCore/AbstractModuleRecord.h"
+
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -58,6 +60,9 @@ public:
 
     // Purposely not virtual. Dispatches to the correct subclass.
     JSValue createModuleRecord(JSC::JSGlobalObject* globalObject);
+
+    // Purposely not virtual. Dispatches to the correct subclass.
+    AbstractModuleRecord* moduleRecord(JSC::JSGlobalObject* globalObject);
 
 protected:
     WTF::String m_identifier;

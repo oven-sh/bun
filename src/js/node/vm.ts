@@ -258,8 +258,11 @@ class SourceTextModule extends Module {
   }
 
   async [kLink](linker) {
-    this.#statusOverride = "linking";
+    if (this[kNative].getStatusCode() >= kLinked) {
+      throw $ERR_VM_MODULE_ALREADY_LINKED();
+    }
 
+    this.#statusOverride = "linking";
     const moduleRequests = this[kNative].createModuleRecord();
 
     // Iterates the module requests and links with the linker.
@@ -296,7 +299,7 @@ class SourceTextModule extends Module {
 
     try {
       const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
-      this[kNative].link(specifiers, moduleNatives);
+      this[kNative].link(specifiers, moduleNatives, 0);
     } catch (e) {
       console.error("linking error:", e);
       this.#error = e;

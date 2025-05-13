@@ -61,6 +61,16 @@ JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
     return JSC::jsUndefined();
 }
 
+AbstractModuleRecord* NodeVMModule::moduleRecord(JSC::JSGlobalObject* globalObject)
+{
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+        return thisObject->moduleRecord(globalObject);
+    }
+
+    ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
 NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ArgList args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -181,6 +191,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+
+    if (auto* sourceTextModule = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+        sourceTextModule->ensureModuleRecord(globalObject);
+    }
+
     const WTF::Vector<NodeVMModuleRequest>& requests = thisObject->moduleRequests();
 
     JSArray* array = constructEmptyArray(globalObject, nullptr, requests.size());
@@ -235,14 +250,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
         return throwArgumentTypeError(*globalObject, scope, 1, "moduleNatives"_s, "Module"_s, "Module"_s, "Array"_s);
     }
 
-    // JSValue linker = callFrame->argument(0);
-
-    // if (!linker.isCallable()) {
-    //     return throwArgumentTypeError(*globalObject, scope, 0, "linker"_s, "Module"_s, "Module"_s, "function"_s);
-    // }
-
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
-        return JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives));
+        return JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2)));
         // return thisObject->link(globalObject, linker);
         // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
         //     return thisObject->link(globalObject, specifiers, moduleNatives);

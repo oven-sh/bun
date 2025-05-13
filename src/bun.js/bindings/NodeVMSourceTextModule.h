@@ -31,15 +31,21 @@ public:
     }
 
     JSValue createModuleRecord(JSGlobalObject* globalObject);
-    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives);
+    void ensureModuleRecord(JSGlobalObject* globalObject);
+    bool hasModuleRecord() const { return !!m_moduleRecord; }
+    AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
+    JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
     void sigintReceived();
+
+    const SourceCode& sourceCode() const { return m_sourceCode; }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
+    WriteBarrier<JSArray> m_moduleRequestsArray;
     SourceCode m_sourceCode;
     bool m_terminatedWithSigint = false;
 

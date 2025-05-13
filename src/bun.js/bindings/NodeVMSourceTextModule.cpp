@@ -2,12 +2,118 @@
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
+#include "JSSourceCode.h"
 #include "ModuleAnalyzer.h"
 #include "Parser.h"
 #include "Watchdog.h"
+#include "wtf/Scope.h"
 
 #include "../vm/SigintWatcher.h"
+
+#include <print>
+
+extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
+
+template<>
+struct std::formatter<WTF::ASCIILiteral> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const WTF::ASCIILiteral& literal, std::format_context& ctx) const
+    {
+        return std::format_to(ctx.out(), "{}", literal.characters());
+    }
+};
+
+template<>
+struct std::formatter<WTF::String> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const WTF::String& string, std::format_context& ctx) const
+    {
+        return std::format_to(ctx.out(), "{}", string.utf8().data());
+    }
+};
+
+template<>
+struct std::formatter<JSC::Identifier> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const JSC::Identifier& identifier, std::format_context& ctx) const
+    {
+        return std::format_to(ctx.out(), "{}", identifier.utf8().data());
+    }
+};
+
+template<>
+struct std::formatter<WTF::StringPrintStream> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const WTF::StringPrintStream& stream, std::format_context& ctx) const
+    {
+        return std::format_to(ctx.out(), "{}", stream.toString());
+    }
+};
+
+template<>
+struct std::formatter<JSC::JSValue> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const JSC::JSValue& value, std::format_context& ctx) const
+    {
+        auto* global = defaultGlobalObject();
+        if (auto* error = jsDynamicCast<JSC::ErrorInstance*>(value)) {
+            return std::format_to(ctx.out(), "{}", error->sanitizedMessageString(global));
+        }
+        return std::format_to(ctx.out(), "{}", Bun__inspect(global, JSC::JSValue::encode(value)).transferToWTFString());
+    }
+};
+
+template<>
+struct std::formatter<WTF::Vector<JSC::StackFrame>> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(const WTF::Vector<JSC::StackFrame>& frames, std::format_context& ctx) const
+    {
+        for (unsigned i = 0; const JSC::StackFrame& frame : frames) {
+            std::format_to(ctx.out(), "{: 2} | {}\n", i++, frame.toString(defaultGlobalObject()->vm()));
+        }
+
+        return ctx.out();
+    }
+};
+
+template<>
+struct std::formatter<JSC::Exception*> {
+    constexpr auto parse(std::format_parse_context& ctx)
+    {
+        return ctx.begin();
+    }
+
+    auto format(JSC::Exception* exception, std::format_context& ctx) const
+    {
+        return std::format_to(ctx.out(), "{}\n{}", exception->value(), exception->stack());
+    }
+};
 
 namespace Bun {
 using namespace NodeVM;
@@ -76,15 +182,12 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
 
 JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (m_moduleRecord) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module record already present"_s);
-        return {};
+    if (m_moduleRequestsArray) {
+        return m_moduleRequestsArray.get();
     }
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, {}, {}, AllFeatures);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ParserError parserError;
 
@@ -100,6 +203,8 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
         return {};
     }
+
+    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, node->varDeclarations(), node->lexicalVariables(), AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -124,6 +229,8 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     JSArray* requestsArray = JSC::constructEmptyArray(globalObject, nullptr, requests.size());
+
+    // MarkedArgumentBuffer buffer;
 
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
     const JSC::Identifier& specifierIdentifier = builtinNames.specifierPublicName();
@@ -186,18 +293,35 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }
 
+    m_moduleRequestsArray.set(vm, this, requestsArray);
     return requestsArray;
 }
 
-JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives)
+void NodeVMSourceTextModule::ensureModuleRecord(JSGlobalObject* globalObject)
+{
+    if (!m_moduleRecord) {
+        createModuleRecord(globalObject);
+    }
+}
+
+AbstractModuleRecord* NodeVMSourceTextModule::moduleRecord(JSGlobalObject* globalObject)
+{
+    ensureModuleRecord(globalObject);
+    return m_moduleRecord.get();
+}
+
+JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher)
 {
     const unsigned length = specifiers->getArrayLength();
+
     ASSERT(length == moduleNatives->getArrayLength());
 
-    if (length != 0) {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSModuleRecord* record = m_moduleRecord.get();
+
+    if (length != 0) {
         for (unsigned i = 0; i < length; i++) {
             JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
@@ -207,7 +331,9 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             JSObject* moduleNative = moduleNativeValue.getObject();
+            auto* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
 
+            record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
             m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
         }
     }
@@ -216,12 +342,19 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         globalObject = nodeVmGlobalObject;
     }
 
-    JSModuleRecord* record = m_moduleRecord.get();
-    Synchronousness sync = record->link(globalObject, jsUndefined());
+    Synchronousness sync = record->link(globalObject, scriptFetcher);
+
+    if (auto* exception = scope.exception()) {
+        scope.clearException();
+        std::println("Exception: {}", exception);
+        scope.throwException(globalObject, exception);
+    }
 
     if (sync == Synchronousness::Async) {
         ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
     }
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     status(Status::Linked);
     return JSC::jsUndefined();

@@ -331,7 +331,7 @@ describe("worker_threads", () => {
       });
       worker.on("error", expect.unreachable);
       const code = await worker.terminate();
-      expect(code == 0 || code == 1, `unexpected exit code ${code}`).toBeTrue();
+      expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
       codes.push(code);
     }
     expect(codes.includes(0)).toBeTrue();

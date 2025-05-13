@@ -75,7 +75,7 @@ function notUtilIsDeepStrict(a, b) {
   Object.defineProperty(obj4, symbol1, { value: 1 });
   notUtilIsDeepStrict(obj1, obj3);
   utilIsDeepStrict(obj1, obj2);
-  notUtilIsDeepStrict(obj1, obj4); // TODO
+  notUtilIsDeepStrict(obj1, obj4);
   // TypedArrays have a fast path. Test for this as well.
   const a = new Uint8Array(4);
   const b = new Uint8Array(4);
@@ -88,7 +88,7 @@ function notUtilIsDeepStrict(a, b) {
   const boxedStringA = new String('test');
   const boxedStringB = new String('test');
   boxedStringA[symbol1] = true;
-  // notUtilIsDeepStrict(boxedStringA, boxedStringB); // TODO
+  notUtilIsDeepStrict(boxedStringA, boxedStringB);
   boxedStringA[symbol1] = true;
   utilIsDeepStrict(a, b);
 }

@@ -872,21 +872,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     count++;
 
                     JSValue left = o1->getDirect(entry.offset());
-                    Structure* rightStructure = o2->structure();
-
-                    PropertyOffset rightOffset = rightStructure->get(vm, JSC::PropertyName(entry.key()));
-                    checkOffset(rightOffset, rightStructure->inlineCapacity());
-                    JSValue right = rightOffset != invalidOffset ? o2->getDirect(rightOffset) : JSValue();
-
-                    PropertySlot slot(o2, PropertySlot::InternalMethodType::GetOwnProperty);
-                    bool hasProperty = o2->getPropertySlot(globalObject, JSC::PropertyName(entry.key()), slot);
-                    RETURN_IF_EXCEPTION(*scope, false);
-                    if (!hasProperty) {
-                        // TODO
+                    JSValue right;
+                    if (o2->hasEnumerableProperty(globalObject, JSC::PropertyName(entry.key()))) {
+                        right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+                    } else {
+                        right = JSValue();
                     }
-                    bool isEnumerable = !(slot.attributes() & PropertyAttribute::DontEnum) || (slot.slotBase() && slot.slotBase()->structure()->typeInfo().getOwnPropertySlotMayBeWrongAboutDontEnum());
-                    JSValue property = slot.getValue();
-                    // have to get attributes and check for DontEnum; in that case, ignore.
 
                     if constexpr (!isStrict) {
                         if (left.isUndefined() && right.isEmpty()) {

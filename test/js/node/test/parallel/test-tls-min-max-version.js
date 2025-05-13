@@ -62,9 +62,8 @@ function test(cmin, cmax, cprot, smin, smax, sprot, proto, cerr, serr) {
                 u(ciphers), 'expect', u(proto), u(cerr), u(serr));
     console.log('  ', where);
     if (!proto) {
-          console.log('client', pair.client.err ? pair.client.err.code : undefined);
-          console.log('server', pair.server.err ? pair.server.err.code : undefined);
-
+     console.log('client', pair.client.err ? pair.client.err.code : undefined);
+     console.log('server', pair.server.err ? pair.server.err.code : undefined);
      if (cerr) {
         assert(pair.client.err);
         // Accept these codes as aliases, the one reported depends on the

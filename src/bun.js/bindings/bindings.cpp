@@ -804,12 +804,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     // Handle boxed primitives
-    auto v1IsPrimitive = v1.inherits<NumberObject>() || v1.inherits<StringObject>() || v1.inherits<BooleanObject>() || v1.inherits<BigIntObject>() || v1.inherits<SymbolObject>();
-    auto v2IsPrimitive = v2.inherits<NumberObject>() || v2.inherits<StringObject>() || v2.inherits<BooleanObject>() || v2.inherits<BigIntObject>() || v2.inherits<SymbolObject>();
-    if (v1IsPrimitive != v2IsPrimitive) {
+    auto v1IsBoxedPrimitive = v1.inherits<NumberObject>() || v1.inherits<StringObject>() || v1.inherits<BooleanObject>() || v1.inherits<BigIntObject>() || v1.inherits<SymbolObject>();
+    auto v2IsBoxedPrimitive = v2.inherits<NumberObject>() || v2.inherits<StringObject>() || v2.inherits<BooleanObject>() || v2.inherits<BigIntObject>() || v2.inherits<SymbolObject>();
+    if (v1IsBoxedPrimitive != v2IsBoxedPrimitive) {
         return false; // one is a boxed primitive, the other is not
     }
-    if (v1IsPrimitive && v2IsPrimitive) {
+    if (v1IsBoxedPrimitive && v2IsBoxedPrimitive) {
         auto v1Wrapper = jsCast<JSC::JSWrapperObject*>(v1);
         auto v2Wrapper = jsCast<JSC::JSWrapperObject*>(v2);
         auto v1Value = v1Wrapper->internalValue();
@@ -872,7 +872,21 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     count++;
 
                     JSValue left = o1->getDirect(entry.offset());
-                    JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+                    Structure* rightStructure = o2->structure();
+
+                    PropertyOffset rightOffset = rightStructure->get(vm, JSC::PropertyName(entry.key()));
+                    checkOffset(rightOffset, rightStructure->inlineCapacity());
+                    JSValue right = rightOffset != invalidOffset ? o2->getDirect(rightOffset) : JSValue();
+
+                    PropertySlot slot(o2, PropertySlot::InternalMethodType::GetOwnProperty);
+                    bool hasProperty = o2->getPropertySlot(globalObject, JSC::PropertyName(entry.key()), slot);
+                    RETURN_IF_EXCEPTION(*scope, false);
+                    if (!hasProperty) {
+                        // TODO
+                    }
+                    bool isEnumerable = !(slot.attributes() & PropertyAttribute::DontEnum) || (slot.slotBase() && slot.slotBase()->structure()->typeInfo().getOwnPropertySlotMayBeWrongAboutDontEnum());
+                    JSValue property = slot.getValue();
+                    // have to get attributes and check for DontEnum; in that case, ignore.
 
                     if constexpr (!isStrict) {
                         if (left.isUndefined() && right.isEmpty()) {

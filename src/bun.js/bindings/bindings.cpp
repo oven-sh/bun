@@ -1355,20 +1355,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }
-    case StringObjectType: {
-        if (c2Type != StringObjectType) {
-            return false;
-        }
-
-        if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-            return false;
-        }
-
-        JSString* s1 = c1->toStringInline(globalObject);
-        JSString* s2 = c2->toStringInline(globalObject);
-
-        return s1->equal(globalObject, s2);
-    }
     case JSFunctionType: {
         return false;
     }

@@ -1,8 +1,7 @@
-import { readFileSync, existsSync, appendFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { TestSummary, TestError, TestStatus, TestFile, Test, printTest } from "runner";
-import { runTests } from "runner";
 import { a, br, code, count, details, duration, h, percent, table, ul } from "html";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { Test, TestError, TestFile, TestStatus, TestSummary, printTest, runTests } from "runner";
 
 const [filter] = process.argv.slice(2);
 const packagesText = readFileSync(resolve("resources/packages.json"), "utf8");

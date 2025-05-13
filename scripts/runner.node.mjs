@@ -14,21 +14,21 @@ import {
   appendFileSync,
   existsSync,
   constants as fs,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   statSync,
+  symlinkSync,
   unlink,
   unlinkSync,
   writeFileSync,
-  linkSync,
-  symlinkSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep, extname } from "node:path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
   getAbi,

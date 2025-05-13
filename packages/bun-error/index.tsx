@@ -1,5 +1,4 @@
-import React from "react";
-import { useContext, createContext } from "react";
+import React, { createContext, useContext } from "react";
 import { render, unmountComponentAtNode } from "react-dom";
 import type {
   FallbackMessageContainer,

@@ -1,48 +1,47 @@
 #!/usr/bin/env node
 
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { basename, extname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
+import { docker } from "./docker.mjs";
+import { google } from "./google.mjs";
+import { orbstack } from "./orbstack.mjs";
+import { tart } from "./tart.mjs";
 import {
   $,
+  copyFile,
+  curlSafe,
+  escapePowershell,
   getBootstrapVersion,
   getBuildNumber,
+  getGithubApiUrl,
+  getGithubUrl,
   getSecret,
+  getUsernameForDistro,
+  homedir,
   isCI,
+  isMacOS,
+  isWindows,
+  mkdir,
+  mkdtemp,
   parseArch,
   parseOs,
   readFile,
+  rm,
+  setupUserData,
+  sha256,
   spawn,
   spawnSafe,
+  spawnSsh,
+  spawnSshSafe,
   spawnSyncSafe,
   startGroup,
-  spawnSshSafe,
-  spawnSsh,
   tmpdir,
   waitForPort,
   which,
-  escapePowershell,
-  getGithubUrl,
-  getGithubApiUrl,
-  curlSafe,
-  mkdtemp,
   writeFile,
-  copyFile,
-  isMacOS,
-  mkdir,
-  rm,
-  homedir,
-  isWindows,
-  setupUserData,
-  sha256,
-  isPrivileged,
-  getUsernameForDistro,
 } from "./utils.mjs";
-import { basename, extname, join, relative, resolve } from "node:path";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { orbstack } from "./orbstack.mjs";
-import { docker } from "./docker.mjs";
-import { google } from "./google.mjs";
-import { tart } from "./tart.mjs";
 
 const aws = {
   get name() {

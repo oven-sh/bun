@@ -259,6 +259,7 @@ const SocketHandlers: SocketHandler = {
     SocketHandlers.drain(socket);
   },
   handshake(socket, success, verifyError) {
+    debugger;
     const { data: self } = socket;
     if (!self) return;
     if (!success && verifyError?.code === "ECONNRESET") {
@@ -433,7 +434,12 @@ const ServerHandlers: SocketHandler = {
         // verifyError is now guaranteed to be an Error if it exists, or was null
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        // tlsClientError emitted in the !success block if rejection occurred
+        if (self._rejectUnauthorized) {
+          // if we reject we still need to emit secure
+          self.emit("secure", self);
+          self.destroy(verifyError);
+          return;
+        }
       } else {
         self.authorized = true;
       }

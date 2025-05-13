@@ -20,10 +20,11 @@
 #pragma once
 
 #include "JSDOMConstructorBase.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 
-template<typename JSClass> class JSDOMConstructorNotConstructable final : public JSDOMConstructorBase {
+template<typename JSClass, Bun::ErrorCode templateErrorCode = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR> class JSDOMConstructorNotConstructable final : public JSDOMConstructorBase {
 public:
     using Base = JSDOMConstructorBase;
 
@@ -37,7 +38,7 @@ public:
 
 private:
     JSDOMConstructorNotConstructable(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, nullptr)
+        : Base(vm, structure, nullptr, nullptr, templateErrorCode)
     {
     }
 
@@ -47,19 +48,19 @@ private:
     void initializeProperties(JSC::VM&, JSDOMGlobalObject&) {}
 };
 
-template<typename JSClass> inline JSDOMConstructorNotConstructable<JSClass>* JSDOMConstructorNotConstructable<JSClass>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
+template<typename JSClass, Bun::ErrorCode errorCode> inline JSDOMConstructorNotConstructable<JSClass, errorCode>* JSDOMConstructorNotConstructable<JSClass, errorCode>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
 {
     JSDOMConstructorNotConstructable* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructorNotConstructable>(vm)) JSDOMConstructorNotConstructable(vm, structure);
     constructor->finishCreation(vm, globalObject);
     return constructor;
 }
 
-template<typename JSClass> inline JSC::Structure* JSDOMConstructorNotConstructable<JSClass>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
+template<typename JSClass, Bun::ErrorCode errorCode> inline JSC::Structure* JSDOMConstructorNotConstructable<JSClass, errorCode>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
 {
     return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
-template<typename JSClass> inline void JSDOMConstructorNotConstructable<JSClass>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
+template<typename JSClass, Bun::ErrorCode errorCode> inline void JSDOMConstructorNotConstructable<JSClass, errorCode>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));

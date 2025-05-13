@@ -20,10 +20,11 @@
 #pragma once
 
 #include "JSDOMConstructorBase.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 
-template<typename JSClass> class JSDOMConstructor final : public JSDOMConstructorBase {
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled = Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR> class JSDOMConstructor final : public JSDOMConstructorBase {
 public:
     using Base = JSDOMConstructorBase;
 
@@ -40,7 +41,7 @@ public:
 
 private:
     JSDOMConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, construct)
+        : Base(vm, structure, construct, nullptr, errorCodeIfCalled)
     {
     }
 
@@ -50,19 +51,19 @@ private:
     void initializeProperties(JSC::VM&, JSDOMGlobalObject&) {}
 };
 
-template<typename JSClass> inline JSDOMConstructor<JSClass>* JSDOMConstructor<JSClass>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled> inline JSDOMConstructor<JSClass, errorCodeIfCalled>* JSDOMConstructor<JSClass, errorCodeIfCalled>::create(JSC::VM& vm, JSC::Structure* structure, JSDOMGlobalObject& globalObject)
 {
     JSDOMConstructor* constructor = new (NotNull, JSC::allocateCell<JSDOMConstructor>(vm)) JSDOMConstructor(vm, structure);
     constructor->finishCreation(vm, globalObject);
     return constructor;
 }
 
-template<typename JSClass> inline JSC::Structure* JSDOMConstructor<JSClass>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled> inline JSC::Structure* JSDOMConstructor<JSClass, errorCodeIfCalled>::createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
 {
     return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
-template<typename JSClass> inline void JSDOMConstructor<JSClass>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled> inline void JSDOMConstructor<JSClass, errorCodeIfCalled>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));

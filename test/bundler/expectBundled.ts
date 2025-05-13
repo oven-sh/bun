@@ -122,7 +122,7 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string | Buffer | Blob>;
+  files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */

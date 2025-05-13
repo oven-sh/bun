@@ -6451,6 +6451,23 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
+extern "C" void Bun__JSValue__unprotect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (value && value.isCell()) {
+        JSCell* cell = value.asCell();
+        gcUnprotect(cell);
+    }
+}
+
+extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (value && value.isCell()) {
+        JSCell* cell = value.asCell();
+        gcProtect(cell);
+    }
+}
 #if ASSERT_ENABLED
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {

@@ -119,15 +119,14 @@ function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min:
     ) {
       throw $ERR_TLS_INVALID_PROTOCOL_METHOD("SSLv3 methods disabled");
     } else if (secureProtocol === "SSLv23_method") {
-      minVersionName = "TLSv1";
-      maxVersionName = "TLSv1.2";
+      minVersionName = DEFAULT_MIN_VERSION;
+      maxVersionName = DEFAULT_MAX_VERSION;
     } else if (secureProtocol === "SSLv23_server_method") {
-      minVersionName = "TLSv1";
-      maxVersionName = "TLSv1.2";
-      // method = TLS_server_method();
+      minVersionName = DEFAULT_MIN_VERSION;
+      maxVersionName = DEFAULT_MAX_VERSION;
     } else if (secureProtocol === "SSLv23_client_method") {
-      minVersionName = "TLSv1";
-      maxVersionName = "TLSv1.2";
+      minVersionName = DEFAULT_MIN_VERSION;
+      maxVersionName = DEFAULT_MAX_VERSION;
       // method = TLS_client_method();
     } else if (secureProtocol === "TLS_method") {
       minVersionName = "TLSv1";

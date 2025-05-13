@@ -459,7 +459,7 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 TLSSocket.prototype[buntls] = function (port, host) {
   const { minVersion, maxVersion } = this[ksecureContext];
 
-  const options = {
+  return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
     serverName: this.servername || host || "localhost",
@@ -471,8 +471,6 @@ TLSSocket.prototype[buntls] = function (port, host) {
     maxVersionName: TLS_VERSION_REVERSE_MAP[maxVersion],
     ...this[ksecureContext],
   };
-  console.log("BUN TLS", options);
-  return options;
 };
 
 let CLIENT_RENEG_LIMIT = 3,

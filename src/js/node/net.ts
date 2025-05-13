@@ -260,7 +260,6 @@ const SocketHandlers: SocketHandler = {
     SocketHandlers.drain(socket);
   },
   handshake(socket, success, verifyError) {
-    debugger;
     const { data: self } = socket;
     if (!self) return;
     if (!success && verifyError?.code === "ECONNRESET") {
@@ -423,6 +422,12 @@ const ServerHandlers: SocketHandler = {
       self._hadError = true;
 
       // error before handshake on the server side will only be emitted using tlsClientError
+      self.destroy();
+      return;
+    }
+
+    if (!success && verifyError == null) {
+      self.emit("error", new Error("socket hang up")); // TODO: HANGING HERE
       self.destroy();
       return;
     }

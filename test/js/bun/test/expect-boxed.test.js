@@ -5,6 +5,14 @@ test("boxed number", () => {
 test("boxed symbol", () => {
   expect(Object(Symbol())).not.toEqual(Object(Symbol()));
 });
+test("set props on boxed string", () => {
+  const str1 = new String("abc");
+  const str2 = new String("abc");
+  str1.x = 1;
+  expect(str1).toEqual(str2); // jest doesn't care
+  expect(util.isDeepStrictEqual(str1, str2)).toBe(false);
+  expect(Bun.deepEquals(str1, str2)).toBe(true);
+});
 for (const key of [Symbol(), "abc"]) {
   describe(key === "abc" ? "string key" : "symbol key", () => {
     const util = require("util");

@@ -62,9 +62,10 @@ function test(cmin, cmax, cprot, smin, smax, sprot, proto, cerr, serr) {
                 u(ciphers), 'expect', u(proto), u(cerr), u(serr));
     console.log('  ', where);
     if (!proto) {
-      console.log('client', pair.client.err ? pair.client.err.code : undefined);
-      console.log('server', pair.server.err ? pair.server.err.code : undefined);
-      if (cerr) {
+          console.log('client', pair.client.err ? pair.client.err.code : undefined);
+          console.log('server', pair.server.err ? pair.server.err.code : undefined);
+
+     if (cerr) {
         assert(pair.client.err);
         // Accept these codes as aliases, the one reported depends on the
         // OpenSSL version.
@@ -72,11 +73,13 @@ function test(cmin, cmax, cprot, smin, smax, sprot, proto, cerr, serr) {
             pair.client.err.code === 'ERR_SSL_VERSION_TOO_LOW')
           cerr = 'ERR_SSL_VERSION_TOO_LOW';
         assert.strictEqual(pair.client.err.code, cerr);
-      }
+     }
+
       if (serr) {
         assert(pair.server.err);
         assert.strictEqual(pair.server.err.code, serr);
       }
+
       return cleanup();
     }
 

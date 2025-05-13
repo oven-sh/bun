@@ -19,7 +19,8 @@
 *.mjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 
-*.lockb binary diff=lockb
+bun.lock linguist-language=json
+bun.lockb binary diff=lockb
 
 .vscode/launch.json linguist-generated
 src/api/schema.d.ts linguist-generated

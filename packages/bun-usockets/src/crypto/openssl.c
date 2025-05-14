@@ -349,27 +349,40 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
 
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
-    /* If the handshake failed but we did not get any X509 verification
-       error, then the failure is most likely due to protocol/version
-       negotiation (for example, unsupported protocol version). We map
-       the situation to the generic ERR_SSL_UNSUPPORTED_PROTOCOL code
-       that Node expects in its tls test files. */
-    if (!success && verify_error.error == 0) {
-        static const char *unsupported_proto_client = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
-        static const char *unsupported_proto_server = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-        static const char *unsupported_proto_reason_client = "Unsupported protocol on client";
-        static const char *unsupported_proto_reason_server = "Unsupported protocol on server";
 
+    /* If the handshake failed, map protocol negotiation failures to Node.js error codes. */
+    if (!success) {
+      static const char *unsupported_proto_client = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+      static const char *unsupported_proto_reason_client = "Unsupported protocol on client";
+
+      // Debug log: print out the error code and reason from BoringSSL/OpenSSL
+      if (verify_error.code || verify_error.reason) {
+        printf("[usockets] TLS handshake failure: error=%ld, code=%s, reason=%s\n", (long)verify_error.error, verify_error.code ? verify_error.code : "(null)", verify_error.reason ? verify_error.reason : "(null)");
+      } else {
+        printf("[usockets] TLS handshake failure: error=%ld, no code/reason\n", (long)verify_error.error);
+      }
+
+      if (verify_error.error == 0) {
         verify_error.error = -1;
-        if (SSL_is_server(s->ssl)) {
-            verify_error.reason = unsupported_proto_reason_server;
-            verify_error.code = unsupported_proto_server;
-        } else {
-            verify_error.reason = unsupported_proto_reason_client;
-            verify_error.code = unsupported_proto_client;
-        }
-    }
 
+        if (SSL_is_server(s->ssl)) {
+          verify_error.reason = "Wrong version number on server";
+          verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
+        } else {
+          verify_error.reason = unsupported_proto_reason_client;
+          verify_error.code = unsupported_proto_client;
+        }
+      } else if (
+        verify_error.code && (
+          strcmp(verify_error.code, "TLSV1_ALERT_PROTOCOL_VERSION") == 0 ||
+          strcmp(verify_error.code, "UNSUPPORTED_PROTOCOL") == 0
+        )
+      ) {
+        verify_error.error = -1;
+        verify_error.reason = unsupported_proto_reason_client;
+        verify_error.code = unsupported_proto_client;
+      }
+    }
     context->on_handshake(s, success, verify_error, context->handshake_data);
   }
 }
@@ -617,7 +630,7 @@ restart:
 
         break;
       }
-    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
+    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING && SSL_is_init_finished(s->ssl)) {
       // renegotiation ended successfully call on_handshake
       us_internal_trigger_handshake_callback(s, 1);
     }
@@ -659,6 +672,13 @@ restart:
     // if we are closed here, then exit
     if (!s || us_internal_ssl_socket_is_closed(s)) {
       return NULL;
+    }
+  }
+
+  // --- HANDSHAKE COMPLETION CHECK (initial handshake) ---
+  if (s && !us_internal_ssl_socket_is_closed(s)) {
+    if (s->handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s->ssl)) {
+      us_internal_trigger_handshake_callback(s, 1);
     }
   }
 
@@ -1841,6 +1861,10 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   }
 
   if (written > 0) {
+    // Check if this SSL_write operation completed a pending initial handshake.
+    if (s->handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s->ssl)) {
+      us_internal_trigger_handshake_callback(s, 1);
+    }
     return written;
   }
 

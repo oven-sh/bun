@@ -348,6 +348,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
 
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
+    printf("trigger_handshake_callback: %d errno: %d code: %s reason: %s\n", success, verify_error.error, verify_error.code ? verify_error.code : "NULL", verify_error.reason ? verify_error.reason : "NULL"  );
     context->on_handshake(s, success, verify_error, context->handshake_data);
   }
 }
@@ -386,7 +387,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
 
   if (!SSL_renegotiate(s->ssl)) {
     // we failed to renegotiate
-    us_internal_trigger_handshake_callback(s, 0);
+    us_internal_trigger_handshake_callback(s, 0); // better error here
     return 0;
   }
   return 1;
@@ -400,8 +401,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   
   if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
      (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
-
-    us_internal_trigger_handshake_callback(s, 0);
+    us_internal_trigger_handshake_callback_econnreset(s); 
     return;
   }
 
@@ -421,7 +421,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
         ERR_clear_error();
         s->fatal_error = 1;
       }
-      us_internal_trigger_handshake_callback(s, 0);
+      us_internal_trigger_handshake_callback(s, 0); // better error here
     
       return;
     }

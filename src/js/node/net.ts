@@ -280,6 +280,10 @@ const SocketHandlers: SocketHandler = {
       verifyError = checkServerIdentity(self.servername, cert);
     }
 
+    if (!success && verifyError == null) {
+      // verifyError = new Error("TLS handshake failed");
+    }
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
@@ -426,11 +430,9 @@ const ServerHandlers: SocketHandler = {
       return;
     }
 
-    // if (!success && verifyError == null) {
-    //   self.emit("error", new Error("Fails here"));
-    //   self.destroy();
-    //   return;
-    // }
+    if (!success && verifyError == null) {
+      verifyError = new Error("TLS handshake failed");
+    }
 
     self._securePending = false;
     self.secureConnecting = false;

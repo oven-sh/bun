@@ -6154,7 +6154,7 @@ declare module "bun" {
 
     exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
 
-    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [Socket<Data>, Socket<Data>];
+    upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
     close(): void;
 

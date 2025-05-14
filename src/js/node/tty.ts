@@ -10,7 +10,7 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
-const fs = require("node:fs");
+const fs = require("internal/fs/streams");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
@@ -22,58 +22,70 @@ function ReadStream(fd): void {
 }
 $toClass(ReadStream, "ReadStream", fs.ReadStream);
 
-ReadStream.prototype.setRawMode = function (flag) {
-  flag = !!flag;
+Object.defineProperty(ReadStream, "prototype", {
+  get() {
+    const Prototype = Object.create(fs.ReadStream.prototype);
 
-  // On windows, this goes through the stream handle itself, as it must call
-  // uv_tty_set_mode on the uv_tty_t.
-  //
-  // On POSIX, I tried to use the same approach, but it didn't work reliably,
-  // so we just use the file descriptor and use termios APIs directly.
-  if (process.platform === "win32") {
-    // Special case for stdin, as it has a shared uv_tty handle
-    // and it's stream is constructed differently
-    if (this.fd === 0) {
-      const err = ttySetMode(flag);
-      if (err) {
-        this.emit("error", new Error("setRawMode failed with errno: " + err));
+    Prototype.setRawMode = function (flag) {
+      flag = !!flag;
+
+      // On windows, this goes through the stream handle itself, as it must call
+      // uv_tty_set_mode on the uv_tty_t.
+      //
+      // On POSIX, I tried to use the same approach, but it didn't work reliably,
+      // so we just use the file descriptor and use termios APIs directly.
+      if (process.platform === "win32") {
+        // Special case for stdin, as it has a shared uv_tty handle
+        // and it's stream is constructed differently
+        if (this.fd === 0) {
+          const err = ttySetMode(flag);
+          if (err) {
+            this.emit("error", new Error("setRawMode failed with errno: " + err));
+          }
+          return this;
+        }
+
+        const handle = this.$bunNativePtr;
+        if (!handle) {
+          this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
+          return this;
+        }
+
+        // If you call setRawMode before you call on('data'), the stream will
+        // not be constructed, leading to EBADF
+        // This corresponds to the `ensureConstructed` function in `native-readable.ts`
+        this.$start();
+
+        const err = handle.setRawMode(flag);
+        if (err) {
+          this.emit("error", err);
+          return this;
+        }
+      } else {
+        const err = ttySetMode(this.fd, flag);
+        if (err) {
+          this.emit("error", new Error("setRawMode failed with errno: " + err));
+          return this;
+        }
       }
+
+      this.isRaw = flag;
+
       return this;
-    }
+    };
 
-    const handle = this.$bunNativePtr;
-    if (!handle) {
-      this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-      return this;
-    }
+    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
-    // If you call setRawMode before you call on('data'), the stream will
-    // not be constructed, leading to EBADF
-    // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-    this.$start();
-
-    const err = handle.setRawMode(flag);
-    if (err) {
-      this.emit("error", err);
-      return this;
-    }
-  } else {
-    const err = ttySetMode(this.fd, flag);
-    if (err) {
-      this.emit("error", new Error("setRawMode failed with errno: " + err));
-      return this;
-    }
-  }
-
-  this.isRaw = flag;
-
-  return this;
-};
+    return Prototype;
+  },
+  enumerable: true,
+  configurable: true,
+});
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = require("node:fs").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);
@@ -91,7 +103,7 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = require("node:fs").WriteStream.prototype;
+    const Real = fs.WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
     WriteStream.prototype._refreshSize = function () {

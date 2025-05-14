@@ -1464,7 +1464,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
-  const success = writeGeneric(socket, chunk, encoding);
+  const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
     callback();
@@ -1474,26 +1474,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this[kwriteCallback] = callback;
   }
 };
-
-function writeGeneric(socket, data, encoding) {
-  switch (encoding) {
-    case "buffer":
-    case "latin1":
-    case "binary":
-    case "utf8":
-    case "utf-8":
-    case "ascii":
-    case "ucs2":
-    case "ucs-2":
-    case "utf16le":
-    case "utf-16le": {
-      return socket.$write(data, encoding);
-    }
-    default: {
-      return socket.$write(Buffer.from(data, encoding));
-    }
-  }
-}
 
 function createConnection(...args) {
   const normalized = normalizeArgs(args);

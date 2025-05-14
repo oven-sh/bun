@@ -185,3 +185,5 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
 **/.claude/settings.local.json
+
+/.tmp

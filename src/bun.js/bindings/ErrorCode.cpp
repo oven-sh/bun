@@ -2007,6 +2007,15 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(err);
     }
 
+    case Bun::ErrorCode::ERR_SSL_NO_PROTOCOLS_AVAILABLE: {
+        auto message = "no protocols available"_s;
+        auto err = createError(globalObject, error, message);
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, String("SSL routines"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, String("no protocols available"_s)));
+
+        return JSC::JSValue::encode(err);
+    }
+
     case Bun::ErrorCode::ERR_USE_AFTER_CLOSE: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);

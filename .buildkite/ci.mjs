@@ -230,7 +230,6 @@ function getRetry(limit = 0) {
     },
     automatic: [
       { exit_status: 1, limit },
-      { exit_status: -1, limit: 1 },
       { exit_status: 255, limit: 1 },
       { signal_reason: "cancel", limit: 1 },
       { signal_reason: "agent_stop", limit: 1 },

@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";

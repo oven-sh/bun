@@ -29,6 +29,12 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
     expect(response.status).toBe(200);
   });
 
+  it("fetch.preconnect works without specifying a port", async () => {
+    fetch.preconnect("http://example.com");
+    const response = await fetch("http://example.com");
+    expect(response.status).toBe(200);
+  });
+
   describe("doesn't break the request when", () => {
     for (let endOrTerminate of ["end", "terminate", "shutdown"]) {
       describe(endOrTerminate, () => {
@@ -109,6 +115,7 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
 
   it("fetch.preconnect validates the URL", async () => {
     expect(() => fetch.preconnect("http://localhost:0")).toThrow();
+    expect(() => fetch.preconnect("http://localhost")).not.toThrow();
     expect(() => fetch.preconnect("")).toThrow();
     expect(() => fetch.preconnect(" ")).toThrow();
     expect(() => fetch.preconnect("unix:///tmp/foo")).toThrow();

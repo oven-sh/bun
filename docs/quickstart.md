@@ -56,14 +56,13 @@ Then add the following to your `compilerOptions` in `tsconfig.json`:
 ```json#tsconfig.json
 {
   "compilerOptions": {
+    // Environment setup & latest features
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
+    "jsx": "react-jsx",
+    "allowJs": true,
   }
 }
 ```

@@ -3941,7 +3941,6 @@ pub const H2FrameParser = struct {
 
         // Check if headers block exceeds maxSendHeaderBlockLength
         if (this.maxSendHeaderBlockLength != 0 and encoded_size > this.maxSendHeaderBlockLength) {
-            //
             stream.state = .CLOSED;
             stream.rstCode = @intFromEnum(ErrorCode.REFUSED_STREAM);
 

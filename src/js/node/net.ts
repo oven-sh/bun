@@ -285,23 +285,11 @@ const SocketHandlers: SocketHandler = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
-          const remapped = (() => {
-            console.log("THE CODE", verifyError.code);
-            switch (verifyError.code) {
-              case "ERR_SSL_NO_PROTOCOLS_AVAILABLE":
-                return new Error("TLS handshake failed");
-              default:
-                return verifyError;
-            }
-          })();
-
-          console.log("The error", remapped);
-
-          self.emit("error", remapped);
+          self.emit("error", verifyError);
           self.emit("secure", self);
-          self.emit("_tlsError", remapped);
-          self.server.emit("tlsClientError", remapped, self);
-          self.destroy(remapped);
+          self.emit("_tlsError", verifyError);
+          self.server.emit("tlsClientError", verifyError, self);
+          self.destroy(verifyError);
           return;
         }
       } else {

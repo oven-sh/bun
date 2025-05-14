@@ -357,16 +357,17 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
     if (!success && verify_error.error == 0) {
         static const char *unsupported_proto_client = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
         static const char *unsupported_proto_server = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-        static const char *unsupported_proto_reason = "Unsupported protocol";
+        static const char *unsupported_proto_reason_client = "Unsupported protocol on client";
+        static const char *unsupported_proto_reason_server = "Unsupported protocol on server";
 
         verify_error.error = -1;
         if (SSL_is_server(s->ssl)) {
+            verify_error.reason = unsupported_proto_reason_server;
             verify_error.code = unsupported_proto_server;
         } else {
+            verify_error.reason = unsupported_proto_reason_client;
             verify_error.code = unsupported_proto_client;
         }
-
-        verify_error.reason = unsupported_proto_reason;
     }
 
     context->on_handshake(s, success, verify_error, context->handshake_data);

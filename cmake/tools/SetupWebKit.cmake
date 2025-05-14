@@ -80,6 +80,9 @@ else()
 endif()
 
 if(ENABLE_ASAN)
+  # We cannot mix and match ASan Bun + non-ASan WebKit, or vice versa, because some WebKit classes
+  # change their layout according to whether ASan is used, for example:
+  # https://github.com/oven-sh/WebKit/blob/eda8b0fb4fb1aa23db9c2b00933df8b58bcdd289/Source/WTF/wtf/Vector.h#L682
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 

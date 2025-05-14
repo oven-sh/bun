@@ -430,6 +430,8 @@ const ServerHandlers: SocketHandler = {
     if (!success) {
       const err = verifyError || $ERR_SSL_UNSUPPORTED_PROTOCOL("TLS handshake failed");
 
+      console.log("ERRRRR", err);
+
       self._hadError = true;
       self.emit("_tlsError", err);
       self.server.emit("tlsClientError", err, self);

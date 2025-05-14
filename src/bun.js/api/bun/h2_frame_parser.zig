@@ -3944,8 +3944,12 @@ pub const H2FrameParser = struct {
             stream.state = .CLOSED;
             stream.rstCode = @intFromEnum(ErrorCode.REFUSED_STREAM);
 
-            this.dispatchWith2Extra(.onFrameError, stream.getIdentifier(), JSC.JSValue.jsNumber(1), // Frame type HEADERS (1)
-                JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)));
+            this.dispatchWith2Extra(
+                .onFrameError,
+                stream.getIdentifier(),
+                JSC.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
+                JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
+            );
 
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
             return JSC.JSValue.jsNumber(stream_id);

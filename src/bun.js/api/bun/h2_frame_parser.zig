@@ -4210,7 +4210,7 @@ pub const H2FrameParser = struct {
                 }
                 if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |max_send_header_block_length| {
                     if (max_send_header_block_length.isNumber()) {
-                        this.maxSendHeaderBlockLength = @truncate(max_send_header_block_length.to(u64));
+                        this.maxSendHeaderBlockLength = @bitCast(max_send_header_block_length.toInt32());
                     }
                 }
             }

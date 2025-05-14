@@ -88,6 +88,28 @@ NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     return nullptr;
 }
 
+JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* globalObject)
+{
+    JSModuleNamespaceObject* object = m_namespaceObject.get();
+    if (object) {
+        return object;
+    }
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        object = thisObject->moduleRecord(globalObject)->getModuleNamespace(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (object) {
+            namespaceObject(vm, object);
+        }
+    } else {
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", info()->className.characters());
+    }
+
+    return object;
+}
+
 JSC_DECLARE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode);
 JSC_DECLARE_HOST_FUNCTION(jsNodeVmModuleGetStatus);
@@ -179,7 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalO
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSValue::encode(thisObject->namespace_());
+    return JSValue::encode(thisObject->namespaceObject(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -292,7 +314,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(vmModule, info());
     Base::visitChildren(vmModule, visitor);
 
-    visitor.append(vmModule->m_namespace);
+    visitor.append(vmModule->m_namespaceObject);
     visitor.append(vmModule->m_context);
 
     auto moduleNatives = vmModule->m_resolveCache.values();

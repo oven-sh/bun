@@ -2,8 +2,8 @@
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
+#include "JSPromise.h"
 #include "JSSourceCode.h"
 #include "ModuleAnalyzer.h"
 #include "Parser.h"
@@ -228,7 +228,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             JSObject* moduleNative = moduleNativeValue.getObject();
-            auto* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
+            AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
 
             record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
             m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
@@ -244,10 +244,8 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
     }
-
-    RETURN_IF_EXCEPTION(scope, {});
 
     status(Status::Linked);
     return JSC::jsUndefined();
@@ -273,7 +271,19 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
     }
 
     auto run = [&] {
-        // TODO(@heimskr): top-level await support
+        status(Status::Evaluating);
+
+        for (const auto& request : record->requestedModules()) {
+            if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
+                if (auto* dependency = jsDynamicCast<NodeVMSourceTextModule*>(iter->value.get())) {
+                    if (dependency->status() == Status::Linked) {
+                        JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+                        RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm SourceTextModule dependencies");
+                    }
+                }
+            }
+        }
+
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 

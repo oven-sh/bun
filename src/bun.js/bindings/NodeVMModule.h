@@ -2,7 +2,8 @@
 
 #include "NodeVM.h"
 
-#include "JavaScriptCore/AbstractModuleRecord.h"
+#include "AbstractModuleRecord.h"
+#include "JSModuleNamespaceObject.h"
 
 namespace Bun {
 
@@ -49,8 +50,8 @@ public:
     Status status() const { return m_status; }
     void status(Status value) { m_status = value; }
 
-    JSObject* namespace_() const { return m_namespace.get(); }
-    void namespace_(VM& vm, JSObject* value) { m_namespace.set(vm, this, value); }
+    JSModuleNamespaceObject* namespaceObject(JSC::JSGlobalObject* globalObject);
+    void namespaceObject(JSC::VM& vm, JSModuleNamespaceObject* value) { m_namespaceObject.set(vm, this, value); }
 
     const WTF::Vector<NodeVMModuleRequest>& moduleRequests() const { return m_moduleRequests; }
     void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
@@ -67,7 +68,7 @@ public:
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
-    mutable WriteBarrier<JSObject> m_namespace;
+    mutable WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
     mutable WriteBarrier<JSObject> m_context;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     mutable WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;

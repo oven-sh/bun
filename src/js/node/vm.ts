@@ -9,7 +9,6 @@ const {
   validateInt32,
   validateBuffer,
   validateFunction,
-  validateInternalField,
 } = require("internal/validators");
 const util = require("node:util");
 
@@ -190,7 +189,6 @@ class Module {
   }
 
   [util.inspect.custom](depth, options) {
-    validateInternalField(this, kNative, "Module");
     if (typeof depth === "number" && depth < 0) return this;
 
     const constructor = getConstructorOf(this) || Module;
@@ -301,7 +299,6 @@ class SourceTextModule extends Module {
       const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, moduleNatives, 0);
     } catch (e) {
-      console.error("linking error:", e);
       this.#error = e;
       throw e;
     } finally {

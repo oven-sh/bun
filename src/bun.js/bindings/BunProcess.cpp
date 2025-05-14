@@ -3310,7 +3310,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     return object;
 }
 
-static int32_t debugPort;
+static uint16_t debugPort;
 
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

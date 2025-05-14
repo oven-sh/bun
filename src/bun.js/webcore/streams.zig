@@ -205,12 +205,12 @@ pub const Result = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
 
-    pub fn deinit(this: *Result) void {
+    pub fn deinit(this: *Result, is_shutting_down: bool) void {
         switch (this.*) {
             .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
             .err => |err| {
-                if (err == .JSValue) {
+                if (err == .JSValue and !is_shutting_down) {
                     err.JSValue.unprotect();
                 }
             },
@@ -378,7 +378,23 @@ pub const Result = union(Tag) {
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
         ) void {
-            defer promise.asValue(globalThis).unprotect();
+            const vm = globalThis.bunVM();
+            if (vm.isShuttingDown()) {
+                @branchHint(.unlikely);
+                Output.debugWarn("fulfillPromise called after shutdown", .{});
+                if (result == .pending) {
+                    result.pending.deinit();
+                }
+                return;
+            }
+
+            const promise_value = promise.asValue(globalThis);
+            defer {
+                if (!vm.isShuttingDown()) {
+                    @branchHint(.likely);
+                    promise_value.unprotect();
+                }
+            }
             switch (result) {
                 .err => |err| {
                     promise.reject(globalThis, err.toJSC(globalThis));
@@ -500,9 +516,21 @@ pub const Result = union(Tag) {
 
     pub fn fulfillPromise(result: *Result, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
         const vm = globalThis.bunVM();
+        if (vm.isShuttingDown()) {
+            @branchHint(.unlikely);
+            Output.debugWarn("fulfillPromise called after shutdown", .{});
+            result.deinit(true);
+            return;
+        }
+
         const loop = vm.eventLoop();
         const promise_value = promise.asValue(globalThis);
-        defer promise_value.unprotect();
+        defer {
+            if (!vm.isShuttingDown()) {
+                @branchHint(.likely);
+                promise_value.unprotect();
+            }
+        }
 
         loop.enter();
         defer loop.exit();
@@ -527,6 +555,13 @@ pub const Result = union(Tag) {
                 const value = result.toJS(globalThis);
                 value.ensureStillAlive();
 
+                if (globalThis.hasException()) {
+                    @branchHint(.unlikely);
+                    result.* = .{ .temporary = .{} };
+                    promise.reject(globalThis, globalThis.takeError(error.JSError));
+                    return;
+                }
+
                 result.* = .{ .temporary = .{} };
                 promise.resolve(globalThis, value);
             },
@@ -534,12 +569,6 @@ pub const Result = union(Tag) {
     }
 
     pub fn toJS(this: *const Result, globalThis: *JSGlobalObject) JSValue {
-        if (JSC.VirtualMachine.get().isShuttingDown()) {
-            var that = this.*;
-            that.deinit();
-            return .zero;
-        }
-
         switch (this.*) {
             .owned => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -1288,7 +1317,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
-                prom.asValue(globalThis).unprotect();
+                const promise_value = prom.asValue(globalThis);
+                defer {
+                    if (!globalThis.bunVM().isShuttingDown()) {
+                        @branchHint(.likely);
+                        promise_value.unprotect();
+                    }
+                }
+
                 prom.resolve(globalThis, JSC.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
                 this.wrote_at_start_of_flush = this.wrote;
             }

@@ -107,7 +107,7 @@ pub fn onData(
         if (stream == .err) {
             defer {
                 this.buffer.clearAndFree();
-                this.pending.result.deinit();
+                this.pending.result.deinit(bun.JSC.VirtualMachine.get().isShuttingDown());
                 this.pending.result = .{ .done = {} };
                 this.buffer_action = null;
             }
@@ -346,7 +346,7 @@ pub fn onCancel(this: *@This()) void {
 
     if (view != .zero) {
         this.pending_buffer = &.{};
-        this.pending.result.deinit();
+        this.pending.result.deinit(bun.JSC.VirtualMachine.get().isShuttingDown());
         this.pending.result = .{ .done = {} };
         this.pending.run();
     }
@@ -372,7 +372,7 @@ pub fn deinit(this: *@This()) void {
         this.done = true;
 
         this.pending_buffer = &.{};
-        this.pending.result.deinit();
+        this.pending.result.deinit(bun.JSC.VirtualMachine.get().isShuttingDown());
         this.pending.result = .{ .done = {} };
         this.pending.run();
     }
@@ -406,7 +406,7 @@ pub fn toAnyBlob(this: *@This()) ?Blob.Any {
             .capacity = 0,
         };
         this.done = true;
-        this.pending.result.deinit();
+        this.pending.result.deinit(false);
         this.pending.result = .{ .done = {} };
         this.parent().is_closed = true;
         return .{ .InternalBlob = .{
@@ -425,7 +425,7 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
 
     if (this.pending.result == .err) {
         const err, _ = this.pending.result.err.toJSWeak(globalThis);
-        this.pending.result.deinit();
+        this.pending.result.deinit(bun.JSC.VirtualMachine.get().isShuttingDown());
         this.done = true;
         this.buffer.clearAndFree();
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);

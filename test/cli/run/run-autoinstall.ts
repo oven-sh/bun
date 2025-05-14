@@ -62,7 +62,7 @@ test("--install=fallback to install missing packages", async () => {
   ]);
 
   Bun.spawnSync({
-    cmd: ["bun", "install"],
+    cmd: [bunExe(), "install"],
     cwd: dir,
     env: bunEnv,
   });

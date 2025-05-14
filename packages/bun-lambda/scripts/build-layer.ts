@@ -2,10 +2,10 @@
 process.stdout.getWindowSize = () => [80, 80];
 process.stderr.getWindowSize = () => [80, 80];
 
-import { createReadStream, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { Command, Flags } from "@oclif/core";
 import JSZip from "jszip";
+import { createReadStream, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export class BuildCommand extends Command {
   static summary = "Build a custom Lambda layer for Bun.";

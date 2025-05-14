@@ -1,18 +1,18 @@
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
-  isLinux,
-  bunEnv as env,
-  bunExe,
   assertManifestsPopulated,
-  readdirSorted,
+  bunExe,
+  bunEnv as env,
+  isLinux,
   isWindows,
-  stderrForInstall,
+  readdirSorted,
   runBunInstall,
+  stderrForInstall,
 } from "harness";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
-import { writeFile, exists, rm, mkdir } from "fs/promises";
 import { join, sep } from "path";
-import { spawn, file, write } from "bun";
 
 var verdaccio = new VerdaccioRegistry();
 var packageDir: string;

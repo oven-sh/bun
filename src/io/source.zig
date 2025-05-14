@@ -48,7 +48,7 @@ pub const Source = union(enum) {
     }
     pub fn toStream(this: Source) *uv.uv_stream_t {
         return switch (this) {
-            .pipe => @ptrCast(this.pipe),
+            .pipe => this.pipe.asStream(),
             .tty => @ptrCast(this.tty),
             .sync_file, .file => unreachable,
         };

@@ -3201,6 +3201,11 @@ JSC::EncodedJSValue ZigString__toTypeErrorInstance(const ZigString* str, JSC::JS
     return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
 }
 
+JSC::EncodedJSValue ZigString__toDOMExceptionInstance(const ZigString* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
+{
+    return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
+}
+
 JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(Zig::getSyntaxErrorInstance(str, globalObject));
@@ -5341,6 +5346,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
+// This enum must match the zig enum in src/bun.js/bindings/JSValue.zig JSValue.BuiltinName
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -5365,6 +5371,7 @@ enum class BuiltinNamesMap : uint8_t {
     ignoreBOM,
     type,
     signal,
+    cmd,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5440,6 +5447,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::signal: {
         return clientData->builtinNames().signalPublicName();
+    }
+    case BuiltinNamesMap::cmd: {
+        return clientData->builtinNames().cmdPublicName();
     }
     default: {
         ASSERT_NOT_REACHED();

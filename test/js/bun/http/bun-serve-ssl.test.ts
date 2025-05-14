@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
-import { tls } from "harness";
 
 describe("Bun.serve SSL validations", () => {
   const fixtures = [

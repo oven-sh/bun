@@ -791,7 +791,7 @@ pub const H2FrameParser = struct {
                 const stream = this.parser.streams.getEntry(this.stream_id) orelse return;
                 const value = stream.value_ptr;
                 if (value.state != .CLOSED) {
-                    this.parser.abortStream(value, reason);
+                    this.parser.abortStream(value, Bun__wrapAbortError(this.parser.globalThis, reason));
                 }
             }
 
@@ -3041,9 +3041,6 @@ pub const H2FrameParser = struct {
         }
 
         const error_code = error_arg.toU32();
-        if (error_code > 13) {
-            return globalObject.throw("Invalid ErrorCode", .{});
-        }
 
         this.endStream(stream, @enumFromInt(error_code));
 
@@ -3472,6 +3469,16 @@ pub const H2FrameParser = struct {
         return stream_id;
     }
 
+    pub fn setNextStreamID(this: *H2FrameParser, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments();
+        bun.debugAssert(args_list.len >= 1);
+        const stream_id_arg = args_list.ptr[0];
+        bun.debugAssert(stream_id_arg.isNumber());
+        this.lastStreamID = stream_id_arg.to(u32);
+        return .undefined;
+    }
+
     pub fn hasNativeRead(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         return JSC.JSValue.jsBoolean(this.native_socket == .tcp or this.native_socket == .tls);
     }
@@ -3562,6 +3569,7 @@ pub const H2FrameParser = struct {
         }
         return .undefined;
     }
+
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -3905,7 +3913,7 @@ pub const H2FrameParser = struct {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                     if (signal_.aborted()) {
                         stream.state = .IDLE;
-                        this.abortStream(stream, signal_.abortReason());
+                        this.abortStream(stream, Bun__wrapAbortError(globalObject, signal_.abortReason()));
                         return JSC.JSValue.jsNumber(stream_id);
                     }
                     stream.attachSignal(this, signal_);
@@ -4269,6 +4277,8 @@ pub const H2FrameParser = struct {
         this.deref();
     }
 };
+
+extern fn Bun__wrapAbortError(globalObject: *JSC.JSGlobalObject, cause: JSC.JSValue) JSC.JSValue;
 
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{

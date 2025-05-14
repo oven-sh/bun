@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
-import { randomUUIDv7, RedisClient } from "bun";
-import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, retry, testKey } from "../test-utils";
+import { RedisClient } from "bun";
+import { describe, expect, mock, test } from "bun:test";
+import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
 /**
  * Test suite for connection failures, reconnection, and error handling

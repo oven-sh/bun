@@ -4007,7 +4007,7 @@ pub const NodeFS = struct {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
-                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, path)) },
+                    .result = .{ .string = bun.String.createFromOSPath(path) },
                 };
             },
         }
@@ -4029,6 +4029,20 @@ pub const NodeFS = struct {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
                             .EXIST => {
+                                // On Windows, this may happen if trying to mkdir replacing a file
+                                if (bun.Environment.isWindows) {
+                                    switch (bun.sys.directoryExistsAt(bun.invalid_fd, parent)) {
+                                        .err => {},
+                                        .result => |res| {
+                                            // is a directory. break.
+                                            if (!res) return .{ .err = .{
+                                                .errno = @intFromEnum(bun.sys.E.NOTDIR),
+                                                .syscall = .mkdir,
+                                                .path = this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path[0..len])),
+                                            } };
+                                        },
+                                    }
+                                }
                                 // Handle race condition
                                 break;
                             },
@@ -4106,7 +4120,7 @@ pub const NodeFS = struct {
             return .{ .result = .{ .none = {} } };
         }
         return .{
-            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, working_mem[0..first_match])) },
+            .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },
         };
     }
 

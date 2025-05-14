@@ -72,7 +72,7 @@ function parseV8OrIE(stack: string): Frame[] {
       let fileName = ["eval", "<anonymous>"].indexOf(locationParts[0]) > -1 ? undefined : locationParts[0];
 
       return {
-        fn: functionName || 'unknown',
+        fn: functionName || "unknown",
         file: fileName,
         line: 0 | locationParts[1],
         col: 0 | locationParts[2],
@@ -127,7 +127,7 @@ function remapFileName(fileName: string) {
   if (fileName.startsWith("blob:")) {
     const sourceMapURL = blobToSourceMap.get(fileName);
     if (sourceMapURL) {
-      return location.origin + '/_bun/client/hmr-' + sourceMapURL.id + '.js';
+      return location.origin + "/_bun/client/hmr-" + sourceMapURL.id + ".js";
     }
   }
   return fileName;

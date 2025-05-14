@@ -426,11 +426,11 @@ const ServerHandlers: SocketHandler = {
       return;
     }
 
-    if (!success && verifyError == null) {
-      self.emit("error", new Error("socket hang up")); // TODO: HANGING HERE
-      self.destroy();
-      return;
-    }
+    // if (!success && verifyError == null) {
+    //   self.emit("error", new Error("Fails here"));
+    //   self.destroy();
+    //   return;
+    // }
 
     self._securePending = false;
     self.secureConnecting = false;

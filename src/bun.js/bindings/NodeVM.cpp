@@ -80,17 +80,54 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
+
+    // First try parsing the code as is without wrapping it in an anonymous function expression.
+    // This is to reject cases where the user passes in a string like "});(function() {".
+    if (!args.isEmpty() && args.at(0).isString()) {
+        ParserError error;
+        String code = args.at(0).toWTFString(globalObject);
+
+        SourceCode sourceCode(
+            JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position, SourceProviderSourceType::Program),
+            position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
+
+        if (!checkSyntax(vm, sourceCode, error)) {
+            ASSERT(error.isValid());
+
+            bool actuallyValid = true;
+
+            if (error.type() == ParserError::ErrorType::SyntaxError && error.syntaxErrorType() == ParserError::SyntaxErrorIrrecoverable) {
+                String message = error.message();
+                if (message == "Return statements are only valid inside functions.") {
+                    actuallyValid = false;
+                } else {
+                    const JSToken& token = error.token();
+                    int start = token.m_startPosition.offset;
+                    int end = token.m_endPosition.offset;
+                    if (start >= 0 && start < end) {
+                        StringView tokenView = sourceCode.view().substring(start, end - start);
+                        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, token, makeString("Unexpected token '"_s, tokenView, '\''), error.line());
+                    }
+                }
+            }
+
+            if (actuallyValid) {
+                auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+                throwException(globalObject, throwScope, exception);
+                return nullptr;
+            }
+        }
+    }
+
     // wrap the arguments in an anonymous function expression
     int startOffset = 0;
     String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
-    position.m_column = OrdinalNumber::fromZeroBasedInt(position.m_column.zeroBasedInt());
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
-
-    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
     ParserError error;
     bool isEvalNode = false;
@@ -125,8 +162,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     // the code we passed in should be a single expression statement containing a function expression
     StatementNode* statement = program->singleStatement();
     if (!statement || !statement->isExprStatement()) {
-        JSToken token;
-        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, token, "Parser error"_s, -1);
+        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken {}, "Parser error"_s, -1);
         auto exception = error.toErrorObject(globalObject, sourceCode, -1);
         throwException(globalObject, throwScope, exception);
         return nullptr;

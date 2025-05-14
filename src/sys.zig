@@ -331,7 +331,7 @@ pub const Error = struct {
 
     const todo_errno = std.math.maxInt(Int) - 1;
 
-    pub const Int = if (Environment.isWindows) u16 else u8; // @TypeOf(@intFromEnum(E.BADF));
+    pub const Int = u16;
 
     /// TODO: convert to function
     pub const oom = fromCode(E.NOMEM, .read);

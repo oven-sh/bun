@@ -427,6 +427,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
+  printf("SSL_do_handshake result: %d\n", result);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
@@ -532,8 +533,18 @@ restart:
     
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
+       printf("SSL_read failed, just_read: %d, error: %d\n", just_read, err);
       // as far as I know these are the only errors we want to handle
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        unsigned long err_code;
+        while ((err_code = ERR_get_error()) != 0) {
+          const char* err_str = ERR_reason_error_string(err_code);
+          if (err_str) {
+            printf("OpenSSL error queue: %s\n", err_str);
+          } else {
+            printf("OpenSSL error queue: (unknown error)\n");
+          }
+        }
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (us_internal_ssl_renegotiate(s)) {
             // ok, we are done here, we need to call SSL_read again
@@ -964,7 +975,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   }
 
   while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                                SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
 
     X509_STORE_add_cert(store, x);
 

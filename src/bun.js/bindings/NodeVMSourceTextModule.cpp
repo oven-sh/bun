@@ -127,12 +127,31 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
     JSArray* requestsArray = JSC::constructEmptyArray(globalObject, nullptr, requests.size());
 
-    // MarkedArgumentBuffer buffer;
-
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
     const JSC::Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const JSC::Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const JSC::Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
+
+    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
+    attributesNodes.reserveInitialCapacity(requests.size());
+
+    for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
+        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
+        if (statement->isModuleDeclarationNode()) {
+            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
+            if (moduleDeclaration->isImportDeclarationNode()) {
+                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
+                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
+                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == WTF::String(*requests.at(attributesNodes.size()).m_specifier), "Module name mismatch");
+                attributesNodes.append(importDeclaration->attributesList());
+            } else if (moduleDeclaration->hasAttributesList()) {
+                // Necessary to make the indices of `attributesNodes` and `requests` match up
+                attributesNodes.append(nullptr);
+            }
+        }
+    }
+
+    ASSERT_WITH_MESSAGE(attributesNodes.size() == requests.size(), "Attributes node count doesn't match request count (%zu != %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
@@ -143,6 +162,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
         WTF::String attributesTypeString = "unknown"_str;
+
+        WTF::HashMap<WTF::String, WTF::String> attributeMap;
+        JSObject* attributesObject = constructEmptyObject(globalObject);
 
         if (request.m_attributes) {
             JSValue attributesType {};
@@ -170,23 +192,24 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
                 break;
             }
 
-            WTF::HashMap<WTF::String, WTF::String> attributeMap {
-                { "type"_s, attributesTypeString },
-            };
-
-            JSObject* attributesObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+            attributeMap.set("type"_s, WTFMove(attributesTypeString));
             attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
+
             if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
                 attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
                 attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
             }
-            requestObject->putDirect(vm, attributesIdentifier, attributesObject);
-            addModuleRequest({ WTF::String(*request.m_specifier), WTFMove(attributeMap) });
-        } else {
-            addModuleRequest({ WTF::String(*request.m_specifier), {} });
-            requestObject->putDirect(vm, attributesIdentifier, JSC::jsNull());
         }
 
+        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
+            for (auto [key, value] : attributesNode->attributes()) {
+                attributeMap.set(key->string(), value->string());
+                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+            }
+        }
+
+        requestObject->putDirect(vm, attributesIdentifier, attributesObject);
+        addModuleRequest({ WTF::String(*request.m_specifier), WTFMove(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }
 

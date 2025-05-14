@@ -14,21 +14,21 @@ import {
   appendFileSync,
   existsSync,
   constants as fs,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   statSync,
+  symlinkSync,
   unlink,
   unlinkSync,
   writeFileSync,
-  linkSync,
-  symlinkSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep, extname } from "node:path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
   getAbi,
@@ -749,7 +749,8 @@ async function spawnSafe(options) {
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
     (error = /oh no: Bun has crashed/i.exec(buffer)) ||
-    (error = /(ERROR: AddressSanitizer)/.exec(buffer))
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer)) ||
+    (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";

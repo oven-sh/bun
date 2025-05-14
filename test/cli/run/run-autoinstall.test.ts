@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
@@ -52,13 +52,19 @@ test("--install=fallback to install missing packages", async () => {
   const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   await Promise.all([
-    Bun.write(join(dir, "index.js"), "import isEven from 'is-even'; import isOdd from 'is-odd'; console.log(isEven(2), isOdd(2));"),
-    Bun.write(join(dir, "package.json"), JSON.stringify({
-      name: "test",
-      dependencies: {
-        "is-odd": "1.0.0"
-      }
-    })),
+    Bun.write(
+      join(dir, "index.js"),
+      "import isEven from 'is-even'; import isOdd from 'is-odd'; console.log(isEven(2), isOdd(2));",
+    ),
+    Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "test",
+        dependencies: {
+          "is-odd": "1.0.0",
+        },
+      }),
+    ),
   ]);
 
   Bun.spawnSync({

@@ -2575,6 +2575,7 @@ pub const us_bun_verify_error_t = extern struct {
         const fallback = JSC.SystemError{
             .code = bun.String.createUTF8(code),
             .message = bun.String.createUTF8(reason),
+            .errno = this.error_no,
         };
 
         return fallback.toErrorInstance(globalObject);

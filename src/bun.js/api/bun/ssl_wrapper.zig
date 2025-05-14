@@ -306,7 +306,6 @@ pub fn SSLWrapper(comptime T: type) type {
             // If no certificate verification error, fall back to handshake error
             if (verr.code == null and peek_err != 0) {
                 const reason_ptr = BoringSSL.ERR_reason_error_string(peek_err);
-                bun.Output.print("BoringSSL error: {s}\n", .{reason_ptr});
 
                 verr = uws.us_bun_verify_error_t{
                     .error_no = @intCast(peek_err),

@@ -2,11 +2,11 @@
 // Components integration. It is designed as a minimal base to build RSC
 // applications on, and to showcase what features that Bake offers.
 /// <reference lib="dom" />
+import { onServerSideReload } from "bun:bake/client";
 import * as React from "react";
+import { flushSync } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { onServerSideReload } from "bun:bake/client";
-import { flushSync } from "react-dom";
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -143,7 +143,6 @@ async function goto(href: string, cacheId?: number) {
     currentCssList = cached.css;
     await ensureCssIsReady(currentCssList);
     setPage?.((rscPayload = cached.element));
-    console.log("cached", cached);
     if (olderController?.signal.aborted === false) abortOnRender = olderController;
     return;
   }
@@ -226,9 +225,7 @@ async function goto(href: string, cacheId?: number) {
 function ensureCssIsReady(cssList: string[]) {
   const wait: Promise<void>[] = [];
   for (const href of cssList) {
-    console.log("check", href);
     const existing = cssFiles.get(href);
-    console.log("get", existing);
     if (existing) {
       const { promise, link } = existing;
       if (promise) {
@@ -245,7 +242,6 @@ function ensureCssIsReady(cssList: string[]) {
         link.href = href;
         document.head.appendChild(link);
       }).then(() => {
-        console.log("loaded", href);
         entry.promise = null;
       });
       entry = { promise, link };
@@ -330,7 +326,6 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 
 // Handle browser navigation events
 window.addEventListener("popstate", event => {
-  console.log("popstate", event);
   let state = event.state;
   if (typeof state !== "number") {
     state = undefined;
@@ -445,13 +440,11 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
     }
   };
   const header = new Uint32Array(await readChunk(4))[0];
-  console.log("h", header);
   if (header === 0) {
     currentCssList = [];
   } else {
     currentCssList = td.decode(await readChunk(header)).split("\n");
   }
-  console.log("cc", currentCssList);
   if (chunks.length === 0) {
     return stream;
   }

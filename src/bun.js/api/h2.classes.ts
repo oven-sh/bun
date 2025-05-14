@@ -17,6 +17,14 @@ export default [
         fn: "ping",
         length: 0,
       },
+      altsvc: {
+        fn: "altsvc",
+        length: 3,
+      },
+      origin: {
+        fn: "origin",
+        length: 1,
+      },
       goaway: {
         fn: "goaway",
         length: 3,
@@ -27,6 +35,10 @@ export default [
       },
       settings: {
         fn: "updateSettings",
+        length: 1,
+      },
+      setLocalWindowSize: {
+        fn: "setLocalWindowSize",
         length: 1,
       },
       read: {
@@ -87,6 +99,10 @@ export default [
       },
       hasNativeRead: {
         fn: "hasNativeRead",
+        length: 1,
+      },
+      setNextStreamID: {
+        fn: "setNextStreamID",
         length: 1,
       },
       getAllStreams: {

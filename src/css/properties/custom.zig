@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
@@ -177,9 +177,10 @@ pub const TokenList = struct {
         if (!dest.minify and
             i != this.v.items.len - 1 and
             !(this.v.items[i + 1] == .token and switch (this.v.items[i + 1].token) {
-            .comma, .close_paren => true,
-            else => false,
-        })) {
+                .comma, .close_paren => true,
+                else => false,
+            }))
+        {
             // Whitespace is removed during parsing, so add it back if we aren't minifying.
             try dest.writeChar(' ');
             return true;
@@ -355,14 +356,14 @@ pub const TokenList = struct {
                             .{ .color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (input.tryParse(UnresolvedColor.parse, .{ f, options }).asValue()) |color| {
                         tokens.append(
                             input.allocator(),
                             .{ .unresolved_color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (bun.strings.eql(f, "url")) {
                         input.reset(&state);
                         tokens.append(
@@ -462,9 +463,9 @@ pub const TokenList = struct {
                     }
                     continue;
                 },
-                .hash, .idhash => {
+                .unrestrictedhash, .idhash => {
                     const h = switch (tok.*) {
-                        .hash => |h| h,
+                        .unrestrictedhash => |h| h,
                         .idhash => |h| h,
                         else => unreachable,
                     };
@@ -472,7 +473,7 @@ pub const TokenList = struct {
                         const r, const g, const b, const a = css.color.parseHashColor(h) orelse {
                             tokens.append(
                                 input.allocator(),
-                                .{ .token = .{ .hash = h } },
+                                .{ .token = .{ .unrestrictedhash = h } },
                             ) catch unreachable;
                             break :brk;
                         };
@@ -624,17 +625,17 @@ pub const TokenList = struct {
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         var fallbacks = this.getNecessaryFallbacks(targets);
         const lowest_fallback = fallbacks.lowest();
-        fallbacks.remove(lowest_fallback);
+        bun.bits.remove(ColorFallbackKind, &fallbacks, lowest_fallback);
 
         var res = css.SmallList(Fallbacks, 2){};
-        if (fallbacks.contains(ColorFallbackKind.P3)) {
+        if (fallbacks.p3) {
             res.appendAssumeCapacity(.{
                 ColorFallbackKind.P3.supportsCondition(),
                 this.getFallback(allocator, ColorFallbackKind.P3),
             });
         }
 
-        if (fallbacks.contains(ColorFallbackKind.LAB)) {
+        if (fallbacks.lab) {
             res.appendAssumeCapacity(.{
                 ColorFallbackKind.LAB.supportsCondition(),
                 this.getFallback(allocator, ColorFallbackKind.LAB),
@@ -669,23 +670,23 @@ pub const TokenList = struct {
     }
 
     pub fn getNecessaryFallbacks(this: *const TokenList, targets: css.targets.Targets) ColorFallbackKind {
-        var fallbacks = ColorFallbackKind.empty();
+        var fallbacks = ColorFallbackKind{};
         for (this.v.items) |*token_or_value| {
             switch (token_or_value.*) {
                 .color => |*color| {
-                    fallbacks.insert(color.getPossibleFallbacks(targets));
+                    bun.bits.insert(ColorFallbackKind, &fallbacks, color.getPossibleFallbacks(targets));
                 },
                 .function => |*f| {
-                    fallbacks.insert(f.arguments.getNecessaryFallbacks(targets));
+                    bun.bits.insert(ColorFallbackKind, &fallbacks, f.arguments.getNecessaryFallbacks(targets));
                 },
                 .@"var" => |*v| {
                     if (v.fallback) |*fallback| {
-                        fallbacks.insert(fallback.getNecessaryFallbacks(targets));
+                        bun.bits.insert(ColorFallbackKind, &fallbacks, fallback.getNecessaryFallbacks(targets));
                     }
                 },
                 .env => |*v| {
                     if (v.fallback) |*fallback| {
-                        fallbacks.insert(fallback.getNecessaryFallbacks(targets));
+                        bun.bits.insert(ColorFallbackKind, &fallbacks, fallback.getNecessaryFallbacks(targets));
                     }
                 },
                 else => {},
@@ -859,13 +860,12 @@ pub const UnresolvedColor = union(enum) {
                 const dark: *const TokenList = &ld.dark;
 
                 if (!dest.targets.isCompatible(.light_dark)) {
-                    // TODO(zack): lightningcss -> buncss
-                    try dest.writeStr("var(--lightningcss-light)");
+                    try dest.writeStr("var(--buncss-light");
                     try dest.delim(',', false);
                     try light.toCss(W, dest, is_custom_property);
                     try dest.writeChar(')');
                     try dest.whitespace();
-                    try dest.writeStr("var(--lightningcss-dark");
+                    try dest.writeStr("var(--buncss-dark");
                     try dest.delim(',', false);
                     try dark.toCss(W, dest, is_custom_property);
                     return dest.writeChar(')');
@@ -1265,11 +1265,12 @@ pub const UAEnvironmentVariable = enum {
     /// The viewport segment right position.
     @"viewport-segment-right",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
-
-    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
-        return css.implementEql(@This(), lhs, rhs);
-    }
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A custom CSS function.

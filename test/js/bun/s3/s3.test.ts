@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, getSecret, tempDirWithFiles, isLinux } from "harness";
+import type { S3Options } from "bun";
+import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { S3Client, s3 as defaultS3, file, which } from "bun";
+import { getSecret, tempDirWithFiles } from "harness";
+import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
-import child_process from "child_process";
-import type { S3File, S3Options } from "bun";
-import path from "path";
 
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
@@ -81,6 +81,125 @@ if (isDockerEnabled()) {
     service: "MinIO" as string,
   });
 }
+
+describe("Virtual Hosted-Style", () => {
+  const r2Url = new URL(getSecret("S3_R2_ENDPOINT") as string);
+  // R2 do support virtual hosted style lets use it
+  r2Url.hostname = `${getSecret("S3_R2_BUCKET")}.${r2Url.hostname}`;
+
+  const credentials: S3Options = {
+    accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
+    secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+    endpoint: r2Url.toString(),
+    virtualHostedStyle: true,
+  };
+
+  it("basic operations", async () => {
+    const client = new Bun.S3Client(credentials);
+    const file = client.file(randomUUIDv7() + ".txt");
+    await file.write("Hello Bun!");
+    const text = await file.text();
+    expect(text).toBe("Hello Bun!");
+    const stat = await file.stat();
+    expect(stat.size).toBe(10);
+    expect(stat.type).toBe("text/plain;charset=utf-8");
+    await file.unlink();
+    expect(await file.exists()).toBe(false);
+  });
+
+  it("ignore bucket name in path", async () => {
+    const client = new Bun.S3Client(credentials);
+    const filename = randomUUIDv7() + ".txt";
+    const file = client.file(filename, {
+      bucket: "will-be-ignored",
+    });
+    await file.write("Hello Bun!");
+    const text = await client.file(filename).text();
+    expect(text).toBe("Hello Bun!");
+    await file.unlink();
+  });
+
+  it("presign", async () => {
+    {
+      const client = new Bun.S3Client(credentials);
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe(r2Url.hostname);
+    }
+
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-west-1",
+      });
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-west-1.amazonaws.com");
+    }
+
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+      });
+      const presigned = client.presign("filename.txt");
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-east-1.amazonaws.com");
+    }
+  });
+
+  it("inspect", () => {
+    const client = new Bun.S3Client({
+      endpoint: "bucket.test.r2.cloudflarestorage.com",
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      virtualHostedStyle: true,
+    });
+
+    {
+      expect(Bun.inspect(client)).toBe(
+        'S3Client ("bucket") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+
+    {
+      expect(
+        Bun.inspect(
+          new Bun.S3Client({
+            virtualHostedStyle: true,
+            bucket: "bucket",
+            accessKeyId: "test",
+            secretAccessKey: "test",
+            region: "us-west-1",
+          }),
+        ),
+      ).toBe(
+        'S3Client ("bucket") {\n  endpoint: "https://<bucket>.s3.<region>.amazonaws.com",\n  region: "us-west-1",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+    {
+      const file = client.file("filename.txt");
+      expect(Bun.inspect(file)).toBe(
+        'S3Ref ("bucket/filename.txt") {\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+    {
+      const file = client
+        .file("filename.txt", {
+          type: "text/plain",
+        })
+        .slice(10);
+      expect(Bun.inspect(file)).toBe(
+        'S3Ref ("bucket/filename.txt") {\n  type: "text/plain;charset=utf-8",\n  offset: 10,\n  endpoint: "bucket.test.r2.cloudflarestorage.com",\n  region: "auto",\n  accessKeyId: "[REDACTED]",\n  secretAccessKey: "[REDACTED]",\n  partSize: 5242880,\n  queueSize: 5,\n  retry: 3\n}',
+      );
+    }
+  });
+});
 for (let credentials of allCredentials) {
   describe(`${credentials.service}`, () => {
     const s3Options: S3Options = {
@@ -107,7 +226,8 @@ for (let credentials of allCredentials) {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
             var tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              // await a little bit so we dont change the filename before deleting it
               tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const result = await fetch(tmp_filename, {
                 method: "PUT",
@@ -117,12 +237,17 @@ for (let credentials of allCredentials) {
               expect(result.status).toBe(200);
             });
 
-            afterAll(async () => {
-              const result = await fetch(tmp_filename, {
-                method: "DELETE",
-                s3: options,
-              });
-              expect(result.status).toBe(204);
+            afterEach(async () => {
+              try {
+                const result = await fetch(tmp_filename, {
+                  method: "DELETE",
+                  s3: options,
+                });
+                expect([204, 200, 404]).toContain(result.status);
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via fetch GET", async () => {
@@ -208,22 +333,29 @@ for (let credentials of allCredentials) {
 
         describe("Bun.S3Client", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? null : { bucket: S3Bucket };
 
             var bucket = S3(s3Options);
-            beforeAll(async () => {
+            beforeEach(async () => {
+              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const file = bucket.file(tmp_filename, options);
               await file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const file = bucket.file(tmp_filename, options);
-              await file.unlink();
+            afterEach(async () => {
+              try {
+                const file = bucket.file(tmp_filename, options);
+                await file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.s3().text()", async () => {
               const file = bucket.file(tmp_filename, options);
+              await file.write("Hello Bun!");
               const text = await file.text();
               expect(text).toBe("Hello Bun!");
             });
@@ -343,7 +475,7 @@ for (let credentials of allCredentials) {
                           await writer.end();
                           const stat = await s3File.stat();
                           expect(stat.size).toBe(Buffer.byteLength(payload) * payloadQuantity);
-                          s3File.delete();
+                          await s3File.delete();
                         }
                       },
                       30_000,
@@ -357,16 +489,22 @@ for (let credentials of allCredentials) {
 
         describe("Bun.file", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const s3file = file(tmp_filename, options);
               await s3file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const s3file = file(tmp_filename, options);
-              await s3file.unlink();
+            afterEach(async () => {
+              try {
+                const s3file = file(tmp_filename, options);
+                await s3file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.file().text()", async () => {
@@ -426,7 +564,6 @@ for (let credentials of allCredentials) {
 
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-              s3file.delete();
             });
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -442,7 +579,7 @@ for (let credentials of allCredentials) {
                 await s3File.write(bigPayload);
                 expect(s3File.size).toBeNaN();
                 expect(await s3File.text()).toBe(bigPayload);
-                s3File.delete();
+                await s3File.delete();
               }
             }, 10_000);
           });
@@ -450,16 +587,22 @@ for (let credentials of allCredentials) {
 
         describe("Bun.s3", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+            let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeAll(async () => {
+            beforeEach(async () => {
+              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const s3file = s3(tmp_filename, options);
               await s3file.write("Hello Bun!");
             });
 
-            afterAll(async () => {
-              const s3file = s3(tmp_filename, options);
-              await s3file.unlink();
+            afterEach(async () => {
+              try {
+                const s3file = s3(tmp_filename, options);
+                await s3file.unlink();
+              } catch (e) {
+                // if error with NoSuchKey, it means the file does not exist and its fine
+                expect(e?.code || e).toBe("NoSuchKey");
+              }
             });
 
             it("should download file via Bun.s3().text()", async () => {
@@ -533,7 +676,7 @@ for (let credentials of allCredentials) {
 
                 expect(stat.lastModified).toBeDefined();
                 expect(await s3file.text()).toBe(bigPayload);
-                s3file.delete();
+                await s3file.delete();
               }
             }, 10_000);
 
@@ -548,15 +691,25 @@ for (let credentials of allCredentials) {
                 expect(stat.lastModified).toBeDefined();
 
                 expect(await s3File.text()).toBe(bigPayload);
-                s3File.delete();
+                await s3File.delete();
               }
             }, 10_000);
 
             describe("readable stream", () => {
-              afterAll(async () => {
+              afterEach(async () => {
                 await Promise.all([
-                  s3(tmp_filename + "-readable-stream", options).unlink(),
-                  s3(tmp_filename + "-readable-stream-big", options).unlink(),
+                  s3(tmp_filename + "-readable-stream", options)
+                    .unlink()
+                    .catch(e => {
+                      // if error with NoSuchKey, it means the file does not exist and its fine
+                      expect(e?.code || e).toBe("NoSuchKey");
+                    }),
+                  s3(tmp_filename + "-readable-stream-big", options)
+                    .unlink()
+                    .catch(e => {
+                      // if error with NoSuchKey, it means the file does not exist and its fine
+                      expect(e?.code || e).toBe("NoSuchKey");
+                    }),
                 ]);
               });
               it("should work with small files", async () => {
@@ -576,7 +729,6 @@ for (let credentials of allCredentials) {
                 }
                 expect(bytes).toBe(10);
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
-                s3file.delete();
               });
               it("should work with large files ", async () => {
                 const s3file = s3(tmp_filename + "-readable-stream-big", options);
@@ -602,14 +754,14 @@ for (let credentials of allCredentials) {
                   const SHA1_2 = Bun.SHA1.hash(bigishPayload, "hex");
                   expect(SHA1).toBe(SHA1_2);
                 }
-                s3file.delete();
               }, 30_000);
             });
           });
         });
       }
       describe("special characters", () => {
-        it("should allow special characters in the path", async () => {
+        // supabase will throw InvalidKey
+        it.skipIf(credentials.service === "supabase")("should allow special characters in the path", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
           const s3file = s3(`🌈🦄${randomUUID()}.txt`, options);
           await s3file.write("Hello Bun!");
@@ -716,7 +868,10 @@ for (let credentials of allCredentials) {
           const dir = tempDirWithFiles("fsr", {
             "hello.txt": "",
           });
-          await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
+          const tmp_filename = `${randomUUID()}.txt`;
+
+          await Bun.write(s3(tmp_filename, { ...s3Options, bucket: S3Bucket }), file(path.join(dir, "hello.txt")));
+          await s3(tmp_filename, { ...s3Options, bucket: S3Bucket }).unlink();
         });
         it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
           try {
@@ -739,7 +894,7 @@ for (let credentials of allCredentials) {
             );
             expect.unreachable();
           } catch (e: any) {
-            expect(["AccessDenied", "NoSuchBucket"]).toContain(e?.code);
+            expect(["AccessDenied", "NoSuchBucket", "NoSuchKey"]).toContain(e?.code);
             expect(e?.path).toBe("do-not-exist.txt");
             expect(e?.name).toBe("S3Error");
           }
@@ -941,7 +1096,7 @@ for (let credentials of allCredentials) {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
               let options = { ...s3Options, bucket: S3Bucket };
-              options.endpoint = Buffer.alloc(1024, "a").toString();
+              options.endpoint = Buffer.alloc(2048, "a").toString();
 
               try {
                 const s3file = fn(randomUUID(), options);

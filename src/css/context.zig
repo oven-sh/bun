@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
@@ -79,6 +79,10 @@ pub const PropertyHandlerContext = struct {
             .context = context,
             .unused_symbols = this.unused_symbols,
         };
+    }
+
+    pub fn addDarkRule(this: *@This(), allocator: Allocator, property: css.Property) void {
+        this.dark.append(allocator, property) catch bun.outOfMemory();
     }
 
     pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
@@ -171,7 +175,7 @@ pub const PropertyHandlerContext = struct {
                                     .feature = MediaFeature{
                                         .plain = .{
                                             .name = .{ .standard = MediaFeatureId.@"prefers-color-scheme" },
-                                            .value = .{ .ident = .{ .v = "dark " } },
+                                            .value = .{ .ident = .{ .v = "dark" } },
                                         },
                                     },
                                 },

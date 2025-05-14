@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = @import("./node_assert.zig");
 const DiffList = @import("./assert/myers_diff.zig").DiffList;
 const Allocator = std.mem.Allocator;
@@ -39,9 +39,9 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     if (!actual_arg.isString()) return global.throwInvalidArgumentTypeValue("actual", "string", actual_arg);
     if (!expected_arg.isString()) return global.throwInvalidArgumentTypeValue("expected", "string", expected_arg);
 
-    const actual_str = try actual_arg.toBunString2(global);
+    const actual_str = try actual_arg.toBunString(global);
     defer actual_str.deref();
-    const expected_str = try expected_arg.toBunString2(global);
+    const expected_str = try expected_arg.toBunString(global);
     defer expected_str.deref();
 
     bun.assertWithLocation(actual_str.tag != .Dead, @src());

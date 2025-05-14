@@ -83,6 +83,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
+    values: ["routeList"],
   });
 }
 export default [
@@ -90,6 +91,116 @@ export default [
   generate(`DebugHTTPServer`),
   generate(`HTTPSServer`),
   generate(`DebugHTTPSServer`),
+
+  define({
+    name: "NodeHTTPResponse",
+    JSType: "0b11101110",
+    proto: {
+      writeHead: {
+        fn: "writeHead",
+        length: 3,
+      },
+      writeContinue: {
+        fn: "writeContinue",
+      },
+      write: {
+        fn: "write",
+        length: 3,
+      },
+      end: {
+        fn: "end",
+        length: 2,
+      },
+      getBytesWritten: {
+        fn: "getBytesWritten",
+        length: 0,
+      },
+      flushHeaders: {
+        fn: "flushHeaders",
+        length: 0,
+      },
+      cork: {
+        fn: "cork",
+        length: 1,
+      },
+      ref: {
+        fn: "jsRef",
+      },
+      unref: {
+        fn: "jsUnref",
+      },
+      abort: {
+        fn: "abort",
+        length: 0,
+      },
+      pause: {
+        fn: "doPause",
+        length: 0,
+        passThis: true,
+      },
+      drainRequestBody: {
+        fn: "drainRequestBody",
+        length: 0,
+      },
+      dumpRequestBody: {
+        fn: "dumpRequestBody",
+        length: 0,
+        passThis: true,
+      },
+      resume: {
+        fn: "doResume",
+        length: 0,
+      },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
+      aborted: {
+        getter: "getAborted",
+      },
+      flags: {
+        getter: "getFlags",
+      },
+      finished: {
+        getter: "getFinished",
+      },
+      hasBody: {
+        getter: "getHasBody",
+      },
+      ended: {
+        getter: "getEnded",
+      },
+      ondata: {
+        getter: "getOnData",
+        setter: "setOnData",
+        this: true,
+      },
+      onabort: {
+        getter: "getOnAbort",
+        setter: "setOnAbort",
+        this: true,
+      },
+      hasCustomOnData: {
+        getter: "getHasCustomOnData",
+        setter: "setHasCustomOnData",
+      },
+      upgraded: {
+        getter: "getUpgraded",
+      },
+      // ontimeout: {
+      //   getter: "getOnTimeout",
+      //   setter: "setOnTimeout",
+      // },
+      onwritable: {
+        getter: "getOnWritable",
+        setter: "setOnWritable",
+        this: true,
+      },
+    },
+    klass: {},
+    finalize: true,
+    noConstructor: true,
+    values: ["onAborted", "onWritable", "onData"],
+  }),
 
   define({
     name: "ServerWebSocket",
@@ -205,6 +316,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
+    values: ["socket"],
   }),
 
   define({

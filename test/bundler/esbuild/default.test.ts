@@ -1,7 +1,7 @@
 import assert from "assert";
-import path from "path";
 import { describe, expect } from "bun:test";
 import { osSlashes } from "harness";
+import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1835,7 +1835,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("var bar"), 'bundle shouldnt include "var bar"');
     },
     run: {
-      error: "ReferenceError: Can't find variable: bar",
+      error: "ReferenceError: bar is not defined",
     },
   });
   itBundled("default/ArgumentDefaultValueScopeNoBundle", {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -194,7 +194,12 @@ pub const LineStyle = enum {
     /// Two parallel solid lines with some space between them.
     double,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn isCompatible(_: *const @This(), _: bun.css.targets.Browsers) bool {
         return true;
@@ -216,8 +221,8 @@ pub const BorderSideWidth = union(enum) {
     /// An explicit width.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const @This(), browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -250,9 +255,11 @@ pub const BorderColor = struct {
     left: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
-    pub usingnamespace css.DefineRectShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
+    const css_impl = css.DefineRectShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-color",
@@ -278,8 +285,10 @@ pub const BorderStyle = struct {
     left: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
-    pub usingnamespace css.DefineRectShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
+    const css_impl = css.DefineRectShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-style",
@@ -305,8 +314,10 @@ pub const BorderWidth = struct {
     left: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
-    pub usingnamespace css.DefineRectShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
+    const css_impl = css.DefineRectShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-width",
@@ -333,9 +344,11 @@ pub const BorderBlockColor = struct {
     end: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
-    pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
+    const css_impl = css.DefineSizeShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-color",
@@ -359,8 +372,10 @@ pub const BorderBlockStyle = struct {
     end: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
+    const css_impl = css.DefineSizeShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-style",
@@ -384,8 +399,10 @@ pub const BorderBlockWidth = struct {
     end: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
-    pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
+    const css_impl = css.DefineSizeShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-width",
@@ -410,9 +427,11 @@ pub const BorderInlineColor = struct {
     end: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
-    pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
+    const css_impl = css.DefineSizeShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-color",
@@ -436,8 +455,10 @@ pub const BorderInlineStyle = struct {
     end: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
+    const css_impl = css.DefineSizeShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-style",
@@ -461,8 +482,10 @@ pub const BorderInlineWidth = struct {
     end: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
-    pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
+    const css_impl = css.DefineSizeShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-width",
@@ -479,35 +502,36 @@ pub const BorderInlineWidth = struct {
 };
 
 pub fn ImplFallbacks(comptime T: type) type {
-    const field_names = bun.meta.fieldNames(T);
     return struct {
+        const fields = std.meta.fields(T);
+
         pub fn getFallbacks(this: *T, allocator: std.mem.Allocator, targets: css.Targets) css.SmallList(T, 2) {
             const ColorFallbackKind = css.css_values.color.ColorFallbackKind;
-            var fallbacks = ColorFallbackKind.empty();
-            inline for (field_names) |name| {
-                fallbacks.insert(@field(this, name).getNecessaryFallbacks(targets));
+            var fallbacks = ColorFallbackKind{};
+            inline for (fields) |field| {
+                bun.bits.insert(ColorFallbackKind, &fallbacks, @field(this, field.name).getNecessaryFallbacks(targets));
             }
 
             var res = css.SmallList(T, 2){};
-            if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) {
+            if (fallbacks.rgb) {
                 var out: T = undefined;
-                inline for (field_names) |name| {
-                    @field(out, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .rgb = true });
+                inline for (fields) |field| {
+                    @field(out, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .rgb = true });
                 }
                 res.append(allocator, out);
             }
 
-            if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
+            if (fallbacks.p3) {
                 var out: T = undefined;
-                inline for (field_names) |name| {
-                    @field(out, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .p3 = true });
+                inline for (fields) |field| {
+                    @field(out, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .p3 = true });
                 }
                 res.append(allocator, out);
             }
 
-            if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
-                inline for (field_names) |name| {
-                    @field(this, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .lab = true });
+            if (fallbacks.lab) {
+                inline for (fields) |field| {
+                    @field(this, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .lab = true });
                 }
             }
 
@@ -551,79 +575,77 @@ const BorderShorthand = struct {
 };
 
 const BorderProperty = packed struct(u32) {
-    @"border-top-color": bool = false,
-    @"border-bottom-color": bool = false,
-    @"border-left-color": bool = false,
-    @"border-right-color": bool = false,
-    @"border-block-start-color": bool = false,
-    @"border-block-end-color": bool = false,
-    @"border-inline-start-color": bool = false,
-    @"border-inline-end-color": bool = false,
-    @"border-top-width": bool = false,
-    @"border-bottom-width": bool = false,
-    @"border-left-width": bool = false,
-    @"border-right-width": bool = false,
-    @"border-block-start-width": bool = false,
-    @"border-block-end-width": bool = false,
-    @"border-inline-start-width": bool = false,
-    @"border-inline-end-width": bool = false,
-    @"border-top-style": bool = false,
-    @"border-bottom-style": bool = false,
-    @"border-left-style": bool = false,
-    @"border-right-style": bool = false,
-    @"border-block-start-style": bool = false,
-    @"border-block-end-style": bool = false,
-    @"border-inline-start-style": bool = false,
-    @"border-inline-end-style": bool = false,
+    @"top-color": bool = false,
+    @"bottom-color": bool = false,
+    @"left-color": bool = false,
+    @"right-color": bool = false,
+    @"block-start-color": bool = false,
+    @"block-end-color": bool = false,
+    @"inline-start-color": bool = false,
+    @"inline-end-color": bool = false,
+    @"top-width": bool = false,
+    @"bottom-width": bool = false,
+    @"left-width": bool = false,
+    @"right-width": bool = false,
+    @"block-start-width": bool = false,
+    @"block-end-width": bool = false,
+    @"inline-start-width": bool = false,
+    @"inline-end-width": bool = false,
+    @"top-style": bool = false,
+    @"bottom-style": bool = false,
+    @"left-style": bool = false,
+    @"right-style": bool = false,
+    @"block-start-style": bool = false,
+    @"block-end-style": bool = false,
+    @"inline-start-style": bool = false,
+    @"inline-end-style": bool = false,
     __unused: u8 = 0,
 
-    pub usingnamespace css.Bitflags(@This());
+    const @"border-top-color" = BorderProperty{ .@"top-color" = true };
+    const @"border-bottom-color" = BorderProperty{ .@"bottom-color" = true };
+    const @"border-left-color" = BorderProperty{ .@"left-color" = true };
+    const @"border-right-color" = BorderProperty{ .@"right-color" = true };
+    const @"border-block-start-color" = BorderProperty{ .@"block-start-color" = true };
+    const @"border-block-end-color" = BorderProperty{ .@"block-end-color" = true };
+    const @"border-inline-start-color" = BorderProperty{ .@"inline-start-color" = true };
+    const @"border-inline-end-color" = BorderProperty{ .@"inline-end-color" = true };
+    const @"border-top-width" = BorderProperty{ .@"top-width" = true };
+    const @"border-bottom-width" = BorderProperty{ .@"bottom-width" = true };
+    const @"border-left-width" = BorderProperty{ .@"left-width" = true };
+    const @"border-right-width" = BorderProperty{ .@"right-width" = true };
+    const @"border-block-start-width" = BorderProperty{ .@"block-start-width" = true };
+    const @"border-block-end-width" = BorderProperty{ .@"block-end-width" = true };
+    const @"border-inline-start-width" = BorderProperty{ .@"inline-start-width" = true };
+    const @"border-inline-end-width" = BorderProperty{ .@"inline-end-width" = true };
+    const @"border-top-style" = BorderProperty{ .@"top-style" = true };
+    const @"border-bottom-style" = BorderProperty{ .@"bottom-style" = true };
+    const @"border-left-style" = BorderProperty{ .@"left-style" = true };
+    const @"border-right-style" = BorderProperty{ .@"right-style" = true };
+    const @"border-block-start-style" = BorderProperty{ .@"block-start-style" = true };
+    const @"border-block-end-style" = BorderProperty{ .@"block-end-style" = true };
+    const @"border-inline-start-style" = BorderProperty{ .@"inline-start-style" = true };
+    const @"border-inline-end-style" = BorderProperty{ .@"inline-end-style" = true };
 
-    const @"border-top-color" = BorderProperty{ .@"border-top-color" = true };
-    const @"border-bottom-color" = BorderProperty{ .@"border-bottom-color" = true };
-    const @"border-left-color" = BorderProperty{ .@"border-left-color" = true };
-    const @"border-right-color" = BorderProperty{ .@"border-right-color" = true };
-    const @"border-block-start-color" = BorderProperty{ .@"border-block-start-color" = true };
-    const @"border-block-end-color" = BorderProperty{ .@"border-block-end-color" = true };
-    const @"border-inline-start-color" = BorderProperty{ .@"border-inline-start-color" = true };
-    const @"border-inline-end-color" = BorderProperty{ .@"border-inline-end-color" = true };
-    const @"border-top-width" = BorderProperty{ .@"border-top-width" = true };
-    const @"border-bottom-width" = BorderProperty{ .@"border-bottom-width" = true };
-    const @"border-left-width" = BorderProperty{ .@"border-left-width" = true };
-    const @"border-right-width" = BorderProperty{ .@"border-right-width" = true };
-    const @"border-block-start-width" = BorderProperty{ .@"border-block-start-width" = true };
-    const @"border-block-end-width" = BorderProperty{ .@"border-block-end-width" = true };
-    const @"border-inline-start-width" = BorderProperty{ .@"border-inline-start-width" = true };
-    const @"border-inline-end-width" = BorderProperty{ .@"border-inline-end-width" = true };
-    const @"border-top-style" = BorderProperty{ .@"border-top-style" = true };
-    const @"border-bottom-style" = BorderProperty{ .@"border-bottom-style" = true };
-    const @"border-left-style" = BorderProperty{ .@"border-left-style" = true };
-    const @"border-right-style" = BorderProperty{ .@"border-right-style" = true };
-    const @"border-block-start-style" = BorderProperty{ .@"border-block-start-style" = true };
-    const @"border-block-end-style" = BorderProperty{ .@"border-block-end-style" = true };
-    const @"border-inline-start-style" = BorderProperty{ .@"border-inline-start-style" = true };
-    const @"border-inline-end-style" = BorderProperty{ .@"border-inline-end-style" = true };
-
-    const @"border-block-color" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-end-color" = true };
-    const @"border-inline-color" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-end-color" = true };
-    const @"border-block-width" = BorderProperty{ .@"border-block-start-width" = true, .@"border-block-end-width" = true };
-    const @"border-inline-width" = BorderProperty{ .@"border-inline-start-width" = true, .@"border-inline-end-width" = true };
-    const @"border-block-style" = BorderProperty{ .@"border-block-start-style" = true, .@"border-block-end-style" = true };
-    const @"border-inline-style" = BorderProperty{ .@"border-inline-start-style" = true, .@"border-inline-end-style" = true };
-    const @"border-top" = BorderProperty{ .@"border-top-color" = true, .@"border-top-width" = true, .@"border-top-style" = true };
-    const @"border-bottom" = BorderProperty{ .@"border-bottom-color" = true, .@"border-bottom-width" = true, .@"border-bottom-style" = true };
-    const @"border-left" = BorderProperty{ .@"border-left-color" = true, .@"border-left-width" = true, .@"border-left-style" = true };
-    const @"border-right" = BorderProperty{ .@"border-right-color" = true, .@"border-right-width" = true, .@"border-right-style" = true };
-    const @"border-block-start" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-start-width" = true, .@"border-block-start-style" = true };
-    const @"border-block-end" = BorderProperty{ .@"border-block-end-color" = true, .@"border-block-end-width" = true, .@"border-block-end-style" = true };
-    const @"border-inline-start" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-start-width" = true, .@"border-inline-start-style" = true };
-    const @"border-inline-end" = BorderProperty{ .@"border-inline-end-color" = true, .@"border-inline-end-width" = true, .@"border-inline-end-style" = true };
-    const @"border-block" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-end-color" = true, .@"border-block-start-width" = true, .@"border-block-end-width" = true, .@"border-block-start-style" = true, .@"border-block-end-style" = true };
-    const @"border-inline" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-end-color" = true, .@"border-inline-start-width" = true, .@"border-inline-end-width" = true, .@"border-inline-start-style" = true, .@"border-inline-end-style" = true };
-    const @"border-width" = BorderProperty{ .@"border-left-width" = true, .@"border-right-width" = true, .@"border-top-width" = true, .@"border-bottom-width" = true };
-    const @"border-style" = BorderProperty{ .@"border-left-style" = true, .@"border-right-style" = true, .@"border-top-style" = true, .@"border-bottom-style" = true };
-    const @"border-color" = BorderProperty{ .@"border-left-color" = true, .@"border-right-color" = true, .@"border-top-color" = true, .@"border-bottom-color" = true };
-    const border = BorderProperty{ .@"border-left-width" = true, .@"border-right-width" = true, .@"border-top-width" = true, .@"border-bottom-width" = true, .@"border-left-style" = true, .@"border-right-style" = true, .@"border-top-style" = true, .@"border-bottom-style" = true, .@"border-left-color" = true, .@"border-right-color" = true, .@"border-top-color" = true, .@"border-bottom-color" = true };
+    const @"border-block-color" = BorderProperty{ .@"block-start-color" = true, .@"block-end-color" = true };
+    const @"border-inline-color" = BorderProperty{ .@"inline-start-color" = true, .@"inline-end-color" = true };
+    const @"border-block-width" = BorderProperty{ .@"block-start-width" = true, .@"block-end-width" = true };
+    const @"border-inline-width" = BorderProperty{ .@"inline-start-width" = true, .@"inline-end-width" = true };
+    const @"border-block-style" = BorderProperty{ .@"block-start-style" = true, .@"block-end-style" = true };
+    const @"border-inline-style" = BorderProperty{ .@"inline-start-style" = true, .@"inline-end-style" = true };
+    const @"border-top" = BorderProperty{ .@"top-color" = true, .@"top-width" = true, .@"top-style" = true };
+    const @"border-bottom" = BorderProperty{ .@"bottom-color" = true, .@"bottom-width" = true, .@"bottom-style" = true };
+    const @"border-left" = BorderProperty{ .@"left-color" = true, .@"left-width" = true, .@"left-style" = true };
+    const @"border-right" = BorderProperty{ .@"right-color" = true, .@"right-width" = true, .@"right-style" = true };
+    const @"border-block-start" = BorderProperty{ .@"block-start-color" = true, .@"block-start-width" = true, .@"block-start-style" = true };
+    const @"border-block-end" = BorderProperty{ .@"block-end-color" = true, .@"block-end-width" = true, .@"block-end-style" = true };
+    const @"border-inline-start" = BorderProperty{ .@"inline-start-color" = true, .@"inline-start-width" = true, .@"inline-start-style" = true };
+    const @"border-inline-end" = BorderProperty{ .@"inline-end-color" = true, .@"inline-end-width" = true, .@"inline-end-style" = true };
+    const @"border-block" = BorderProperty{ .@"block-start-color" = true, .@"block-end-color" = true, .@"block-start-width" = true, .@"block-end-width" = true, .@"block-start-style" = true, .@"block-end-style" = true };
+    const @"border-inline" = BorderProperty{ .@"inline-start-color" = true, .@"inline-end-color" = true, .@"inline-start-width" = true, .@"inline-end-width" = true, .@"inline-start-style" = true, .@"inline-end-style" = true };
+    const @"border-width" = BorderProperty{ .@"left-width" = true, .@"right-width" = true, .@"top-width" = true, .@"bottom-width" = true };
+    const @"border-style" = BorderProperty{ .@"left-style" = true, .@"right-style" = true, .@"top-style" = true, .@"bottom-style" = true };
+    const @"border-color" = BorderProperty{ .@"left-color" = true, .@"right-color" = true, .@"top-color" = true, .@"bottom-color" = true };
+    const border = BorderProperty{ .@"left-width" = true, .@"right-width" = true, .@"top-width" = true, .@"bottom-width" = true, .@"left-style" = true, .@"right-style" = true, .@"top-style" = true, .@"bottom-style" = true, .@"left-color" = true, .@"right-color" = true, .@"top-color" = true, .@"bottom-color" = true };
 
     pub fn tryFromPropertyId(property_id: css.PropertyIdTag) ?@This() {
         @setEvalBranchQuota(10000);
@@ -855,13 +877,13 @@ pub const BorderHandler = struct {
         }
 
         inline fn push(f: *FlushContext, comptime p: []const u8, val: anytype) void {
-            f.self.flushed_properties.insert(@field(BorderProperty, p));
+            bun.bits.insert(BorderProperty, &f.self.flushed_properties, @field(BorderProperty, p));
             f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))) catch bun.outOfMemory();
         }
 
         inline fn fallbacks(f: *FlushContext, comptime p: []const u8, _val: anytype) void {
             var val = _val;
-            if (!f.self.flushed_properties.contains(@field(BorderProperty, p))) {
+            if (!bun.bits.contains(BorderProperty, f.self.flushed_properties, @field(BorderProperty, p))) {
                 const fbs = val.getFallbacks(f.ctx.allocator, f.ctx.targets);
                 for (css.generic.slice(@TypeOf(fbs), &fbs)) |fallback| {
                     f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)) catch bun.outOfMemory();
@@ -1400,7 +1422,7 @@ pub const BorderHandler = struct {
         if (logical_supported) {
             var up = unparsed.deepClone(context.allocator);
             context.addUnparsedFallbacks(&up);
-            this.flushed_properties.insert(BorderProperty.tryFromPropertyId(up.property_id).?);
+            bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
             dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
             return;
         }
@@ -1410,7 +1432,7 @@ pub const BorderHandler = struct {
                 _ = d; // autofix
                 var upppppppppp = up.withPropertyId(c.allocator, @unionInit(css.PropertyId, id, {}));
                 c.addUnparsedFallbacks(&upppppppppp);
-                self.flushed_properties.insert(@field(BorderProperty, id));
+                bun.bits.insert(BorderProperty, &self.flushed_properties, @field(BorderProperty, id));
             }
         }.prop;
 
@@ -1459,7 +1481,7 @@ pub const BorderHandler = struct {
             else => {
                 var up = unparsed.deepClone(context.allocator);
                 context.addUnparsedFallbacks(&up);
-                this.flushed_properties.insert(BorderProperty.tryFromPropertyId(up.property_id).?);
+                bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
                 dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
             },
         }

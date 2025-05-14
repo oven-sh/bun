@@ -1,5 +1,7 @@
 // This script is run when you change anything in src/js/*
 //
+// Documentation is in src/js/README.md
+//
 // Originally, the builtin bundler only supported function files, but then the module files were
 // added to this, which has made this entire setup extremely convoluted and a mess.
 //
@@ -14,6 +16,7 @@
 // - We concatenate all the sources into one big string, which then createsa
 // single JSC::SourceProvider and pass start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to.
+import assert from "assert";
 import { readdirSync, rmSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
@@ -21,7 +24,6 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { addCPPCharArray, cap, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
-import assert from "assert";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -71,6 +73,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   let contents = await Bun.file(filename).text();
 
   contents = applyGlobalReplacements(contents);
+  const originalContents = contents;
 
   // first approach doesnt work perfectly because we actually need to split each function declaration
   // and then compile those separately
@@ -91,7 +94,36 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     if (!contents.length) break;
     const match = contents.match(consumeTopLevelContent);
     if (!match) {
-      throw new SyntaxError("Could not process input:\n" + contents.slice(0, contents.indexOf("\n")));
+      const pos = originalContents.length - contents.length;
+      let lineNumber = 1;
+      let columnNumber = 1;
+      let lineStartPos = 0;
+      for (let i = 0; i < pos; i++) {
+        if (originalContents[i] === "\n") {
+          lineNumber++;
+          columnNumber = 1;
+          lineStartPos = i + 1;
+        } else {
+          columnNumber++;
+        }
+        if (i === pos) {
+          break;
+        }
+      }
+      const lineEndPos = lineStartPos + originalContents.slice(lineStartPos).indexOf("\n");
+      throw new SyntaxError(
+        "Could not process input:\n" +
+          originalContents.slice(lineStartPos, lineEndPos) +
+          "\n" +
+          " ".repeat(pos - lineStartPos) +
+          "^" +
+          "\n    at " +
+          filename +
+          ":" +
+          lineNumber +
+          ":" +
+          columnNumber,
+      );
     }
     contents = contents.slice(match.index!);
     if (match[1] === "import") {
@@ -144,7 +176,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       contents = contents.slice(directive[0].length);
     } else if (match[1] === "export function" || match[1] === "export async function") {
       // consume async token and function name
-      const nameMatch = contents.match(/^export\s+(async\s+)?function\s([a-zA-Z0-9]+)\s*/);
+      const nameMatch = contents.match(/^export\s+(async\s+)?function\s([_a-zA-Z0-9]+)\s*/);
       if (!nameMatch)
         throw new SyntaxError("Could not parse function name:\n" + contents.slice(0, contents.indexOf("\n")));
       const async = Boolean(nameMatch[1]);
@@ -593,7 +625,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         void exportNames();
 
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
 
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
@@ -636,7 +668,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         template<typename Visitor> void visit(Visitor&);
 
     public:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
 
     #define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \\
         JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
@@ -680,7 +712,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledHeader += `
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
     `;
 
   for (const { basename } of files) {
@@ -706,7 +738,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledHeader += `
     private:
-        JSC::VM& m_vm;
+        [[maybe_unused]] JSC::VM& m_vm;
     `;
 
   for (const { basename, internal } of files) {

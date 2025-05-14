@@ -1,6 +1,6 @@
-import { bunExe, bunEnv, tmpdirSync } from "harness";
-import { write, spawnSync } from "bun";
-import { describe, test, expect } from "bun:test";
+import { spawnSync, write } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe("redact", async () => {

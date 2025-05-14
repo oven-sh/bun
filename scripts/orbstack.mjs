@@ -1,6 +1,6 @@
 import { inspect } from "node:util";
-import { $, mkdtemp, rm, spawnSafe, writeFile, getUsernameForDistro, spawnSshSafe, setupUserData } from "./utils.mjs";
 import { getUserData } from "./machine.mjs";
+import { $, getUsernameForDistro, mkdtemp, rm, setupUserData, spawnSafe, spawnSshSafe, writeFile } from "./utils.mjs";
 
 /**
  * @link https://docs.orbstack.dev/

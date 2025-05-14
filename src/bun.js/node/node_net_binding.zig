@@ -1,10 +1,12 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
+const C = bun.c;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
+const validators = @import("./util/validators.zig");
 
 //
 //
@@ -39,10 +41,14 @@ pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     }).setter, 1, .{});
 }
 
-//
-//
-
-pub var autoSelectFamilyAttemptTimeoutDefault: u32 = 250;
+/// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
+/// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
+/// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
+/// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
+///
+/// If this becomes used in more places, and especially if it can be read by other threads, we may
+/// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
+pub threadlocal var autoSelectFamilyAttemptTimeoutDefault: u32 = 250;
 
 pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "getDefaultAutoSelectFamilyAttemptTimeout", (struct {
@@ -62,12 +68,14 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
                 return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
-            if (!arg.isInt32AsAnyInt()) {
-                return globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
-            }
-            const value: u32 = @max(10, arg.coerceToInt32(globalThis));
-            autoSelectFamilyAttemptTimeoutDefault = value;
+            var value = try validators.validateInt32(globalThis, arg, "value", .{}, 1, null);
+            if (value < 10) value = 10;
+            autoSelectFamilyAttemptTimeoutDefault = @intCast(value);
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
 }
+
+pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
+
+pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;

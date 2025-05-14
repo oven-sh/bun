@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
@@ -146,6 +146,7 @@ pub const DiffFormatter = struct {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
                 var formatter = ConsoleObject.Formatter{ .globalThis = this.globalThis, .quote_strings = true };
+                defer formatter.deinit();
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         expected.toFmt(&formatter),

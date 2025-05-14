@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -79,7 +79,12 @@ pub const GeometryBox = enum {
     /// Uses the nearest SVG viewport as reference box.
     @"view-box",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn intoMaskClip(this: *const @This()) MaskClip {
         return MaskClip{ .@"geometry-box" = this.* };
@@ -166,7 +171,12 @@ pub const MaskMode = enum {
     /// If an SVG source is used, the value matches the `mask-type` property. Otherwise, the alpha values are used.
     @"match-source",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() MaskMode {
         return .@"match-source";
@@ -180,8 +190,8 @@ pub const MaskClip = union(enum) {
     /// The painted content is not clipped.
     @"no-clip",
 
-    pub usingnamespace @call(.auto, css.DeriveParse, .{@This()});
-    pub usingnamespace @call(.auto, css.DeriveToCss, .{@This()});
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -203,7 +213,12 @@ pub const MaskComposite = enum {
     /// The non-overlapping regions of source and destination are combined.
     exclude,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() MaskComposite {
         return .add;
@@ -217,7 +232,12 @@ pub const MaskType = enum {
     /// The alpha values of the mask is used.
     alpha,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [mask](https://www.w3.org/TR/css-masking-1/#the-mask) shorthand property.
@@ -238,8 +258,6 @@ pub const Mask = struct {
     composite: MaskComposite,
     /// How the mask image is interpreted.
     mode: MaskMode,
-
-    pub usingnamespace css.DefineListShorthand(@This());
 
     pub const PropertyFieldMap = .{
         .image = css.PropertyIdTag.@"mask-image",
@@ -404,7 +422,12 @@ pub const MaskBorderMode = enum {
     /// The alpha values of the mask image is used.
     alpha,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() @This() {
         return .alpha;
@@ -427,7 +450,7 @@ pub const MaskBorder = struct {
     /// How the mask image is interpreted.
     mode: MaskBorderMode,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border");
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
     pub const PropertyFieldMap = .{
         .source = css.PropertyIdTag.@"mask-border-source",
@@ -520,7 +543,12 @@ pub const WebKitMaskComposite = enum {
     /// Equivalent to `exclude` in the standard `mask-composite` syntax.
     xor,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [-webkit-mask-source-type](https://github.com/WebKit/WebKit/blob/6eece09a1c31e47489811edd003d1e36910e9fd3/Source/WebCore/css/CSSProperties.json#L6578-L6587)
@@ -539,7 +567,12 @@ pub const WebKitMaskSourceType = enum {
     /// The alpha values of the mask image is used.
     alpha,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 pub fn getWebkitMaskProperty(property_id: *const css.PropertyId) ?css.PropertyId {

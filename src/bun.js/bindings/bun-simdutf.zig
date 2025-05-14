@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const SIMDUTFResult = extern struct {
@@ -95,6 +95,7 @@ pub extern fn simdutf__utf8_length_from_utf32(input: [*c]const c_uint, length: u
 pub extern fn simdutf__utf16_length_from_utf32(input: [*c]const c_uint, length: usize) usize;
 pub extern fn simdutf__utf32_length_from_utf8(input: [*]const u8, length: usize) usize;
 pub extern fn simdutf__utf8_length_from_latin1(input: [*]const u8, length: usize) usize;
+pub extern fn simdutf__utf16_length_from_latin1(input: [*]const u8, length: usize) usize;
 
 pub const validate = struct {
     pub const with_errors = struct {
@@ -295,6 +296,10 @@ pub const length = struct {
                 JSC.markBinding(@src());
                 return simdutf__utf16_length_from_utf32(input.ptr, input.len);
             }
+
+            pub fn latin1(input: []const u8) usize {
+                return simdutf__utf16_length_from_latin1(input.ptr, input.len);
+            }
         };
     };
 
@@ -387,9 +392,14 @@ pub const base64 = struct {
     extern fn simdutf__base64_encode(input: [*]const u8, length: usize, output: [*]u8, is_urlsafe: c_int) usize;
     extern fn simdutf__base64_decode_from_binary(input: [*]const u8, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
     extern fn simdutf__base64_decode_from_binary16(input: [*]const u16, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+    extern fn simdutf__base64_length_from_binary(length: usize, options: c_int) usize;
 
     pub fn encode(input: []const u8, output: []u8, is_urlsafe: bool) usize {
         return simdutf__base64_encode(input.ptr, input.len, output.ptr, @intFromBool(is_urlsafe));
+    }
+
+    pub fn encode_len(input: usize, is_urlsafe: bool) usize {
+        return simdutf__base64_length_from_binary(input, @intFromBool(is_urlsafe));
     }
 
     pub fn decode(input: []const u8, output: []u8, is_urlsafe: bool) SIMDUTFResult {

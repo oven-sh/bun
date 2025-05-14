@@ -1,39 +1,53 @@
-As of Bun v1.1.44, we've added initial support for bundling frontend apps directly in Bun's HTTP server: `Bun.serve()`. Run your frontend and backend in the same app with no extra steps.
+Using `Bun.serve()`'s `routes` option, you can run your frontend and backend in the same app with no extra steps.
 
-To get started, import your HTML files and pass them to the `static` option in `Bun.serve()`.
+To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts
+import { sql, serve } from "bun";
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
-const server = Bun.serve({
-  // Add HTML imports to `static`
-  static: {
-    // Bundle & route index.html to "/"
+const server = serve({
+  routes: {
+    // ** HTML imports **
+    // Bundle & route index.html to "/". This uses HTMLRewriter to scan the HTML for `<script>` and `<link>` tags, run's Bun's JavaScript & CSS bundler on them, transpiles any TypeScript, JSX, and TSX, downlevels CSS with Bun's CSS parser and serves the result.
     "/": homepage,
     // Bundle & route dashboard.html to "/dashboard"
     "/dashboard": dashboard,
+
+    // ** API endpoints ** (Bun v1.2.3+ required)
+    "/api/users": {
+      async GET(req) {
+        const users = await sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] =
+          await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
+    },
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
   },
 
   // Enable development mode for:
   // - Detailed error messages
-  // - Rebuild on request
+  // - Hot reloading (Bun v1.2.3+ required)
   development: true,
 
-  // Handle API requests
-  async fetch(req) {
-    // ...your API code
-    if (req.url.endsWith("/api/users")) {
-      const users = await Bun.sql`SELECT * FROM users`;
-      return Response.json(users);
-    }
-
-    // Return 404 for unmatched routes
-    return new Response("Not Found", { status: 404 });
-  },
+  // Prior to v1.2.3, the `fetch` option was used to handle all API requests. It is now optional.
+  // async fetch(req) {
+  //   // Return 404 for unmatched routes
+  //   return new Response("Not Found", { status: 404 });
+  // },
 });
 
-console.log(`Listening on ${server.url}`)
+console.log(`Listening on ${server.url}`);
 ```
 
 ```bash
@@ -55,7 +69,7 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 
 ```ts
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -113,7 +127,7 @@ import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-  static: {
+  routes: {
     "/": dashboard,
   },
 
@@ -171,7 +185,7 @@ import homepage from "./index.html";
 import dashboard from "./dashboard.html";
 
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -189,6 +203,34 @@ When `development` is `true`, Bun will:
 - Include the `SourceMap` header in the response so that devtools can show the original source code
 - Disable minification
 - Re-bundle assets on each request to a .html file
+- Enable hot module reloading (unless `hmr: false` is set)
+
+#### Echo console logs from browser to terminal
+
+Bun.serve() supports echoing console logs from the browser to the terminal.
+
+To enable this, pass `console: true` in the `development` object in `Bun.serve()`.
+
+```ts
+import homepage from "./index.html";
+
+Bun.serve({
+  // development can also be an object.
+  development: {
+    // Enable Hot Module Reloading
+    hmr: true,
+
+    // Echo console logs from the browser to the terminal
+    console: true,
+  },
+
+  routes: {
+    "/": homepage,
+  },
+});
+```
+
+When `console: true` is set, Bun will stream console logs from the browser to the terminal. This reuses the existing WebSocket connection from HMR to send the logs.
 
 #### Production mode
 
@@ -211,6 +253,7 @@ For example, enable TailwindCSS on your routes by installing and adding the `bun
 ```sh
 $ bun add bun-plugin-tailwind
 ```
+
 ```toml#bunfig.toml
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
@@ -247,6 +290,8 @@ plugins = ["./my-plugin-implementation.ts"]
 ```
 
 Bun will lazily resolve and load each plugin and use them to bundle your routes.
+
+Note: this is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in the CLI.
 
 ## How this works
 
@@ -292,5 +337,4 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 
 ## This is a work in progress
 
-- Client-side hot reloading isn't wired up yet. It will be in the future.
 - This doesn't support `bun build` yet. It also will in the future.

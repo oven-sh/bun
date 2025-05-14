@@ -35,13 +35,15 @@ class EventLoopTask;
 class ContextDestructionObserver;
 
 using ScriptExecutionContextIdentifier = uint32_t;
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 
+#if ENABLE(MALLOC_BREAKDOWN)
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
 #if ENABLE(MALLOC_BREAKDOWN)
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #else
-    WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
+    WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
 #endif
 
 public:
@@ -77,7 +79,7 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return static_cast<unsigned>(m_identifier) == 1; }
+    bool isMainThread() const { return m_identifier == 1; }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
     bool isContextThread();

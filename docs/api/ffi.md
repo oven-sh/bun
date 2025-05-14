@@ -1,3 +1,7 @@
+{% callout %}
+**⚠️ Warning** — `bun:ffi` is **experimental**, with known bugs and limitations, and should not be relied on in production. The most stable way to interact with native code from Bun is to write a [Node-API module](/docs/api/node-api).
+{% /callout %}
+
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
 
 ## dlopen usage (`bun:ffi`)
@@ -298,7 +302,11 @@ setTimeout(() => {
 When you're done with a JSCallback, you should call `close()` to free the memory.
 
 ### Experimental thread-safe callbacks
-`JSCallback` has experimental support for thread-safe callbacks. This will be needed if you pass a callback function into a different thread from it's instantiation context. You can enable it with the optional `threadsafe` option flag.
+
+`JSCallback` has experimental support for thread-safe callbacks. This will be needed if you pass a callback function into a different thread from its instantiation context. You can enable it with the optional `threadsafe` parameter.
+
+Currently, thread-safe callbacks work best when run from another thread that is running JavaScript code, i.e. a [`Worker`](/docs/api/workers). A future version of Bun will enable them to be called from any thread (such as new threads spawned by your native library that Bun is not aware of).
+
 ```ts
 const searchIterator = new JSCallback(
   (ptr, length) => /hello/.test(new CString(ptr, length)),
@@ -309,7 +317,6 @@ const searchIterator = new JSCallback(
   },
 );
 ```
-Be aware that there are still cases where this does not 100% work.
 
 {% callout %}
 

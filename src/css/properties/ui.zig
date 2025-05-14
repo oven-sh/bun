@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -41,6 +41,71 @@ pub const ColorScheme = packed struct(u8) {
     dark: bool = false,
     /// Forbids the user agent from overriding the color scheme for the element.
     only: bool = false,
+    __unused: u5 = 0,
+
+    pub fn eql(a: ColorScheme, b: ColorScheme) bool {
+        return a == b;
+    }
+
+    const Map = bun.ComptimeEnumMap(enum { normal, only, light, dark });
+
+    pub fn parse(input: *css.Parser) css.Result(ColorScheme) {
+        var res = ColorScheme{};
+        const ident = switch (input.expectIdent()) {
+            .result => |ident| ident,
+            .err => |e| return .{ .err = e },
+        };
+
+        if (Map.get(ident)) |value| switch (value) {
+            .normal => return .{ .result = res },
+            .only => res.only = true,
+            .light => res.light = true,
+            .dark => res.dark = true,
+        };
+
+        while (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |i| {
+            if (Map.get(i)) |value| switch (value) {
+                .normal => return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
+                .only => {
+                    // Only must be at the start or the end, not in the middle
+                    if (res.only) {
+                        return .{ .err = input.newCustomError(css.ParserError.invalid_value) };
+                    }
+                    res.only = true;
+                    return .{ .result = res };
+                },
+                .light => res.light = true,
+                .dark => res.dark = true,
+            };
+        }
+
+        return .{ .result = res };
+    }
+
+    pub fn toCss(this: *const ColorScheme, comptime W: type, dest: *Printer(W)) css.PrintErr!void {
+        if (this.* == ColorScheme{}) {
+            return dest.writeStr("normal");
+        }
+
+        if (this.light) {
+            try dest.writeStr("light");
+            if (this.dark) {
+                try dest.writeChar(' ');
+            }
+        }
+
+        if (this.dark) {
+            try dest.writeStr("dark");
+        }
+
+        if (this.only) {
+            try dest.writeStr(" only");
+        }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [resize](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#resize) property.
@@ -107,3 +172,59 @@ pub const Appearance = union(enum) {
     textarea,
     non_standard: []const u8,
 };
+
+pub const ColorSchemeHandler = struct {
+    pub fn handleProperty(_: *@This(), property: *const css.Property, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) bool {
+        switch (property.*) {
+            .@"color-scheme" => |*color_scheme_| {
+                const color_scheme: *const ColorScheme = color_scheme_;
+                if (!context.targets.isCompatible(css.compat.Feature.light_dark)) {
+                    if (color_scheme.light) {
+                        dest.append(
+                            context.allocator,
+                            defineVar(context.allocator, "--buncss-light", .{ .ident = "initial" }),
+                        ) catch bun.outOfMemory();
+                        dest.append(
+                            context.allocator,
+                            defineVar(context.allocator, "--buncss-dark", .{ .whitespace = " " }),
+                        ) catch bun.outOfMemory();
+
+                        if (color_scheme.dark) {
+                            context.addDarkRule(
+                                context.allocator,
+                                defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " }),
+                            );
+                            context.addDarkRule(
+                                context.allocator,
+                                defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" }),
+                            );
+                        }
+                    } else if (color_scheme.dark) {
+                        dest.append(context.allocator, defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " })) catch bun.outOfMemory();
+                        dest.append(context.allocator, defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" })) catch bun.outOfMemory();
+                    }
+                }
+                dest.append(context.allocator, property.deepClone(context.allocator)) catch bun.outOfMemory();
+                return true;
+            },
+            else => return false,
+        }
+    }
+
+    pub fn finalize(_: *@This(), _: *css.DeclarationList, _: *css.PropertyHandlerContext) void {}
+};
+
+fn defineVar(allocator: Allocator, name: []const u8, value: css.Token) css.Property {
+    return css.Property{
+        .custom = css.css_properties.custom.CustomProperty{
+            .name = css.css_properties.custom.CustomPropertyName{ .custom = css.DashedIdent{ .v = name } },
+            .value = css.TokenList{
+                .v = brk: {
+                    var list = ArrayList(css.css_properties.custom.TokenOrValue){};
+                    list.append(allocator, css.css_properties.custom.TokenOrValue{ .token = value }) catch bun.outOfMemory();
+                    break :brk list;
+                },
+            },
+        },
+    };
+}

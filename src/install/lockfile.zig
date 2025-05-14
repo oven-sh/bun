@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
@@ -11,7 +11,7 @@ const Glob = bun.glob;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSAst = bun.JSAst;
 const TextLockfile = @import("./bun.lock.zig");
 const OOM = bun.OOM;
@@ -56,10 +56,10 @@ const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
 const Bin = @import("./bin.zig").Bin;
@@ -962,7 +962,7 @@ pub const Tree = struct {
                                 },
                             };
 
-                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                            switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
                                 .match, .negate_match => match = true,
 
                                 .negate_no_match => {
@@ -1148,7 +1148,7 @@ pub fn maybeCloneFilteringRootPackages(
     manager: *PackageManager,
     features: Features,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     const old_packages = old.packages.slice();
     const old_dependencies_lists = old_packages.items(.dependencies);
@@ -1273,7 +1273,7 @@ pub fn clean(
     manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
     var log = logger.Log.init(bun.default_allocator);
@@ -1344,9 +1344,12 @@ pub fn cleanWithLogger(
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
+    log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start();
+    var timer: std.time.Timer = undefined;
+    if (log_level.isVerbose()) {
+        timer = try std.time.Timer.start();
+    }
 
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -1519,7 +1522,7 @@ pub fn cleanWithLogger(
         }
     }
 
-    if (comptime log_level.isVerbose()) {
+    if (log_level.isVerbose()) {
         Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
             old.packages.len,
             new.packages.len,
@@ -1578,7 +1581,7 @@ const Cloner = struct {
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
-        while (this.clone_queue.popOrNull()) |to_clone| {
+        while (this.clone_queue.pop()) |to_clone| {
             const mapping = this.mapping[to_clone.old_resolution];
             if (mapping < max_package_id) {
                 this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = mapping;
@@ -1704,7 +1707,7 @@ pub const Printer = struct {
         input_lockfile_path: string,
         format: Format,
     ) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
@@ -2061,7 +2064,7 @@ pub const Printer = struct {
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
-            comptime log_level: PackageManager.Options.LogLevel,
+            log_level: PackageManager.Options.LogLevel,
         ) !void {
             try writer.writeAll("\n");
             const allocator = this.lockfile.allocator;
@@ -2083,7 +2086,7 @@ pub const Printer = struct {
 
             var had_printed_new_install = false;
             if (this.successfully_installed) |*installed| {
-                if (comptime log_level.isVerbose()) {
+                if (log_level.isVerbose()) {
                     var workspaces_to_print: std.ArrayListUnmanaged(DependencyID) = .{};
                     defer workspaces_to_print.deinit(allocator);
 
@@ -2547,13 +2550,13 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
-    bun.rand(&base64_bytes);
+    bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
-    const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
+    const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
             Output.err(err, "failed to create temporary file to save lockfile", .{});
             Global.crash();
@@ -2687,7 +2690,7 @@ pub fn getPackageID(
     return null;
 }
 
-/// Appends `pkg` to `this.packages` if a duplicate isn't found
+/// Appends `pkg` to `this.packages`, and adds to `this.package_index`
 pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 
@@ -3014,6 +3017,29 @@ pub const OverrideMap = struct {
             dep.version
         else
             null;
+    }
+
+    pub fn sort(this: *OverrideMap, lockfile: *const Lockfile) void {
+        const Ctx = struct {
+            buf: string,
+            override_deps: [*]const Dependency,
+
+            pub fn lessThan(sorter: *const @This(), l: usize, r: usize) bool {
+                const deps = sorter.override_deps;
+                const l_dep = deps[l];
+                const r_dep = deps[r];
+
+                const buf = sorter.buf;
+                return l_dep.name.order(&r_dep.name, buf, buf) == .lt;
+            }
+        };
+
+        const ctx: Ctx = .{
+            .buf = lockfile.buffers.string_bytes.items,
+            .override_deps = this.map.values().ptr,
+        };
+
+        this.map.sort(&ctx);
     }
 
     pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
@@ -3775,11 +3801,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.prod };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = .{ .prod = true } };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = .{ .dev = true } };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = .{ .optional = true } };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = .{ .peer = true } };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -4302,6 +4328,8 @@ pub const Package = extern struct {
                     Output.prettyErrorln("Overrides changed since last install", .{});
                 }
             } else {
+                from_lockfile.overrides.sort(from_lockfile);
+                to_lockfile.overrides.sort(to_lockfile);
                 for (
                     from_lockfile.overrides.map.keys(),
                     from_lockfile.overrides.map.values(),
@@ -4511,7 +4539,7 @@ pub const Package = extern struct {
                                 var local_buf: bun.PathBuffer = undefined;
                                 const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
 
-                                const source = bun.sys.File.toSource(package_json_path, allocator).unwrap() catch {
+                                const source = bun.sys.File.toSource(package_json_path, allocator, .{}).unwrap() catch {
                                     // Can't guarantee this workspace still exists
                                     break :brk false;
                                 };
@@ -5057,7 +5085,7 @@ pub const Package = extern struct {
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-            if (Glob.Ascii.detectGlobSyntax(input_path)) {
+            if (Glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             }
@@ -5510,7 +5538,7 @@ pub const Package = extern struct {
                             }
 
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
-                            // TODO: what if we could comptime call the syntax highlighter
+                                // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
                                 \\    <green>"path/to/package"<r>
@@ -5522,7 +5550,7 @@ pub const Package = extern struct {
                             const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
-                                // TODO: what if we could comptime call the syntax highlighter
+                                    // TODO: what if we could comptime call the syntax highlighter
                                     \\{0s} expects a map of specifiers, e.g.
                                     \\  <r><green>"{0s}"<r>: {{
                                     \\    <green>"bun"<r>: <green>"latest"<r>
@@ -5545,7 +5573,7 @@ pub const Package = extern struct {
                     else => {
                         if (group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
-                            // TODO: what if we could comptime call the syntax highlighter
+                                // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
                                 \\    <green>"path/to/package"<r>
@@ -5813,7 +5841,7 @@ pub const Package = extern struct {
                                 if (strings.eqlLong(value.name, entry.name, true)) {
                                     const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
-                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
+                                    const note_src = bun.sys.File.toSource(note_abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 
                                     notes[i] = .{
                                         .text = "Package name is also declared here",
@@ -5827,7 +5855,7 @@ pub const Package = extern struct {
 
                         const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
 
-                        const src = bun.sys.File.toSource(abs_path, allocator).unwrap() catch logger.Source.initEmptyFile(abs_path);
+                        const src = bun.sys.File.toSource(abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(abs_path);
 
                         log.addRangeErrorFmtWithNotes(
                             &src,
@@ -6086,7 +6114,7 @@ pub const Package = extern struct {
             };
         };
 
-        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).Enum;
+        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).@"enum";
 
         pub fn byteSize(list: Lockfile.Package.List) usize {
             const sizes_vector: std.meta.Vector(sizes.bytes.len, usize) = sizes.bytes;
@@ -6980,10 +7008,10 @@ pub const Serializer = struct {
                 if (next_num == has_patched_dependencies_tag) {
                     var patched_dependencies_name_and_version_hashes =
                         try Lockfile.Buffers.readArray(
-                        stream,
-                        allocator,
-                        std.ArrayListUnmanaged(PackageNameAndVersionHash),
-                    );
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameAndVersionHash),
+                        );
                     defer patched_dependencies_name_and_version_hashes.deinit(allocator);
 
                     var map = lockfile.patched_dependencies;
@@ -7513,7 +7541,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         try w.beginObject();
         defer w.endObject() catch {};
 
-        const fields = @typeInfo(Behavior).Struct.fields;
+        const fields = @typeInfo(Behavior).@"struct".fields;
         inline for (fields[1 .. fields.len - 1]) |field| {
             if (@field(dep.behavior, field.name)) {
                 try w.objectField(field.name);

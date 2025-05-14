@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -41,17 +41,15 @@ pub const Percentage = struct {
         } };
 
         if (this.v != 0.0 and @abs(this.v) < 0.01) {
-            // TODO: is this the max length?
             var buf: [32]u8 = undefined;
-            var fba = std.heap.FixedBufferAllocator.init(&buf);
-            var string = std.ArrayList(u8).init(fba.allocator());
-            const writer = string.writer();
+            var stream = std.io.fixedBufferStream(&buf);
+            const writer = stream.writer();
             percent.toCssGeneric(writer) catch return dest.addFmtError();
             if (this.v < 0.0) {
                 try dest.writeChar('-');
-                try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(stream.getWritten(), '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(string.items, '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(stream.getWritten(), '0'));
             }
         } else {
             try percent.toCss(W, dest);
@@ -473,8 +471,8 @@ pub const NumberOrPercentage = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
     //     _ = input; // autofix

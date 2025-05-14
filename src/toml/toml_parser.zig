@@ -7,7 +7,7 @@ const js_ast = bun.JSAst;
 const options = @import("../options.zig");
 
 const fs = @import("../fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -16,7 +16,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
@@ -95,7 +95,7 @@ pub const TOML = struct {
 
     pub fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr {
         const Type = @TypeOf(t);
-        if (@typeInfo(Type) == .Pointer) {
+        if (@typeInfo(Type) == .pointer) {
             return Expr.init(std.meta.Child(Type), t.*, loc);
         } else {
             return Expr.init(Type, t, loc);

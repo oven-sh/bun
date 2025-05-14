@@ -1,5 +1,5 @@
 const PackageManager = @import("./install.zig").PackageManager;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
@@ -8,7 +8,7 @@ const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Path = bun.path;
 const JSON = bun.JSON;
 const OOM = bun.OOM;

@@ -254,6 +254,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
+#if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
 
 JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
@@ -274,6 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
+#endif
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
@@ -291,6 +293,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, {});
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -335,6 +338,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                 }
                 continue;

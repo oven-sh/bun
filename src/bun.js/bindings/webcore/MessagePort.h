@@ -51,11 +51,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
 
 class MessagePort final : /* public ActiveDOMObject, */ public ContextDestructionObserver, public EventTarget, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePort> {
     WTF_MAKE_NONCOPYABLE(MessagePort);
-#if ENABLE(MALLOC_BREAKDOWN)
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MessagePort);
-#else
-    WTF_MAKE_ISO_ALLOCATED(MessagePort);
-#endif
+    WTF_MAKE_TZONE_ALLOCATED(MessagePort);
 
 public:
     static Ref<MessagePort> create(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);

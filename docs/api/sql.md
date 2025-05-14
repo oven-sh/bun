@@ -87,7 +87,7 @@ await sql`INSERT INTO users ${sql(users)}`;
 
 ### Picking columns to insert
 
-You can use `sql(object, Array<string>)` to pick which columns to insert. Each of the columns must be defined on the object.
+You can use `sql(object, ...string)` to pick which columns to insert. Each of the columns must be defined on the object.
 
 ```ts
 const user = {
@@ -96,7 +96,7 @@ const user = {
   age: 25,
 };
 
-await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
+await sql`INSERT INTO users ${sql(user, "name", "email")}`;
 // Only inserts name and email columns, ignoring other fields
 ```
 
@@ -165,13 +165,72 @@ await sql`
 `;
 ```
 
-### Unsafe Queries
+### Dynamic columns in updates
 
-You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input.
+You can use `sql(object, ...string)` to pick which columns to update. Each of the columns must be defined on the object. If the columns are not informed all keys will be used to update the row.
 
 ```ts
+await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
+// uses all keys from the object to update the row
+await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
+```
+
+### Dynamic values and `where in`
+
+Value lists can also be created dynamically, making where in queries simple too. Optionally you can pass a array of objects and inform what key to use to create the list.
+
+```ts
+await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
+];
+await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
+```
+
+## `sql``.simple()`
+
+The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.
+
+To run multiple statements in a single query, use `sql``.simple()`:
+
+```ts
+// Multiple statements in one query
+await sql`
+  SELECT 1;
+  SELECT 2;
+`.simple();
+```
+
+Simple queries are often useful for database migrations and setup scripts.
+
+Note that simple queries cannot use parameters (`${value}`). If you need parameters, you must split your query into separate statements.
+
+### Queries in files
+
+You can use the `sql.file` method to read a query from a file and execute it, if the file includes $1, $2, etc you can pass parameters to the query. If no parameters are used it can execute multiple commands per file.
+
+```ts
+const result = await sql.file("query.sql", [1, 2, 3]);
+```
+
+### Unsafe Queries
+
+You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input. Executing more than one command per query is allowed if no parameters are used.
+
+```ts
+// Multiple commands without parameters
+const result = await sql.unsafe(`
+  SELECT ${userColumns} FROM users;
+  SELECT ${accountColumns} FROM accounts;
+`);
+
+// Using parameters (only one command is allowed)
 const result = await sql.unsafe(
-  "SELECT " + columns + " FROM users WHERE id = " + id,
+  "SELECT " + dangerous + " FROM users WHERE id = $1",
+  [id],
 );
 ```
 
@@ -181,7 +240,7 @@ const result = await sql.unsafe(
 
 ### Execute and Cancelling Queries
 
-Bun's SQL is lazy that means its will only start executing when awaited or executed with `.execute()`.
+Bun's SQL is lazy, which means it will only start executing when awaited or executed with `.execute()`.
 You can cancel a query that is currently executing by calling the `cancel()` method on the query object.
 
 ```ts
@@ -259,6 +318,21 @@ const db = new SQL({
   onclose: client => {
     console.log("Connection closed");
   },
+});
+```
+
+## Dynamic passwords
+
+When clients need to use alternative authentication schemes such as access tokens or connections to databases with rotating passwords, provide either a synchronous or asynchronous function that will resolve the dynamic password value at connection time.
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL(url, {
+  // Other connection config
+  ...
+  // Password function for the database user
+  password: async () => await signer.getAuthToken(),
 });
 ```
 
@@ -431,6 +505,34 @@ try {
 } // Automatically released
 ```
 
+## Prepared Statements
+
+By default, Bun's SQL client automatically creates named prepared statements for queries where it can be inferred that the query is static. This provides better performance. However, you can change this behavior by setting `prepare: false` in the connection options:
+
+```ts
+const sql = new SQL({
+  // ... other options ...
+  prepare: false, // Disable persisting named prepared statements on the server
+});
+```
+
+When `prepare: false` is set:
+
+Queries are still executed using the "extended" protocol, but they are executed using [unnamed prepared statements](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY), an unnamed prepared statement lasts only until the next Parse statement specifying the unnamed statement as destination is issued.
+
+- Parameter binding is still safe against SQL injection
+- Each query is parsed and planned from scratch by the server
+- Queries will not be [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
+
+You might want to use `prepare: false` when:
+
+- Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
+- Debugging query execution plans
+- Working with dynamic SQL where query plans need to be regenerated frequently
+- More than one command per query will not be supported (unless you use `sql``.simple()`)
+
+Note that disabling prepared statements may impact performance for queries that are executed frequently with different parameters, as the server needs to parse and plan each query from scratch.
+
 ## Error Handling
 
 The client provides typed errors for different failure scenarios:
@@ -466,6 +568,7 @@ The client provides typed errors for different failure scenarios:
 | `ERR_POSTGRES_SERVER_ERROR`          | General error from PostgreSQL server       |
 | `ERR_POSTGRES_INVALID_QUERY_BINDING` | Invalid parameter binding                  |
 | `ERR_POSTGRES_QUERY_CANCELLED`       | Query was cancelled                        |
+| `ERR_POSTGRES_NOT_TAGGED_CALL`       | Query was called without a tagged call     |
 
 ### Data Type Errors
 
@@ -501,7 +604,7 @@ The client provides typed errors for different failure scenarios:
 
 ## Numbers and BigInt
 
-Bun's SQL client includes special handling for large numbers that exceed the range of a 53-bit integer. Here’s how it works:
+Bun's SQL client includes special handling for large numbers that exceed the range of a 53-bit integer. Here's how it works:
 
 ```ts
 import { sql } from "bun";

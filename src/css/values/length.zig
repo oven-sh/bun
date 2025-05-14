@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -19,8 +19,8 @@ pub const LengthOrNumber = union(enum) {
     /// A length.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deinit(this: *const LengthOrNumber, allocator: std.mem.Allocator) void {
         switch (this.*) {
@@ -57,8 +57,8 @@ pub const LengthPercentageOrAuto = union(enum) {
     /// A [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage).
     length: LengthPercentage,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
         return switch (this.*) {
@@ -355,7 +355,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn sign(this: *const @This()) f32 {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return css.signfns.signF32(@field(this, field.name));
@@ -379,7 +379,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return .{ @field(this, field.name), field.name };
@@ -523,6 +523,10 @@ pub const Length = union(enum) {
     value: LengthValue,
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
+
+    pub fn zero() Length {
+        return .{ .value = LengthValue.zero() };
+    }
 
     pub fn deepClone(this: *const Length, allocator: Allocator) Length {
         return switch (this.*) {

@@ -1,79 +1,76 @@
 const KEventWatcher = @This();
+const log = Output.scoped(.watcher, false);
 pub const EventListIndex = u32;
 
 const KEvent = std.c.Kevent;
 
-// Internal
-changelist: [128]KEvent = undefined,
-
 // Everything being watched
-eventlist: [max_eviction_count]KEvent = undefined,
 eventlist_index: EventListIndex = 0,
 
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD.Optional = .none,
+
+const changelist_count = 128;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
     if (fd == 0) return error.KQueueError;
-    this.fd = bun.toFD(fd);
+    this.fd = .init(.fromNative(fd));
 }
 
 pub fn stop(this: *KEventWatcher) void {
-    if (this.fd.isValid()) {
-        _ = bun.sys.close(this.fd);
-        this.fd = bun.invalid_fd;
+    if (this.fd.take()) |fd| {
+        fd.close();
     }
 }
 
 pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
     return .{
         .op = .{
-            .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
-            .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
-            .rename = (kevent.fflags & (std.c.NOTE_RENAME | std.c.NOTE_LINK)) > 0,
-            .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
+            .delete = (kevent.fflags & std.c.NOTE.DELETE) > 0,
+            .metadata = (kevent.fflags & std.c.NOTE.ATTRIB) > 0,
+            .rename = (kevent.fflags & (std.c.NOTE.RENAME | std.c.NOTE.LINK)) > 0,
+            .write = (kevent.fflags & std.c.NOTE.WRITE) > 0,
         },
         .index = @truncate(kevent.udata),
     };
 }
 
 pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
-    bun.assert(this.platform.fd.isValid());
+    const fd: bun.FD = this.platform.fd.unwrap() orelse
+        @panic("KEventWatcher has an invalid file descriptor");
 
     // not initialized each time
-    var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
+    var changelist_array: [changelist_count]KEvent = undefined;
+    @memset(&changelist_array, std.mem.zeroes(KEvent));
     var changelist = &changelist_array;
 
     defer Output.flush();
 
     var count = std.posix.system.kevent(
-        this.platform.fd.cast(),
-        @as([*]KEvent, changelist),
+        fd.native(),
+        changelist,
         0,
-        @as([*]KEvent, changelist),
-        128,
-
-        null,
+        changelist,
+        changelist_count,
+        null, // timeout
     );
 
     // Give the events more time to coalesce
     if (count < 128 / 2) {
         const remain = 128 - count;
-        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
         const extra = std.posix.system.kevent(
-            this.platform.fd.cast(),
-            @as([*]KEvent, changelist[@as(usize, @intCast(count))..].ptr),
+            fd.native(),
+            changelist[@intCast(count)..].ptr,
             0,
-            @as([*]KEvent, changelist[@as(usize, @intCast(count))..].ptr),
+            changelist[@intCast(count)..].ptr,
             remain,
-
-            &timespec,
+            &.{ .sec = 0, .nsec = 100_000 }, // 0.0001 seconds
         );
 
         count += extra;
     }
 
-    var changes = changelist[0..@as(usize, @intCast(@max(0, count)))];
+    var changes = changelist[0..@intCast(@max(0, count))];
     var watchevents = this.watch_events[0..changes.len];
     var out_len: usize = 0;
     if (changes.len > 0) {
@@ -105,7 +102,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.JSC.Maybe(void) {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 const max_eviction_count = Watcher.max_eviction_count;

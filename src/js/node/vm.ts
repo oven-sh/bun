@@ -67,7 +67,10 @@ function measureMemory() {
 
 function validateContext(contextifiedObject) {
   if (!isContext(contextifiedObject)) {
-    throw $ERR_INVALID_ARG_TYPE("contextifiedObject", "vm.Context", contextifiedObject);
+    const error = new Error('The "contextifiedObject" argument must be an vm.Context');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    error.name = "TypeError";
+    throw error;
   }
 }
 

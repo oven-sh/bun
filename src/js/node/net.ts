@@ -41,7 +41,7 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
-const { UV_EADDRINUSE, UV_EINVAL, UV_ENOTCONN, UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
@@ -50,6 +50,8 @@ const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "g
 const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
+const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
+const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -105,7 +107,6 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
-const kpromise = Symbol("kpromise");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -114,7 +115,7 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
-  socket.end();
+  socket.$end();
   callback(err);
 }
 function emitCloseNT(self, hasError) {
@@ -222,10 +223,10 @@ const SocketHandlers: SocketHandler = {
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
   },
-  error(socket, error, ignoreHadError) {
+  error(socket, error) {
     const self = socket.data;
     if (!self) return;
-    if (self._hadError && !ignoreHadError) return;
+    if (self._hadError) return;
     self._hadError = true;
 
     const callback = self[kwriteCallback];
@@ -506,15 +507,11 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; req?: object }> = {
+const SocketHandlers2: SocketHandler<NodeJS.SocketHandleData> = {
   open(socket) {
     $debug("Bun.Socket open");
-    let { self, that, req } = socket.data;
-    if (!that) that = SocketHandle[kAttach](socket, self);
-    self._handle = that;
+    let { self, req } = socket.data;
     socket[owner_symbol] = self;
-    that[ksocket] = socket;
-    that[kpromise] = null;
     $debug("self[kupgraded]", String(self[kupgraded]));
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
@@ -532,13 +529,13 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
-    const { self, that } = socket.data;
+    const { self } = socket.data;
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
     $debug("Bun.Socket drain");
-    const { self, that } = socket.data;
+    const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback) {
@@ -556,7 +553,7 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   end(socket) {
     $debug("Bun.Socket end");
-    const { self, that } = socket.data;
+    const { self } = socket.data;
     if (self[kended]) return;
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -565,8 +562,7 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   close(socket, err) {
     $debug("Bun.Socket close");
-    let { self, that } = socket.data;
-    if (!that) that = SocketHandle[kAttach](socket, self);
+    let { self } = socket.data;
     if (self[kclosed]) return;
     self[kclosed] = true;
     self[kended] = true;
@@ -576,7 +572,7 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
-    const { self, that } = socket.data;
+    const { self } = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       // will be handled in onConnectEnd
       return;
@@ -610,10 +606,12 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
     self.emit("secureConnect", verifyError);
     self.removeListener("end", onConnectEnd);
   },
-  error(socket, error, ignoreHadError) {
+  error(socket, error) {
     $debug("Bun.Socket error");
-    const { self, that } = socket.data;
-    if (self._hadError && !ignoreHadError) return;
+    if (socket.data === undefined) return;
+    console.log(error);
+    const { self } = socket.data;
+    if (self._hadError) return;
     self._hadError = true;
 
     const callback = self[kwriteCallback];
@@ -627,299 +625,51 @@ const SocketHandlers2: SocketHandler<{ self: NodeJS.Socket; that: SocketHandle; 
   },
   timeout(socket) {
     $debug("Bun.Socket timeout");
-    const { self, that } = socket.data;
+    const { self } = socket.data;
     self.emit("timeout", self);
   },
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
-    let { self, that, req } = socket.data;
-    if (!that) that = SocketHandle[kAttach](socket, self);
-    self._handle = that;
+    let { self, req } = socket.data;
     socket[owner_symbol] = self;
-    that[ksocket] = socket;
-    that[kpromise] = null;
     req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
   },
 };
 
-const kConnectTcp = Symbol("kConnectTcp");
-const kConnectPipe = Symbol("kConnectPipe");
+function kConnectTcp(self, addressType, req, address, port) {
+  $debug("SocketHandle.kConnectTcp", addressType, address, port);
+  const promise = doConnect(self._handle, {
+    hostname: address,
+    port,
+    ipv6Only: addressType === 6,
+    allowHalfOpen: self.allowHalfOpen,
+    tls: req.tls,
+    data: { self, req },
+    socket: self[khandlers],
+  });
+  promise.catch(reason => {
+    // eat this so there's no unhandledRejection
+    // we already catch this in connectError and error
+  });
+  return 0;
+}
 
-class SocketHandle {
-  #promise: Promise<Socket<undefined>> | null;
-  #socket: Socket<undefined> | null;
-  #refsOnConnect: number = 0;
-  #unrefsOnConnect: number = 0;
-
-  constructor() {
-    $debug("new SocketHandle");
-    this.#promise = null;
-    this.#socket = null;
-  }
-  static [kAttach](sock, self) {
-    const x = new SocketHandle();
-    x.#socket = sock;
-    x[owner_symbol] = self;
-    return x;
-  }
-  set [kpromise](prom) {
-    this.#promise = prom;
-  }
-  set [ksocket](sock) {
-    this.#socket = sock;
-  }
-  [kConnectTcp](self, addressType, req, address, port) {
-    $debug("SocketHandle.kConnectTcp", addressType, address, port);
-    // $assert(this.#promise == null);
-    // $assert(this.#socket == null);
-    const that = this;
-    this.#promise = Bun.connect({
-      hostname: address,
-      port,
-      ipv6Only: addressType === 6,
-      allowHalfOpen: self.allowHalfOpen,
-      tls: req.tls,
-      data: { self, that, req },
-      socket: self[khandlers],
-    }).then(sock => {
-      $debug("Bun.Socket then");
-      that.#socket = sock;
-      that.#promise = null;
-      for (let i = 0; i < that.#refsOnConnect; i++) sock.ref();
-      for (let i = 0; i < that.#unrefsOnConnect; i++) sock.unref();
-    });
-    this.#promise.catch(reason => {
-      // eat this so there's no unhandledRejection
-      // we already catch this in connectError and error
-    });
-    return 0;
-  }
-  [kConnectPipe](self, req, address) {
-    $debug("SocketHandle.kConnectPipe");
-    $assert(this.#promise == null);
-    $assert(this.#socket == null);
-    const that = this;
-    this.#promise = Bun.connect({
-      hostname: address,
-      unix: address,
-      allowHalfOpen: self.allowHalfOpen,
-      tls: req.tls,
-      data: { self, that, req },
-      socket: self[khandlers],
-    }).then(sock => {
-      that.#socket = sock;
-      that.#promise = null;
-      for (let i = 0; i < that.#refsOnConnect; i++) sock.ref();
-      for (let i = 0; i < that.#unrefsOnConnect; i++) sock.unref();
-    });
-    this.#promise.catch(reason => {
-      // eat this so there's no unhandledRejection
-      // we already catch this in connectError and error
-    });
-    return 0;
-  }
-  [Symbol.dispose]() {
-    $assert(this.#socket != null);
-    this.#socket[Symbol.dispose]();
-  }
-  setNoDelay(noDelay?: boolean) {
-    $debug("SocketHandle.setNoDelay");
-    if (this.#socket == null) return;
-    return this.#socket.setNoDelay(noDelay);
-  }
-  setKeepAlive(enable?: boolean, initialDelay?: number) {
-    $debug("SocketHandle.setKeepAlive");
-    if (this.#socket == null) return;
-    return this.#socket.setKeepAlive(enable, initialDelay);
-  }
-  resume() {
-    $debug("SocketHandle.resume");
-    return this.#socket?.resume();
-  }
-  pause() {
-    $debug("SocketHandle.pause");
-    return this.#socket?.pause();
-  }
-  write() {
-    $debug("SocketHandle.write");
-    $assert(this.#socket != null);
-    return this.#socket.$write(...arguments);
-  }
-  end() {
-    $debug("SocketHandle.end");
-    $assert(this.#socket != null);
-    return this.#socket.$end(...arguments);
-  }
-  close(cb) {
-    $debug("SocketHandle.close");
-    this.#socket?.close();
-    if (typeof cb === "function") setImmediate(cb);
-  }
-  shutdown() {
-    $debug("SocketHandle.shutdown");
-    return this.#socket?.shutdown(...arguments);
-  }
-  reset(cb) {
-    $debug("SocketHandle.reset");
-    if (this.#socket == null) {
-      return;
-    }
-    this.#socket.close();
-    if (typeof cb === "function") setImmediate(cb);
-  }
-  ref() {
-    $debug("SocketHandle.ref");
-    if (this.#socket == null) {
-      this.#refsOnConnect += 1;
-      return;
-    }
-    return this.#socket.ref();
-  }
-  unref() {
-    $debug("SocketHandle.unref");
-    if (this.#socket == null) {
-      this.#unrefsOnConnect += 1;
-      return;
-    }
-    return this.#socket.unref();
-  }
-  //TLS
-  getPeerCertificate(abbreviated?) {
-    $debug("SocketHandle.getPeerCertificate");
-    $assert(this.#socket != null);
-    return this.#socket.getPeerCertificate(...arguments);
-  }
-  getTLSFinishedMessage() {
-    $debug("SocketHandle.getTLSFinishedMessage");
-    $assert(this.#socket != null);
-    return this.#socket.getTLSFinishedMessage(...arguments);
-  }
-  getTLSPeerFinishedMessage() {
-    $debug("SocketHandle.getTLSPeerFinishedMessage");
-    $assert(this.#socket != null);
-    return this.#socket.getTLSPeerFinishedMessage(...arguments);
-  }
-  getEphemeralKeyInfo() {
-    $debug("SocketHandle.getEphemeralKeyInfo");
-    $assert(this.#socket != null);
-    return this.#socket.getEphemeralKeyInfo(...arguments);
-  }
-  getCipher() {
-    $debug("SocketHandle.getCipher");
-    $assert(this.#socket != null);
-    return this.#socket.getCipher(...arguments);
-  }
-  renegotiate() {
-    $debug("SocketHandle.renegotiate");
-    $assert(this.#socket != null);
-    return this.#socket.renegotiate(...arguments);
-  }
-  disableRenegotiation() {
-    $debug("SocketHandle.disableRenegotiation");
-    if (this.#socket == null) return;
-    return this.#socket.disableRenegotiation(...arguments);
-  }
-  setVerifyMode(requestCert, rejectUnauthorized) {
-    $debug("SocketHandle.setVerifyMode");
-    $assert(this.#socket != null);
-    return this.#socket.setVerifyMode(...arguments);
-  }
-  getSession() {
-    $debug("SocketHandle.getSession");
-    $assert(this.#socket != null);
-    return this.#socket.getSession(...arguments);
-  }
-  setSession(session) {
-    $debug("SocketHandle.setSession");
-    $assert(this.#socket != null);
-    return this.#socket.setSession(...arguments);
-  }
-  getTLSTicket() {
-    $debug("SocketHandle.getTLSTicket");
-    $assert(this.#socket != null);
-    return this.#socket.getTLSTicket(...arguments);
-  }
-  exportKeyingMaterial(length, label, context) {
-    $debug("SocketHandle.exportKeyingMaterial");
-    $assert(this.#socket != null);
-    return this.#socket.exportKeyingMaterial(...arguments);
-  }
-  setMaxSendFragment(size: number) {
-    $debug("SocketHandle.setMaxSendFragment");
-    $assert(this.#socket != null);
-    return this.#socket.setMaxSendFragment(...arguments);
-  }
-  getSharedSigalgs() {
-    $debug("SocketHandle.getSharedSigalgs");
-    $assert(this.#socket != null);
-    return this.#socket.getSharedSigalgs(...arguments);
-  }
-  getTLSVersion() {
-    $debug("SocketHandle.getTLSVersion");
-    $assert(this.#socket != null);
-    return this.#socket.getTLSVersion(...arguments);
-  }
-  getX509Certificate() {
-    $debug("SocketHandle.getX509Certificate");
-    $assert(this.#socket != null);
-    return this.#socket.getX509Certificate(...arguments);
-  }
-  getPeerX509Certificate() {
-    $debug("SocketHandle.getPeerX509Certificate");
-    $assert(this.#socket != null);
-    return this.#socket.getPeerX509Certificate(...arguments);
-  }
-  upgradeTLS(options) {
-    $debug("SocketHandle.upgradeTLS");
-    $assert(this.#socket != null);
-    return this.#socket.upgradeTLS(...arguments);
-  }
-  setServername(name) {
-    $debug("SocketHandle.setServername");
-    $assert(this.#socket != null);
-    return this.#socket.setServername(...arguments);
-  }
-  getServername() {
-    $debug("SocketHandle.getServername");
-    $assert(this.#socket != null);
-    return this.#socket.getServername(...arguments);
-  }
-  getCertificate() {
-    $debug("SocketHandle.getCertificate");
-    $assert(this.#socket != null);
-    return this.#socket.getCertificate(...arguments);
-  }
-  //TLS
-  get bytesWritten() {
-    return this.#socket?.bytesWritten;
-  }
-  get localFamily() {
-    return this.#socket?.localFamily;
-  }
-  get localAddress() {
-    return this.#socket?.localAddress;
-  }
-  get localPort() {
-    return this.#socket?.localPort;
-  }
-  get remoteFamily() {
-    return this.#socket?.remoteFamily;
-  }
-  get remoteAddress() {
-    return this.#socket?.remoteAddress;
-  }
-  get remotePort() {
-    return this.#socket?.remotePort;
-  }
-  //TLS
-  get authorized() {
-    return this.#socket?.authorized;
-  }
-  get alpnProtocol() {
-    return this.#socket?.alpnProtocol;
-  }
-  //TLS
+function kConnectPipe(self, req, address) {
+  $debug("SocketHandle.kConnectPipe");
+  const promise = doConnect(self._handle, {
+    hostname: address,
+    unix: address,
+    allowHalfOpen: self.allowHalfOpen,
+    tls: req.tls,
+    data: { self, req },
+    socket: self[khandlers],
+  });
+  promise.catch(reason => {
+    // eat this so there's no unhandledRejection
+    // we already catch this in connectError and error
+  });
+  return 0;
 }
 
 function Socket(options?) {
@@ -1226,7 +976,7 @@ Socket.prototype.connect = function connect(...args) {
           this[kupgraded] = connection;
           connection.connecting = true;
           const [result, events] = upgradeDuplexToTLS(connection, {
-            data: { self: this, that: socket, req: { oncomplete: afterConnect } },
+            data: { self: this, req: { oncomplete: afterConnect } },
             tls,
             socket: this[khandlers],
           });
@@ -1234,24 +984,24 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          this._handle = SocketHandle[kAttach](result, this);
+          this._handle = result;
         } else {
           if (socket) {
             this.connecting = true;
             this[kupgraded] = connection;
             connection.connecting = true;
             const result = socket.upgradeTLS({
-              data: { self: this, that: socket, req: { oncomplete: afterConnect } },
+              data: { self: this, req: { oncomplete: afterConnect } },
               tls,
               socket: this[khandlers],
             });
             if (result) {
               const [raw, tls] = result;
               // replace socket
-              connection._handle = SocketHandle[kAttach](raw, connection);
+              connection._handle = raw;
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
-              this._handle = SocketHandle[kAttach](tls, this);
+              this._handle = tls;
             } else {
               this._handle = null;
               throw new Error("Invalid socket");
@@ -1269,7 +1019,7 @@ Socket.prototype.connect = function connect(...args) {
                 this[kupgraded] = connection;
                 connection.connecting = true;
                 const [result, events] = upgradeDuplexToTLS(connection, {
-                  data: { self: this, that: socket, req: { oncomplete: afterConnect } },
+                  data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],
                 });
@@ -1277,23 +1027,23 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                this._handle = SocketHandle[kAttach](result, this);
+                this._handle = result;
               } else {
                 this.connecting = true;
                 this[kupgraded] = connection;
                 connection.connecting = true;
                 const result = socket.upgradeTLS({
-                  data: { self: this, that: socket, req: { oncomplete: afterConnect } },
+                  data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],
                 });
                 if (result) {
                   const [raw, tls] = result;
                   // replace socket
-                  connection._handle = SocketHandle[kAttach](raw, connection);
+                  connection._handle = raw;
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
-                  this._handle = SocketHandle[kAttach](tls, this);
+                  this._handle = tls;
                 } else {
                   this._handle = null;
                   throw new Error("Invalid socket");
@@ -1336,8 +1086,7 @@ Socket.prototype.connect = function connect(...args) {
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
-    // this._handle = pipe ? new Pipe(PipeConstants.SOCKET) : new TCP(TCPConstants.SOCKET);
-    this._handle = new SocketHandle();
+    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
     initSocketHandle(this);
   }
 
@@ -1374,7 +1123,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
   $debug("close");
   if (this._handle) {
-    if (this !== process.stderr) $debug("close handle");
+    $debug("close handle");
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
@@ -1382,7 +1131,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
-      const err = this._handle.reset(() => {
+      const err = this._handle.reset();
+      setImmediate(() => {
         $debug("emit close");
         this.emit("close", isException);
       });
@@ -1737,18 +1487,10 @@ function writeGeneric(socket, data, encoding) {
     case "ucs-2":
     case "utf16le":
     case "utf-16le": {
-      if (!(socket instanceof SocketHandle)) {
-        // temp
-        return socket.$write(data, encoding);
-      }
-      return socket.write(data, encoding);
+      return socket.$write(data, encoding);
     }
     default: {
-      if (!(socket instanceof SocketHandle)) {
-        // temp
-        return socket.$write(Buffer.from(data, encoding));
-      }
-      return socket.write(Buffer.from(data, encoding));
+      return socket.$write(Buffer.from(data, encoding));
     }
   }
 }
@@ -2028,7 +1770,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
     self[kConnectOptions] = options;
     self.prependListener("end", onConnectEnd);
   }
-  // self._undestroy();
   //TLS
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
@@ -2039,7 +1780,6 @@ function internalConnect(self, options, address, port, addressType, localAddress
       self.destroy($ERR_IP_BLOCKED(address));
       return;
     }
-    // const req = new TCPConnectWrap();
     const req: any = {};
     req.oncomplete = afterConnect;
     req.address = address;
@@ -2049,15 +1789,14 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.addressType = addressType;
     req.tls = tls;
 
-    err = self._handle[kConnectTcp](self, addressType, req, address, port);
+    err = kConnectTcp(self, addressType, req, address, port);
   } else {
-    // const req = new PipeConnectWrap();
     const req: any = {};
     req.address = address;
     req.oncomplete = afterConnect;
     req.tls = tls;
 
-    err = self._handle[kConnectPipe](self, req, address);
+    err = kConnectPipe(self, req, address);
   }
 
   if (err) {
@@ -2091,7 +1830,7 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
-    self[kReinitializeHandle](new SocketHandle());
+    self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
   }
 
   const { localPort, port, flags } = context;
@@ -2186,7 +1925,7 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
-  err = self._handle[kConnectTcp](self, addressType, req, address, port);
+  err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
@@ -2862,9 +2601,10 @@ function initSocketHandle(self) {
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {
-  $debug("closeSocketHandle", isException, isCleanupPending);
+  $debug("closeSocketHandle", isException, isCleanupPending, !!self._handle);
   if (self._handle) {
-    self._handle.close(() => {
+    self._handle.close();
+    setImmediate(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);
       if (isCleanupPending) {

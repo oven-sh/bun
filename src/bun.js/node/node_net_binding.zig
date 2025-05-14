@@ -79,3 +79,42 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
 pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
 
 pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
+
+pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalThis.bunVM();
+    const args = callframe.argumentsAsArray(1);
+    const is_ssl = args[0].toBoolean();
+
+    if (!is_ssl) {
+        const socket = bun.api.TCPSocket.new(.{
+            .socket = .detached,
+            .socket_context = null,
+            .ref_count = .init(),
+            .protos = null,
+            .handlers = bun.new(bun.api.SocketHandlers, .{
+                .globalObject = globalThis,
+                .vm = vm,
+                .is_server = false,
+            }),
+        });
+        return socket.toJS(globalThis);
+    } else {
+        const socket = bun.api.TLSSocket.new(.{
+            .socket = .detached,
+            .socket_context = null,
+            .ref_count = .init(),
+            .protos = null,
+            .handlers = bun.new(bun.api.SocketHandlers, .{
+                .globalObject = globalThis,
+                .vm = vm,
+                .is_server = false,
+            }),
+        });
+        return socket.toJS(globalThis);
+    }
+}
+
+pub fn doConnect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const prev, const opts = callframe.argumentsAsArray(2);
+    return bun.api.Listener.connectInner(globalThis, .{ prev.as(bun.api.TCPSocket), prev.as(bun.api.TLSSocket) }, opts);
+}

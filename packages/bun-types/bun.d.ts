@@ -400,7 +400,7 @@ declare module "bun" {
     /**
      * In Bun, this does nothing.
      */
-    type?: Bun.WorkerType;
+    type?: Bun.WorkerType | undefined;
 
     /**
      * List of arguments which would be stringified and appended to
@@ -408,20 +408,20 @@ declare module "bun" {
      * but the values will be available on the global `Bun.argv` as if they
      * were passed as CLI options to the script.
      */
-    argv?: any[];
+    argv?: any[] | undefined;
 
     /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
-    // eval?: boolean ;
+    // eval?: boolean | undefined;
 
     /**
      * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
-    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"];
+    env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
 
     /**
      * In Bun, this does nothing.
      */
-    credentials?: import("undici-types").RequestCredentials;
+    credentials?: import("undici-types").RequestCredentials | undefined;
 
     /**
      * @default true
@@ -436,7 +436,7 @@ declare module "bun" {
      *
      * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
      */
-    preload?: string[] | string;
+    preload?: string[] | string | undefined;
   }
 
   interface Worker extends EventTarget, AbstractWorker {
@@ -778,10 +778,10 @@ declare module "bun" {
   ): Promise<number>;
 
   interface SystemError extends Error {
-    errno?: number;
-    code?: string;
-    path?: string;
-    syscall?: string;
+    errno?: number | undefined;
+    code?: string | undefined;
+    path?: string | undefined;
+    syscall?: string | undefined;
   }
 
   /**
@@ -3660,7 +3660,7 @@ declare module "bun" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
+    ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3672,7 +3672,7 @@ declare module "bun" {
      *  intermediate certificates are not provided, the peer will not be
      *  able to validate the certificate, and the handshake will fail.
      */
-    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
+    cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3683,7 +3683,7 @@ declare module "bun" {
      * object.passphrase is optional. Encrypted keys will be decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
-    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile>;
+    key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
@@ -3784,7 +3784,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.ca` instead
      */
-    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -3798,7 +3798,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.cert` instead
      */
-    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
      * being encrypted. Encrypted keys will be decrypted with
@@ -3811,7 +3811,7 @@ declare module "bun" {
      *
      * @deprecated Use `.tls.key` instead
      */
-    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
      * usually necessary. This should be used carefully if at all! Value is
@@ -3819,7 +3819,7 @@ declare module "bun" {
      *
      * @deprecated `Use .tls.secureOptions` instead
      */
-    secureOptions?: number; // Value is a numeric bitmask of the `SSL_OP_*` options
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
   interface SocketAddress {
@@ -5617,7 +5617,7 @@ declare module "bun" {
       callback: {
         napiModule: unknown;
         symbol: string;
-        external?: unknown;
+        external?: unknown | undefined;
       },
     ): this;
     /**
@@ -6034,7 +6034,7 @@ declare module "bun" {
      * certificate.
      * @return A certificate object.
      */
-    getPeerCertificate(abbreviated?: boolean): import("tls").PeerCertificate;
+    getPeerCertificate(): import("node:tls").PeerCertificate;
     getPeerX509Certificate(): import("node:crypto").X509Certificate;
 
     /**

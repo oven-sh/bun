@@ -4208,9 +4208,9 @@ pub const H2FrameParser = struct {
                         this.maxOutstandingSettings = @max(1, @as(u32, @truncate(max_outstanding_settings.to(u64))));
                     }
                 }
-                if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |maxSendHeaderBlockLength| {
-                    if (maxSendHeaderBlockLength.isNumber()) {
-                        this.maxSendHeaderBlockLength = maxSendHeaderBlockLength.to(u32);
+                if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |max_send_header_block_length| {
+                    if (max_send_header_block_length.isNumber()) {
+                        this.maxSendHeaderBlockLength = @truncate(max_send_header_block_length.to(u64));
                     }
                 }
             }

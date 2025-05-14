@@ -192,34 +192,34 @@ if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
 
 // // TLSv1 thru TLSv1.2 are only supported with explicit configuration with API or
 // // CLI (--tls-v1.0 and --tls-v1.1).
-// test(U, U, 'TLSv1_2_method', U, U, 'TLSv1_2_method', 'TLSv1.2');
-// test(U, U, 'TLSv1_1_method', U, U, 'TLSv1_1_method', 'TLSv1.1');
-// test(U, U, 'TLSv1_method', U, U, 'TLSv1_method', 'TLSv1');
+test(U, U, 'TLSv1_2_method', U, U, 'TLSv1_2_method', 'TLSv1.2');
+test(U, U, 'TLSv1_1_method', U, U, 'TLSv1_1_method', 'TLSv1.1');
+test(U, U, 'TLSv1_method', U, U, 'TLSv1_method', 'TLSv1');
 
-// // The default default.
-// if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
-//   test(U, U, 'TLSv1_1_method', U, U, U,
-//        U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-//        'ERR_SSL_UNSUPPORTED_PROTOCOL');
-//   test(U, U, 'TLSv1_method', U, U, U,
-//        U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-//        'ERR_SSL_UNSUPPORTED_PROTOCOL');
+// The default default.
+if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
+  test(U, U, 'TLSv1_1_method', U, U, U,
+       U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+       'ERR_SSL_UNSUPPORTED_PROTOCOL');
+  test(U, U, 'TLSv1_method', U, U, U,
+       U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+       'ERR_SSL_UNSUPPORTED_PROTOCOL');
 
-//   if (DEFAULT_MAX_VERSION === 'TLSv1.2') {
-//     test(U, U, U, U, U, 'TLSv1_1_method',
-//          U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
-//     test(U, U, U, U, U, 'TLSv1_method',
-//          U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
-//   } else {
-//     // TLS1.3 client hellos are are not understood by TLS1.1 or below.
-//     test(U, U, U, U, U, 'TLSv1_1_method',
-//          U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-//          'ERR_SSL_UNSUPPORTED_PROTOCOL');
-//     test(U, U, U, U, U, 'TLSv1_method',
-//          U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-//          'ERR_SSL_UNSUPPORTED_PROTOCOL');
-//   }
-// }
+  if (DEFAULT_MAX_VERSION === 'TLSv1.2') {
+    test(U, U, U, U, U, 'TLSv1_1_method',
+         U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+    test(U, U, U, U, U, 'TLSv1_method',
+         U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+  } else {
+    // TLS1.3 client hellos are are not understood by TLS1.1 or below.
+    test(U, U, U, U, U, 'TLSv1_1_method',
+         U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+         'ERR_SSL_UNSUPPORTED_PROTOCOL');
+    test(U, U, U, U, U, 'TLSv1_method',
+         U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+         'ERR_SSL_UNSUPPORTED_PROTOCOL');
+  }
+}
 
 // // The default with --tls-v1.1.
 // if (DEFAULT_MIN_VERSION === 'TLSv1.1') {
@@ -248,36 +248,36 @@ if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
 //   test(U, U, U, U, U, 'TLSv1_method', 'TLSv1');
 // }
 
-// // TLS min/max are respected when set with no secureProtocol.
-// test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_method', 'TLSv1');
-// test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_1_method', 'TLSv1.1');
-// test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_2_method', 'TLSv1.2');
-// test('TLSv1', 'TLSv1.2', U, U, U, 'TLS_method', 'TLSv1.2');
+// TLS min/max are respected when set with no secureProtocol.
+test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_method', 'TLSv1');
+test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_1_method', 'TLSv1.1');
+test('TLSv1', 'TLSv1.2', U, U, U, 'TLSv1_2_method', 'TLSv1.2');
+test('TLSv1', 'TLSv1.2', U, U, U, 'TLS_method', 'TLSv1.2');
 
-// test(U, U, 'TLSv1_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1');
-// test(U, U, 'TLSv1_1_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
-// test(U, U, 'TLSv1_2_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1.2');
+test(U, U, 'TLSv1_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1');
+test(U, U, 'TLSv1_1_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
+test(U, U, 'TLSv1_2_method', 'TLSv1', 'TLSv1.2', U, 'TLSv1.2');
 
-// test('TLSv1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1');
-// test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
-// test('TLSv1.1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.2', U, 'TLSv1.1', 'TLSv1.1', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.2');
+test('TLSv1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1', U, 'TLSv1', 'TLSv1.1', U, 'TLSv1');
+test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
+test('TLSv1.1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.2', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.2', U, 'TLSv1.1', 'TLSv1.1', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.2', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.2');
 
-// // v-any client can connect to v-specific server
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1.3', 'TLSv1.3', U, 'TLSv1.3');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1.2', 'TLSv1.3', U, 'TLSv1.3');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1.2', 'TLSv1.2', U, 'TLSv1.2');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1.1', 'TLSv1.1', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
+// v-any client can connect to v-specific server
+test('TLSv1', 'TLSv1.3', U, 'TLSv1.3', 'TLSv1.3', U, 'TLSv1.3');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1.2', 'TLSv1.3', U, 'TLSv1.3');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1.2', 'TLSv1.2', U, 'TLSv1.2');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1.1', 'TLSv1.1', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1.3', U, 'TLSv1', 'TLSv1', U, 'TLSv1');
 
-// // v-specific client can connect to v-any server
-// test('TLSv1.3', 'TLSv1.3', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.3');
-// test('TLSv1.2', 'TLSv1.2', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.2');
-// test('TLSv1.1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.1');
-// test('TLSv1', 'TLSv1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1');
+// v-specific client can connect to v-any server
+test('TLSv1.3', 'TLSv1.3', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.3');
+test('TLSv1.2', 'TLSv1.2', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.2');
+test('TLSv1.1', 'TLSv1.1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1.1');
+test('TLSv1', 'TLSv1', U, 'TLSv1', 'TLSv1.3', U, 'TLSv1');

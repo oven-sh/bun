@@ -297,8 +297,31 @@ pub fn SSLWrapper(comptime T: type) type {
             if (this.isShutdown()) {
                 return .{};
             }
+
             const ssl = this.ssl orelse return .{};
-            return uws.us_ssl_socket_verify_error_from_ssl(ssl);
+            var verr = uws.us_ssl_socket_verify_error_from_ssl(ssl);
+
+            // If that returned "empty" (no verify error) but boringssl couldnt complete
+            // the handshake (protocol version mismatch, unsupported
+            // cipher, etc.) there will be an entry on the error queue. we need to
+            // propogate to JS land as `err.code` –
+            // Node's tests rely on seeing strings like
+            // "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION".
+            if (verr.code == null) {
+                const err_code = BoringSSL.ERR_peek_error();
+                if (err_code != 0) {
+                    const reason_ptr = BoringSSL.ERR_reason_error_string(err_code);
+                    bun.Output.print("BoringSSL error: {s}\n", .{reason_ptr});
+
+                    verr = uws.us_bun_verify_error_t{
+                        .error_no = @intCast(err_code),
+                        .code = reason_ptr,
+                        .reason = reason_ptr,
+                    };
+                }
+            }
+
+            return verr;
         }
 
         /// Update the handshake state

@@ -289,6 +289,8 @@ const SocketHandlers: SocketHandler = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
+          console.log("The error", verifyError);
+          self.emit("error", verifyError);
           self.emit("secure", self);
           self.emit("_tlsError", verifyError);
           self.server.emit("tlsClientError", verifyError, self);
@@ -430,8 +432,14 @@ const ServerHandlers: SocketHandler = {
       return;
     }
 
-    if (!success && verifyError == null) {
-      verifyError = new Error("TLS handshake failed");
+    if (!success) {
+      const err = verifyError || $ERR_SSL_UNSUPPORTED_PROTOCOL("TLS handshake failed");
+
+      self._hadError = true;
+      self.emit("_tlsError", err);
+      self.server.emit("tlsClientError", err, self);
+      self.destroy();
+      return;
     }
 
     self._securePending = false;

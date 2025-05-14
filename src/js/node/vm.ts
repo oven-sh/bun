@@ -50,6 +50,10 @@ const {
 } = vm;
 
 function runInContext(code, context, options) {
+  validateContext(context);
+  if (typeof options === "string") {
+    options = { filename: options };
+  }
   return new Script(code, options).runInContext(context, options);
 }
 
@@ -59,6 +63,12 @@ function createScript(code, options) {
 
 function measureMemory() {
   throwNotImplemented("node:vm measureMemory");
+}
+
+function validateContext(contextifiedObject) {
+  if (!isContext(contextifiedObject)) {
+    throw $ERR_INVALID_ARG_TYPE("contextifiedObject", "vm.Context", contextifiedObject);
+  }
 }
 
 let globalModuleId = 0;

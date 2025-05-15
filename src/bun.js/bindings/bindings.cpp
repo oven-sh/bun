@@ -2134,7 +2134,6 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
         result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    // ASSERT(err.errno_ <= 0); // TODO: aspirational; come back to this
     result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -2178,7 +2177,6 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
     info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString), JSC::PropertyAttribute::DontDelete | 0);
 
-    // ASSERT(err.errno_ <= 0); // TODO: aspirational; come back to this
     info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
     result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
@@ -5994,24 +5992,19 @@ extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* abortSignal)
     abortSignal->deref();
 }
 
-extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* arg0, void* arg1)
+extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->cleanNativeBindings(arg1);
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-
     if (abortSignal->aborted()) {
         callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
-        return arg0;
+        return abortSignal;
     }
-
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
-
-    return arg0;
+    return abortSignal;
 }
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue value)
 {
@@ -6433,6 +6426,27 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
+extern "C" void Bun__JSValue__unprotect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (LIKELY(value && value.isCell())) {
+        JSCell* cell = value.asCell();
+
+        // Necessary if we're inside a finalizer due to an assertion.
+        JSLockHolder lock(cell->vm());
+
+        gcUnprotect(cell);
+    }
+}
+
+extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (LIKELY(value && value.isCell())) {
+        JSCell* cell = value.asCell();
+        gcProtect(cell);
+    }
+}
 #if ASSERT_ENABLED
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {

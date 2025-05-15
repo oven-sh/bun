@@ -1671,7 +1671,7 @@ pub fn Bun__fetch_(
         }
 
         if (request_init_object) |request_init| {
-            if (request_init.fastGet(globalThis, .url)) |url_| {
+            if (try request_init.fastGet(globalThis, .url)) |url_| {
                 if (!url_.isUndefined()) {
                     break :extract_url try bun.String.fromJS(url_, globalThis);
                 }
@@ -2092,7 +2092,7 @@ pub fn Bun__fetch_(
     //
     body = extract_body: {
         if (options_object) |options| {
-            if (options.fastGet(globalThis, .body)) |body__| {
+            if (try options.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
                     break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                 }
@@ -2123,7 +2123,7 @@ pub fn Bun__fetch_(
         }
 
         if (request_init_object) |req| {
-            if (req.fastGet(globalThis, .body)) |body__| {
+            if (try req.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
                     break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                 }
@@ -2149,7 +2149,7 @@ pub fn Bun__fetch_(
 
         const fetch_headers: ?*bun.webcore.FetchHeaders = brk: {
             if (options_object) |options| {
-                if (options.fastGet(globalThis, .headers)) |headers_value| {
+                if (try options.fastGet(globalThis, .headers)) |headers_value| {
                     if (!headers_value.isUndefined()) {
                         if (headers_value.as(FetchHeaders)) |headers__| {
                             if (headers__.isEmpty()) {
@@ -2183,7 +2183,7 @@ pub fn Bun__fetch_(
             }
 
             if (request_init_object) |options| {
-                if (options.fastGet(globalThis, .headers)) |headers_value| {
+                if (try options.fastGet(globalThis, .headers)) |headers_value| {
                     if (!headers_value.isUndefined()) {
                         if (headers_value.as(FetchHeaders)) |headers__| {
                             if (headers__.isEmpty()) {
@@ -2590,7 +2590,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.options,
                 credentialsWithOptions.acl,
                 credentialsWithOptions.storage_class,
-                if (headers) |h| h.getContentType() else null,
+                if (headers) |h| (h.getContentType()) else null,
                 proxy_url,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
@@ -2630,7 +2630,7 @@ pub fn Bun__fetch_(
             result.url = ""; // fetch now owns this
         }
 
-        const content_type = if (headers) |h| h.getContentType() else null;
+        const content_type = if (headers) |h| (h.getContentType()) else null;
         var header_buffer: [10]picohttp.Header = undefined;
 
         if (range) |range_| {

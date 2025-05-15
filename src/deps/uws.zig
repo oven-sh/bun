@@ -1241,30 +1241,41 @@ pub const InternalSocket = union(enum) {
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
         const ssl_int: i32 = @intFromBool(is_ssl);
+
         socket: InternalSocket,
+
         const ThisSocket = @This();
+
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+
         pub fn setNoDelay(this: ThisSocket, enabled: bool) bool {
             return this.socket.setNoDelay(enabled);
         }
+
         pub fn setKeepAlive(this: ThisSocket, enabled: bool, delay: u32) bool {
             return this.socket.setKeepAlive(enabled, delay);
         }
+
         pub fn pauseStream(this: ThisSocket) bool {
             return this.socket.pauseResume(is_ssl, true);
         }
+
         pub fn resumeStream(this: ThisSocket) bool {
             return this.socket.pauseResume(is_ssl, false);
         }
+
         pub fn detach(this: *ThisSocket) void {
             this.socket.detach();
         }
+
         pub fn isDetached(this: ThisSocket) bool {
             return this.socket.isDetached();
         }
+
         pub fn isNamedPipe(this: ThisSocket) bool {
             return this.socket.isNamedPipe();
         }
+
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             switch (this.socket) {
                 .connected => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
@@ -1562,6 +1573,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting, .detached => 0,
             };
         }
+
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.rawWrite(is_ssl, data, msg_more),
@@ -1570,6 +1582,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.rawWrite(data, msg_more) else 0,
             };
         }
+
         pub fn shutdown(this: ThisSocket) void {
             switch (this.socket) {
                 .connected => |socket| socket.shutdown(is_ssl),

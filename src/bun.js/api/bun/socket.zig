@@ -460,7 +460,7 @@ pub const SocketConfig = struct {
 
         var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero, is_server);
 
-        if (opts.fastGet(globalObject, .data)) |default_data_value| {
+        if (try opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -1139,7 +1139,7 @@ pub const Listener = struct {
                 handlers_ptr.* = handlers;
 
                 var promise = JSC.JSPromise.create(globalObject);
-                const promise_value = promise.asValue(globalObject);
+                const promise_value = promise.toJS();
                 handlers_ptr.promise.set(globalObject, promise_value);
 
                 if (ssl_enabled) {
@@ -1239,7 +1239,7 @@ pub const Listener = struct {
         handlers_ptr.is_server = false;
 
         var promise = JSC.JSPromise.create(globalObject);
-        const promise_value = promise.asValue(globalObject);
+        const promise_value = promise.toJS();
         handlers_ptr.promise.set(globalObject, promise_value);
 
         switch (ssl_enabled) {
@@ -1750,11 +1750,12 @@ fn NewSocket(comptime ssl: bool) type {
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
+
             // update the internal socket instance to the one that was just connected
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = socket;
             JSC.markBinding(@src());
-            log("onOpen {s} ssl: {}", .{ if (this.handlers.is_server) "S" else "C", comptime ssl });
+            log("onOpen {s} ssl: {}", .{ if (this.handlers.is_server) "S" else "C", ssl });
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
@@ -3409,7 +3410,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.fastGet(globalObject, .data)) |default_data_value| {
+            if (try opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }
@@ -3452,11 +3453,7 @@ fn NewSocket(comptime ssl: bool) type {
             const TLSHandler = NewWrappedHandler(true);
             const new_socket = this.socket.wrapTLS(options, ext_size, true, WrappedSocket, TLSHandler) orelse {
                 const err = BoringSSL.ERR_get_error();
-                defer {
-                    if (err != 0) {
-                        BoringSSL.ERR_clear_error();
-                    }
-                }
+                defer if (err != 0) BoringSSL.ERR_clear_error();
                 tls.wrapped = .none;
 
                 // Reset config to TCP
@@ -4257,7 +4254,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     }
 
     var default_data = JSValue.zero;
-    if (opts.fastGet(globalObject, .data)) |default_data_value| {
+    if (try opts.fastGet(globalObject, .data)) |default_data_value| {
         default_data = default_data_value;
         default_data.ensureStillAlive();
     }

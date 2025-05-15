@@ -1260,7 +1260,7 @@ pub fn Mixin(comptime Type: type) type {
                 value.toBlobIfPossible();
             }
 
-            var encoder = this.getFormDataEncoding() orelse {
+            var encoder = (try this.getFormDataEncoding()) orelse {
                 // TODO: catch specific errors from getFormDataEncoding
                 return globalObject.ERR(.FORMDATA_PARSE_ERROR, "Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
@@ -1305,7 +1305,7 @@ pub fn Mixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             this_value: JSValue,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1357,7 +1357,7 @@ pub fn Mixin(comptime Type: type) type {
         pub fn getBlobWithoutCallFrame(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        ) bun.JSError!JSC.JSValue {
             return getBlobWithThisValue(this, globalObject, .zero);
         }
     };

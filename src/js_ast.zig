@@ -8268,9 +8268,9 @@ pub const Macro = struct {
 
                         if (value.jsType() == .DOMWrapper) {
                             if (value.as(JSC.WebCore.Response)) |resp| {
-                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                                return this.run(try resp.getBlobWithoutCallFrame(this.global));
                             } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                                return this.run(try resp.getBlobWithoutCallFrame(this.global));
                             } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;

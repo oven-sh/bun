@@ -598,7 +598,7 @@ const Handlers = struct {
             }
         }
 
-        if (opts.fastGet(globalObject, .@"error")) |callback_value| {
+        if (try opts.fastGet(globalObject, .@"error")) |callback_value| {
             if (!callback_value.isCell() or !callback_value.isCallable()) {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }

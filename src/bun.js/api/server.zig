@@ -5427,7 +5427,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
                         }
 
-                        if (opts.fastGet(globalThis, .data)) |headers_value| {
+                        if (try opts.fastGet(globalThis, .data)) |headers_value| {
                             data_value = headers_value;
                         }
 
@@ -5435,7 +5435,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                        if (try opts.fastGet(globalThis, .headers)) |headers_value| {
                             if (headers_value.isEmptyOrUndefinedOrNull()) {
                                 break :getter;
                             }
@@ -5555,7 +5555,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
                     }
 
-                    if (opts.fastGet(globalThis, .data)) |headers_value| {
+                    if (try opts.fastGet(globalThis, .data)) |headers_value| {
                         data_value = headers_value;
                     }
 
@@ -5563,7 +5563,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return error.JSError;
                     }
 
-                    if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                    if (try opts.fastGet(globalThis, .headers)) |headers_value| {
                         if (headers_value.isEmptyOrUndefinedOrNull()) {
                             break :getter;
                         }
@@ -5823,13 +5823,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
-                    if (opts.fastGet(ctx, .method)) |method_| {
+                    if (try opts.fastGet(ctx, .method)) |method_| {
                         var slice_ = try method_.toSlice(ctx, bun.default_allocator);
                         defer slice_.deinit();
                         method = HTTP.Method.which(slice_.slice()) orelse method;
                     }
 
-                    if (opts.fastGet(ctx, .headers)) |headers_| {
+                    if (try opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(WebCore.FetchHeaders)) |headers__| {
                             headers = headers__;
                         } else if (WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
@@ -5837,7 +5837,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     }
 
-                    if (opts.fastGet(ctx, .body)) |body__| {
+                    if (try opts.fastGet(ctx, .body)) |body__| {
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {

@@ -161,16 +161,16 @@ const NO_PROTOCOLS_AVAILABLE_SERVER_ALERT = hasOpenSSL3 ?
 // }
 
 if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
-  // test(U, U, 'TLSv1_1_method', U, U, 'SSLv23_method',
-  //      U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-  //      'ERR_SSL_UNSUPPORTED_PROTOCOL');
+  test(U, U, 'TLSv1_1_method', U, U, 'SSLv23_method',
+       U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+       'ERR_SSL_UNSUPPORTED_PROTOCOL');
   test(U, U, 'TLSv1_method', U, U, 'SSLv23_method',
        U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
        'ERR_SSL_UNSUPPORTED_PROTOCOL');
-  // test(U, U, 'SSLv23_method', U, U, 'TLSv1_1_method',
-  //      U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
-  // test(U, U, 'SSLv23_method', U, U, 'TLSv1_method',
-  //      U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+  test(U, U, 'SSLv23_method', U, U, 'TLSv1_1_method',
+       U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+  test(U, U, 'SSLv23_method', U, U, 'TLSv1_method',
+       U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
 }
 
 // if (DEFAULT_MIN_VERSION === 'TLSv1.1') {

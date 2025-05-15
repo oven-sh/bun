@@ -370,7 +370,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
           int min = SSL_CTX_get_min_proto_version(ctx);
           int max = SSL_CTX_get_max_proto_version(ctx);
           int is_legacy = (min == max) && (min == TLS1_1_VERSION || min == TLS1_VERSION);
-          printf("[usockets] SERVER handshake debug: min=%d, max=%d, is_legacy=%d\n", min, max, is_legacy);
+          // printf("[usockets] SERVER handshake debug: min=%d, max=%d, is_legacy=%d\n", min, max, is_legacy);
           if (is_legacy) {
             verify_error.reason = "Wrong version number on server";
             verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
@@ -384,7 +384,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
           int max = SSL_CTX_get_max_proto_version(ctx);
           int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
           int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
-          printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
+          // printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
           if (is_tlsv1_1_method || is_tlsv1_method) {
             verify_error.reason = "TLSv1 alert protocol version";
             verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
@@ -404,7 +404,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
         int max = SSL_CTX_get_max_proto_version(ctx);
         int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
         int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
-        printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
+        // printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
         if (is_tlsv1_1_method || is_tlsv1_method) {
           verify_error.reason = "TLSv1 alert protocol version";
           verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";

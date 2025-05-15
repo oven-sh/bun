@@ -16,6 +16,7 @@ namespace Bun {
 
 class NodeVMGlobalObject;
 class NodeVMContextOptions;
+class CompileFunctionOptions;
 
 namespace NodeVM {
 
@@ -33,7 +34,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
 /// For vm.compileFunction we need to return an anonymous function expression
 ///
 /// This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
-JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
+JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);
 
 } // namespace NodeVM
 

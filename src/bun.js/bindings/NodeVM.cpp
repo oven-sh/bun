@@ -45,9 +45,10 @@
 #include "NodeValidator.h"
 
 #include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"
+#include "JavaScriptCore/JIT.h"
 #include "wtf/FileHandle.h"
 
 #include "../vm/SigintWatcher.h"
@@ -76,11 +77,14 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
-JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName, JSC::SourceTaintedOrigin sourceTaintOrigin, TextPosition position, JSC::JSScope* scope)
+JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
+    ASSERT(scope);
+
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    TextPosition position(options.lineOffset, options.columnOffset);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
     // First try parsing the code as is without wrapping it in an anonymous function expression.
@@ -90,7 +94,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         String code = args.at(0).toWTFString(globalObject);
 
         SourceCode sourceCode(
-            JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position, SourceProviderSourceType::Program),
+            JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
             position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
         if (!checkSyntax(vm, sourceCode, error)) {
@@ -127,7 +131,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position, SourceProviderSourceType::Program),
+        JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
     ParserError error;
@@ -205,10 +209,49 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, nullptr, sourceCode, std::nullopt);
 
     JSScope* functionScope = scope ? scope : globalObject->globalScope();
-
     Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
 
+    TriState bytecodeAccepted = TriState::Indeterminate;
+
+    if (false && !options.cachedData.isEmpty()) {
+        Ref<CachedBytecode> bytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::FunctionType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+        JSC::UnlinkedFunctionCodeBlock* unlinked = JSC::decodeCodeBlock<UnlinkedFunctionCodeBlock>(vm, key, WTFMove(bytecode));
+        if (!unlinked) {
+            bytecodeAccepted = TriState::False;
+        } else {
+            CodeBlock* linked = nullptr;
+            {
+                // JSC::FunctionCodeBlock::create() requires GC to be deferred.
+                DeferGC deferGC(vm);
+                linked = JSC::FunctionCodeBlock::create(vm, functionExecutable, unlinked, scope);
+            }
+            JSC::CompilationResult compilationResult = JIT::compileSync(vm, linked, JITCompilationEffort::JITCompilationCanFail);
+            if (compilationResult != JSC::CompilationResult::CompilationFailed) {
+                functionExecutable->installCode(linked);
+                bytecodeAccepted = TriState::True;
+            } else {
+                bytecodeAccepted = TriState::False;
+            }
+        }
+    }
+
     JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, functionScope, structure);
+
+    if (bytecodeAccepted != TriState::Indeterminate) {
+        function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataRejected"_s), jsBoolean(bytecodeAccepted == TriState::False));
+    } else if (false && options.produceCachedData) {
+        CodeBlock* codeBlock = nullptr;
+        std::optional<std::span<const uint8_t>> bytecode = getBytecode(globalObject, function, codeBlock);
+        if (bytecode) {
+            JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, *bytecode);
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
+        } else {
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(false));
+        }
+    }
+
     return function;
 }
 
@@ -278,21 +321,27 @@ RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::Progr
     return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
 }
 
-std::optional<std::span<const uint8_t>> getBytecode(JSGlobalObject* globalObject, JSC::JSFunction* function, CodeBlock*& codeBlock)
+std::optional<std::span<const uint8_t>> getBytecode(JSGlobalObject* globalObject, JSC::JSFunction* function, JSC::CodeBlock*& codeBlock)
 {
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // TODO(@heimskr): JSC bytecode for functions is just raw memory, with pointers to limited-lifetime data and everything.
+    // If it's not properly in the CodeCache, it can easily be UAF'd without warning.
+    // There doesn't appear to be any way to cache a function's bytecode.
+    // A workaround might be to compile an entire program containing just the function and then return the bytecode from that program.
+    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("getBytecode for functions is not implemented");
+    return std::nullopt;
+    // VM& vm = JSC::getVM(globalObject);
+    // auto scope = DECLARE_THROW_SCOPE(vm);
 
-    FunctionExecutable* executable = function->jsExecutable();
-    executable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    // FunctionExecutable* executable = function->jsExecutable();
+    // executable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);
+    // RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    if (!codeBlock) {
-        return std::nullopt;
-    }
+    // if (!codeBlock) {
+    //     return std::nullopt;
+    // }
 
-    const JSInstructionStream& instructionStream = codeBlock->instructions();
-    return std::span { reinterpret_cast<const uint8_t*>(instructionStream.rawPointer()), instructionStream.sizeInBytes() };
+    // const JSInstructionStream& instructionStream = codeBlock->instructions();
+    // return std::span { reinterpret_cast<const uint8_t*>(instructionStream.rawPointer()), instructionStream.sizeInBytes() };
 }
 
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source)
@@ -913,19 +962,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
-    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
-
-    if (options.produceCachedData) {
-        CodeBlock* codeBlock = nullptr;
-        std::optional<std::span<const uint8_t>> bytecode = getBytecode(globalObject, function, codeBlock);
-        if (bytecode) {
-            JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, *bytecode);
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
-        } else {
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(false));
-        }
-    }
+    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTFMove(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
 
     RETURN_IF_EXCEPTION(scope, {});
 

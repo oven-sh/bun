@@ -209,6 +209,7 @@ var InternalSecureContext = class SecureContext {
   secureOptions;
   ciphers;
 
+  secureProtocol: string | undefined;
   minVersion: number | undefined;
   maxVersion: number | undefined;
 
@@ -217,6 +218,7 @@ var InternalSecureContext = class SecureContext {
 
     if (options) {
       validateTLSOptions(options);
+
       let cert = options.cert;
       if (cert) this.cert = cert;
 
@@ -230,6 +232,7 @@ var InternalSecureContext = class SecureContext {
       this.passphrase = options.passphrase;
       this.servername = options.servername;
       this.secureOptions = options.secureOptions || 0;
+      this.secureProtocol = options.secureProtocol;
 
       const [minVersion, maxVersion] = resolveTLSVersions(options);
       this.minVersion = minVersion;
@@ -457,8 +460,6 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
-  const { minVersion, maxVersion } = this[ksecureContext];
-
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
@@ -467,8 +468,9 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
-    minVersionName: TLS_VERSION_REVERSE_MAP[minVersion],
-    maxVersionName: TLS_VERSION_REVERSE_MAP[maxVersion],
+    minVersionName: TLS_VERSION_REVERSE_MAP[this[ksecureContext].minVersion],
+    maxVersionName: TLS_VERSION_REVERSE_MAP[this[ksecureContext].maxVersion],
+    secureProtocol: this[ksecureContext].secureProtocol,
     ...this[ksecureContext],
   };
 };
@@ -540,6 +542,7 @@ function Server(options, secureConnectionListener): void {
       this.passphrase = options.passphrase;
       this.servername = options.servername;
       this.secureOptions = options.secureOptions || 0;
+      this.secureProtocol = options.secureProtocol;
 
       const requestCert = options.requestCert || false;
       if (requestCert) this._requestCert = requestCert;
@@ -574,6 +577,7 @@ function Server(options, secureConnectionListener): void {
         passphrase: this.passphrase,
         minVersion: this.minVersion,
         maxVersion: this.maxVersion,
+        secureProtocol: this.secureProtocol,
         minVersionName: TLS_VERSION_REVERSE_MAP[this.minVersion],
         maxVersionName: TLS_VERSION_REVERSE_MAP[this.maxVersion],
         secureOptions: this.secureOptions,

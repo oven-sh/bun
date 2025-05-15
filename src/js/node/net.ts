@@ -507,7 +507,7 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketHandlers2: SocketHandler<NodeJS.SocketHandleData> = {
+const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -1131,7 +1131,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
-      const err = this._handle.reset();
+      const err = this._handle.close();
       setImmediate(() => {
         $debug("emit close");
         this.emit("close", isException);
@@ -1887,7 +1887,6 @@ function internalConnectMultiple(context, canceled?) {
     self[kConnectOptions] = context.options;
     self.prependListener("end", onConnectEnd);
   }
-  // self._undestroy();
   //TLS
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);

@@ -1066,10 +1066,10 @@ pub const Listener = struct {
     }
 
     pub fn connect(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
-        return connectInner(globalObject, .{ null, null }, opts);
+        return connectInner(globalObject, null, null, opts);
     }
 
-    pub fn connectInner(globalObject: *JSC.JSGlobalObject, prev_instance: struct { ?*TCPSocket, ?*TLSSocket }, opts: JSValue) bun.JSError!JSValue {
+    pub fn connectInner(globalObject: *JSC.JSGlobalObject, prev_maybe_tcp: ?*TCPSocket, prev_maybe_tls: ?*TLSSocket, opts: JSValue) bun.JSError!JSValue {
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             return globalObject.throwInvalidArguments("Expected options object", .{});
         }
@@ -1245,14 +1245,18 @@ pub const Listener = struct {
         switch (ssl_enabled) {
             inline else => |is_ssl_enabled| {
                 const SocketType = NewSocket(is_ssl_enabled);
-                const socket = if (prev_instance[@intFromBool(is_ssl_enabled)]) |prev| blk: {
+                const maybe_previous: ?*SocketType = if (is_ssl_enabled) prev_maybe_tls else prev_maybe_tcp;
+
+                const socket = if (maybe_previous) |prev| blk: {
                     bun.destroy(prev.handlers);
+                    bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
+                    bun.assert(prev.socket.socket == .detached);
                     prev.connection = connection;
                     prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
                     prev.server_name = server_name;
+                    bun.assert(prev.socket_context == null);
                     prev.socket_context = socket_context;
-                    prev.ref();
                     break :blk prev;
                 } else bun.new(SocketType, .{
                     .ref_count = .init(),

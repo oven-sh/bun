@@ -97,7 +97,7 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
                 .is_server = false,
             }),
         });
-        return socket.toJS(globalThis);
+        return socket.getThisValue(globalThis);
     } else {
         const socket = bun.api.TLSSocket.new(.{
             .socket = .detached,
@@ -110,11 +110,13 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
                 .is_server = false,
             }),
         });
-        return socket.toJS(globalThis);
+        return socket.getThisValue(globalThis);
     }
 }
 
 pub fn doConnect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const prev, const opts = callframe.argumentsAsArray(2);
-    return bun.api.Listener.connectInner(globalThis, .{ prev.as(bun.api.TCPSocket), prev.as(bun.api.TLSSocket) }, opts);
+    const maybe_tcp = prev.as(bun.api.TCPSocket);
+    const maybe_tls = prev.as(bun.api.TLSSocket);
+    return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
 }

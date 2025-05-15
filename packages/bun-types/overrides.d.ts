@@ -206,7 +206,9 @@ declare module "tls" {
 }
 
 declare module "net" {
+  type SocketHandleData = { self: Socket; req?: object };
+
   interface Socket {
-    _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+    _handle: Bun.Socket<SocketHandleData> | null;
   }
 }

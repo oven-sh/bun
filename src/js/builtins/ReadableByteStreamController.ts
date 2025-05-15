@@ -36,7 +36,7 @@ export function enqueue(this: ReadableByteStreamController, chunk: ArrayBufferVi
   if ($getByIdDirectPrivate(this, "closeRequested")) throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   if (!$isObject(chunk) || !ArrayBuffer.$isView(chunk)) throw new TypeError("Provided chunk is not a TypedArray");
 
@@ -47,7 +47,7 @@ export function error(this: ReadableByteStreamController, error: any) {
   if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   $readableByteStreamControllerError(this, error);
 }
@@ -58,7 +58,7 @@ export function close(this: ReadableByteStreamController) {
   if ($getByIdDirectPrivate(this, "closeRequested")) throw new TypeError("Close has already been requested");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
-    throw new TypeError("ReadableStream is not readable");
+    throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   $readableByteStreamControllerClose(this);
 }

@@ -242,14 +242,12 @@ class Source {
   //   code: 'ERR_INVALID_ARG_TYPE',
   // });
   controller.close();
-  // TODO:
-  // assert.throws(() => controller.enqueue(new Uint8Array(10)), {
-  //   code: 'ERR_INVALID_STATE',
-  // });
-  // TODO:
-  // assert.throws(() => controller.close(), {
-  //   code: 'ERR_INVALID_STATE',
-  // });
+  assert.throws(() => controller.enqueue(new Uint8Array(10)), {
+    code: 'ERR_INVALID_STATE',
+  });
+  assert.throws(() => controller.close(), {
+    code: 'ERR_INVALID_STATE',
+  });
 }
 
 {

@@ -286,10 +286,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::X25519: {
             // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
-            JSValue nameValue = value.get()->get(&state, Identifier::fromString(vm, "name"_s));
-            JSValue publicValue = value.get()->get(&state, Identifier::fromString(vm, "public"_s));
+            JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+            JSValue publicValue = value.get()->get(&state, vm.propertyNames->publicKeyword);
             JSObject* newValue = constructEmptyObject(&state);
-            newValue->putDirect(vm, Identifier::fromString(vm, "name"_s), nameValue);
+            newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);

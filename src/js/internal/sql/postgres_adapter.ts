@@ -1,16 +1,5 @@
-import {
-  QueryAdapter, QueryLike, SQLQueryResultMode, SQLQueryFlags, BaseQuery,
-  TransactionCallback, SQLTagFn, ReservedSQL, QueryStatus
-} from "./SQLTypes";
-import { SQLResultArray } from "./SQLResultArray";
-import { symbols } from "./BaseQuery";
-import { 
-  SQLArrayParameter, 
-  normalizeQuery as commonNormalizeQuery, 
-  escapeIdentifier, 
-  detectCommand, 
-  commandToString 
-} from "./SQLHelpers";
+import { normalizeQuery as commonNormalizeQuery } from "./SQLHelpers";
+import { BaseQuery, QueryAdapter, QueryLike, SQLQueryFlags, SQLQueryResultMode, SQLTagFn } from "./SQLTypes";
 
 const enum SSLMode {
   disable = 0,
@@ -65,8 +54,7 @@ function notTaggedCallError() {
 
 export interface PostgresAdapter extends QueryAdapter {}
 
-export class PostgresQuery extends BaseQuery<PostgresAdapter> {
-}
+export class PostgresQuery extends BaseQuery<PostgresAdapter> {}
 
 export class PostgresAdapter implements QueryAdapter {
   private connectionInfo: any;
@@ -75,24 +63,15 @@ export class PostgresAdapter implements QueryAdapter {
   constructor(options: any) {
     this.connectionInfo = this.loadOptions(options);
     this.pool = new ConnectionPool(this.connectionInfo);
-    
+
     init();
   }
 
-  normalizeQuery(
-    strings: string | TemplateStringsArray,
-    values: any[],
-    queryInstance: QueryLike
-  ): [string, any[]] {
+  normalizeQuery(strings: string | TemplateStringsArray, values: any[], queryInstance: QueryLike): [string, any[]] {
     return commonNormalizeQuery(strings, values, this);
   }
 
-  createQueryHandle(
-    sqlString: string,
-    params: any[],
-    flags: SQLQueryFlags,
-    queryInstance: QueryLike
-  ): any {
+  createQueryHandle(sqlString: string, params: any[], flags: SQLQueryFlags, queryInstance: QueryLike): any {
     return createQuery(sqlString, params, flags & SQLQueryFlags.simple);
   }
 
@@ -163,6 +142,5 @@ export class PostgresAdapter implements QueryAdapter {
 }
 
 class ConnectionPool {
-  constructor(connectionInfo: any) {
-  }
+  constructor(connectionInfo: any) {}
 }

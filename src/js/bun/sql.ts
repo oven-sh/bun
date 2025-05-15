@@ -16,29 +16,28 @@ declare module "bun" {
   }
 }
 
+import { BaseQuery } from "../internal/sql/BaseQuery";
 import { PostgresAdapter } from "../internal/sql/postgres_adapter";
-import { 
-  QueryStatus, 
-  SQLQueryResultMode, 
-  SQLQueryFlags, 
+import { SQLArrayParameter, escapeIdentifier } from "../internal/sql/SQLHelpers";
+import { SQLResultArray } from "../internal/sql/SQLResultArray";
+import {
+  QueryStatus,
   SQLCommand,
+  SQLQueryFlags,
+  SQLQueryResultMode,
   SQLTagFn,
   TransactionCallback,
-  ReservedSQL
 } from "../internal/sql/SQLTypes";
-import { BaseQuery } from "../internal/sql/BaseQuery";
-import { SQLResultArray } from "../internal/sql/SQLResultArray";
-import { SQLArrayParameter, escapeIdentifier } from "../internal/sql/SQLHelpers";
 
-export { 
-  QueryStatus, 
-  SQLQueryResultMode, 
-  SQLQueryFlags, 
-  SQLCommand,
-  SQLResultArray,
+export {
+  BaseQuery as Query,
+  QueryStatus,
   SQLArrayParameter,
+  SQLCommand,
+  SQLQueryFlags,
+  SQLQueryResultMode,
+  SQLResultArray,
   escapeIdentifier,
-  BaseQuery as Query
 };
 
 let _defaultAdapter: PostgresAdapter | null = null;
@@ -54,7 +53,6 @@ declare const $ERR_POSTGRES_QUERY_CANCELLED: (message: string) => Error;
 
 const { hideFromStack } = Function("return require('internal/shared')")();
 const defineProperties = Object.defineProperties;
-
 
 const enum SSLMode {
   disable = 0,
@@ -90,7 +88,6 @@ const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const PublicPromise = Promise;
-
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
@@ -154,7 +151,7 @@ const LocalSQLCommand = {
   updateSet: SQLCommand.updateSet,
   where: SQLCommand.where,
   whereIn: SQLCommand.whereIn,
-  none: SQLCommand.none
+  none: SQLCommand.none,
 };
 
 function commandToString(command: SQLCommand): string {
@@ -1320,7 +1317,6 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
   }
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
-
 
 // Define Bun-specific types for runtime functions
 declare const $setTimeout: (callback: (...args: any[]) => void, ms?: number) => any;

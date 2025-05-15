@@ -45,17 +45,8 @@ export interface QueryLike {
 }
 
 export interface QueryAdapter {
-  normalizeQuery(
-    strings: string | TemplateStringsArray,
-    values: any[],
-    queryInstance: QueryLike
-  ): [string, any[]];
-  createQueryHandle(
-    sqlString: string,
-    params: any[],
-    flags: SQLQueryFlags,
-    queryInstance: QueryLike
-  ): any;
+  normalizeQuery(strings: string | TemplateStringsArray, values: any[], queryInstance: QueryLike): [string, any[]];
+  createQueryHandle(sqlString: string, params: any[], flags: SQLQueryFlags, queryInstance: QueryLike): any;
   executeQuery(queryInstance: QueryLike): Promise<void>;
   cancelQuery(queryInstance: QueryLike): void;
   releaseHandle(queryInstance: QueryLike): void;
@@ -73,16 +64,10 @@ export interface QueryAdapter {
 }
 
 export type SQLTagFn = {
-  (
-    strings: string | TemplateStringsArray,
-    ...values: any[]
-  ): BaseQuery<QueryAdapter>;
+  (strings: string | TemplateStringsArray, ...values: any[]): BaseQuery<QueryAdapter>;
   unsafe(query: string, params?: any[]): BaseQuery<QueryAdapter>;
   file(path: string, params?: any[]): Promise<BaseQuery<QueryAdapter>>;
-  begin(
-    optionsOrFn: string | TransactionCallback,
-    fn?: TransactionCallback
-  ): Promise<any>;
+  begin(optionsOrFn: string | TransactionCallback, fn?: TransactionCallback): Promise<any>;
   beginDistributed(name: string, fn: TransactionCallback): Promise<any>;
   commitDistributed(name: string): Promise<any>;
   rollbackDistributed(name: string): Promise<any>;
@@ -97,7 +82,4 @@ export interface ReservedSQL extends SQLTagFn {
   "Symbol.dispose"?(): void;
 }
 
-export declare abstract class BaseQuery<
-  AdapterType extends QueryAdapter
-> extends Promise<any> {
-}
+export declare abstract class BaseQuery<AdapterType extends QueryAdapter> extends Promise<any> {}

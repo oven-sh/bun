@@ -1,10 +1,4 @@
-import {
-  QueryStatus,
-  SQLQueryResultMode,
-  SQLQueryFlags,
-  QueryAdapter,
-  QueryLike,
-} from "./SQLTypes";
+import { QueryAdapter, QueryLike, QueryStatus, SQLQueryFlags, SQLQueryResultMode } from "./SQLTypes";
 
 declare const $markPromiseAsHandled: ((promise: Promise<any>) => void) | undefined;
 
@@ -22,10 +16,7 @@ export const symbols = {
   results: Symbol("results"),
 } as const;
 
-export abstract class BaseQuery<AdapterType extends QueryAdapter>
-  extends Promise<any>
-  implements QueryLike
-{
+export abstract class BaseQuery<AdapterType extends QueryAdapter> extends Promise<any> implements QueryLike {
   private _adapter!: AdapterType;
   private _status: QueryStatus = QueryStatus.active;
   private _flags!: SQLQueryFlags;
@@ -34,11 +25,7 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
   private _underlyingHandle: any = null;
   private _resolve!: (value: any) => void;
   private _reject!: (reason?: any) => void;
-  private _handler!: (
-    query: BaseQuery<AdapterType>,
-    handle: any,
-    err?: Error
-  ) => Promise<any>;
+  private _handler!: (query: BaseQuery<AdapterType>, handle: any, err?: Error) => Promise<any>;
   private _results: any = null;
 
   public get strings() {
@@ -57,11 +44,7 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
     values: any[],
     initialFlags: SQLQueryFlags,
     adapter: AdapterType,
-    handler: (
-      query: BaseQuery<AdapterType>,
-      handle: any,
-      err?: Error
-    ) => Promise<any>
+    handler: (query: BaseQuery<AdapterType>, handle: any, err?: Error) => Promise<any>,
   ) {
     let resolvePromise!: (value: any) => void;
     let rejectPromise!: (reason?: any) => void;
@@ -78,17 +61,8 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
     this._reject = rejectPromise;
     this._handler = handler;
 
-    const [normalizedSql, normalizedParams] = adapter.normalizeQuery(
-      strings,
-      values,
-      this
-    );
-    this._underlyingHandle = adapter.createQueryHandle(
-      normalizedSql,
-      normalizedParams,
-      this._flags,
-      this
-    );
+    const [normalizedSql, normalizedParams] = adapter.normalizeQuery(strings, values, this);
+    this._underlyingHandle = adapter.createQueryHandle(normalizedSql, normalizedParams, this._flags, this);
   }
 
   getUnderlyingHandle(): any {
@@ -99,32 +73,23 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
   }
 
   then<TResult1 = any, TResult2 = never>(
-    onfulfilled?:
-      | ((value: any) => TResult1 | PromiseLike<TResult1>)
-      | undefined
-      | null,
-    onrejected?:
-      | ((reason: any) => TResult2 | PromiseLike<TResult2>)
-      | undefined
-      | null
+    onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null,
   ): Promise<TResult1 | TResult2> {
     this[symbols.run](true); // true for async execution path
     const promise = super.then(onfulfilled, onrejected);
-    if (typeof $markPromiseAsHandled !== 'undefined') {
+    if (typeof $markPromiseAsHandled !== "undefined") {
       $markPromiseAsHandled(promise);
     }
     return promise;
   }
 
   catch<TResult = never>(
-    onrejected?:
-      | ((reason: any) => TResult | PromiseLike<TResult>)
-      | undefined
-      | null
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null,
   ): Promise<any | TResult> {
     this[symbols.run](true);
     const promise = super.catch(onrejected);
-    if (typeof $markPromiseAsHandled !== 'undefined') {
+    if (typeof $markPromiseAsHandled !== "undefined") {
       $markPromiseAsHandled(promise);
     }
     return promise;
@@ -200,13 +165,7 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
   }
 
   async [symbols.run](isAsync: boolean): Promise<void> {
-    if (
-      this._status &
-      (QueryStatus.executed |
-        QueryStatus.error |
-        QueryStatus.cancelled |
-        QueryStatus.invalidHandle)
-    ) {
+    if (this._status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
       return;
     }
     if (this._flags & SQLQueryFlags.notTagged) {
@@ -222,9 +181,7 @@ export abstract class BaseQuery<AdapterType extends QueryAdapter>
     try {
       await this._adapter.executeQuery(this);
     } catch (err) {
-      if (
-        !(this._status & (QueryStatus.error | QueryStatus.cancelled))
-      ) {
+      if (!(this._status & (QueryStatus.error | QueryStatus.cancelled))) {
         this.reject(err);
       }
     }

@@ -1,4 +1,4 @@
-import { SQLCommand, QueryLike } from "./SQLTypes";
+import { SQLCommand } from "./SQLTypes";
 
 export const escapeIdentifier = function escape(str: string): string {
   return '"' + str.replace(/"/g, '""').replace(/\./g, '"."') + '"';
@@ -129,21 +129,21 @@ export function normalizeQuery(
   strings: string | TemplateStringsArray,
   values: any[],
   adapter: any,
-  binding_idx = 1
+  binding_idx = 1,
 ): [string, any[]] {
   if (typeof strings === "string") {
     return [strings, values || []];
   }
-  
+
   const params: any[] = [];
   let sql = "";
   const length = strings.length;
-  
+
   for (let i = 0; i < length - 1; i++) {
     sql += strings[i];
-    
+
     const value = values[i];
-    
+
     if (value === null || value === undefined) {
       sql += "NULL";
     } else if (Array.isArray(value)) {
@@ -159,8 +159,8 @@ export function normalizeQuery(
       params.push(value);
     }
   }
-  
+
   sql += strings[length - 1];
-  
+
   return [sql, params];
 }

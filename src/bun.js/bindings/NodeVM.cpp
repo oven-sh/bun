@@ -47,6 +47,7 @@
 #include "JavaScriptCore/JSCInlines.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
+#include "JavaScriptCore/FunctionCodeBlock.h"
 #include "wtf/FileHandle.h"
 
 #include "../vm/SigintWatcher.h"
@@ -177,8 +178,9 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(expression)->metadata();
     ASSERT(metadata);
-    if (!metadata)
+    if (!metadata) {
         return nullptr;
+    }
 
     // metadata->setStartOffset(startOffset);
 
@@ -263,7 +265,7 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source)
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     JSC::CodeCache* cache = vm.codeCache();
     JSC::ParserError parserError;
     JSC::UnlinkedProgramCodeBlock* unlinked = cache->getUnlinkedProgramCodeBlock(vm, executable, source, {}, parserError);
@@ -276,9 +278,26 @@ RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::Progr
     return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
 }
 
+std::optional<std::span<const uint8_t>> getBytecode(JSGlobalObject* globalObject, JSC::JSFunction* function, CodeBlock*& codeBlock)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    FunctionExecutable* executable = function->jsExecutable();
+    executable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (!codeBlock) {
+        return std::nullopt;
+    }
+
+    const JSInstructionStream& instructionStream = codeBlock->instructions();
+    return std::span { reinterpret_cast<const uint8_t*>(instructionStream.rawPointer()), instructionStream.sizeInBytes() };
+}
+
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source)
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::ProgramExecutable* executable = JSC::ProgramExecutable::create(globalObject, source);
@@ -292,7 +311,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
     }
 
     std::span<const uint8_t> bytes = bytecode->span();
-    auto* buffer = WebCore::createBuffer(globalObject, bytes);
+    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(buffer);
@@ -523,7 +542,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     auto* sandbox = thisObject->m_sandbox.get();
 
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
     if (auto* proxy = jsDynamicCast<JSGlobalProxy*>(thisValue); proxy && proxy->target() == globalObject) {
@@ -662,7 +681,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     auto* contextifiedObject = thisObject->m_sandbox.get();
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
@@ -772,7 +791,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
 JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto sourceStringValue = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -867,7 +886,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
 
     // Process contextExtensions if they exist
-    JSScope* functionScope = !!options.parsingContext ? options.parsingContext : globalObject;
+    JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
         auto* contextExtensionsArray = jsCast<JSArray*>(options.contextExtensions);
@@ -896,10 +915,23 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
 
+    if (options.produceCachedData) {
+        CodeBlock* codeBlock = nullptr;
+        std::optional<std::span<const uint8_t>> bytecode = getBytecode(globalObject, function, codeBlock);
+        if (bytecode) {
+            JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, *bytecode);
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
+        } else {
+            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(false));
+        }
+    }
+
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!function)
+    if (!function) {
         return throwVMError(globalObject, scope, "Failed to compile function"_s);
+    }
 
     return JSValue::encode(function);
 }
@@ -1016,7 +1048,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();

@@ -33,8 +33,7 @@ export function initializeReadableByteStreamController(this, stream, underlyingB
 export function enqueue(this: ReadableByteStreamController, chunk: ArrayBufferView) {
   if (!$isReadableByteStreamController(this)) throw $ERR_INVALID_THIS("ReadableByteStreamController");
 
-  if ($getByIdDirectPrivate(this, "closeRequested"))
-    throw new TypeError("ReadableByteStreamController is requested to close");
+  if ($getByIdDirectPrivate(this, "closeRequested")) throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
     throw new TypeError("ReadableStream is not readable");

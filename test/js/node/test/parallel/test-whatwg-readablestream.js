@@ -260,10 +260,9 @@ class Source {
   });
   controller.enqueue(new Uint8Array(10));
   controller.close();
-  // TODO:
-  // assert.throws(() => controller.enqueue(new Uint8Array(10)), {
-  //   code: 'ERR_INVALID_STATE',
-  // });
+  assert.throws(() => controller.enqueue(new Uint8Array(10)), {
+    code: 'ERR_INVALID_STATE',
+  });
 }
 
 {

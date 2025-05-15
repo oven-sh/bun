@@ -351,68 +351,29 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
     if (!success) {
-      static const char *unsupported_proto_client = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-      static const char *unsupported_proto_reason_client = "Unsupported protocol on client";
-
-      if (verify_error.code || verify_error.reason) {
-        printf("[usockets] TLS handshake failure: error=%ld, code=%s, reason=%s\n", (long)verify_error.error, verify_error.code ? verify_error.code : "(null)", verify_error.reason ? verify_error.reason : "(null)");
-      } else {
-        printf("[usockets] TLS handshake failure: error=%ld, no code/reason\n", (long)verify_error.error);
-      }
-
       if (verify_error.error == 0) {
         verify_error.error = -1;
 
-        if (SSL_is_server(s->ssl)) {
-          SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
-          int min = SSL_CTX_get_min_proto_version(ctx);
-          int max = SSL_CTX_get_max_proto_version(ctx);
-          int is_legacy = (min == max) && (min == TLS1_1_VERSION || min == TLS1_VERSION);
-          printf("[usockets] SERVER mapping: min=%d, max=%d, is_legacy=%d\n", min, max, is_legacy);
-          if (is_legacy) {
-            verify_error.reason = "Wrong version number on server";
-            verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
-          } else {
-            verify_error.reason = "Unsupported protocol on server";
-            verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-          }
-          printf("[usockets] SERVER mapped to code=%s, reason=%s\n", verify_error.code, verify_error.reason);
-        } else {
-          SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
-          int min = SSL_CTX_get_min_proto_version(ctx);
-          int max = SSL_CTX_get_max_proto_version(ctx);
-          int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
-          int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
-          printf("[usockets] CLIENT mapping: min=%d, max=%d, is_tlsv1_1=%d, is_tlsv1=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
-          if (is_tlsv1_1_method || is_tlsv1_method) {
-            verify_error.reason = "TLSv1 alert protocol version";
-            verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
-          } else {
-            verify_error.reason = unsupported_proto_reason_client;
-            verify_error.code = unsupported_proto_client;
-          }
-          printf("[usockets] CLIENT mapped to code=%s, reason=%s\n", verify_error.code, verify_error.reason);
-        }
-      } else if (
-        verify_error.code && (
-          strcmp(verify_error.code, "TLSV1_ALERT_PROTOCOL_VERSION") == 0 ||
-          strcmp(verify_error.code, "UNSUPPORTED_PROTOCOL") == 0
-        )
-      ) {
-        SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
-        int min = SSL_CTX_get_min_proto_version(ctx);
-        int max = SSL_CTX_get_max_proto_version(ctx);
-        printf("[usockets] CLIENT handshake debug: min=%d, max=%d\n", min, max);
-        if (min == max && (min == TLS1_1_VERSION || min == TLS1_VERSION)) {
-          verify_error.reason = "TLSv1 alert protocol version";
+        unsigned long err = ERR_peek_error();
+        int reason = ERR_GET_REASON(err);
+
+        if (reason == SSL_R_TLSV1_ALERT_PROTOCOL_VERSION) {
           verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
+          verify_error.reason = "TLSv1 alert protocol version";
+        } else if (reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+          verify_error.reason = SSL_is_server(s->ssl) ? "Unsupported protocol on server" : "Unsupported protocol on client";
+        } else if (reason == SSL_R_WRONG_VERSION_NUMBER) {
+          verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
+          verify_error.reason = "Wrong version number on server";
         } else {
-          verify_error.reason = unsupported_proto_reason_client;
-          verify_error.code = unsupported_proto_client;
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+          verify_error.reason = "Unsupported protocol";
         }
-        verify_error.error = -1;
+        ERR_clear_error();
       }
     }
+
     context->on_handshake(s, success, verify_error, context->handshake_data);
   }
 }
@@ -470,7 +431,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
-  printf("SSL_do_handshake result: %d\n", result);
+  // printf("SSL_do_handshake result: %d\n", result);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
@@ -576,18 +537,9 @@ restart:
     
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
-       printf("SSL_read failed, just_read: %d, error: %d\n", just_read, err);
+      
       // as far as I know these are the only errors we want to handle
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
-        unsigned long err_code;
-        while ((err_code = ERR_get_error()) != 0) {
-          const char* err_str = ERR_reason_error_string(err_code);
-          if (err_str) {
-            printf("OpenSSL error queue: %s\n", err_str);
-          } else {
-            printf("OpenSSL error queue: (unknown error)\n");
-          }
-        }
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (us_internal_ssl_renegotiate(s)) {
             // ok, we are done here, we need to call SSL_read again

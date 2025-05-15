@@ -328,6 +328,34 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+/**
+ * Override the protocol error if the secure_protocol_method is set. This is to match Node's
+ * behaviour
+ * Will modify the verify_error struct to override the error code and reason if necessary.
+
+ * Returns 1 if the protocol error was overridden, 0 otherwise
+*/
+static int should_override_protocol_error(const char *proto, int is_server, struct us_bun_verify_error_t *verify_error) {
+    if (!proto) return 0;
+    if (is_server) {
+        if (strcmp(proto, "TLSv1_method") == 0 || strcmp(proto, "TLSv1_1_method") == 0) {
+            verify_error->code = "ERR_SSL_WRONG_VERSION_NUMBER";
+            verify_error->reason = "Wrong version number on server";
+            verify_error->error = -1;
+            ERR_clear_error();
+            return 1;
+        }
+    } else {
+        if (strcmp(proto, "SSLv23_method") == 0) {
+            verify_error->code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+            verify_error->reason = "Unsupported protocol";
+            verify_error->error = -1;
+            ERR_clear_error();
+            return 1;
+        }
+    }
+    return 0;
+}
 
 void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
@@ -352,25 +380,9 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
     if (!success) {
-      if (context->options.secure_protocol_method) {
-        const char *proto = context->options.secure_protocol_method;
-        printf("[openssl.c] secure_protocol_method: %s\n", proto);
-
-        if (
-          strcmp(proto, "SSLv23_method") == 0 ||
-          strcmp(proto, "TLSv1_1_method") == 0 ||
-          strcmp(proto, "TLSv1_method") == 0
-        ) {
-          printf("[openssl.c] secure_protocol_method was REJECTED: %s\n", proto);
-          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-          verify_error.reason = "Unsupported protocol";
-          verify_error.error = -1;
-          ERR_clear_error();
+      if (should_override_protocol_error(context->options.secure_protocol_method, SSL_is_server(s->ssl), &verify_error)) {
           context->on_handshake(s, success, verify_error, context->handshake_data);
           return;
-        } else {
-          printf("[openssl.c] secure_protocol_method was ACCEPTED: %s\n", proto);
-        }
       }
 
       if (verify_error.error == 0) {

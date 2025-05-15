@@ -260,7 +260,6 @@ const SocketHandlers: SocketHandler = {
     SocketHandlers.drain(socket);
   },
   handshake(socket, success, verifyError) {
-    console.log("[buntls] CLIENT handshake callback:", "success=", success, "verifyError=", verifyError);
     const { data: self } = socket;
     if (!self) return;
     if (!success && verifyError?.code === "ECONNRESET") {
@@ -414,7 +413,6 @@ const ServerHandlers: SocketHandler = {
   },
 
   handshake(socket, success, verifyError) {
-    console.log("[buntls] SERVER handshake callback:", "success=", success, "verifyError=", verifyError);
     const { data: self } = socket;
 
     if (!success && verifyError?.code === "ECONNRESET") {
@@ -431,7 +429,6 @@ const ServerHandlers: SocketHandler = {
 
     if (!success) {
       const err = verifyError || $ERR_SSL_UNSUPPORTED_PROTOCOL("TLS handshake failed");
-      console.log("[buntls] SERVER handshake error:", err);
 
       self._hadError = true;
       self.emit("_tlsError", err);

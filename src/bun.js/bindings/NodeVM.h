@@ -21,8 +21,6 @@ class CompileFunctionOptions;
 namespace NodeVM {
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source);
-// The lifetime of the return value is tied to the lifetime of the pointer in `codeBlock`. That's why the caller has to pass it by reference.
-std::optional<std::span<const uint8_t>> getBytecode(JSGlobalObject* globalObject, JSC::JSFunction* function, CodeBlock*& codeBlock);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
@@ -31,9 +29,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
-/// For vm.compileFunction we need to return an anonymous function expression
-///
-/// This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
+// For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);
 
 } // namespace NodeVM

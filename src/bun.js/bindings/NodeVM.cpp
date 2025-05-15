@@ -48,6 +48,7 @@
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"
+#include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/JIT.h"
 #include "wtf/FileHandle.h"
 
@@ -134,122 +135,66 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         JSC::StringSourceProvider::create(code, sourceOrigin, WTFMove(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
-    ParserError error;
-    bool isEvalNode = false;
+    CodeCache* cache = vm.codeCache();
+    ProgramExecutable* programExecutable = ProgramExecutable::create(globalObject, sourceCode);
 
-    // use default name
-    Identifier name;
-    std::unique_ptr<ProgramNode> program;
-
-    if (code.is8Bit()) {
-        Parser<Lexer<LChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            lexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
-            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
-            isEvalNode, EvalContextType::None, nullptr);
-
-        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
-    } else {
-        Parser<Lexer<UChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            lexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
-            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
-            isEvalNode, EvalContextType::None, nullptr);
-
-        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
-    }
-
-    if (!program) {
-        RELEASE_ASSERT(error.isValid());
-        auto exception = error.toErrorObject(globalObject, sourceCode, -1);
-        throwException(globalObject, throwScope, exception);
-        return nullptr;
-    }
-
-    // the code we passed in should be a single expression statement containing a function expression
-    StatementNode* statement = program->singleStatement();
-    if (!statement || !statement->isExprStatement()) {
-        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken {}, "Parser error"_s, -1);
-        auto exception = error.toErrorObject(globalObject, sourceCode, -1);
-        throwException(globalObject, throwScope, exception);
-        return nullptr;
-    }
-
-    ExprStatementNode* exprStatement = static_cast<ExprStatementNode*>(statement);
-    ExpressionNode* expression = exprStatement->expr();
-    if (!expression || !expression->isFuncExprNode()) {
-        throwSyntaxError(globalObject, throwScope, "Expected a function expression"_s);
-        return nullptr;
-    }
-
-    FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(expression)->metadata();
-    ASSERT(metadata);
-    if (!metadata) {
-        return nullptr;
-    }
-
-    // metadata->setStartOffset(startOffset);
-
-    ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
-    UnlinkedFunctionExecutable* unlinkedFunctionExecutable = UnlinkedFunctionExecutable::create(
-        vm,
-        sourceCode,
-        metadata,
-        UnlinkedNormalFunction,
-        constructAbility,
-        InlineAttribute::None,
-        JSParserScriptMode::Classic,
-        nullptr,
-        std::nullopt,
-        std::nullopt,
-        DerivedContextType::None,
-        NeedsClassFieldInitializer::No,
-        PrivateBrandRequirement::None);
-
-    unlinkedFunctionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
-
-    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, nullptr, sourceCode, std::nullopt);
-
-    JSScope* functionScope = scope ? scope : globalObject->globalScope();
-    Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
+    UnlinkedProgramCodeBlock* unlinkedProgramCodeBlock = nullptr;
+    RefPtr<CachedBytecode> cachedBytecode;
 
     TriState bytecodeAccepted = TriState::Indeterminate;
 
-    if (false && !options.cachedData.isEmpty()) {
-        Ref<CachedBytecode> bytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
-        SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::FunctionType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        JSC::UnlinkedFunctionCodeBlock* unlinked = JSC::decodeCodeBlock<UnlinkedFunctionCodeBlock>(vm, key, WTFMove(bytecode));
-        if (!unlinked) {
+    if (!options.cachedData.isEmpty()) {
+        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+        unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
+        if (unlinkedProgramCodeBlock == nullptr) {
             bytecodeAccepted = TriState::False;
         } else {
-            CodeBlock* linked = nullptr;
-            {
-                // JSC::FunctionCodeBlock::create() requires GC to be deferred.
-                DeferGC deferGC(vm);
-                linked = JSC::FunctionCodeBlock::create(vm, functionExecutable, unlinked, scope);
-            }
-            JSC::CompilationResult compilationResult = JIT::compileSync(vm, linked, JITCompilationEffort::JITCompilationCanFail);
-            if (compilationResult != JSC::CompilationResult::CompilationFailed) {
-                functionExecutable->installCode(linked);
-                bytecodeAccepted = TriState::True;
-            } else {
-                bytecodeAccepted = TriState::False;
-            }
+            bytecodeAccepted = TriState::True;
         }
     }
 
-    JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, functionScope, structure);
+    ParserError error;
 
-    if (bytecodeAccepted != TriState::Indeterminate) {
-        function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataRejected"_s), jsBoolean(bytecodeAccepted == TriState::False));
-    } else if (false && options.produceCachedData) {
-        CodeBlock* codeBlock = nullptr;
-        std::optional<std::span<const uint8_t>> bytecode = getBytecode(globalObject, function, codeBlock);
-        if (bytecode) {
-            JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, *bytecode);
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
-        } else {
-            function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(false));
+    if (unlinkedProgramCodeBlock == nullptr) {
+        unlinkedProgramCodeBlock = cache->getUnlinkedProgramCodeBlock(vm, programExecutable, sourceCode, {}, error);
+    }
+
+    if (!unlinkedProgramCodeBlock || error.isValid()) {
+        return nullptr;
+    }
+
+    ProgramCodeBlock* programCodeBlock = nullptr;
+    {
+        DeferGC deferGC(vm);
+        programCodeBlock = ProgramCodeBlock::create(vm, programExecutable, unlinkedProgramCodeBlock, scope);
+    }
+
+    if (!programCodeBlock || programCodeBlock->numberOfFunctionExprs() == 0) {
+        return nullptr;
+    }
+
+    FunctionExecutable* functionExecutable = programCodeBlock->functionExpr(0);
+    if (!functionExecutable) {
+        return nullptr;
+    }
+
+    Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
+    JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, scope, structure);
+
+    if (bytecodeAccepted == TriState::Indeterminate) {
+        if (options.produceCachedData) {
+            RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, programExecutable, sourceCode);
+            if (producedBytecode) {
+                JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, producedBytecode->span());
+                function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
+                function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
+            } else {
+                function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(false));
+            }
         }
+    } else {
+        function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataRejected"_s), jsBoolean(bytecodeAccepted == TriState::False));
     }
 
     return function;
@@ -263,7 +208,6 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     if (args.isEmpty()) {
         // No arguments, just an empty function body
         program = "(function () {\n\n})"_s;
-        // program = "(function () {})"_s;
     } else if (args.size() == 1) {
         // Just the function body
         auto body = args.at(0).toWTFString(globalObject);
@@ -285,8 +229,9 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
             auto param = args.at(i).toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (i > 0)
+            if (i > 0) {
                 paramString.append(", "_s);
+            }
 
             paramString.append(param);
         }
@@ -319,29 +264,6 @@ RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::Progr
     JSC::BytecodeCacheError bytecodeCacheError;
     FileSystem::FileHandle fileHandle;
     return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
-}
-
-std::optional<std::span<const uint8_t>> getBytecode(JSGlobalObject* globalObject, JSC::JSFunction* function, JSC::CodeBlock*& codeBlock)
-{
-    // TODO(@heimskr): JSC bytecode for functions is just raw memory, with pointers to limited-lifetime data and everything.
-    // If it's not properly in the CodeCache, it can easily be UAF'd without warning.
-    // There doesn't appear to be any way to cache a function's bytecode.
-    // A workaround might be to compile an entire program containing just the function and then return the bytecode from that program.
-    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("getBytecode for functions is not implemented");
-    return std::nullopt;
-    // VM& vm = JSC::getVM(globalObject);
-    // auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // FunctionExecutable* executable = function->jsExecutable();
-    // executable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);
-    // RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    // if (!codeBlock) {
-    //     return std::nullopt;
-    // }
-
-    // const JSInstructionStream& instructionStream = codeBlock->instructions();
-    // return std::span { reinterpret_cast<const uint8_t*>(instructionStream.rawPointer()), instructionStream.sizeInBytes() };
 }
 
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source)

@@ -156,7 +156,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
 
 JSC::ProgramExecutable* NodeVMScript::createExecutable()
 {
-    auto& vm = JSC::getVM(globalObject());
+    VM& vm = JSC::getVM(globalObject());
     m_cachedExecutable.set(vm, this, JSC::ProgramExecutable::create(globalObject(), m_source));
     return m_cachedExecutable.get();
 }
@@ -243,35 +243,67 @@ void NodeVMScript::destroy(JSCell* cell)
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
-
-    auto& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     RunningScriptOptions options;
     if (allowStringInPlaceOfOptions && optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else if (!options.fromJS(globalObject, vm, throwScope, optionsArg)) {
-        RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+        RETURN_IF_EXCEPTION(scope, {});
         options = {};
     }
 
     // Set the contextified object before evaluating
     globalObject->setContextifiedObject(contextifiedObject);
 
-    if (options.breakOnSigint) {
-        // TODO(@heimskr): set up a GlobalObjectHolder
-        SigintWatcher::get().registerGlobalObject(globalObject);
+    NakedPtr<JSC::Exception> exception;
+    JSValue result {};
+    auto run = [&] {
+        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    };
+
+    if (options.timeout) {
+        JSC::JSLockHolder locker(vm);
+        JSC::Watchdog& dog = vm.ensureWatchdog();
+        dog.enteredVM();
+        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(*options.timeout));
     }
 
-    NakedPtr<JSC::Exception> exception;
-    JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    script->setSigintReceived(false);
+
+    if (options.breakOnSigint) {
+        auto holder = SigintWatcher::hold(globalObject, script);
+        run();
+    } else {
+        run();
+    }
+
+    if (options.timeout) {
+        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+    }
+
+    if (vm.hasPendingTerminationException() || vm.hasTerminationRequest()) {
+        vm.clearHasTerminationRequest();
+        if (script->getSigintReceived()) {
+            script->setSigintReceived(false);
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        } else if (options.timeout) {
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *options.timeout, "ms"_s));
+        } else {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to sigint nor to timeout");
+        }
+        return {};
+    }
+
+    script->setSigintReceived(false);
 
     if (UNLIKELY(exception)) {
-        if (handleException(globalObject, vm, exception, throwScope)) {
+        if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
-        JSC::throwException(globalObject, throwScope, exception.get());
+        JSC::throwException(globalObject, scope, exception.get());
         return {};
     }
 
@@ -280,7 +312,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -327,7 +359,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
@@ -341,7 +373,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
@@ -358,7 +390,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
@@ -371,7 +403,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
@@ -391,7 +423,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
 
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
@@ -406,7 +438,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
@@ -427,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = JSC::getVM(globalObject);
     NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
     // TODO: options

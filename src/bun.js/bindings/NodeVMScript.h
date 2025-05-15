@@ -2,6 +2,8 @@
 
 #include "NodeVM.h"
 
+#include "../vm/SigintReceiver.h"
+
 namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
@@ -36,7 +38,7 @@ private:
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptConstructor, JSC::InternalFunction);
 
-class NodeVMScript final : public JSC::JSDestructibleObject {
+class NodeVMScript final : public JSC::JSDestructibleObject, public SigintReceiver {
 public:
     using Base = JSC::JSDestructibleObject;
 

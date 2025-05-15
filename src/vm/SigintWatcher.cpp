@@ -1,5 +1,4 @@
 #include "NodeVM.h"
-#include "NodeVMSourceTextModule.h"
 #include "SigintWatcher.h"
 
 extern "C" void Bun__onPosixSignal(int signalNumber);
@@ -90,7 +89,7 @@ void SigintWatcher::signalReceived()
     }
 }
 
-void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
+void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
 {
     if (globalObject == nullptr) {
         return;
@@ -100,7 +99,7 @@ void SigintWatcher::registerGlobalObject(NodeVMGlobalObject* globalObject)
     m_globalObjects.appendIfNotContains(globalObject);
 }
 
-void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
+void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)
 {
     if (globalObject == nullptr) {
         return;
@@ -117,27 +116,27 @@ void SigintWatcher::unregisterGlobalObject(NodeVMGlobalObject* globalObject)
     m_globalObjects.removeLast();
 }
 
-void SigintWatcher::registerModule(NodeVMSourceTextModule* module)
+void SigintWatcher::registerReceiver(SigintReceiver* module)
 {
     if (module == nullptr) {
         return;
     }
 
-    std::unique_lock lock(m_modulesMutex);
-    m_modules.appendIfNotContains(module);
+    std::unique_lock lock(m_receiversMutex);
+    m_receivers.appendIfNotContains(module);
 }
 
-void SigintWatcher::unregisterModule(NodeVMSourceTextModule* module)
+void SigintWatcher::unregisterReceiver(SigintReceiver* module)
 {
-    std::unique_lock lock(m_modulesMutex);
+    std::unique_lock lock(m_receiversMutex);
 
-    auto iter = std::find(m_modules.begin(), m_modules.end(), module);
-    if (iter == m_modules.end()) {
+    auto iter = std::find(m_receivers.begin(), m_receivers.end(), module);
+    if (iter == m_receivers.end()) {
         return;
     }
 
-    std::swap(*iter, m_modules.last());
-    m_modules.removeLast();
+    std::swap(*iter, m_receivers.last());
+    m_receivers.removeLast();
 }
 
 void SigintWatcher::ref()
@@ -163,9 +162,9 @@ SigintWatcher& SigintWatcher::get()
 bool SigintWatcher::signalAll()
 {
     {
-        std::unique_lock lock(m_modulesMutex);
-        for (NodeVMSourceTextModule* module : m_modules) {
-            module->sigintReceived();
+        std::unique_lock lock(m_receiversMutex);
+        for (auto* receiver : m_receivers) {
+            receiver->setSigintReceived();
         }
     }
 
@@ -175,8 +174,8 @@ bool SigintWatcher::signalAll()
         return false;
     }
 
-    for (NodeVMGlobalObject* globalObject : m_globalObjects) {
-        globalObject->sigintReceived();
+    for (JSGlobalObject* globalObject : m_globalObjects) {
+        globalObject->vm().notifyNeedTermination();
     }
 
     return true;

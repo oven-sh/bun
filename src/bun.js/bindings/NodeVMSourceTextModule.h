@@ -3,9 +3,11 @@
 #include "NodeVM.h"
 #include "NodeVMModule.h"
 
+#include "../vm/SigintReceiver.h"
+
 namespace Bun {
 
-class NodeVMSourceTextModule final : public NodeVMModule {
+class NodeVMSourceTextModule final : public NodeVMModule, public SigintReceiver {
 public:
     using Base = NodeVMModule;
 
@@ -36,7 +38,6 @@ public:
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
-    void sigintReceived();
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
 
@@ -47,7 +48,6 @@ private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
     SourceCode m_sourceCode;
-    bool m_terminatedWithSigint = false;
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode)
         : Base(vm, structure, WTFMove(identifier), context)

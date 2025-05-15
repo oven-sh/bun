@@ -310,7 +310,7 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 
-    m_terminatedWithSigint = false;
+    setSigintReceived(false);
 
     if (timeout != 0) {
         JSC::JSLockHolder locker(vm);
@@ -326,12 +326,16 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         run();
     }
 
+    if (timeout != 0) {
+        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+    }
+
     if (vm.hasPendingTerminationException()) {
         scope.clearException();
         vm.clearHasTerminationRequest();
         status(Status::Errored);
-        if (m_terminatedWithSigint) {
-            m_terminatedWithSigint = false;
+        if (getSigintReceived()) {
+            setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
@@ -339,15 +343,10 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
         return {};
     }
 
-    m_terminatedWithSigint = false;
+    setSigintReceived(false);
     RETURN_IF_EXCEPTION(scope, (status(Status::Errored), JSValue {}));
     status(Status::Evaluated);
     return result;
-}
-
-void NodeVMSourceTextModule::sigintReceived()
-{
-    m_terminatedWithSigint = true;
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

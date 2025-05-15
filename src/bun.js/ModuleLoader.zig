@@ -994,7 +994,7 @@ pub fn transpileSourceCode(
             }
 
             var parse_result: ParseResult = switch (disable_transpilying or
-                (loader == .json)) {
+                (loader == .json or loader == .text)) {
                 inline else => |return_file_only| brk: {
                     break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                         parse_options,
@@ -1074,7 +1074,17 @@ pub fn transpileSourceCode(
                     .source_code = bun.String.createUTF8(parse_result.source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .tag = ResolvedSource.Tag.json_for_object_loader,
+                    .tag = .json_for_object_loader,
+                };
+            }
+
+            if (loader == .text and !disable_transpilying) {
+                return ResolvedSource{
+                    .allocator = null,
+                    .jsvalue_for_export = bun.String.createUTF8ForJS(globalObject.?, parse_result.source.contents),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .tag = .export_default_object,
                 };
             }
 

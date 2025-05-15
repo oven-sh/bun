@@ -233,7 +233,8 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             loader = BunLoaderTypeNone;
 
             if (JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject)) {
-                WTF::String loaderString = loaderJSString->value(globalObject);
+                auto loaderString = loaderJSString->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, result);
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
@@ -246,15 +247,19 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeTSX;
                 } else if (loaderString == "json"_s) {
                     loader = BunLoaderTypeJSON;
+                } else if (loaderString == "jsonc"_s) {
+                    loader = BunLoaderTypeJSONC;
                 } else if (loaderString == "toml"_s) {
                     loader = BunLoaderTypeTOML;
+                } else if (loaderString == "text"_s) {
+                    loader = BunLoaderTypeTEXT;
                 }
             }
         }
     }
 
     if (UNLIKELY(loader == BunLoaderTypeNone)) {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"json\", \"jsonc\", \"text\""_s));
         result.value.error = scope.exception();
         return result;
     }
@@ -357,6 +362,23 @@ static JSValue handleVirtualModuleResult(
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
         if (!res->success) {
             return reject(JSValue::decode(reinterpret_cast<EncodedJSValue>(res->result.err.ptr)));
+        }
+
+        // This makes it so require("my-text-loader") returns a string instead of a {default: string}
+        switch (res->result.value.tag) {
+        case SyntheticModuleType::ExportsObject:
+        case SyntheticModuleType::ExportDefaultObject: {
+            JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            if (commonJSModule) {
+                commonJSModule->setExportsObject(value);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
+            }
+            break;
+        }
+        default: {
+            break;
+        }
         }
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

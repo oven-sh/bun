@@ -1,15 +1,61 @@
 import type * as BunTypes from "bun";
 
-const enum QueryStatus {
-  active = 1 << 1,
-  cancelled = 1 << 2,
-  error = 1 << 3,
-  executed = 1 << 4,
-  invalidHandle = 1 << 5,
+// Define the SQL type for BunTypes since it's not in the imported type
+declare module "bun" {
+  export interface SQL {
+    (strings: string | TemplateStringsArray, ...values: any[]): any;
+    unsafe(query: string, params?: any[]): any;
+    file(path: string, params?: any[]): Promise<any>;
+    begin(optionsOrFn: string | TransactionCallback, fn?: TransactionCallback): Promise<any>;
+    beginDistributed(name: string, fn: TransactionCallback): Promise<any>;
+    commitDistributed(name: string): Promise<any>;
+    rollbackDistributed(name: string): Promise<any>;
+    reserve(): Promise<any>;
+    close(options?: { timeout?: number }): Promise<void>;
+    options: any;
+  }
 }
-const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const PublicArray = globalThis.Array;
+import { PostgresAdapter } from "../internal/sql/postgres_adapter";
+import { 
+  QueryStatus, 
+  SQLQueryResultMode, 
+  SQLQueryFlags, 
+  SQLCommand,
+  SQLTagFn,
+  TransactionCallback,
+  ReservedSQL
+} from "../internal/sql/SQLTypes";
+import { BaseQuery } from "../internal/sql/BaseQuery";
+import { SQLResultArray } from "../internal/sql/SQLResultArray";
+import { SQLArrayParameter, escapeIdentifier } from "../internal/sql/SQLHelpers";
+
+export { 
+  QueryStatus, 
+  SQLQueryResultMode, 
+  SQLQueryFlags, 
+  SQLCommand,
+  SQLResultArray,
+  SQLArrayParameter,
+  escapeIdentifier,
+  BaseQuery as Query
+};
+
+let _defaultAdapter: PostgresAdapter | null = null;
+let _defaultSQL: SQLTagFn | null = null;
+
+declare const $ERR_POSTGRES_CONNECTION_CLOSED: (message: string) => Error;
+declare const $ERR_POSTGRES_NOT_TAGGED_CALL: (message: string) => Error;
+declare const $markPromiseAsHandled: (promise: Promise<any>) => void;
+declare const $zig: (path: string, name: string) => any;
+declare const $isArray: (value: any) => boolean;
+declare const $ERR_INVALID_ARG_VALUE: (name: string, value: any, message?: string) => Error;
+declare const $ERR_POSTGRES_QUERY_CANCELLED: (message: string) => Error;
+
+const { hideFromStack } = Function("return require('internal/shared')")();
+const defineProperties = Object.defineProperties;
+
+
 const enum SSLMode {
   disable = 0,
   prefer = 1,
@@ -18,42 +64,20 @@ const enum SSLMode {
   verify_full = 4,
 }
 
-const { hideFromStack } = require("internal/shared");
-const defineProperties = Object.defineProperties;
-
 function connectionClosedError() {
   return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
 }
+
 function notTaggedCallError() {
   return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
 }
+
 hideFromStack(connectionClosedError);
 hideFromStack(notTaggedCallError);
 
-enum SQLQueryResultMode {
-  objects = 0,
-  values = 1,
-  raw = 2,
-}
-const escapeIdentifier = function escape(str) {
-  return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
-};
-class SQLResultArray extends PublicArray {
-  static [Symbol.toStringTag] = "SQLResults";
+const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-  constructor() {
-    super();
-    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
-    Object.defineProperties(this, {
-      count: { value: null, writable: true },
-      command: { value: null, writable: true },
-    });
-  }
-  static get [Symbol.species]() {
-    return Array;
-  }
-}
-
+// Define symbols for internal properties
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
@@ -66,7 +90,7 @@ const _poolSize = Symbol("poolSize");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const PublicPromise = Promise;
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query) => Promise<any>;
+
 
 const { createConnection: _createConnection, createQuery, init } = $zig("postgres.zig", "createBinding");
 
@@ -98,13 +122,9 @@ function normalizeSSLMode(value: string): SSLMode {
   throw $ERR_INVALID_ARG_VALUE("sslmode", value);
 }
 
-enum SQLQueryFlags {
-  none = 0,
+const enum LocalSQLQueryFlags {
   allowUnsafeTransaction = 1 << 0,
-  unsafe = 1 << 1,
   bigint = 1 << 2,
-  simple = 1 << 3,
-  notTagged = 1 << 4,
 }
 
 function getQueryHandle(query) {
@@ -114,9 +134,9 @@ function getQueryHandle(query) {
       query[_handle] = handle = doCreateQuery(
         query[_strings],
         query[_values],
-        query[_flags] & SQLQueryFlags.allowUnsafeTransaction,
+        query[_flags] & LocalSQLQueryFlags.allowUnsafeTransaction,
         query[_poolSize],
-        query[_flags] & SQLQueryFlags.bigint,
+        query[_flags] & LocalSQLQueryFlags.bigint,
         query[_flags] & SQLQueryFlags.simple,
       );
     } catch (err) {
@@ -127,14 +147,15 @@ function getQueryHandle(query) {
   return handle;
 }
 
-enum SQLCommand {
-  insert = 0,
-  update = 1,
-  updateSet = 2,
-  where = 3,
-  whereIn = 4,
-  none = -1,
-}
+// Define a mapping for local command values
+const LocalSQLCommand = {
+  insert: SQLCommand.insert,
+  update: SQLCommand.update,
+  updateSet: SQLCommand.updateSet,
+  where: SQLCommand.where,
+  whereIn: SQLCommand.whereIn,
+  none: SQLCommand.none
+};
 
 function commandToString(command: SQLCommand): string {
   switch (command) {
@@ -710,7 +731,7 @@ enum PooledConnectionFlags {
 
 class PooledConnection {
   pool: ConnectionPool;
-  connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+  connection: PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -784,7 +805,7 @@ class PooledConnection {
       this.connectionInfo,
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
-    )) as $ZigGeneratedClasses.PostgresSQLConnection;
+    )) as PostgresSQLConnection;
   }
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
@@ -902,7 +923,7 @@ class ConnectionPool {
     if (this.waitingQueue.length > 0) {
       // we still wanna to flush the waiting queue but lets wait for the next tick because some connections might be released
       // this is better for query performance
-      process.nextTick(this.flushConcurrentQueries.bind(this));
+      $process.nextTick(this.flushConcurrentQueries.bind(this));
     }
   }
 
@@ -1097,13 +1118,13 @@ class ConnectionPool {
       }
 
       const { promise, resolve } = Promise.withResolvers();
-      const timer = setTimeout(() => {
+      const timer = $setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
       }, timeout * 1000);
       timer.unref(); // dont block the event loop
       this.onAllQueriesFinished = () => {
-        clearTimeout(timer);
+        $clearTimeout(timer);
         // everything is closed, lets close the pool
         this.#close().finally(resolve);
       };
@@ -1281,7 +1302,7 @@ async function createConnection(options, onConnected, onClose) {
       connectionTimeout,
       maxLifetime,
       !prepare,
-    ) as $ZigGeneratedClasses.PostgresSQLConnection;
+    ) as PostgresSQLConnection;
   } catch (e) {
     onClose(e);
   }
@@ -1300,38 +1321,38 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 
-class SQLArrayParameter {
-  value: any;
-  columns: string[];
-  constructor(value, keys) {
-    if (keys?.length === 0) {
-      keys = Object.keys(value[0]);
-    }
 
-    for (let key of keys) {
-      if (typeof key === "string") {
-        const asNumber = Number(key);
-        if (Number.isNaN(asNumber)) {
-          continue;
-        }
-        key = asNumber;
-      }
+// Define Bun-specific types for runtime functions
+declare const $setTimeout: (callback: (...args: any[]) => void, ms?: number) => any;
+declare const $clearTimeout: (timeoutId: any) => void;
+declare const setTimeout: typeof $setTimeout;
+declare const clearTimeout: typeof $clearTimeout;
+declare const $process: {
+  nextTick: (callback: () => void) => void;
+};
+declare const $ZigGeneratedClasses: {
+  PostgresSQLConnection: any;
+};
 
-      if (typeof key !== "string") {
-        if (Number.isSafeInteger(key)) {
-          if (key >= 0 && key <= 64 * 1024) {
-            continue;
-          }
-        }
+type PostgresSQLConnection = any;
 
-        throw new Error(`Keys must be strings or numbers: ${key}`);
-      }
-    }
+declare const Bun: {
+  env: Record<string, string | undefined>;
+  file(path: string): {
+    text(): Promise<string>;
+  };
+};
 
-    this.value = value;
-    this.columns = keys;
-  }
+declare class URL {
+  constructor(url: string, base?: string);
+  hostname: string;
+  port: string;
+  username: string;
+  password: string;
+  protocol: string;
 }
+declare const $ERR_POSTGRES_UNSAFE_TRANSACTION: (message: string) => Error;
+declare const $ERR_POSTGRES_INVALID_TRANSACTION_STATE: (message: string) => Error;
 
 function decodeIfValid(value) {
   if (value) {
@@ -2458,7 +2479,7 @@ function SQL(o, e = {}) {
   return sql;
 }
 
-var lazyDefaultSQL: InstanceType<typeof BunTypes.SQL>;
+var lazyDefaultSQL: any;
 
 function resetDefaultSQL(sql) {
   lazyDefaultSQL = sql;
@@ -2473,7 +2494,7 @@ function ensureDefaultSQL() {
   }
 }
 
-var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, ...values) {
+var defaultSQLObject: any = function sql(strings, ...values) {
   if (new.target) {
     return SQL(strings);
   }
@@ -2481,7 +2502,7 @@ var defaultSQLObject: InstanceType<typeof BunTypes.SQL> = function sql(strings, 
     resetDefaultSQL(SQL(undefined));
   }
   return lazyDefaultSQL(strings, ...values);
-} as typeof BunTypes.SQL;
+} as any;
 
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
@@ -2518,7 +2539,7 @@ defaultSQLObject.file = (filename: string, ...args) => {
 defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
   ensureDefaultSQL();
   return lazyDefaultSQL.begin(...args);
-} as (typeof BunTypes.SQL)["begin"];
+} as any;
 
 defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
   ensureDefaultSQL();

@@ -60,7 +60,7 @@ export function respondWithNewView(this, view) {
 
 $getter;
 export function view(this) {
-  if (!$isReadableStreamBYOBRequest(this)) throw $makeGetterTypeError("ReadableStreamBYOBRequest", "view");
+  if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
   return $getByIdDirectPrivate(this, "view");
 }

@@ -18,7 +18,7 @@ function highWaterMarkFrom(
   return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
 }
 
-function getDefaultHighWaterMark(objectMode: boolean): number {
+function getDefaultHighWaterMark(objectMode?: boolean): number {
   return objectMode ? defaultHighWaterMarkObjectMode : defaultHighWaterMarkBytes;
 }
 

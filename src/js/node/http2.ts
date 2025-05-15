@@ -2479,6 +2479,11 @@ class ServerHttp2Session extends Http2Session {
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
     },
+    frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
+      if (!self || typeof stream !== "object") return;
+      // Emit the frameError event with the frame type and error code
+      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+    },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
@@ -2949,6 +2954,11 @@ class ClientHttp2Session extends Http2Session {
         const stream = new ClientHttp2Session(stream_id, self, null);
         self.#parser?.setStreamContext(stream_id, stream);
       }
+    },
+    frameError(self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) {
+      if (!self || typeof stream !== "object") return;
+      // Emit the frameError event with the frame type and error code
+      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
     },
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -3698,6 +3708,9 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);
+}
+function emitFrameErrorEventNT(stream, frameType, errorCode) {
+  stream.emit("frameError", frameType, errorCode);
 }
 class Http2SecureServer extends tls.Server {
   timeout = 0;

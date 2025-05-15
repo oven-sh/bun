@@ -106,7 +106,7 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessagePortPrototype, JSMessagePortPrototype::Base);
 
-using JSMessagePortDOMConstructor = JSDOMConstructorNotConstructable<JSMessagePort>;
+using JSMessagePortDOMConstructor = JSDOMConstructorNotConstructable<JSMessagePort, Bun::ErrorCode::ERR_CONSTRUCT_CALL_INVALID>;
 
 template<> const ClassInfo JSMessagePortDOMConstructor::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortDOMConstructor) };
 

@@ -1684,7 +1684,7 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Expected onNodeHTTPRequest to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
-                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
+                onRequest.protect();
                 args.onNodeHTTPRequest = onRequest;
             }
 
@@ -1693,7 +1693,7 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
-                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
+                onRequest.protect();
                 args.onRequest = onRequest;
             } else if (args.bake == null and args.onNodeHTTPRequest == .zero and ((args.static_routes.items.len + args.user_routes_to_build.items.len) == 0 and !opts.has_user_routes) and opts.is_fetch_required) {
                 if (global.hasException()) return error.JSError;
@@ -2377,7 +2377,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
-            JSC.C.JSValueProtect(ctx.server.?.globalThis, value.asObjectRef());
+            value.protect();
 
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
@@ -5064,8 +5064,9 @@ const ServePlugins = struct {
                     // promise not fulfilled yet
                     .pending => {
                         this.ref();
-                        this.state.pending.promise.strong.set(global, promise.asValue(global));
-                        promise.asValue(global).then(global, this, onResolveImpl, onRejectImpl);
+                        const promise_value = promise.asValue();
+                        this.state.pending.promise.strong.set(global, promise_value);
+                        promise_value.then(global, this, onResolveImpl, onRejectImpl);
                         return;
                     },
                     .fulfilled => {
@@ -6117,7 +6118,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn getAllClosedPromise(this: *ThisServer, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             if (this.listener == null and this.pending_requests == 0) {
-                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).asValue(globalThis);
+                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).toJS();
             }
             const prom = &this.all_closed_promise;
             if (prom.strong.has()) {

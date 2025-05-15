@@ -16,6 +16,7 @@ const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
   ["ERR_AMBIGUOUS_ARGUMENT", TypeError],
+  ["ERR_ARG_NOT_ITERABLE", TypeError],
   ["ERR_ASSERTION", Error],
   ["ERR_ASYNC_CALLBACK", TypeError],
   ["ERR_ASYNC_TYPE", TypeError],

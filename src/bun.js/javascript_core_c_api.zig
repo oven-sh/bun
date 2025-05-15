@@ -74,31 +74,6 @@ pub extern fn JSValueMakeNull(ctx: *JSC.JSGlobalObject) JSValueRef;
 pub extern fn JSValueToNumber(ctx: *JSC.JSGlobalObject, value: JSValueRef, exception: ExceptionRef) f64;
 pub extern fn JSValueToObject(ctx: *JSC.JSGlobalObject, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
-const log_protection = bun.Environment.allow_assert and false;
-pub inline fn JSValueUnprotect(ctx: *JSC.JSGlobalObject, value: JSValueRef) void {
-    const Wrapped = struct {
-        pub extern fn JSValueUnprotect(ctx: *JSC.JSGlobalObject, value: JSValueRef) void;
-    };
-    if (comptime log_protection) {
-        const Output = bun.Output;
-        Output.debug("[unprotect] {d}\n", .{@intFromPtr(value)});
-    }
-    // wrapper exists to make it easier to set a breakpoint
-    Wrapped.JSValueUnprotect(ctx, value);
-}
-
-pub inline fn JSValueProtect(ctx: *JSC.JSGlobalObject, value: JSValueRef) void {
-    const Wrapped = struct {
-        pub extern fn JSValueProtect(ctx: *JSC.JSGlobalObject, value: JSValueRef) void;
-    };
-    if (comptime log_protection) {
-        const Output = bun.Output;
-        Output.debug("[protect] {d}\n", .{@intFromPtr(value)});
-    }
-    // wrapper exists to make it easier to set a breakpoint
-    Wrapped.JSValueProtect(ctx, value);
-}
-
 pub const JSPropertyAttributes = enum(c_uint) {
     kJSPropertyAttributeNone = 0,
     kJSPropertyAttributeReadOnly = 2,

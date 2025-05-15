@@ -2083,8 +2083,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
-    JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     SystemError err = *arg0;
@@ -2122,24 +2121,20 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     if (err.fd >= 0) {
         JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
-        result->putDirect(vm, names.fdPublicName(), fd,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.fdPublicName(), fd, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
         JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
-        result->putDirect(vm, names.syscallPublicName(), syscall,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.syscallPublicName(), syscall, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.hostname.tag != BunStringTag::Empty) {
         JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
-        result->putDirect(vm, names.hostnamePublicName(), hostname,
-            JSC::PropertyAttribute::DontDelete | 0);
+        result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, names.errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
     scope.release();
@@ -2147,8 +2142,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0,
     return JSC::JSValue::encode(JSC::JSValue(result));
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0,
-    JSC::JSGlobalObject* globalObject)
+JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     SystemError err = *arg0;
@@ -2169,34 +2163,22 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
 
     auto clientData = WebCore::clientData(vm);
 
-    result->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(jsString(vm, String("SystemError"_s))),
-        JSC::PropertyAttribute::DontEnum | 0);
-    result->putDirect(
-        vm, clientData->builtinNames().codePublicName(),
-        JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))),
-        JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, vm.propertyNames->name, JSC::JSValue(jsString(vm, String("SystemError"_s))), JSC::PropertyAttribute::DontEnum | 0);
+    result->putDirect(vm, clientData->builtinNames().codePublicName(), JSC::JSValue(jsString(vm, String("ERR_SYSTEM_ERROR"_s))), JSC::PropertyAttribute::DontEnum | 0);
 
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
 
     result->putDirect(vm, JSC::Identifier::fromString(vm, "info"_s), info, JSC::PropertyAttribute::DontDelete | 0);
 
     auto syscallJsString = jsString(vm, syscallString);
-    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
-        JSC::PropertyAttribute::DontDelete | 0);
-    info->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString,
-        JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString, JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscallJsString, JSC::PropertyAttribute::DontDelete | 0);
 
-    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString),
-        JSC::PropertyAttribute::DontDelete | 0);
-    info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString),
-        JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString), JSC::PropertyAttribute::DontDelete | 0);
 
-    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
-    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_),
-        JSC::PropertyAttribute::DontDelete | 0);
+    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), JSC::JSValue(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(result)));
 }
@@ -5999,37 +5981,30 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* arg0)
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->ref();
-    return arg0;
+    return abortSignal;
 }
 
-extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0)
+extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* abortSignal)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
 }
 
-extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* arg0, void* arg1)
+extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->cleanNativeBindings(arg1);
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
-    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-
     if (abortSignal->aborted()) {
         callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
-        return arg0;
+        return abortSignal;
     }
-
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
-
-    return arg0;
+    return abortSignal;
 }
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue value)
 {
@@ -6451,6 +6426,27 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
+extern "C" void Bun__JSValue__unprotect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (LIKELY(value && value.isCell())) {
+        JSCell* cell = value.asCell();
+
+        // Necessary if we're inside a finalizer due to an assertion.
+        JSLockHolder lock(cell->vm());
+
+        gcUnprotect(cell);
+    }
+}
+
+extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (LIKELY(value && value.isCell())) {
+        JSCell* cell = value.asCell();
+        gcProtect(cell);
+    }
+}
 #if ASSERT_ENABLED
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {

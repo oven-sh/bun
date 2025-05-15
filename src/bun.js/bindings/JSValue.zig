@@ -845,7 +845,10 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
-    /// Protects a JSValue from garbage collection.
+    extern "c" fn Bun__JSValue__protect(value: JSValue) void;
+    extern "c" fn Bun__JSValue__unprotect(value: JSValue) void;
+
+    /// Protects a JSValue from garbage collection by storing it in a hash table that is strongly referenced and incrementing a reference count.
     ///
     /// This is useful when you want to store a JSValue in a global or on the
     /// heap, where the garbage collector will not be able to discover your
@@ -853,20 +856,24 @@ pub const JSValue = enum(i64) {
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn protect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__protect(this);
     }
 
-    /// Unprotects a JSValue from garbage collection.
+    /// Unprotects a JSValue from garbage collection by removing it from the hash table and decrementing a reference count.
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
     ///
     /// This is the inverse of `protect`.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn unprotect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__unprotect(this);
     }
 
     extern fn JSC__JSValue__JSONValueFromString(
@@ -1446,10 +1453,6 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    pub fn toJSString(globalObject: *JSC.JSGlobalObject, slice_: []const u8) JSC.JSValue {
-        return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
-    }
-
     extern fn JSC__JSValue__asCell(this: JSValue) *JSCell;
     pub fn asCell(this: JSValue) *JSCell {
         // NOTE: asCell already asserts this, but since we're crossing an FFI
@@ -1574,8 +1577,8 @@ pub const JSValue = enum(i64) {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
-    // On exception, this returns the empty string.
     extern fn JSC__JSValue__toString(this: JSValue, globalThis: *JSGlobalObject) *JSString;
+    /// On exception, this returns the empty string.
     pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return JSC__JSValue__toString(this, globalThis);
     }
@@ -1584,10 +1587,11 @@ pub const JSValue = enum(i64) {
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
         return JSC__JSValue__jsonStringify(this, globalThis, indent, out);
     }
+
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
-    /// On exception, this returns null, to make exception checks clearer.
-    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
-        return JSC__JSValue__toStringOrNull(this, globalThis);
+    // Calls JSValue::toStringOrNull. Returns error on exception.
+    pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
+        return JSC__JSValue__toStringOrNull(this, globalThis) orelse return error.JSError;
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -1627,7 +1631,7 @@ pub const JSValue = enum(i64) {
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
+        var str = this.toJSString(globalThis) catch return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
             globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;

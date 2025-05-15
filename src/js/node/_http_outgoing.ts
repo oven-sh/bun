@@ -229,6 +229,11 @@ const OutgoingMessagePrototype = {
     return write_(this, chunk, encoding, callback, false);
   },
 
+  pipe() {
+    // OutgoingMessage should be write-only. Piping from it is disabled.
+    this.emit("error", $ERR_STREAM_CANNOT_PIPE());
+  },
+
   getHeaderNames() {
     var headers = this[headersSymbol];
     if (!headers) return [];

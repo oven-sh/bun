@@ -2249,10 +2249,8 @@ pub const Expect = struct {
             if (expected_value.isString()) {
                 const received_message: JSValue = (if (result.isObject())
                     try result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
 
                 // TODO: remove this allocation
@@ -2274,10 +2272,8 @@ pub const Expect = struct {
             if (expected_value.isRegExp()) {
                 const received_message: JSValue = (if (result.isObject())
                     try result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
 
                 if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
@@ -2295,10 +2291,8 @@ pub const Expect = struct {
             if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const received_message: JSValue = (if (result.isObject())
                     try result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
 
                 // no partial match for this case
@@ -2324,11 +2318,10 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
+
                 try result.fastGet(globalThis, .message)
-            else if (result.toStringOrNull(globalThis)) |js_str|
-                JSValue.fromCell(js_str)
             else
-                null;
+                JSValue.fromCell(try result.toJSString(globalThis));
 
             if (expected_value.isString()) {
                 if (_received_message) |received_message| {
@@ -5676,13 +5669,13 @@ pub const ExpectMatcherUtils = struct {
                 is_not = val.coerce(bool, globalThis);
             }
             if (try options.get(globalThis, "comment")) |val| {
-                comment = val.toStringOrNull(globalThis);
+                comment = try val.toJSString(globalThis);
             }
             if (try options.get(globalThis, "promise")) |val| {
-                promise = val.toStringOrNull(globalThis);
+                promise = try val.toJSString(globalThis);
             }
             if (try options.get(globalThis, "secondArgument")) |val| {
-                second_argument = val.toStringOrNull(globalThis);
+                second_argument = try val.toJSString(globalThis);
             }
         }
 

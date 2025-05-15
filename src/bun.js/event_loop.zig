@@ -53,7 +53,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .globalThis = globalThis,
             });
             var promise = JSC.JSPromise.create(globalThis);
-            this.promise.strong.set(globalThis, promise.asValue(globalThis));
+            this.promise.strong.set(globalThis, promise.toJS());
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;

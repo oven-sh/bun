@@ -581,7 +581,7 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue
             }
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
-            return .{ .result = this.pending.promise(globalThis).asValue(globalThis) };
+            return .{ .result = this.pending.promise(globalThis).toJS() };
         },
         .wrote => |written| {
             this.writer.end();

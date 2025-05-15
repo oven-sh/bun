@@ -32,12 +32,12 @@ pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32)
     if (value.isEmptyOrUndefinedOrNull()) return null;
     return value;
 }
-const MAX_WINDOW_SIZE = 2147483647;
-const MAX_HEADER_TABLE_SIZE = 4294967295;
-const MAX_STREAM_ID = 2147483647;
-const WINDOW_INCREMENT_SIZE = 65536;
-const MAX_HPACK_HEADER_SIZE = 65536;
-const MAX_FRAME_SIZE = 16777215;
+const MAX_WINDOW_SIZE = std.math.maxInt(i32);
+const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
+const MAX_STREAM_ID = std.math.maxInt(i32);
+const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
+const MAX_HPACK_HEADER_SIZE = std.math.maxInt(u16);
+const MAX_FRAME_SIZE = std.math.maxInt(u24);
 
 const PaddingStrategy = enum {
     none,
@@ -235,14 +235,6 @@ const FullSettingsPayload = packed struct(u288) {
         return (writer.write(std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize]) catch 0) != 0;
     }
 };
-const ValidPseudoHeaders = bun.ComptimeStringMap(void, .{
-    .{":status"},
-    .{":method"},
-    .{":authority"},
-    .{":scheme"},
-    .{":path"},
-    .{":protocol"},
-});
 
 const ValidResponsePseudoHeaders = bun.ComptimeStringMap(void, .{
     .{":status"},
@@ -534,6 +526,7 @@ const Handlers = struct {
     onAborted: JSC.JSValue = .zero,
     onAltSvc: JSC.JSValue = .zero,
     onOrigin: JSC.JSValue = .zero,
+    onFrameError: JSC.JSValue = .zero, // Added for frameError events
     binary_type: BinaryType = .Buffer,
 
     vm: *JSC.VirtualMachine,
@@ -592,6 +585,7 @@ const Handlers = struct {
             .{ "onWrite", "write" },
             .{ "onAltSvc", "altsvc" },
             .{ "onOrigin", "origin" },
+            .{ "onFrameError", "frameError" },
         };
 
         inline for (pairs) |pair| {
@@ -648,6 +642,7 @@ const Handlers = struct {
         this.onEnd = .zero;
         this.onGoAway = .zero;
         this.onAborted = .zero;
+        this.onFrameError = .zero;
         this.strong_ctx.deinit();
     }
 };
@@ -701,6 +696,7 @@ pub const H2FrameParser = struct {
     queuedDataSize: u64 = 0, // this is in bytes
     maxOutstandingPings: u64 = 10,
     outStandingPings: u64 = 0,
+    maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
@@ -3940,6 +3936,23 @@ pub const H2FrameParser = struct {
         }
 
         log("request encoded_size {}", .{encoded_size});
+
+        // Check if headers block exceeds maxSendHeaderBlockLength
+        if (this.maxSendHeaderBlockLength != 0 and encoded_size > this.maxSendHeaderBlockLength) {
+            stream.state = .CLOSED;
+            stream.rstCode = @intFromEnum(ErrorCode.REFUSED_STREAM);
+
+            this.dispatchWith2Extra(
+                .onFrameError,
+                stream.getIdentifier(),
+                JSC.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
+                JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
+            );
+
+            this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
+            return JSC.JSValue.jsNumber(stream_id);
+        }
+
         const padding = stream.getPadding(encoded_size, buffer.len - 1);
         const payload_size = encoded_size + (if (padding != 0) padding + 1 else 0);
         if (padding != 0) {
@@ -4202,6 +4215,11 @@ pub const H2FrameParser = struct {
                 if (try settings_js.get(globalObject, "maxOutstandingSettings")) |max_outstanding_settings| {
                     if (max_outstanding_settings.isNumber()) {
                         this.maxOutstandingSettings = @max(1, @as(u32, @truncate(max_outstanding_settings.to(u64))));
+                    }
+                }
+                if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |max_send_header_block_length| {
+                    if (max_send_header_block_length.isNumber()) {
+                        this.maxSendHeaderBlockLength = @bitCast(max_send_header_block_length.toInt32());
                     }
                 }
             }

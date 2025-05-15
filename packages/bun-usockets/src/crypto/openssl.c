@@ -353,6 +353,11 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
 
     if (!success) {
       if (context->options.secure_protocol_method) {
+        printf("[openssl.c] secure_protocol_method: %s\n", context->options.secure_protocol_method);
+      } else {
+        printf("[openssl.c] secure_protocol_method: (null)\n");
+      }
+      if (context->options.secure_protocol_method) {
         const char *proto = context->options.secure_protocol_method;
         if (
           strcmp(proto, "SSLv23_method") == 0 ||

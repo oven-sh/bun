@@ -38,7 +38,7 @@ export function cancel(this, reason) {
   if (!$isReadableStreamBYOBReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamBYOBReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($makeTypeError("cancel() called on a reader owned by no readable stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
@@ -47,7 +47,7 @@ export function read(this, view: DataView) {
   if (!$isReadableStreamBYOBReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamBYOBReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($makeTypeError("read() called on a reader owned by no readable stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   if (!$isObject(view)) return Promise.$reject($ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
 

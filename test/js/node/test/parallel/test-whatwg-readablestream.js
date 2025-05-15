@@ -223,14 +223,12 @@ class Source {
   const reader = readable.getReader({ mode: 'byob' });
   reader.releaseLock();
   reader.releaseLock();
-  // TODO: doesn't reject
-  // assert.rejects(reader.read(new Uint8Array(10)), {
-  //   code: 'ERR_INVALID_STATE',
-  // }).then(common.mustCall());
-  // TODO: doesn't reject
-  // assert.rejects(reader.cancel(), {
-  //   code: 'ERR_INVALID_STATE',
-  // }).then(common.mustCall());
+  assert.rejects(reader.read(new Uint8Array(10)), {
+    code: 'ERR_INVALID_STATE',
+  }).then(common.mustCall());
+  assert.rejects(reader.cancel(), {
+    code: 'ERR_INVALID_STATE',
+  }).then(common.mustCall()).catch(e => console.log(e));
 }
 
 {

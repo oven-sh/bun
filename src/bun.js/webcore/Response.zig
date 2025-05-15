@@ -27,8 +27,8 @@ pub const getBlob = ResponseMixin.getBlob;
 pub const getBlobWithoutCallFrame = ResponseMixin.getBlobWithoutCallFrame;
 pub const getFormData = ResponseMixin.getFormData;
 
-pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncFormData {
+    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
@@ -123,7 +123,7 @@ pub fn redirectLocation(this: *const Response) ?[]const u8 {
 }
 
 pub fn header(this: *const Response, name: bun.webcore.FetchHeaders.HTTPHeaderName) ?[]const u8 {
-    return if ((this.init.headers orelse return null).fastGet(name)) |str|
+    return if (try (this.init.headers orelse return null).fastGet(name)) |str|
         str.slice()
     else
         null;
@@ -343,7 +343,7 @@ pub fn finalize(
 
 pub fn getContentType(
     this: *Response,
-) ?ZigString.Slice {
+) bun.JSError!?ZigString.Slice {
     if (this.init.headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
@@ -643,7 +643,7 @@ pub const Init = struct {
             return error.JSError;
         }
 
-        if (response_init.fastGet(globalThis, .headers)) |headers| {
+        if (try response_init.fastGet(globalThis, .headers)) |headers| {
             if (headers.as(FetchHeaders)) |orig| {
                 if (!orig.isEmpty()) {
                     result.headers = orig.cloneThis(globalThis);
@@ -657,7 +657,7 @@ pub const Init = struct {
             return error.JSError;
         }
 
-        if (response_init.fastGet(globalThis, .status)) |status_value| {
+        if (try response_init.fastGet(globalThis, .status)) |status_value| {
             const number = status_value.coerceToInt64(globalThis);
             if ((200 <= number and number < 600) or number == 101) {
                 result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
@@ -674,11 +674,11 @@ pub const Init = struct {
             return error.JSError;
         }
 
-        if (response_init.fastGet(globalThis, .statusText)) |status_text| {
+        if (try response_init.fastGet(globalThis, .statusText)) |status_text| {
             result.status_text = try bun.String.fromJS(status_text, globalThis);
         }
 
-        if (response_init.fastGet(globalThis, .method)) |method_value| {
+        if (try response_init.fastGet(globalThis, .method)) |method_value| {
             if (try Method.fromJS(globalThis, method_value)) |method| {
                 result.method = method;
             }

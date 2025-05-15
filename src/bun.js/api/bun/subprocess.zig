@@ -1745,7 +1745,7 @@ pub fn getExited(
             return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJSC(globalThis));
         },
         else => {
-            const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+            const promise = JSC.JSPromise.create(globalThis).toJS();
             JSC.Codegen.JSSubprocess.exitedPromiseSetCached(this_value, globalThis, promise);
             return promise;
         },

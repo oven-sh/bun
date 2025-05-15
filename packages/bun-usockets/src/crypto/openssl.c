@@ -350,12 +350,10 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
-    /* If the handshake failed, map protocol negotiation failures to Node.js error codes. */
     if (!success) {
       static const char *unsupported_proto_client = "ERR_SSL_UNSUPPORTED_PROTOCOL";
       static const char *unsupported_proto_reason_client = "Unsupported protocol on client";
 
-      // Debug log: print out the error code and reason from BoringSSL/OpenSSL
       if (verify_error.code || verify_error.reason) {
         printf("[usockets] TLS handshake failure: error=%ld, code=%s, reason=%s\n", (long)verify_error.error, verify_error.code ? verify_error.code : "(null)", verify_error.reason ? verify_error.reason : "(null)");
       } else {
@@ -366,32 +364,11 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
         verify_error.error = -1;
 
         if (SSL_is_server(s->ssl)) {
-          SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
-          int min = SSL_CTX_get_min_proto_version(ctx);
-          int max = SSL_CTX_get_max_proto_version(ctx);
-          int is_legacy = (min == max) && (min == TLS1_1_VERSION || min == TLS1_VERSION);
-          // printf("[usockets] SERVER handshake debug: min=%d, max=%d, is_legacy=%d\n", min, max, is_legacy);
-          if (is_legacy) {
-            verify_error.reason = "Wrong version number on server";
-            verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
-          } else {
-            verify_error.reason = "Unsupported protocol on server";
-            verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
-          }
+          verify_error.reason = "Unsupported protocol on server";
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
         } else {
-          SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
-          int min = SSL_CTX_get_min_proto_version(ctx);
-          int max = SSL_CTX_get_max_proto_version(ctx);
-          int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
-          int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
-          // printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
-          if (is_tlsv1_1_method || is_tlsv1_method) {
-            verify_error.reason = "TLSv1 alert protocol version";
-            verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
-          } else {
-            verify_error.reason = unsupported_proto_reason_client;
-            verify_error.code = unsupported_proto_client;
-          }
+          verify_error.reason = "TLSv1 alert protocol version";
+          verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
         }
       } else if (
         verify_error.code && (

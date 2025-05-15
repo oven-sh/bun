@@ -38,7 +38,8 @@ export function enqueue(this: ReadableByteStreamController, chunk: ArrayBufferVi
   if ($getByIdDirectPrivate($getByIdDirectPrivate(this, "controlledReadableStream"), "state") !== $streamReadable)
     throw $ERR_INVALID_STATE_TypeError("Controller is already closed");
 
-  if (!$isObject(chunk) || !ArrayBuffer.$isView(chunk)) throw new TypeError("Provided chunk is not a TypedArray");
+  if (!$isObject(chunk) || !ArrayBuffer.$isView(chunk))
+    throw $ERR_INVALID_ARG_TYPE("buffer", "Buffer, TypedArray, or DataView", chunk);
 
   return $readableByteStreamControllerEnqueue(this, chunk);
 }

@@ -237,10 +237,9 @@ class Source {
     type: 'bytes',
     start(c) { controller = c; }
   });
-  // TODO:
-  // assert.throws(() => controller.enqueue(1), {
-  //   code: 'ERR_INVALID_ARG_TYPE',
-  // });
+  assert.throws(() => controller.enqueue(1), {
+    code: 'ERR_INVALID_ARG_TYPE',
+  });
   controller.close();
   assert.throws(() => controller.enqueue(new Uint8Array(10)), {
     code: 'ERR_INVALID_STATE',

@@ -1,6 +1,7 @@
 #pragma once
 
 namespace Bun {
+
 class SigintReceiver {
 public:
     SigintReceiver() = default;
@@ -18,4 +19,5 @@ public:
 protected:
     bool m_sigintReceived = false;
 };
-}
+
+} // namespace Bun

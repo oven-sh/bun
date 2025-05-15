@@ -241,6 +241,34 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, RunningScriptOptions& options)
+{
+    VM& vm = JSC::getVM(globalObject);
+
+    if (vm.hasPendingTerminationException() || vm.hasTerminationRequest()) {
+        vm.clearHasTerminationRequest();
+        if (script->getSigintReceived()) {
+            script->setSigintReceived(false);
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        } else if (options.timeout) {
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *options.timeout, "ms"_s));
+        } else {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to sigint nor to timeout");
+        }
+        return true;
+    }
+
+    return false;
+}
+
+static void setupWatchdog(VM& vm, int64_t timeout)
+{
+    JSC::JSLockHolder locker(vm);
+    JSC::Watchdog& dog = vm.ensureWatchdog();
+    dog.enteredVM();
+    dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+}
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -265,10 +293,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     };
 
     if (options.timeout) {
-        JSC::JSLockHolder locker(vm);
-        JSC::Watchdog& dog = vm.ensureWatchdog();
-        dog.enteredVM();
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(*options.timeout));
+        setupWatchdog(vm, *options.timeout);
     }
 
     script->setSigintReceived(false);
@@ -284,16 +309,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
     }
 
-    if (vm.hasPendingTerminationException() || vm.hasTerminationRequest()) {
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (options.timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *options.timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to sigint nor to timeout");
-        }
+    if (checkForTermination(globalObject, scope, script, options)) {
         return {};
     }
 
@@ -315,10 +331,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     VM& vm = JSC::getVM(globalObject);
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(!script)) {
-        return ERR::INVALID_ARG_VALUE(throwScope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
     JSValue contextArg = callFrame->argument(0);
@@ -327,33 +343,53 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     if (!contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(throwScope, globalObject, "context"_s, "object"_s, contextArg);
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
-    // TODO(@heimskr): try to retrieve the NodeVMGlobalObject from the context
-
     RunningScriptOptions options;
-    if (!options.fromJS(globalObject, vm, throwScope, contextArg)) {
-        RETURN_IF_EXCEPTION(throwScope, {});
+    if (!options.fromJS(globalObject, vm, scope, contextArg)) {
+        RETURN_IF_EXCEPTION(scope, {});
         options = {};
     }
 
-    if (options.breakOnSigint) {
-        // TODO(@heimskr): register global object as appropriate
+    NakedPtr<JSC::Exception> exception;
+    JSValue result {};
+    auto run = [&] {
+        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    };
+
+    if (options.timeout) {
+        setupWatchdog(vm, *options.timeout);
     }
 
-    NakedPtr<JSC::Exception> exception;
-    JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+    script->setSigintReceived(false);
 
-    if (UNLIKELY(exception)) {
-        if (handleException(globalObject, vm, exception, throwScope)) {
-            return {};
-        }
-        JSC::throwException(globalObject, throwScope, exception.get());
+    if (options.breakOnSigint) {
+        auto holder = SigintWatcher::hold(globalObject, script);
+        run();
+    } else {
+        run();
+    }
+
+    if (options.timeout) {
+        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+    }
+
+    if (checkForTermination(globalObject, scope, script, options)) {
         return {};
     }
 
-    RETURN_IF_EXCEPTION(throwScope, {});
+    script->setSigintReceived(false);
+
+    if (UNLIKELY(exception)) {
+        if (handleException(globalObject, vm, exception, scope)) {
+            return {};
+        }
+        JSC::throwException(globalObject, scope, exception.get());
+        return {};
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 

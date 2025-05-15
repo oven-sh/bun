@@ -215,7 +215,7 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
     case CryptoKeyFormat::Raw: {
         auto raw = ecKey.exportRaw();
         if (raw.hasException()) {
-            exceptionCallback(raw.releaseException().code(), ""_s);;
+            exceptionCallback(raw.releaseException().code(), ""_s);
             return;
         }
         result = raw.releaseReturnValue();

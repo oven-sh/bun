@@ -185,7 +185,7 @@ bun upgrade --canary
   - [import.meta](https://bun.sh/docs/api/import-meta)
   - [SQLite (`bun:sqlite`)](https://bun.sh/docs/api/sqlite)
   - [PostgreSQL (`Bun.sql`)](https://bun.sh/docs/api/sql)
-  - [Redis (`bun:redis`)](https://bun.sh/docs/api/redis)
+  - [Redis (`Bun.redis`)](https://bun.sh/docs/api/redis)
   - [S3 Client (`Bun.s3`)](https://bun.sh/docs/api/s3)
   - [FileSystemRouter](https://bun.sh/docs/api/file-system-router)
   - [TCP sockets](https://bun.sh/docs/api/tcp)

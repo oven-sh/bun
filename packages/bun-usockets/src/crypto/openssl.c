@@ -378,6 +378,20 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
             verify_error.reason = "Unsupported protocol on server";
             verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
           }
+        } else {
+          SSL_CTX *ctx = SSL_get_SSL_CTX(s->ssl);
+          int min = SSL_CTX_get_min_proto_version(ctx);
+          int max = SSL_CTX_get_max_proto_version(ctx);
+          int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
+          int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
+          printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
+          if (is_tlsv1_1_method || is_tlsv1_method) {
+            verify_error.reason = "TLSv1 alert protocol version";
+            verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
+          } else {
+            verify_error.reason = unsupported_proto_reason_client;
+            verify_error.code = unsupported_proto_client;
+          }
         }
       } else if (
         verify_error.code && (
@@ -390,6 +404,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
         int max = SSL_CTX_get_max_proto_version(ctx);
         int is_tlsv1_1_method = (min == TLS1_1_VERSION && max == TLS1_1_VERSION);
         int is_tlsv1_method   = (min == TLS1_VERSION   && max == TLS1_VERSION);
+        printf("[usockets] CLIENT handshake debug: min=%d, max=%d, is_tlsv1_1_method=%d, is_tlsv1_method=%d\n", min, max, is_tlsv1_1_method, is_tlsv1_method);
         if (is_tlsv1_1_method || is_tlsv1_method) {
           verify_error.reason = "TLSv1 alert protocol version";
           verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";

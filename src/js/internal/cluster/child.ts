@@ -163,7 +163,7 @@ function rr(message, { indexesKey, index }, cb) {
     }
   }
 
-  function listen(backlog) {
+  function listen(_backlog) {
     // TODO(bnoordhuis) Send a message to the primary that tells it to
     // update the backlog size. The actual backlog should probably be
     // the largest requested size by any worker.

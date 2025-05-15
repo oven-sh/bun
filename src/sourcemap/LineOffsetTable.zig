@@ -222,7 +222,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
 }
 
 const LineOffsetTable = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 const BabyList = bun.BabyList;
 const std = @import("std");
 const strings = bun.strings;

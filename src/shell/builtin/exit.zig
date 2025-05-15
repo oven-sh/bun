@@ -80,7 +80,7 @@ pub inline fn bltn(this: *Exit) *Builtin {
 
 // --
 const log = bun.Output.scoped(.Exit, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

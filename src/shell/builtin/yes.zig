@@ -72,8 +72,8 @@ pub const YesTask = struct {
         const yes: *Yes = @fieldParentPtr("task", this);
 
         // Manually make safeguard since this task should not be created if output does not need IO
-        yes.bltn().stdout.enqueue(yes, yes.expletive, OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
-        yes.bltn().stdout.enqueue(yes, "\n", OutputNeedsIOSafeGuard{ .__i_know_what_i_am_doing_it_needs_io_yes = 0 });
+        yes.bltn().stdout.enqueue(yes, yes.expletive, .output_needs_io);
+        yes.bltn().stdout.enqueue(yes, "\n", .output_needs_io);
 
         this.enqueue();
     }
@@ -85,7 +85,7 @@ pub const YesTask = struct {
 
 // --
 const log = bun.Output.scoped(.Yes, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

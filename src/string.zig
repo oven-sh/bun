@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const OOM = bun.OOM;
@@ -191,7 +191,7 @@ pub const String = extern struct {
     }
 
     pub fn createUTF8(bytes: []const u8) String {
-        return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
+        return JSC.WebCore.encoding.toBunStringComptime(bytes, .utf8);
     }
 
     pub fn createUTF16(bytes: []const u16) String {
@@ -447,7 +447,7 @@ pub const String = extern struct {
     /// Max WTFStringImpl length.
     /// **Not** in bytes. In characters.
     pub inline fn max_length() usize {
-        return JSC.string_allocation_limit;
+        return JSC.VirtualMachine.string_allocation_limit;
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
@@ -490,6 +490,10 @@ pub const String = extern struct {
     /// - Does not increment reference counts
     pub fn fromUTF16(value: []const u16) String {
         return String.init(ZigString.initUTF16(value));
+    }
+
+    pub fn initLatin1OrASCIIView(value: []const u8) String {
+        return String.init(ZigString.init(value));
     }
 
     /// Create a `String` from a byte slice.
@@ -673,14 +677,14 @@ pub const String = extern struct {
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
         if (self.isUTF16()) {
-            return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
+            return JSC.WebCore.encoding.encodeIntoFrom16(self.utf16(), out, enc, true);
         }
 
         if (self.isUTF8()) {
             @panic("TODO");
         }
 
-        return JSC.WebCore.Encoder.encodeIntoFrom8(self.latin1(), out, enc);
+        return JSC.WebCore.encoding.encodeIntoFrom8(self.latin1(), out, enc);
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
@@ -843,6 +847,14 @@ pub const String = extern struct {
     pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) JSC.JSValue {
         JSC.markBinding(@src());
         return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
+    }
+
+    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSC.JSValue {
+        JSC.markBinding(@src());
+        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        defer builder.deinit();
+        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        return BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
     }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
@@ -1157,7 +1169,7 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return .{
-            .underlying = JSC.WebCore.Encoder.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
+            .underlying = JSC.WebCore.encoding.toBunStringFromOwnedSlice(owned_input_bytes, encoding),
         };
     }
 

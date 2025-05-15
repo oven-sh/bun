@@ -2,7 +2,11 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
-pub usingnamespace JSC.Codegen.JSHTMLBundle;
+pub const js = JSC.Codegen.JSHTMLBundle;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
 /// HTMLBundle can be owned by JavaScript as well as any number of Server instances.
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
@@ -31,8 +35,7 @@ fn deinit(this: *HTMLBundle) void {
 }
 
 pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
-    var str = bun.String.createUTF8(this.path);
-    return str.transferToJS(globalObject);
+    return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
 /// Deprecated: use Route instead.
@@ -44,7 +47,7 @@ pub const HTMLBundleRoute = Route;
 /// html file on multiple endpoints.
 pub const Route = struct {
     /// One HTMLBundle.Route can be specified multiple times
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{});
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" });
     pub const ref = Route.RefCount.ref;
     pub const deref = Route.RefCount.deref;
 
@@ -69,8 +72,8 @@ pub const Route = struct {
         return cost;
     }
 
-    pub fn init(html_bundle: *HTMLBundle) *Route {
-        return bun.new(Route, .{
+    pub fn init(html_bundle: *HTMLBundle) RefPtr(Route) {
+        return .new(.{
             .bundle = .initRef(html_bundle),
             .pending_responses = .{},
             .ref_count = .init(),
@@ -352,8 +355,8 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
-                    var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
+                    const blob = JSC.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
                         bun.debugAssert(false); // should be populated by `output_file.toBlob`
                         break :brk output_file.loader.toMimeType(&.{}).value;
@@ -496,7 +499,7 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

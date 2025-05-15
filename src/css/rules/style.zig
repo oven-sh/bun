@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -58,7 +58,7 @@ pub fn StyleRule(comptime R: type) type {
 
         pub fn updatePrefix(this: *This, context: *css.MinifyContext) void {
             this.vendor_prefix = css.selector.getPrefix(&this.selectors);
-            if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and
+            if (this.vendor_prefix.none and
                 context.targets.shouldCompileSelectors())
             {
                 this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.slice_mut(), context.targets.*);
@@ -91,7 +91,7 @@ pub fn StyleRule(comptime R: type) type {
                     }
                 }
 
-                dest.vendor_prefix = css.VendorPrefix.empty();
+                dest.vendor_prefix = .{};
             }
         }
 

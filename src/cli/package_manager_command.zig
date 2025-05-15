@@ -1,6 +1,6 @@
 const std = @import("std");
 const Progress = std.Progress;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const string = bun.string;
@@ -247,7 +247,7 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
-            const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
+            const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
@@ -274,7 +274,7 @@ pub const PackageManagerCommand = struct {
 
                     // This is to match 'bunx_command.BunxCommand.exec's logic
                     const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
-                        if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId(),
+                        if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
                     });
 
                     var deleted: usize = 0;

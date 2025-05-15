@@ -273,11 +273,11 @@ public:
     inline operator const EVP_MD*() const { return md_; }
     inline operator bool() const { return md_ != nullptr; }
 
-    static const Digest MD5;
-    static const Digest SHA1;
-    static const Digest SHA256;
-    static const Digest SHA384;
-    static const Digest SHA512;
+    static const Digest& MD5();
+    static const Digest& SHA1();
+    static const Digest& SHA256();
+    static const Digest& SHA384();
+    static const Digest& SHA512();
 
     static const Digest FromName(WTF::StringView name);
 
@@ -349,19 +349,19 @@ public:
     // the result will be an empty Cipher object whose bool operator
     // will return false.
 
-    static const Cipher EMPTY;
-    static const Cipher AES_128_CBC;
-    static const Cipher AES_192_CBC;
-    static const Cipher AES_256_CBC;
-    static const Cipher AES_128_CTR;
-    static const Cipher AES_192_CTR;
-    static const Cipher AES_256_CTR;
-    static const Cipher AES_128_GCM;
-    static const Cipher AES_192_GCM;
-    static const Cipher AES_256_GCM;
-    static const Cipher AES_128_KW;
-    static const Cipher AES_192_KW;
-    static const Cipher AES_256_KW;
+    static const Cipher& EMPTY();
+    static const Cipher& AES_128_CBC();
+    static const Cipher& AES_192_CBC();
+    static const Cipher& AES_256_CBC();
+    static const Cipher& AES_128_CTR();
+    static const Cipher& AES_192_CTR();
+    static const Cipher& AES_256_CTR();
+    static const Cipher& AES_128_GCM();
+    static const Cipher& AES_192_GCM();
+    static const Cipher& AES_256_GCM();
+    static const Cipher& AES_128_KW();
+    static const Cipher& AES_192_KW();
+    static const Cipher& AES_256_KW();
 
     struct CipherParams {
         int padding;
@@ -478,6 +478,8 @@ public:
     const EC_GROUP* getGroup() const;
     int getCurve() const;
 
+    static int GetCurveIdFromName(const char* name);
+
     inline operator bool() const { return ec_ != nullptr; }
     inline operator OSSL3_CONST EC_KEY*() const { return ec_; }
 
@@ -502,6 +504,16 @@ public:
     // If the secure heap is enabled, returns the amount of data that
     // has been allocated from the heap.
     static size_t GetSecureHeapUsed();
+
+    static DataPointer FromSpan(std::span<const uint8_t> span)
+    {
+        if (span.empty()) return {};
+        if (auto dp = Alloc(span.size())) {
+            memcpy(dp.get(), span.data(), span.size());
+            return dp;
+        }
+        return {};
+    }
 
     enum class InitSecureHeapResult {
         FAILED,
@@ -652,6 +664,7 @@ public:
 
     size_t byteLength() const;
 
+    static DataPointer toHex(const BIGNUM* bn);
     DataPointer toHex() const;
     DataPointer encode() const;
     DataPointer encodePadded(size_t size) const;
@@ -843,6 +856,20 @@ public:
         // ECPrivateKey according to SEC1.
         SEC1,
     };
+
+    static WTF::ASCIILiteral EncodingName(PKEncodingType type)
+    {
+        switch (type) {
+        case PKEncodingType::PKCS1:
+            return "pkcs1"_s;
+        case PKEncodingType::PKCS8:
+            return "pkcs8"_s;
+        case PKEncodingType::SPKI:
+            return "spki"_s;
+        case PKEncodingType::SEC1:
+            return "sec1"_s;
+        }
+    }
 
     enum class PKFormatType {
         DER,

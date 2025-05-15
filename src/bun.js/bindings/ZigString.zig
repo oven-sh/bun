@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const strings = bun.strings;
@@ -48,7 +48,7 @@ pub const ZigString = extern struct {
     pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
         return switch (this.as()) {
             inline else => |repr| switch (encoding) {
-                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
+                inline else => |enc| JSC.WebCore.encoding.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
             },
         };
     }
@@ -235,7 +235,7 @@ pub const ZigString = extern struct {
             return this.len * 2;
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
+        return JSC.WebCore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
     }
 
     pub fn latin1ByteLength(this: ZigString) usize {
@@ -257,7 +257,7 @@ pub const ZigString = extern struct {
             return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
         }
 
-        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
+        return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
     }
 
     pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![]u8 {
@@ -603,7 +603,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalU16(ptr, len, global);
@@ -790,7 +790,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
         return ZigString__toExternalValue(this, global);
@@ -823,7 +823,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
-            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
 
@@ -843,7 +843,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn toJSStringRef(this: *const ZigString) C_API.JSStringRef {
-        if (comptime @hasDecl(@import("root").bun, "bindgen")) {
+        if (comptime @hasDecl(@import("bun"), "bindgen")) {
             return undefined;
         }
 
@@ -861,6 +861,11 @@ pub const ZigString = extern struct {
     extern fn ZigString__toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return ZigString__toTypeErrorInstance(this, global);
+    }
+
+    extern fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: u8) JSValue;
+    pub fn toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode) JSValue {
+        return ZigString__toDOMExceptionInstance(this, global, @intFromEnum(code));
     }
 
     extern fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;

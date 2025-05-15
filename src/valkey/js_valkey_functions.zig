@@ -37,7 +37,7 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn get(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -57,7 +57,27 @@ pub fn get(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: 
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
+}
+
+pub fn getBuffer(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("getBuffer", "key", "string or buffer");
+    };
+    defer key.deinit();
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "GET",
+            .args = .{ .args = &.{key} },
+            .meta = .{ .return_as_buffer = true },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send GET command", err);
+    };
+    return promise.toJS();
 }
 
 pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -103,7 +123,7 @@ pub fn set(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: 
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SET command", err);
     };
 
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn incr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -123,7 +143,7 @@ pub fn incr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe:
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send INCR command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn decr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -143,7 +163,7 @@ pub fn decr(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe:
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send DECR command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn exists(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -164,7 +184,7 @@ pub fn exists(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send EXISTS command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -173,7 +193,11 @@ pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     };
     defer key.deinit();
 
-    const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{ .min = 0, .max = 2147483647 });
+    const seconds = try globalObject.validateIntegerRange(callframe.argument(1), i32, 0, .{
+        .min = 0,
+        .max = 2147483647,
+        .field_name = "seconds",
+    });
 
     // Convert seconds to a string
     var int_buf: [64]u8 = undefined;
@@ -191,7 +215,7 @@ pub fn expire(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfram
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send EXPIRE command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub fn ttl(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -211,7 +235,7 @@ pub fn ttl(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: 
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send TTL command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement srem (remove value from a set)
@@ -236,7 +260,7 @@ pub fn srem(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe:
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SREM command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement srandmember (get random member from set)
@@ -257,7 +281,7 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, cal
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SRANDMEMBER command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement smembers (get all members of a set)
@@ -278,7 +302,7 @@ pub fn smembers(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfr
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SMEMBERS command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement spop (pop a random member from a set)
@@ -299,7 +323,7 @@ pub fn spop(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe:
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SPOP command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement sadd (add member to a set)
@@ -324,7 +348,7 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe:
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SADD command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement sismember (check if value is member of a set)
@@ -350,7 +374,7 @@ pub fn sismember(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callf
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SISMEMBER command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement hmget (get multiple values from hash)
@@ -397,7 +421,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send HMGET command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement hincrby (increment hash field by integer value)
@@ -427,7 +451,7 @@ pub fn hincrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callfra
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBY command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement hincrbyfloat (increment hash field by float value)
@@ -457,7 +481,7 @@ pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, ca
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send HINCRBYFLOAT command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 // Implement hmset (set multiple values in hash)
@@ -519,7 +543,7 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send HMSET command", err);
     };
-    return promise.asValue(globalObject);
+    return promise.toJS();
 }
 
 pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call;
@@ -612,7 +636,7 @@ const compile = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
                 };
-                return promise.asValue(globalObject);
+                return promise.toJS();
             }
         };
     }
@@ -658,7 +682,7 @@ const compile = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
                 };
-                return promise.asValue(globalObject);
+                return promise.toJS();
             }
         };
     }
@@ -689,7 +713,7 @@ const compile = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
                 };
-                return promise.asValue(globalObject);
+                return promise.toJS();
             }
         };
     }
@@ -725,7 +749,7 @@ const compile = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
                 };
-                return promise.asValue(globalObject);
+                return promise.toJS();
             }
         };
     }
@@ -765,14 +789,14 @@ const compile = struct {
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
                 };
-                return promise.asValue(globalObject);
+                return promise.toJS();
             }
         };
     }
 };
 
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const valkey = bun.valkey;
 const protocol = valkey.protocol;

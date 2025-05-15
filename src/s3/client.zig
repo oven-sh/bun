@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const picohttp = bun.picohttp;
 
@@ -184,7 +184,7 @@ pub fn listObjects(
 
     search_params.deinitWithAllocator(bun.default_allocator);
 
-    const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+    const headers = bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
 
     const task = bun.new(S3HttpSimpleTask, .{
         .http = undefined,
@@ -406,9 +406,9 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 comptime {
-    const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
+    const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
     @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
-    const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
+    const jsonRejectRequestStream = JSC.toJSHostFn(onUploadStreamRejectRequestStream);
     @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 
@@ -447,7 +447,7 @@ pub fn uploadStream(
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
         },
         else => {},
@@ -633,9 +633,9 @@ pub fn downloadStream(
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
         } else {
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
         }
     };
     const proxy = proxy_url orelse "";

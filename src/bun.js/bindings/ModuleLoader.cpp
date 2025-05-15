@@ -101,8 +101,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-
+        object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
 
         auto len = properties.size() + 1;
@@ -116,7 +115,9 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
                 hasDefault = true;
             }
             exportNames.append(entry);
-            exportValues.append(object->get(globalObject, entry));
+            JSValue value = object->get(globalObject, entry);
+            RETURN_IF_EXCEPTION(throwScope, void());
+            exportValues.append(value);
         }
 
         if (!hasDefault) {
@@ -574,13 +575,10 @@ void evaluateCommonJSCustomExtension(
     JSCommonJSModule* target,
     String filename,
     JSValue filenameValue,
-    uint32_t extensionIndex)
+    JSValue extension)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
-
     if (!extension) {
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
@@ -792,7 +790,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, res->result.value.cjsCustomExtensionIndex);
+        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

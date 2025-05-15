@@ -1,4 +1,4 @@
-import { file, pathToFileURL } from "bun";
+import { pathToFileURL } from "bun";
 import { bunRun, bunRunAsScript, isWindows, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";

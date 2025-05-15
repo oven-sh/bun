@@ -1,6 +1,6 @@
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 const Global = bun.Global;
@@ -18,7 +18,7 @@ const Async = bun.Async;
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
-const EventLoopTimer = JSC.BunTimer.EventLoopTimer;
+const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 const timespec = bun.timespec;
 
 const LibInfo = struct {
@@ -41,7 +41,7 @@ const LibInfo = struct {
         if (loaded)
             return handle;
         loaded = true;
-        handle = bun.C.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
+        handle = bun.sys.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
         if (handle == null)
             Output.debug("libinfo.dylib not found", .{});
         return handle;
@@ -51,7 +51,7 @@ const LibInfo = struct {
         pub fn get() ?*const GetaddrinfoAsyncStart {
             bun.Environment.onlyMac();
 
-            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
+            return bun.sys.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
         }
     }.get;
 
@@ -59,7 +59,7 @@ const LibInfo = struct {
         pub fn get() ?*const GetaddrinfoAsyncHandleReply {
             bun.Environment.onlyMac();
 
-            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
+            return bun.sys.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
         }
     }.get;
 
@@ -112,7 +112,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.C.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -120,13 +120,20 @@ const LibInfo = struct {
         }
 
         bun.assert(request.backend.libinfo.machport != null);
-        var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+        var poll = bun.Async.FilePoll.init(
+            this.vm,
+            // TODO: WHAT?????????
+            .fromNative(std.math.maxInt(i32) - 1),
+            .{},
+            GetAddrInfoRequest,
+            request,
+        );
         request.backend.libinfo.file_poll = poll;
         const rc = poll.registerWithFd(
             this.vm.event_loop_handle.?,
             .machport,
             .one_shot,
-            bun.toFD(@as(i32, @intCast(@intFromPtr(request.backend.libinfo.machport)))),
+            .fromNative(@intCast(@intFromPtr(request.backend.libinfo.machport))),
         );
         bun.assert(rc == .result);
 
@@ -802,13 +809,13 @@ pub const GetAddrInfoRequest = struct {
             file_poll: ?*bun.Async.FilePoll = null,
             machport: ?*anyopaque = null,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *GetAddrInfoRequest) void {
                 if (comptime !Environment.isMac)
                     unreachable;
                 bun.JSC.markBinding(@src());
 
-                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, JSC.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
+                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, bun.api.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
                     log("onMachportChange: getaddrinfo_send_reply failed", .{});
                     getAddrInfoAsyncCallback(-1, null, this);
                 }
@@ -1222,7 +1229,7 @@ pub const InternalDNS = struct {
             file_poll: ?*bun.Async.FilePoll = null,
             machport: ?*anyopaque = null,
 
-            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            extern fn getaddrinfo_send_reply(*anyopaque, *const bun.api.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
             pub fn onMachportChange(this: *Request) void {
                 if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
                     libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
@@ -1572,7 +1579,7 @@ pub const InternalDNS = struct {
         }
 
         const fake_fd: i32 = @intCast(@intFromPtr(machport));
-        var poll = bun.Async.FilePoll.init(loop, bun.toFD(fake_fd), .{}, InternalDNSRequest, req);
+        var poll = bun.Async.FilePoll.init(loop, .fromNative(fake_fd), .{}, InternalDNSRequest, req);
         const rc = poll.register(loop.loop(), .machport, true);
 
         if (rc == .err) {
@@ -1802,7 +1809,10 @@ pub const DNSResolver = struct {
     pending_addr_cache_cares: AddrPendingCache,
     pending_nameinfo_cache_cares: NameInfoPendingCache,
 
-    pub usingnamespace JSC.Codegen.JSDNSResolver;
+    pub const js = JSC.Codegen.JSDNSResolver;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     const PollsMap = std.AutoArrayHashMap(c_ares.ares_socket_t, *PollType);
 
@@ -2366,7 +2376,7 @@ pub const DNSResolver = struct {
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
         var channel = this.channel orelse {
-            _ = this.polls.orderedRemove(poll.fd.int());
+            _ = this.polls.orderedRemove(poll.fd.native());
             poll.deinit();
             return;
         };
@@ -2375,7 +2385,7 @@ pub const DNSResolver = struct {
         defer this.deref();
 
         channel.process(
-            poll.fd.int(),
+            poll.fd.native(),
             poll.isReadable(),
             poll.isWritable(),
         );
@@ -2436,7 +2446,7 @@ pub const DNSResolver = struct {
             const poll_entry = this.polls.getOrPut(fd) catch unreachable;
 
             if (!poll_entry.found_existing) {
-                poll_entry.value_ptr.* = Async.FilePoll.init(vm, bun.toFD(fd), .{}, DNSResolver, this);
+                poll_entry.value_ptr.* = Async.FilePoll.init(vm, .fromNative(fd), .{}, DNSResolver, this);
             }
 
             var poll = poll_entry.value_ptr.*;
@@ -2517,16 +2527,13 @@ pub const DNSResolver = struct {
                 break :brk RecordType.default;
             }
 
-            const record_type_str = record_type_value.toStringOrNull(globalThis) orelse {
-                return .zero;
-            };
-
+            const record_type_str = try record_type_value.toJSString(globalThis);
             if (record_type_str.length() == 0) {
                 break :brk RecordType.default;
             }
 
             break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), JSC.ZigString.eqlComptime) orelse {
-                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
+                return globalThis.throwInvalidArgumentPropertyValue("record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT", record_type_value);
             };
         };
 
@@ -2536,10 +2543,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolve", "name", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolve", "name", "non-empty string");
         }
@@ -2600,9 +2604,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "string");
         }
 
-        const ip_str = ip_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+        const ip_str = try ip_value.toJSString(globalThis);
         if (ip_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "non-empty string");
         }
@@ -2660,10 +2662,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "non-empty string");
         }
@@ -2744,10 +2743,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
         }
@@ -2774,10 +2770,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
@@ -2800,10 +2793,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
         }
@@ -2830,9 +2820,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNs", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+        const name_str = try name_value.toJSString(globalThis);
 
         const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
@@ -2856,10 +2844,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
         }
@@ -2886,10 +2871,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
         }
@@ -2916,10 +2898,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
         }
@@ -2946,10 +2925,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
         }
@@ -2976,10 +2952,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
         }
@@ -3006,10 +2979,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
         }
@@ -3231,13 +3201,13 @@ pub const DNSResolver = struct {
             return c_ares.AF.INET6;
         }
 
-        return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{slice});
+        return JSC.Error.INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{slice});
     }
 
     fn setChannelServers(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if (channel != try getChannelFromVM(globalThis) and c_ares.ares_queue_active_queries(channel) != 0) {
-            return globalThis.ERR_DNS_SET_SERVERS_FAILED("Failed to set servers: there are pending queries", .{}).throw();
+            return globalThis.ERR(.DNS_SET_SERVERS_FAILED, "Failed to set servers: there are pending queries", .{}).throw();
         }
 
         const arguments = callframe.arguments();
@@ -3303,7 +3273,7 @@ pub const DNSResolver = struct {
             };
 
             if (c_ares.ares_inet_pton(af, addressBuffer.ptr, &entries[i].addr) != 1) {
-                return JSC.Error.ERR_INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{addressSlice});
+                return JSC.Error.INVALID_IP_ADDRESS.throw(globalThis, "Invalid IP address: \"{s}\"", .{addressSlice});
             }
 
             if (i > 0) {
@@ -3365,9 +3335,8 @@ pub const DNSResolver = struct {
         if (addr_value.isEmptyOrUndefinedOrNull() or !addr_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "string");
         }
-        const addr_str = addr_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+
+        const addr_str = try addr_value.toJSString(globalThis);
         if (addr_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "non-empty string");
         }
@@ -3426,41 +3395,41 @@ pub const DNSResolver = struct {
     }
 
     comptime {
-        const js_resolve = JSC.toJSHostFunction(globalResolve);
+        const js_resolve = JSC.toJSHostFn(globalResolve);
         @export(&js_resolve, .{ .name = "Bun__DNS__resolve" });
-        const js_lookup = JSC.toJSHostFunction(globalLookup);
+        const js_lookup = JSC.toJSHostFn(globalLookup);
         @export(&js_lookup, .{ .name = "Bun__DNS__lookup" });
-        const js_resolveTxt = JSC.toJSHostFunction(globalResolveTxt);
+        const js_resolveTxt = JSC.toJSHostFn(globalResolveTxt);
         @export(&js_resolveTxt, .{ .name = "Bun__DNS__resolveTxt" });
-        const js_resolveSoa = JSC.toJSHostFunction(globalResolveSoa);
+        const js_resolveSoa = JSC.toJSHostFn(globalResolveSoa);
         @export(&js_resolveSoa, .{ .name = "Bun__DNS__resolveSoa" });
-        const js_resolveMx = JSC.toJSHostFunction(globalResolveMx);
+        const js_resolveMx = JSC.toJSHostFn(globalResolveMx);
         @export(&js_resolveMx, .{ .name = "Bun__DNS__resolveMx" });
-        const js_resolveNaptr = JSC.toJSHostFunction(globalResolveNaptr);
+        const js_resolveNaptr = JSC.toJSHostFn(globalResolveNaptr);
         @export(&js_resolveNaptr, .{ .name = "Bun__DNS__resolveNaptr" });
-        const js_resolveSrv = JSC.toJSHostFunction(globalResolveSrv);
+        const js_resolveSrv = JSC.toJSHostFn(globalResolveSrv);
         @export(&js_resolveSrv, .{ .name = "Bun__DNS__resolveSrv" });
-        const js_resolveCaa = JSC.toJSHostFunction(globalResolveCaa);
+        const js_resolveCaa = JSC.toJSHostFn(globalResolveCaa);
         @export(&js_resolveCaa, .{ .name = "Bun__DNS__resolveCaa" });
-        const js_resolveNs = JSC.toJSHostFunction(globalResolveNs);
+        const js_resolveNs = JSC.toJSHostFn(globalResolveNs);
         @export(&js_resolveNs, .{ .name = "Bun__DNS__resolveNs" });
-        const js_resolvePtr = JSC.toJSHostFunction(globalResolvePtr);
+        const js_resolvePtr = JSC.toJSHostFn(globalResolvePtr);
         @export(&js_resolvePtr, .{ .name = "Bun__DNS__resolvePtr" });
-        const js_resolveCname = JSC.toJSHostFunction(globalResolveCname);
+        const js_resolveCname = JSC.toJSHostFn(globalResolveCname);
         @export(&js_resolveCname, .{ .name = "Bun__DNS__resolveCname" });
-        const js_resolveAny = JSC.toJSHostFunction(globalResolveAny);
+        const js_resolveAny = JSC.toJSHostFn(globalResolveAny);
         @export(&js_resolveAny, .{ .name = "Bun__DNS__resolveAny" });
-        const js_getGlobalServers = JSC.toJSHostFunction(getGlobalServers);
+        const js_getGlobalServers = JSC.toJSHostFn(getGlobalServers);
         @export(&js_getGlobalServers, .{ .name = "Bun__DNS__getServers" });
-        const js_setGlobalServers = JSC.toJSHostFunction(setGlobalServers);
+        const js_setGlobalServers = JSC.toJSHostFn(setGlobalServers);
         @export(&js_setGlobalServers, .{ .name = "Bun__DNS__setServers" });
-        const js_reverse = JSC.toJSHostFunction(globalReverse);
+        const js_reverse = JSC.toJSHostFn(globalReverse);
         @export(&js_reverse, .{ .name = "Bun__DNS__reverse" });
-        const js_lookupService = JSC.toJSHostFunction(globalLookupService);
+        const js_lookupService = JSC.toJSHostFn(globalLookupService);
         @export(&js_lookupService, .{ .name = "Bun__DNS__lookupService" });
-        const js_prefetchFromJS = JSC.toJSHostFunction(InternalDNS.prefetchFromJS);
+        const js_prefetchFromJS = JSC.toJSHostFn(InternalDNS.prefetchFromJS);
         @export(&js_prefetchFromJS, .{ .name = "Bun__DNS__prefetch" });
-        const js_getDNSCacheStats = JSC.toJSHostFunction(InternalDNS.getDNSCacheStats);
+        const js_getDNSCacheStats = JSC.toJSHostFn(InternalDNS.getDNSCacheStats);
         @export(&js_getDNSCacheStats, .{ .name = "Bun__DNS__getCacheStats" });
     }
 };

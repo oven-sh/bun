@@ -1,4 +1,8 @@
 /// <reference types="../../build/debug/codegen/generated.d.ts" />
+/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
+/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
+/// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
@@ -50,6 +54,50 @@ declare var $sloppy;
 declare var $alwaysInline;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
+/**
+ * Overrides **
+ */
+
+interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  $controlledReadableStream: ReadableStream<R>;
+  $underlyingSource: UnderlyingSource;
+  $queue: any;
+  $started: number;
+  $closeRequested: boolean;
+  $pullAgain: boolean;
+  $pulling: boolean;
+  $strategy: any;
+
+  $pullAlgorithm(): void;
+  $pull: typeof ReadableStreamDefaultController.prototype.pull;
+  $cancel: typeof ReadableStreamDefaultController.prototype.cancel;
+  $cancelAlgorithm: (reason?: any) => void;
+  $close: typeof ReadableStreamDefaultController.prototype.close;
+  $enqueue: typeof ReadableStreamDefaultController.prototype.enqueue;
+  $error: typeof ReadableStreamDefaultController.prototype.error;
+}
+
+declare var ReadableStreamDefaultController: {
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
+};
+
+interface ReadableStream<R = any> extends _ReadableStream<R> {
+  $highWaterMark: number;
+  $bunNativePtr: undefined | TODO;
+  $asyncContext?: {};
+  $disturbed: boolean;
+  $state: $streamClosed | $streamErrored | $streamReadable | $streamWritable | $streamClosedAndErrored;
+}
+
+declare var ReadableStream: {
+  prototype: ReadableStream;
+  new (): ReadableStream;
+};
+
+interface Console {
+  $writer: ReturnType<typeof Bun.stdout.writer>;
+}
 
 // JSC defines their intrinsics in a nice list here:
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/bytecode/BytecodeIntrinsicRegistry.h
@@ -63,14 +111,7 @@ declare function $argument<T = any>(index: number): any | undefined;
 declare function $argumentCount(): number;
 /** array.push(item) */
 declare function $arrayPush(array: T[], item: T): void;
-/** gets a property on an object */
-declare function $getByIdDirect<T = any>(obj: any, key: string): T;
-/**
- * gets a private property on an object. translates to the `op_get_by_id_direct` bytecode.
- *
- * TODO: clarify what private means exactly.
- */
-declare function $getByIdDirectPrivate<T = any>(obj: any, key: string): T;
+
 /**
  * gets a property on an object
  */
@@ -128,7 +169,6 @@ declare function $isProxyObject(obj: unknown): obj is Proxy;
 declare function $isDerivedArray(): TODO;
 declare function $isGenerator(obj: unknown): obj is Generator<any, any, any>;
 declare function $isAsyncGenerator(obj: unknown): obj is AsyncGenerator<any, any, any>;
-declare function $isPromise(obj: unknown): obj is Promise<any>;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -157,7 +197,21 @@ declare function $throwOutOfMemoryError(): never;
 declare function $tryGetById(): TODO;
 declare function $tryGetByIdWithWellKnownSymbol(obj: any, key: WellKnownSymbol): any;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
-declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): void;
+
+/**
+ * Sets a private property on an object.
+ * Translates to the `op_put_by_id_direct` bytecode.
+ *
+ * @param obj The object to set the private property on
+ * @param key The key of the private property (without the "$" prefix)
+ * @param value The value to set the private property to
+ */
+declare function $putByIdDirectPrivate<T extends Record<`$${K}`, unknown>, K extends string>(
+  obj: T,
+  key: K,
+  value: T[`$${K}`],
+): void;
+
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
@@ -368,7 +422,7 @@ declare function $isDisturbed(): TODO;
 declare function $isPaused(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazyStreamPrototypeMap(): TODO;
+declare const $lazyStreamPrototypeMap: Map<string, typeof import("node:stream/web").ReadableStreamDefaultController>;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
 declare function $main(): TODO;
@@ -425,7 +479,13 @@ declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string, isESM?: boolean, isUserRequireResolve?: boolean, paths?: string[]): string;
+declare function $resolveSync(
+  name: string,
+  from: string,
+  isESM?: boolean,
+  isUserRequireResolve?: boolean,
+  paths?: string[],
+): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
@@ -534,6 +594,7 @@ declare interface UnderlyingSource {
   $lazy?: boolean;
   $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
+  $stream?: ReadableStream;
 }
 
 declare class OutOfMemoryError {
@@ -629,6 +690,7 @@ declare function $ERR_BROTLI_INVALID_PARAM(p: number): RangeError;
 declare function $ERR_TLS_CERT_ALTNAME_INVALID(reason: string, host: string, cert): Error;
 declare function $ERR_USE_AFTER_CLOSE(name: string): Error;
 declare function $ERR_HTTP2_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
+declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
 declare function $ERR_INVALID_HTTP_TOKEN(name: string, value: string): TypeError;
 declare function $ERR_HTTP2_STATUS_INVALID(code: number): RangeError;
 declare function $ERR_HTTP2_INVALID_PSEUDOHEADER(name: string): TypeError;
@@ -706,6 +768,7 @@ declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
+declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, invalidIndex: number | -1): TypeError;
 
 /**
  * Convert a function to a class-like object.
@@ -724,3 +787,49 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 declare function $min(a: number, b: number): number;
 
 declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
+
+/**
+ * Schedules a callback to be invoked as a microtask.
+ */
+declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
+
+declare function $rejectPromise(promise: Promise<unknown>, reason: unknown): void;
+declare function $resolvePromise(promise: Promise<unknown>, value: unknown): void;
+
+interface Map<K, V> {
+  $get: typeof Map.prototype.get;
+  $set: typeof Map.prototype.set;
+}
+
+interface ObjectConstructor {
+  $defineProperty: typeof Object.defineProperty;
+  $defineProperties: typeof Object.defineProperties;
+}
+
+declare const $Object: ObjectConstructor;
+
+/** gets a property on an object */
+declare function $getByIdDirect<T = any>(obj: any, key: string): T;
+
+/**
+ * Gets a private property on an object.
+ * Translates to the `op_get_by_id_direct` bytecode.
+ *
+ * @param obj The object to get the private property from
+ * @param key The key of the private property (without the "$" prefix)
+ * @returns The value of the private property
+ */
+declare function $getByIdDirectPrivate<T = any, K extends string = string>(
+  obj: T,
+  key: K,
+): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
+
+declare var $Promise: PromiseConstructor;
+
+declare function $isPromise<T>(value: unknown): value is Promise<T>;
+
+declare type $ReadableStream = ReadableStream;
+declare type $ReadableStreamBYOBReader = ReadableStreamBYOBReader;
+declare type $ReadableStreamDefaultReader = ReadableStreamDefaultReader;
+declare type $ReadableStreamDefaultController = ReadableStreamDefaultController;
+declare type $ReadableStreamDirectController = ReadableStreamDirectController;

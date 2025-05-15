@@ -14,6 +14,8 @@
 
 #include "InspectorLifecycleAgent.h"
 #include "InspectorTestReporterAgent.h"
+#include "InspectorBunFrontendDevServerAgent.h"
+#include "InspectorHTTPServerAgent.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
@@ -112,6 +114,10 @@ public:
                 WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
                 WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+            globalObject->inspectorController().registerAlternateAgent(
+                WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
         this->hasEverConnected = true;

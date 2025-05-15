@@ -4,18 +4,17 @@
 
 import { describe, test } from "bun:test";
 import "harness";
+import { join } from "path";
 import {
-  attrTest,
   cssTest,
   indoc,
-  minify_test,
-  prefix_test,
-  minifyTestWithOptions as minify_test_with_options,
   minify_error_test_with_options,
+  minify_test,
+  minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
   ParserOptions,
+  prefix_test,
 } from "./util";
-import { join } from "path";
 
 function Some(n: number): number {
   return n;
@@ -53,6 +52,51 @@ describe("css tests", () => {
 }`,
     '.foo{content:"+";}',
   );
+
+  describe("custom property cases", () => {
+    cssTest(
+      `div {
+        --foo: 1 1 1 rgba(1, 1, 1, 0.1), 2 2 2 rgba(2, 2, 2, 0.2);
+        --bar: 1 1 1 #01010116, 2 2 2 #02020233;
+      }`,
+      `div {
+        --foo: 1 1 1 #0101011a, 2 2 2 #02020233;
+        --bar: 1 1 1 #01010116, 2 2 2 #02020233;
+       }`,
+    );
+    cssTest(
+      `:root {
+        --my-color: red;
+        --my-bg: white;
+        --my-font-size: 16px;
+      }
+      .element {
+        color: var(--my-color);
+        background-color: var(--my-bg);
+        font-size: var(--my-font-size);
+      }`,
+      `:root {
+        --my-color: red;
+        --my-bg: white;
+        --my-font-size: 16px;
+      }
+      .element {
+        color: var(--my-color);
+        background-color: var(--my-bg);
+        font-size: var(--my-font-size);
+       }`,
+    );
+    cssTest(
+      `div {
+        --custom-padding: calc(20px * 10px);
+        padding: var(--custom-padding);
+      }`,
+      `div {
+        --custom-padding: calc(20px * 10px);
+        padding: var(--custom-padding);
+       }`,
+    );
+  });
 
   describe("pseudo-class edge case", () => {
     cssTest(

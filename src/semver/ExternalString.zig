@@ -47,7 +47,7 @@ pub const ExternalString = extern struct {
 const assert = bun.assert;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -56,7 +56,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 const IdentityContext = bun.IdentityContext;
 const OOM = bun.OOM;

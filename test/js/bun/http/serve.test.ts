@@ -1627,7 +1627,7 @@ describe("should error with invalid options", async () => {
           requestCert: "invalid",
         },
       });
-    }).toThrow("Expected requestCert to be a boolean");
+    }).toThrow('The "requestCert" property must be of type boolean, got string');
   });
   it("rejectUnauthorized", () => {
     expect(() => {
@@ -1640,7 +1640,7 @@ describe("should error with invalid options", async () => {
           rejectUnauthorized: "invalid",
         },
       });
-    }).toThrow("Expected rejectUnauthorized to be a boolean");
+    }).toThrow('The "rejectUnauthorized" property must be of type boolean, got string');
   });
   it("lowMemoryMode", () => {
     expect(() => {

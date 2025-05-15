@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 /// When cloning large amounts of data potentially multiple times, we can
@@ -23,14 +23,14 @@ pub const LinuxMemFdAllocator = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    fd: bun.FileDescriptor = .zero,
     ref_count: RefCount,
+    fd: bun.FileDescriptor = .invalid,
     size: usize = 0,
 
     var memfd_counter = std.atomic.Value(usize).init(0);
 
     fn deinit(this: *LinuxMemFdAllocator) void {
-        _ = bun.sys.close(this.fd);
+        this.fd.close();
         bun.destroy(this);
     }
 
@@ -76,7 +76,7 @@ pub const LinuxMemFdAllocator = struct {
         };
     };
 
-    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn alloc(this: *LinuxMemFdAllocator, len: usize, offset: usize, flags: std.posix.MAP) bun.JSC.Maybe(bun.webcore.Blob.Store.Bytes) {
         var size = len;
 
         // size rounded up to nearest page
@@ -95,7 +95,7 @@ pub const LinuxMemFdAllocator = struct {
         )) {
             .result => |slice| {
                 return .{
-                    .result = bun.JSC.WebCore.Blob.ByteStore{
+                    .result = bun.webcore.Blob.Store.Bytes{
                         .cap = @truncate(slice.len),
                         .ptr = slice.ptr,
                         .len = @truncate(len),
@@ -123,7 +123,7 @@ pub const LinuxMemFdAllocator = struct {
         return bytes.len >= 1024 * 1024 * 8;
     }
 
-    pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.JSC.WebCore.Blob.ByteStore) {
+    pub fn create(bytes: []const u8) bun.JSC.Maybe(bun.webcore.Blob.Store.Bytes) {
         if (comptime !bun.Environment.isLinux) {
             unreachable;
         }
@@ -153,13 +153,13 @@ pub const LinuxMemFdAllocator = struct {
                     }
 
                     bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     return .{ .err = err };
                 },
                 .result => |result| {
                     if (result == 0) {
                         bun.Output.debugWarn("Failed to write to memfd: EOF", .{});
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return .{ .err = bun.sys.Error.fromCode(.NOMEM, .write) };
                     }
                     written += @intCast(result);

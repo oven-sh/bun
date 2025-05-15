@@ -603,6 +603,11 @@ describe("bundler", () => {
         capture((flag == 1234 ? "a" : unbound, "c"));
         // two side effects 2
         capture(([flag == 1234] ? unbound : other, "c"));
+        // new expression
+        capture((new Date(), 123));
+        // call expression
+        const funcWithNoSideEffects = () => 1;
+        capture((/* @__PURE__ */ funcWithNoSideEffects(), 456));
       `,
     },
     minifySyntax: true,
@@ -617,6 +622,8 @@ describe("bundler", () => {
       '(flag == 1234 || unbound, "c")',
       // || is not inserted since the condition is always true, can simplify '1234' to '0'
       '(flag == 0, unbound, "c")',
+      "123",
+      "456",
     ],
   });
 });

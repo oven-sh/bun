@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    e2b2789018fafc71653a477288adfe72ff94942e
+    7b81f24ecc28462667069f573811600f9a4b5abf
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -39,12 +39,12 @@ if(WIN32)
   else()
     set(MIMALLOC_LIBRARY mimalloc-static)
   endif()
-elseif(DEBUG AND ENABLE_ASAN)
-  set(MIMALLOC_LIBRARY mimalloc-asan-debug)
 elseif(DEBUG)
-  set(MIMALLOC_LIBRARY mimalloc-debug)
-elseif(ENABLE_ASAN)
-  set(MIMALLOC_LIBRARY mimalloc-asan)
+  if (ENABLE_ASAN)
+    set(MIMALLOC_LIBRARY mimalloc-asan-debug)
+  else()
+    set(MIMALLOC_LIBRARY mimalloc-debug)
+  endif()
 else()
   set(MIMALLOC_LIBRARY mimalloc)
 endif()

@@ -806,7 +806,7 @@ export class DraculaSyntaxHighlighter {
     // Check for NPM token
     if (str.startsWith("npm_") && str.length === 68) {
       const isValidTokenChar = (c: string) => this.isIdentifierPart(c);
-      return [...str.slice(4)].every(isValidTokenChar);
+      return str.slice(4).every(isValidTokenChar);
     }
 
     return false;

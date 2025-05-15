@@ -457,6 +457,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           const c = Buffer.from([0, 0, 0, 0, 0]);
           expect(c.length).toBe(5);
           expect(c.write("あいうえお", encoding)).toBe(4);
+          console.log(c.toString(encoding), { encoding });
           expect(c).toStrictEqual(Buffer.from([0x42, 0x30, 0x44, 0x30, 0x00]));
         });
 

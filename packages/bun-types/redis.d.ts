@@ -1,12 +1,6 @@
 declare module "bun" {
   export interface RedisOptions {
     /**
-     * URL to connect to, defaults to "redis://localhost:6379"
-     * Supported protocols: redis://, rediss://, redis+unix://, redis+tls://
-     */
-    url?: string;
-
-    /**
      * Connection timeout in milliseconds
      * @default 10000
      */
@@ -116,9 +110,16 @@ declare module "bun" {
     /**
      * Get the value of a key
      * @param key The key to get
-     * @returns Promise that resolves with the key's value, or null if the key doesn't exist
+     * @returns Promise that resolves with the key's value as a string, or null if the key doesn't exist
      */
     get(key: string | ArrayBufferView | Blob): Promise<string | null>;
+
+    /**
+     * Get the value of a key as a Uint8Array
+     * @param key The key to get
+     * @returns Promise that resolves with the key's value as a Uint8Array, or null if the key doesn't exist
+     */
+    getBuffer(key: string | ArrayBufferView | Blob): Promise<Uint8Array<ArrayBuffer> | null>;
 
     /**
      * Set key to hold the string value

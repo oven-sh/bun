@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 
 pub const Method = enum(u8) {
@@ -162,3 +162,12 @@ pub const Method = enum(u8) {
 
     const JSC = bun.JSC;
 };
+
+export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {
+    const method: Method = Method.find(str[0..len]) orelse return -1;
+    return @intFromEnum(method);
+}
+
+comptime {
+    _ = Bun__HTTPMethod__from;
+}

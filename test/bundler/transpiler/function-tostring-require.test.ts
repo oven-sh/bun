@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("toString doesnt observe import.meta.require", () => {
   function hello() {

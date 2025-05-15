@@ -44,6 +44,13 @@ export type Field =
     } & PropertyAttribute)
   | ({
       fn: string;
+
+      /**
+       * Mark it as an async function in the TypeScript definition.
+       *
+       * Does not do anything at runtime.
+       */
+      async?: boolean;
       /**
        * Number of parameters accepted by the function.
        *
@@ -94,7 +101,7 @@ export class ClassDefinition {
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
-   * 
+   *
    * Example for pointers only owned by JavaScript classes:
    * ```zig
    * pub const NativeClass = struct {
@@ -125,7 +132,7 @@ export class ClassDefinition {
    *       // ...
    *     });
    *   }
-   * 
+   *
    *   fn deinit(this: *NativeClass) void {
    *     // free allocations owned by this class, then free the struct itself.
    *     bun.destroy(this);
@@ -195,7 +202,8 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number };
+  customInspect?: boolean;
 
   callbacks?: Record<string, string>;
 
@@ -238,10 +246,10 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone = false,
+    structuredClone,
     ...rest
   } = {} as Partial<ClassDefinition>,
-): Partial<ClassDefinition> {
+): ClassDefinition {
   return new ClassDefinition({
     ...rest,
     call,

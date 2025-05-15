@@ -1,6 +1,5 @@
 const std = @import("std");
-const root = @import("root");
-const bun = root.bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -54,7 +53,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         log.errors = 0;
         log.warnings = 0;
 
-        const json_source = switch (bun.sys.File.toSource(json_path, allocator)) {
+        const json_source = switch (bun.sys.File.toSource(json_path, allocator, .{})) {
             .err => |err| {
                 switch (err.getErrno()) {
                     .NOENT, .ACCES, .PERM => continue,

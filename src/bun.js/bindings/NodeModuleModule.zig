@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -84,44 +84,7 @@ pub fn _stat(path: []const u8) i32 {
 
 pub const CustomLoader = union(enum) {
     loader: bun.options.Loader,
-    /// Retrieve via WriteBarrier in `global->lazyRequireExtensionsObject().get(index)`
-    custom: u32,
-
-    pub const Packed = enum(u32) {
-        const loader_start: u32 = std.math.maxInt(u32) - 4;
-        js = loader_start,
-        json = loader_start + 1,
-        napi = loader_start + 2,
-        ts = loader_start + 3,
-        /// custom
-        _,
-
-        pub fn pack(loader: CustomLoader) Packed {
-            return switch (loader) {
-                .loader => |basic| switch (basic) {
-                    .js => .js,
-                    .json => .json,
-                    .napi => .napi,
-                    .ts => .ts,
-                    else => brk: {
-                        bun.debugAssert(false);
-                        break :brk .js;
-                    },
-                },
-                .custom => |custom| @enumFromInt(custom),
-            };
-        }
-
-        pub fn unpack(self: Packed) CustomLoader {
-            return switch (self) {
-                .js => .{ .loader = .js },
-                .json => .{ .loader = .json },
-                .napi => .{ .loader = .napi },
-                .ts => .{ .loader = .ts },
-                _ => .{ .custom = @intFromEnum(self) },
-            };
-        }
-    };
+    custom: JSC.Strong,
 };
 
 extern fn JSCommonJSExtensions__appendFunction(global: *JSC.JSGlobalObject, value: JSC.JSValue) u32;
@@ -148,56 +111,44 @@ fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: 
         const gop = try list.getOrPut(bun.default_allocator, str);
         if (!gop.found_existing) {
             const dupe = try bun.default_allocator.dupe(u8, str);
-            errdefer bun.default_allocator.free(dupe);
             gop.key_ptr.* = dupe;
             if (is_built_in) {
                 vm.has_mutated_built_in_extensions += 1;
             }
-            gop.value_ptr.* = .pack(switch (loader) {
+            gop.value_ptr.* = switch (loader) {
                 .loader => loader,
                 .custom => .{
-                    .custom = JSCommonJSExtensions__appendFunction(global, value),
+                    .custom = .create(value, global),
                 },
-            });
+            };
         } else {
-            const existing = gop.value_ptr.*.unpack();
-            if (existing == .custom and loader != .custom) {
-                swapRemoveExtension(vm, existing.custom);
-            }
-            gop.value_ptr.* = .pack(switch (loader) {
-                .loader => loader,
-                .custom => .{
-                    .custom = if (existing == .custom) new: {
-                        JSCommonJSExtensions__setFunction(global, existing.custom, value);
-                        break :new existing.custom;
-                    } else JSCommonJSExtensions__appendFunction(global, value),
+            switch (loader) {
+                .loader => {
+                    switch (gop.value_ptr.*) {
+                        .loader => {},
+                        .custom => |*strong| strong.deinit(),
+                    }
+                    gop.value_ptr.* = loader;
                 },
-            });
+                .custom => switch (gop.value_ptr.*) {
+                    .loader => gop.value_ptr.* = .{ .custom = .create(value, global) },
+                    .custom => |*strong| strong.set(global, value),
+                },
+            }
         }
     } else if (list.fetchSwapRemove(str)) |prev| {
         bun.default_allocator.free(prev.key);
         if (is_built_in) {
             vm.has_mutated_built_in_extensions -= 1;
         }
-        switch (prev.value.unpack()) {
+        switch (prev.value) {
             .loader => {},
-            .custom => |index| swapRemoveExtension(vm, index),
+            .custom => |strong| {
+                var mut = strong;
+                mut.deinit();
+            },
         }
     }
-}
-
-fn swapRemoveExtension(vm: *JSC.VirtualMachine, index: u32) void {
-    const last_index = JSCommonJSExtensions__swapRemove(vm.global, index);
-    if (last_index == index) return;
-    // Find and rewrite the last index to the new index.
-    // Since packed structs are sugar over the backing int, this code can use
-    // the simd path in the standard library search.
-    const find: u32 = @intFromEnum(CustomLoader.Packed.pack(.{ .custom = last_index }));
-    const values = vm.commonjs_custom_extensions.values();
-    const values_reinterpret = bun.reinterpretSlice(u32, values);
-    const i = std.mem.indexOfScalar(u32, values_reinterpret, find) orelse
-        return bun.debugAssert(false);
-    values[i] = .pack(.{ .custom = last_index });
 }
 
 pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const u8) ?CustomLoader {
@@ -208,7 +159,7 @@ pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const
         if (i == 0) continue;
         const ext = basename[i..];
         if (vm.commonjs_custom_extensions.get(ext)) |value| {
-            return value.unpack();
+            return value;
         }
     }
     return null;

@@ -109,13 +109,12 @@ class Source {
 
     byobRequest.respond(bytesRead);
 
-    // TODO:
-    // assert.throws(() => byobRequest.respond(bytesRead), {
-    //   code: 'ERR_INVALID_STATE',
-    // });
-    // assert.throws(() => byobRequest.respondWithNewView(view), {
-    //   code: 'ERR_INVALID_STATE',
-    // });
+    assert.throws(() => byobRequest.respond(bytesRead), {
+      code: 'ERR_INVALID_STATE',
+    });
+    assert.throws(() => byobRequest.respondWithNewView(view), {
+      code: 'ERR_INVALID_STATE',
+    });
   }
 
   get type() { return 'bytes'; }

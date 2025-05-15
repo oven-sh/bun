@@ -96,7 +96,9 @@ export function isReadableByteStreamController(controller) {
 export function isReadableStreamBYOBRequest(byobRequest) {
   // Same test mechanism as in isReadableStreamDefaultController (ReadableStreamInternals.js).
   // See corresponding function for explanations.
-  return $isObject(byobRequest) && !!$getByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController");
+  return (
+    $isObject(byobRequest) && $getByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController") !== undefined
+  );
 }
 
 export function isReadableStreamBYOBReader(reader) {
@@ -536,7 +538,7 @@ export function readableByteStreamControllerShiftPendingDescriptor(controller): 
 export function readableByteStreamControllerInvalidateBYOBRequest(controller) {
   if ($getByIdDirectPrivate(controller, "byobRequest") === undefined) return;
   const byobRequest = $getByIdDirectPrivate(controller, "byobRequest");
-  $putByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController", undefined);
+  $putByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController", null);
   $putByIdDirectPrivate(byobRequest, "view", undefined);
   $putByIdDirectPrivate(controller, "byobRequest", undefined);
 }

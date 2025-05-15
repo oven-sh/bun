@@ -150,7 +150,6 @@ bun upgrade --canary
   - [vs esbuild](https://bun.sh/docs/bundler/vs-esbuild)
   - [Single-file executable](https://bun.sh/docs/bundler/executables)
   - [CSS](https://bun.sh/docs/bundler/css)
-  - [CSS Modules](https://bun.sh/docs/bundler/css_modules)
   - [HTML](https://bun.sh/docs/bundler/html)
   - [Hot Module Replacement (HMR)](https://bun.sh/docs/bundler/hmr)
   - [Full-stack with HTML imports](https://bun.sh/docs/bundler/fullstack)

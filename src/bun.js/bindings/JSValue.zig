@@ -845,7 +845,10 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
-    /// Protects a JSValue from garbage collection.
+    extern "c" fn Bun__JSValue__protect(value: JSValue) void;
+    extern "c" fn Bun__JSValue__unprotect(value: JSValue) void;
+
+    /// Protects a JSValue from garbage collection by storing it in a hash table that is strongly referenced and incrementing a reference count.
     ///
     /// This is useful when you want to store a JSValue in a global or on the
     /// heap, where the garbage collector will not be able to discover your
@@ -853,20 +856,24 @@ pub const JSValue = enum(i64) {
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn protect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__protect(this);
     }
 
-    /// Unprotects a JSValue from garbage collection.
+    /// Unprotects a JSValue from garbage collection by removing it from the hash table and decrementing a reference count.
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
     ///
     /// This is the inverse of `protect`.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn unprotect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__unprotect(this);
     }
 
     extern fn JSC__JSValue__JSONValueFromString(

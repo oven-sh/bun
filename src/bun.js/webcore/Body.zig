@@ -193,7 +193,7 @@ pub const PendingValue = struct {
 
         {
             var promise = JSC.JSPromise.create(globalThis);
-            const promise_value = promise.asValue(globalThis);
+            const promise_value = promise.toJS();
             value.promise = promise_value;
             promise_value.protect();
 
@@ -746,7 +746,7 @@ pub const Value = union(Tag) {
                         promise.resolve(global, blob.toJS(global));
                     },
                 }
-                JSC.C.JSValueUnprotect(global, promise_.asObjectRef());
+                promise_.unprotect();
             }
         }
     }

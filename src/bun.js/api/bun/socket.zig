@@ -1136,7 +1136,7 @@ pub const Listener = struct {
                 handlers_ptr.is_server = false;
 
                 var promise = JSC.JSPromise.create(globalObject);
-                const promise_value = promise.asValue(globalObject);
+                const promise_value = promise.toJS();
                 handlers_ptr.promise.set(globalObject, promise_value);
 
                 if (ssl_enabled) {
@@ -1236,7 +1236,7 @@ pub const Listener = struct {
         handlers_ptr.is_server = false;
 
         var promise = JSC.JSPromise.create(globalObject);
-        const promise_value = promise.asValue(globalObject);
+        const promise_value = promise.toJS();
         handlers_ptr.promise.set(globalObject, promise_value);
 
         switch (ssl_enabled) {

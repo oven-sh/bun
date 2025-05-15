@@ -141,7 +141,7 @@ pub const JSPromise = opaque {
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
                 .strong = .create(
-                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                    JSC.JSPromise.create(globalThis).toJS(),
                     globalThis,
                 ),
             };
@@ -174,7 +174,7 @@ pub const JSPromise = opaque {
         }
     };
 
-    pub fn toJS(this: *JSPromise) JSValue {
+    pub inline fn toJS(this: *JSPromise) JSValue {
         return JSValue.fromCell(this);
     }
 

@@ -122,7 +122,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
 
     if (Environment.isWindows) {
         var promise = JSPromise.create(global);
-        const promise_value = promise.asValue(global);
+        const promise_value = promise.toJS();
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
@@ -147,7 +147,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
     // The JSPromise is the next GC'd memory allocation.
     // This shouldn't really fix anything, but it's a little safer.
     var promise = JSPromise.create(global);
-    const promise_value = promise.asValue(global);
+    const promise_value = promise.toJS();
     promise_value.ensureStillAlive();
     handler.promise.strong.set(global, promise_value);
 

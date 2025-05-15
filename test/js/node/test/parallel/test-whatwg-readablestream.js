@@ -103,10 +103,9 @@ class Source {
       this.controller.close();
     }
 
-    // TODO:
-    // assert.throws(() => byobRequest.respondWithNewView({}), {
-    //   code: 'ERR_INVALID_ARG_TYPE',
-    // });
+    assert.throws(() => byobRequest.respondWithNewView({}), {
+      code: 'ERR_INVALID_ARG_TYPE',
+    });
 
     byobRequest.respond(bytesRead);
 

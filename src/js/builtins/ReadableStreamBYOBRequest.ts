@@ -48,9 +48,9 @@ export function respondWithNewView(this, view) {
   if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") === undefined)
     throw new TypeError("ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined");
 
-  if (!$isObject(view)) throw new TypeError("Provided view is not an object");
+  if (!$isObject(view)) throw $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view);
 
-  if (!ArrayBuffer.$isView(view)) throw new TypeError("Provided view is not an ArrayBufferView");
+  if (!ArrayBuffer.$isView(view)) throw $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view);
 
   return $readableByteStreamControllerRespondWithNewView(
     $getByIdDirectPrivate(this, "associatedReadableByteStreamController"),

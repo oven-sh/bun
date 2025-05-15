@@ -2554,6 +2554,7 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_window: u32 = 600,
     min_tls_version: u32 = 0,
     max_tls_version: u32 = 0,
+    secure_protocol_method: [*c]const u8 = null,
 };
 
 pub const create_bun_socket_error_t = enum(c_int) {

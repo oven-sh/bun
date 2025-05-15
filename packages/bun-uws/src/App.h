@@ -80,6 +80,7 @@ namespace uWS {
         unsigned int client_renegotiation_window = 600;
         unsigned int min_tls_version = 0;
         unsigned int max_tls_version = 0;
+        const char **secure_protocol_method = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

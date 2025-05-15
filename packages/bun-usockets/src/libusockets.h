@@ -239,6 +239,7 @@ struct us_bun_socket_context_options_t {
     unsigned int client_renegotiation_window;
     unsigned int min_tls_version;
     unsigned int max_tls_version;
+    const char *secure_protocol_method;
 };
 
 /* Return 15-bit timestamp for this context */

@@ -651,6 +651,7 @@ pub const ServerConfig = struct {
 
         min_version: ?u16 = null,
         max_version: ?u16 = null,
+        secure_protocol_method: ?[*:0]const u8 = null,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -696,6 +697,10 @@ pub const ServerConfig = struct {
                 ctx_opts.max_tls_version = version;
             }
 
+            if (this.secure_protocol_method != null) {
+                ctx_opts.secure_protocol_method = this.secure_protocol_method;
+            }
+
             return ctx_opts;
         }
 
@@ -710,6 +715,7 @@ pub const ServerConfig = struct {
                     "passphrase",
                     "ssl_ciphers",
                     "protos",
+                    "secure_protocol_method",
                 };
 
                 inline for (fields) |field| {
@@ -1059,6 +1065,16 @@ pub const ServerConfig = struct {
             if (try obj.getTruthy(global, "maxVersion")) |max_version| {
                 result.max_version = @as(u16, @intCast(max_version.toInt32()));
                 any = true;
+            }
+
+            if (try obj.getTruthy(global, "secureProtocol")) |proto| {
+                var sliced = try proto.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.secure_protocol_method = try bun.default_allocator.dupeZ(u8, sliced.slice());
+                    any = true;
+                    result.requires_custom_request_ctx = true;
+                }
             }
 
             if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {

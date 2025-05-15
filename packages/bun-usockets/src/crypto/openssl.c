@@ -66,6 +66,7 @@ struct loop_ssl_data {
 
 struct us_internal_ssl_socket_context_t {
   struct us_socket_context_t sc;
+  struct us_bun_socket_context_options_t options;
 
   // this thing can be shared with other socket contexts via socket transfer!
   // maybe instead of holding once you hold many, a vector or set
@@ -351,6 +352,22 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
     if (!success) {
+      if (context->options.secure_protocol_method) {
+        const char *proto = context->options.secure_protocol_method;
+        if (
+          strcmp(proto, "SSLv23_method") == 0 ||
+          strcmp(proto, "TLSv1_1_method") == 0 ||
+          strcmp(proto, "TLSv1_method") == 0
+        ) {
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+          verify_error.reason = "Unsupported protocol";
+          verify_error.error = -1;
+          ERR_clear_error();
+          context->on_handshake(s, success, verify_error, context->handshake_data);
+          return;
+        }
+      }
+
       if (verify_error.error == 0) {
         verify_error.error = -1;
 
@@ -1603,6 +1620,7 @@ us_internal_bun_create_ssl_socket_context(
   context->ssl_context =
       ssl_context; // create_ssl_context_from_options(options);
   context->is_parent = 1;
+  context->options = options;
 
   context->on_handshake = NULL;
   context->handshake_data = NULL;

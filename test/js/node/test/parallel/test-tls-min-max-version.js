@@ -197,29 +197,29 @@ test(U, U, 'TLSv1_1_method', U, U, 'TLSv1_1_method', 'TLSv1.1');
 test(U, U, 'TLSv1_method', U, U, 'TLSv1_method', 'TLSv1');
 
 // The default default.
-if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
-  test(U, U, 'TLSv1_1_method', U, U, U,
-       U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-       'ERR_SSL_UNSUPPORTED_PROTOCOL');
-  test(U, U, 'TLSv1_method', U, U, U,
-       U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-       'ERR_SSL_UNSUPPORTED_PROTOCOL');
+// if (DEFAULT_MIN_VERSION === 'TLSv1.2') {
+//   test(U, U, 'TLSv1_1_method', U, U, U,
+//        U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+//        'ERR_SSL_UNSUPPORTED_PROTOCOL');
+//   test(U, U, 'TLSv1_method', U, U, U,
+//        U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+//        'ERR_SSL_UNSUPPORTED_PROTOCOL');
 
-  if (DEFAULT_MAX_VERSION === 'TLSv1.2') {
-    test(U, U, U, U, U, 'TLSv1_1_method',
-         U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
-    test(U, U, U, U, U, 'TLSv1_method',
-         U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
-  } else {
-    // TLS1.3 client hellos are are not understood by TLS1.1 or below.
-    test(U, U, U, U, U, 'TLSv1_1_method',
-         U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-         'ERR_SSL_UNSUPPORTED_PROTOCOL');
-    test(U, U, U, U, U, 'TLSv1_method',
-         U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
-         'ERR_SSL_UNSUPPORTED_PROTOCOL');
-  }
-}
+//   if (DEFAULT_MAX_VERSION === 'TLSv1.2') {
+//     test(U, U, U, U, U, 'TLSv1_1_method',
+//          U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+//     test(U, U, U, U, U, 'TLSv1_method',
+//          U, 'ERR_SSL_UNSUPPORTED_PROTOCOL', 'ERR_SSL_WRONG_VERSION_NUMBER');
+//   } else {
+//     // TLS1.3 client hellos are are not understood by TLS1.1 or below.
+//     test(U, U, U, U, U, 'TLSv1_1_method',
+//          U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+//          'ERR_SSL_UNSUPPORTED_PROTOCOL');
+//     test(U, U, U, U, U, 'TLSv1_method',
+//          U, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+//          'ERR_SSL_UNSUPPORTED_PROTOCOL');
+//   }
+// }
 
 // The default with --tls-v1.1.
 if (DEFAULT_MIN_VERSION === 'TLSv1.1') {

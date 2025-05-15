@@ -94,7 +94,13 @@ const TLS_VERSION_REVERSE_MAP: {
   0x0304: "TLSv1.3",
 };
 
+// const forbiddenProtocols = ["SSLv23_method", "TLSv1_1_method", "TLSv1_method"];
+
 function resolveTLSVersions(options: import("node:tls").TLSSocketOptions): [min: number, max: number] {
+  // if (typeof options?.secureProtocol === "string" && forbiddenProtocols.includes(options.secureProtocol)) {
+  //   throw $ERR_SSL_UNSUPPORTED_PROTOCOL(`Protocol method ${options.secureProtocol} is not supported`);
+  // }
+
   const secureProtocol = options?.secureProtocol;
   const maybeConflictVersion = options.minVersion || options.maxVersion;
   if (secureProtocol && maybeConflictVersion) {

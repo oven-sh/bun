@@ -3321,7 +3321,8 @@ pub const H2FrameParser = struct {
                         return globalObject.throwValue(exception);
                     }
 
-                    const value_str = item.toStringOrNull(globalObject) orelse {
+                    const value_str = item.toJSString(globalObject) catch {
+                        globalObject.clearException();
                         const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name});
                         return globalObject.throwValue(exception);
                     };
@@ -3351,7 +3352,8 @@ pub const H2FrameParser = struct {
                     }
                     single_value_headers[idx] = true;
                 }
-                const value_str = js_value.toStringOrNull(globalObject) orelse {
+                const value_str = js_value.toJSString(globalObject) catch {
+                    globalObject.clearException();
                     const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name});
                     return globalObject.throwValue(exception);
                 };
@@ -3729,11 +3731,9 @@ pub const H2FrameParser = struct {
                             return .zero;
                         }
 
-                        const value_str = item.toStringOrNull(globalObject) orelse {
-                            if (!globalObject.hasException()) {
-                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
-                            }
-                            return .zero;
+                        const value_str = item.toJSString(globalObject) catch {
+                            globalObject.clearException();
+                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
                         };
 
                         const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
@@ -3765,11 +3765,9 @@ pub const H2FrameParser = struct {
                         }
                         single_value_headers[idx] = true;
                     }
-                    const value_str = js_value.toStringOrNull(globalObject) orelse {
-                        if (!globalObject.hasException()) {
-                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
-                        }
-                        return .zero;
+                    const value_str = js_value.toJSString(globalObject) catch {
+                        globalObject.clearException();
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
                     };
 
                     const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;

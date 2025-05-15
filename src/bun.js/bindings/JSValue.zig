@@ -1446,10 +1446,6 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    pub fn toJSString(globalObject: *JSC.JSGlobalObject, slice_: []const u8) JSC.JSValue {
-        return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
-    }
-
     extern fn JSC__JSValue__asCell(this: JSValue) *JSCell;
     pub fn asCell(this: JSValue) *JSCell {
         // NOTE: asCell already asserts this, but since we're crossing an FFI
@@ -1574,8 +1570,8 @@ pub const JSValue = enum(i64) {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
-    // On exception, this returns the empty string.
     extern fn JSC__JSValue__toString(this: JSValue, globalThis: *JSGlobalObject) *JSString;
+    /// On exception, this returns the empty string.
     pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return JSC__JSValue__toString(this, globalThis);
     }
@@ -1584,10 +1580,11 @@ pub const JSValue = enum(i64) {
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
         return JSC__JSValue__jsonStringify(this, globalThis, indent, out);
     }
+
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
-    /// On exception, this returns null, to make exception checks clearer.
-    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
-        return JSC__JSValue__toStringOrNull(this, globalThis);
+    // Calls JSValue::toStringOrNull. Returns error on exception.
+    pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
+        return JSC__JSValue__toStringOrNull(this, globalThis) orelse return error.JSError;
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -1627,7 +1624,7 @@ pub const JSValue = enum(i64) {
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
+        var str = this.toJSString(globalThis) catch return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
             globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;

@@ -7018,7 +7018,7 @@ fn NewParser_(
                     }
 
                     if (p.scopes_in_order.items[last_i]) |prev_scope| {
-                        if (prev_scope.loc.start >= loc.start) {
+                        if (prev_scope.loc.start >= loc.start and p.lexer.token != .t_end_of_file) {
                             p.log.level = .verbose;
                             p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}) catch bun.outOfMemory();
                             p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}) catch bun.outOfMemory();

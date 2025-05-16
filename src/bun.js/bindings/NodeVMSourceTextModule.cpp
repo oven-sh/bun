@@ -274,6 +274,11 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (m_status != Status::Unlinked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
+        return {};
+    }
+
     JSModuleRecord* record = m_moduleRecord.get();
 
     if (length != 0) {
@@ -368,18 +373,22 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
     if (vm.hasPendingTerminationException()) {
         scope.clearException();
         vm.clearHasTerminationRequest();
-        status(Status::Errored);
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
+    } else {
+        setSigintReceived(false);
+    }
+
+    if (JSC::Exception* exception = scope.exception()) {
+        status(Status::Errored);
+        m_evaluationException.set(vm, this, exception);
         return {};
     }
 
-    setSigintReceived(false);
-    RETURN_IF_EXCEPTION(scope, (status(Status::Errored), JSValue {}));
     status(Status::Evaluated);
     return result;
 }
@@ -423,6 +432,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
+    visitor.append(vmModule->m_evaluationException);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

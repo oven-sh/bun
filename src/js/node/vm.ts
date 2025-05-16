@@ -178,6 +178,8 @@ class Module {
   }
 
   async link(linker) {
+    validateFunction(linker, "linker");
+
     if (this[kNative].getStatusCode() === kLinked) {
       throw $ERR_VM_MODULE_ALREADY_LINKED();
     }

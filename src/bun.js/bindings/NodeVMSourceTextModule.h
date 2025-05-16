@@ -40,6 +40,7 @@ public:
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
+    Exception* evaluationException() const { return m_evaluationException.get(); }
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
     ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
@@ -52,6 +53,7 @@ private:
     WriteBarrier<JSArray> m_moduleRequestsArray;
     WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
+    WriteBarrier<Exception> m_evaluationException;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
 

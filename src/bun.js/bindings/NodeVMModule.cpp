@@ -1,6 +1,7 @@
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
 
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
 namespace Bun {
@@ -206,8 +207,19 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * glob
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSC::encodedJSUndefined();
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+        if (JSC::Exception* exception = thisObject->evaluationException()) {
+            return JSValue::encode(exception->value());
+        }
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must be errored"_s);
+        return {};
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

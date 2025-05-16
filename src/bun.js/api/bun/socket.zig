@@ -1579,12 +1579,6 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onWritable(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onWritable {s} detached={s}, native_callback_writable={s} sanity={s}", .{
-                if (this.handlers.is_server) "S" else "C",
-                if (this.socket.isDetached()) "true" else "false",
-                if (this.native_callback.onWritable()) "true" else "false",
-                if (this.handlers.onWritable == .zero) "true" else "false",
-            });
             if (this.socket.isDetached()) return;
             if (this.native_callback.onWritable()) return;
             const handlers = this.handlers;

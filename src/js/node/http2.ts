@@ -390,6 +390,10 @@ class Http2ServerRequest extends Readable {
   }
 
   get socket() {
+    console.log("this", new Error().stack);
+    console.log("kStream", !!this[kStream]);
+    console.log("bunHTTP2Session", !!this[kStream]?.[bunHTTP2Session]);
+    console.log("socket", !!this[kStream]?.[bunHTTP2Session]?.socket);
     return this[kStream]?.[bunHTTP2Session]?.socket;
   }
 
@@ -488,7 +492,6 @@ class Http2ServerResponse extends Stream {
     // This is compatible with http1 which removes socket reference
     // only from ServerResponse but not IncomingMessage
     if (this[kState].closed) return undefined;
-
     return this[kStream]?.[bunHTTP2Session]?.socket;
   }
 
@@ -1629,8 +1632,9 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-function rstNextTick(id: number, rstCode: number) {
+function rstNextTick(id: number, rstCode: number, stream: Http2Stream) {
   const session = this as Http2Session;
+  this[bunHTTP2Session] = null;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 class Http2Stream extends Duplex {
@@ -1838,14 +1842,13 @@ class Http2Stream extends Duplex {
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     markStreamClosed(this);
-    this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
     if (session) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode, this));
     }
     callback(err);
   }
@@ -1969,6 +1972,7 @@ function tryClose(fd) {
 }
 
 function doSendFileFD(options, fd, headers, err, stat) {
+  console.log("doSendFileFD", options, fd, headers, err, stat);
   const onError = options.onError;
   if (err) {
     if (err.code !== "EBADF") {
@@ -2008,9 +2012,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     tryClose(fd);
-    const error = $ERR_HTTP2_INVALID_STREAM();
-    this.respond(headers, options);
-    this.destroy(error);
+    this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
 
@@ -2046,7 +2048,12 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
-
+    // remove content-length header
+    for (let i in headers) {
+      if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
+        delete headers[i];
+      }
+    }
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {

@@ -1,3 +1,5 @@
+import * as util from "util";
+
 test("boxed number", () => {
   expect(new Number(2)).not.toEqual(new Number(1));
   expect(2).not.toEqual(new Number(2));

@@ -297,8 +297,15 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue());
-    return JSC::encodedJSUndefined();
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+        return JSValue::encode(thisObject->cachedData(globalObject));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

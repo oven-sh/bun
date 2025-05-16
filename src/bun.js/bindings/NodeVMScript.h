@@ -83,8 +83,8 @@ public:
 private:
     JSC::SourceCode m_source;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
-    mutable JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
-    mutable JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
+    JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
+    JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
     TriState m_cachedDataRejected = TriState::Indeterminate;

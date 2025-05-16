@@ -38,8 +38,11 @@ public:
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
+    RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
+    JSUint8Array* cachedData(JSGlobalObject* globalObject);
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
+    ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -47,6 +50,9 @@ public:
 private:
     WriteBarrier<JSModuleRecord> m_moduleRecord;
     WriteBarrier<JSArray> m_moduleRequestsArray;
+    WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
+    WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
+    RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode)

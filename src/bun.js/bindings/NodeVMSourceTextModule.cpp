@@ -2,13 +2,18 @@
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSModuleRecord.h"
-#include "JSPromise.h"
-#include "JSSourceCode.h"
-#include "ModuleAnalyzer.h"
-#include "Parser.h"
-#include "Watchdog.h"
+
 #include "wtf/Scope.h"
+
+#include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/JSModuleRecord.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/JSSourceCode.h"
+#include "JavaScriptCore/ModuleAnalyzer.h"
+#include "JavaScriptCore/ModuleProgramCodeBlock.h"
+#include "JavaScriptCore/Parser.h"
+#include "JavaScriptCore/SourceCodeKey.h"
+#include "JavaScriptCore/Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 
@@ -69,7 +74,37 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode));
     ptr->finishCreation(vm);
-    return ptr;
+
+    if (cachedData.isEmpty()) {
+        return ptr;
+    }
+
+    ModuleProgramExecutable* executable = ModuleProgramExecutable::create(globalObject, ptr->sourceCode());
+    ptr->m_cachedExecutable.set(vm, ptr, executable);
+    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
+    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
+    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
+
+    if (unlinkedBlock) {
+        JSScope* jsScope = globalObject->globalScope();
+        CodeBlock* codeBlock = nullptr;
+        {
+            // JSC::ProgramCodeBlock::create() requires GC to be deferred.
+            DeferGC deferGC(vm);
+            codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
+        }
+        if (codeBlock) {
+            CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
+            if (compilationResult != CompilationResult::CompilationFailed) {
+                executable->installCode(codeBlock);
+                return ptr;
+            }
+        }
+    }
+
+    throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
+    return nullptr;
 }
 
 void NodeVMSourceTextModule::destroy(JSCell* cell)
@@ -122,15 +157,15 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& requests = moduleRecord->requestedModules();
 
     if (requests.isEmpty()) {
-        return JSC::constructEmptyArray(globalObject, nullptr, 0);
+        return constructEmptyArray(globalObject, nullptr, 0);
     }
 
-    JSArray* requestsArray = JSC::constructEmptyArray(globalObject, nullptr, requests.size());
+    JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, requests.size());
 
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
-    const JSC::Identifier& specifierIdentifier = builtinNames.specifierPublicName();
-    const JSC::Identifier& attributesIdentifier = builtinNames.attributesPublicName();
-    const JSC::Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
+    const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
+    const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
+    const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
     WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
     attributesNodes.reserveInitialCapacity(requests.size());
@@ -349,6 +384,29 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
     return result;
 }
 
+RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)
+{
+    if (!m_bytecode) {
+        if (!m_cachedExecutable) {
+            m_cachedExecutable.set(globalObject->vm(), this, JSC::ModuleProgramExecutable::create(globalObject, m_sourceCode));
+        }
+        m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
+    }
+
+    return m_bytecode;
+}
+
+JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
+{
+    if (!m_cachedBytecodeBuffer) {
+        RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
+        std::span<const uint8_t> bytes = cachedBytecode->span();
+        m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject, bytes));
+    }
+
+    return m_cachedBytecodeBuffer.get();
+}
+
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     return NodeVMModulePrototype::create(vm, NodeVMModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
@@ -362,6 +420,9 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(vmModule, visitor);
 
     visitor.append(vmModule->m_moduleRecord);
+    visitor.append(vmModule->m_moduleRequestsArray);
+    visitor.append(vmModule->m_cachedExecutable);
+    visitor.append(vmModule->m_cachedBytecodeBuffer);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

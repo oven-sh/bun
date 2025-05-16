@@ -40,7 +40,7 @@ const {
   createContext,
   isContext,
   runInNewContext,
-  runInThisContext: moduleRunInThisContext,
+  // runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
   kUnlinked,

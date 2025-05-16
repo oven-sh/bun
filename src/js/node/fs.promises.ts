@@ -4,7 +4,7 @@ const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
-const { validateInteger } = require("internal/validators");
+const { validateInteger, validateEncoding } = require("internal/validators");
 
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
@@ -474,9 +474,13 @@ function asyncWrap(fn: any, name: string) {
         if (offset == null) {
           offset = 0;
         }
+
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
+      } else {
+        validateEncoding(buffer, length); // length is the encoding in this overload
       }
+
       try {
         this[kRef]();
         return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };

@@ -423,7 +423,7 @@ describe("error event", () => {
   });
 });
 
-describe.only("getHeapSnapshot", () => {
+describe("getHeapSnapshot", () => {
   test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error

@@ -2489,6 +2489,7 @@ pub const E = struct {
         }
 
         pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
+            bun.assert(s.next == null);
             return if (s.isUTF8())
                 strings.eqlComptime(s.data, value)
             else

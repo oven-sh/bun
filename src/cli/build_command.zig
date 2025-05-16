@@ -224,11 +224,8 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         if (ctx.bundler_options.production) {
-            try this_transpiler.env.map.put("NODE_ENV", "production");
-        }
-
-        if (ctx.bundler_options.production) {
             bun.assert(!this_transpiler.options.jsx.development);
+            try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
         try this_transpiler.configureDefines();

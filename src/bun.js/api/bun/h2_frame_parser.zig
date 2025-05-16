@@ -1143,25 +1143,12 @@ pub const H2FrameParser = struct {
 
     /// Calculate the new window size for the connection and the stream
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
-    fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) bool {
-        if (stream) |s| {
-            s.usedWindowSize += payloadSize;
-            if (s.usedWindowSize >= s.windowSize) {
-                var increment_size: u32 = WINDOW_INCREMENT_SIZE;
-                var new_size = s.windowSize +| increment_size;
-                if (new_size > MAX_WINDOW_SIZE) {
-                    new_size = MAX_WINDOW_SIZE;
-                    increment_size = s.windowSize -| MAX_WINDOW_SIZE;
-                }
-                if (new_size == this.windowSize) {
-                    // we should just not send more window updates not 100% correct yet
-                    return false;
-                }
-                s.windowSize = new_size;
-                this.sendWindowUpdate(s.id, UInt31WithReserved.from(increment_size));
-            }
+    fn ajustWindowSize(this: *H2FrameParser, stream: *Stream, payloadSize: u32) void {
+        stream.usedWindowSize += payloadSize;
+        if (stream.usedWindowSize >= stream.windowSize) {
+            stream.usedWindowSize = 0;
+            this.sendWindowUpdate(stream.id, UInt31WithReserved.from(stream.windowSize));
         }
-        return true;
     }
 
     pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) bool {
@@ -1887,7 +1874,7 @@ pub const H2FrameParser = struct {
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
-            _ = this.ajustWindowSize(stream, @truncate(payload.len));
+            this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
             emitted = true;
         } else {
@@ -1896,7 +1883,6 @@ pub const H2FrameParser = struct {
 
         if (this.remainingLength == 0) {
             this.currentFrame = null;
-            _ = this.ajustWindowSize(stream, frame.length);
             if (emitted) {
                 // we need to revalidate the stream ptr after emitting onStreamData
                 const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;

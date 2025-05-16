@@ -1250,8 +1250,8 @@ SSL_CTX *create_ssl_context_from_bun_options(
         return NULL;
       }
 
-     // It may return spurious errors here.
-    ERR_clear_error();
+      // It may return spurious errors here.
+      ERR_clear_error();
 
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,

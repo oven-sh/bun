@@ -41,10 +41,9 @@ const LibInfo = struct {
         if (loaded)
             return handle;
         loaded = true;
-        // // TODO: observed this causing flakyness in release mode on macOS in node:http2 tests. we'd like to turn this back on but that has to be properly diagnosed and remedied first.
-        // handle = bun.sys.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
-        // if (handle == null)
-        //     Output.debug("libinfo.dylib not found", .{});
+        handle = bun.sys.dlopen("libinfo.dylib", .{ .LAZY = true, .LOCAL = true });
+        if (handle == null)
+            Output.debug("libinfo.dylib not found", .{});
         return handle;
     }
 

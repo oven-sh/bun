@@ -1461,7 +1461,6 @@ pub const EventLoop = struct {
     fn updateCounts(this: *EventLoop) void {
         const delta = this.concurrent_ref.swap(0, .seq_cst);
         const loop = this.virtual_machine.event_loop_handle.?;
-        log("updateCounts {*} {d} (delta:{d})", .{ loop, loop.num_polls, delta });
         if (comptime Environment.isWindows) {
             if (delta > 0) {
                 loop.active_handles += @intCast(delta);

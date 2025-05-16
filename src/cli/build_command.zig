@@ -224,7 +224,6 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         if (ctx.bundler_options.production) {
-            bun.assert(!this_transpiler.options.jsx.development);
             try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
@@ -238,6 +237,10 @@ pub const BuildCommand = struct {
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.options.jsx.development = !this_transpiler.options.production;
         this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
+
+        if (ctx.bundler_options.production) {
+            bun.assert(!this_transpiler.options.jsx.development);
+        }
 
         switch (ctx.debug.macros) {
             .disable => {

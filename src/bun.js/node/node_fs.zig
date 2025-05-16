@@ -2519,6 +2519,32 @@ pub const Arguments = struct {
                 }
             }
 
+            if (buffer_value.?.isString() and args.encoding == .hex) {
+                var str = try bun.String.fromJS(buffer_value.?, ctx);
+                defer str.deref();
+                var utf8_bytes = str.toUTF8(bun.default_allocator);
+                defer utf8_bytes.deinit();
+
+                const input = utf8_bytes.slice();
+                const len = input.len;
+                if (len % 2 != 0) {
+                    return ctx.ERR(.INVALID_ARG_VALUE, "'encoding' is invalid for data of length {d}", .{len}).throw();
+                }
+
+                const dest_len = len / 2;
+                const buf = try bun.default_allocator.alloc(u8, dest_len);
+
+                const written = strings.decodeHexToBytes(buf, u8, input) catch
+                    return ctx.ERR(.INVALID_ARG_VALUE, "'encoding' is invalid for data of length {d}", .{len}).throw();
+                std.debug.assert(written == dest_len);
+
+                const slice = JSC.ZigString.Slice.init(bun.default_allocator, buf);
+                defer ctx.vm().reportExtraMemory(slice.len);
+
+                args.buffer.deinit();
+                args.buffer = .{ .encoded_slice = slice };
+            }
+
             return args;
         }
     };

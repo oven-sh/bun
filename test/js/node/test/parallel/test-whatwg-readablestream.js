@@ -278,20 +278,16 @@ class Source {
   reader.read(view);
 }
 
-// TODO: bug in webkit's implementation
-// with autoAllocateChunkSize: 10, it emits "Invalid value for view.byteLength"
-// it peeks, sees the next item is 10 long, and errors for respondWithNewView(3)
-// in respondWithNewView
-// {
-//   const stream = new ReadableStream({
-//     type: 'bytes',
-//     autoAllocateChunkSize: 10,
-//     pull(c) {
-//       const v = new Uint8Array(c.byobRequest.view.buffer, 0, 3);
-//       v.set([20, 21, 22]);
-//       c.byobRequest.respondWithNewView(v);
-//     },
-//   });
-//   const reader = stream.getReader();
-//   reader.read();
-// }
+{
+  const stream = new ReadableStream({
+    type: 'bytes',
+    autoAllocateChunkSize: 10,
+    pull(c) {
+      const v = new Uint8Array(c.byobRequest.view.buffer, 0, 3);
+      v.set([20, 21, 22]);
+      c.byobRequest.respondWithNewView(v);
+    },
+  });
+  const reader = stream.getReader();
+  reader.read();
+}

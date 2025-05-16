@@ -371,7 +371,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
   if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
-  if (firstDescriptor!.byteLength !== view.byteLength) throw new RangeError("Invalid value for view.byteLength");
+  if (view.byteLength < firstDescriptor!.byteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
 
   firstDescriptor!.buffer = view.buffer;
   $readableByteStreamControllerRespondInternal(controller, view.byteLength);

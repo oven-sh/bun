@@ -21,7 +21,6 @@
 #include "internal/internal.h"
 #include "libusockets.h"
 #include <string.h>
-#include <stdio.h>
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -384,14 +383,12 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
 
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
-    printf("[openssl.c] us_internal_trigger_handshake_callback: success=%d, verify_error.code=%s, verify_error.error=%d\n", success, verify_error.code ? verify_error.code : "(null)", verify_error.error);
 
     if (!success && (verify_error.code == NULL || verify_error.code[0] == 0)) {
       const char *proto = context->options.secure_protocol_method;
       unsigned long err = ERR_peek_error();
       int reason = ERR_GET_REASON(err);
       if (should_override_protocol_error(proto, SSL_is_server(s->ssl), reason, &verify_error)) {
-        printf("[openssl.c] should_override_protocol_error applied: code=%s, reason=%s\n", verify_error.code ? verify_error.code : "(null)", verify_error.reason ? verify_error.reason : "(null)");
         context->on_handshake(s, success, verify_error, context->handshake_data);
         return;
       }
@@ -1202,7 +1199,6 @@ struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
 
   const char *reason = X509_verify_cert_error_string(x509_verify_error);
   const char *code = us_X509_error_code(x509_verify_error);
-  printf("[openssl.c] us_ssl_socket_verify_error_from_ssl: x509_verify_error=%ld, code=%s, reason=%s\n", x509_verify_error, code ? code : "(null)", reason ? reason : "(null)");
 
   return (struct us_bun_verify_error_t){
       .error = x509_verify_error, .code = code, .reason = reason};

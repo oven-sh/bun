@@ -1153,7 +1153,7 @@ pub const H2FrameParser = struct {
                 increment_size = this.windowSize -| MAX_WINDOW_SIZE;
             }
             if (new_size == this.windowSize) {
-                this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                // this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
                 return false;
             }
             this.windowSize = new_size;
@@ -1201,7 +1201,6 @@ pub const H2FrameParser = struct {
         this.localSettings = settings;
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
-        _ = this.ajustWindowSize(null, @intCast(buffer.len));
         return true;
     }
 
@@ -1323,7 +1322,6 @@ pub const H2FrameParser = struct {
         if (alt.len > 0) {
             _ = this.write(alt);
         }
-        _ = this.ajustWindowSize(null, @intCast(frame.length + FrameHeader.byteSize));
     }
 
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
@@ -1365,7 +1363,6 @@ pub const H2FrameParser = struct {
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&preface_buffer);
-        _ = this.ajustWindowSize(null, @intCast(preface_buffer.len));
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
@@ -1382,7 +1379,6 @@ pub const H2FrameParser = struct {
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
-        _ = this.ajustWindowSize(null, @intCast(buffer.len));
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
@@ -1902,6 +1898,8 @@ pub const H2FrameParser = struct {
             data_needed -= padding;
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
+            // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
+            _ = this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
             emitted = true;
         } else {
@@ -2399,9 +2397,7 @@ pub const H2FrameParser = struct {
             this.remainingLength = header.length;
             log("new frame {} {} {} {}", .{ header.type, header.length, header.flags, header.streamIdentifier });
             const stream = this.handleReceivedStreamID(header.streamIdentifier);
-            if (!this.ajustWindowSize(stream, header.length)) {
-                return bytes.len;
-            }
+
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[needed..]) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[needed..], stream) + needed,
@@ -2435,9 +2431,7 @@ pub const H2FrameParser = struct {
         this.currentFrame = header;
         this.remainingLength = header.length;
         const stream = this.handleReceivedStreamID(header.streamIdentifier);
-        if (!this.ajustWindowSize(stream, header.length)) {
-            return bytes.len;
-        }
+
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
@@ -2704,7 +2698,6 @@ pub const H2FrameParser = struct {
             };
             _ = frame.write(@TypeOf(writer), writer);
             _ = this.write(&buffer);
-            _ = this.ajustWindowSize(null, @intCast(FrameHeader.byteSize));
             return .undefined;
         }
 
@@ -2734,7 +2727,6 @@ pub const H2FrameParser = struct {
             if (slice.len > 0) {
                 _ = this.write(slice);
             }
-            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
         } else if (origin_arg.isArray()) {
             var buffer: [FrameHeader.byteSize + 16384]u8 = undefined;
             @memset(&buffer, 0);
@@ -2771,7 +2763,6 @@ pub const H2FrameParser = struct {
             stream.reset();
             _ = frame.write(@TypeOf(writer), writer);
             _ = this.write(buffer[0..total_length]);
-            _ = this.ajustWindowSize(null, total_length);
         }
         return .undefined;
     }

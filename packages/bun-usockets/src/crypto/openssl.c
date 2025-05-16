@@ -286,9 +286,7 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
       // we got some error here, but we dont care about it, we are closing the socket
       int err = SSL_get_error(s->ssl, ret);
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // Keep the alert on OpenSSL's error queue so higher layers (JS) can
-        // translate it into the correct err.code string.  Do NOT clear it yet.
-        // ERR_clear_error();
+        ERR_clear_error();
         s->fatal_error = 1;
         // Fatal error occurred, we should close the socket imeadiatly
         return 1;
@@ -489,7 +487,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
 
   if (!SSL_renegotiate(s->ssl)) {
     // we failed to renegotiate
-    us_internal_trigger_handshake_callback(s, 0); // better error here
+    us_internal_trigger_handshake_callback(s, 0);
     return 0;
   }
   return 1;
@@ -521,14 +519,10 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        /* Capture the fatal TLS alert as a handshake failure so the JS
-           layer receives an informative error (e.g.
-           ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION) instead of the generic
-           ECONNRESET. */
         s->fatal_error = 1;
         us_internal_trigger_handshake_callback(s, 0);
       }
-      us_internal_trigger_handshake_callback(s, 0); // better error here
+      us_internal_trigger_handshake_callback(s, 0);
     
       return;
     }
@@ -648,12 +642,8 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          /* Capture the fatal TLS alert as a handshake failure so the JS
-             layer receives an informative error (e.g.
-             ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION) instead of the generic
-             ECONNRESET. */
           s->fatal_error = 1;
-          us_internal_trigger_handshake_callback(s, 0);
+          us_internal_trigger_handshake_callback(s, 0); 
         }
 
         /* Terminate connection after reporting the handshake error. */
@@ -689,7 +679,7 @@ restart:
 
         break;
       }
-    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING && SSL_is_init_finished(s->ssl)) {
+    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
       // renegotiation ended successfully call on_handshake
       us_internal_trigger_handshake_callback(s, 1);
     }
@@ -731,13 +721,6 @@ restart:
     // if we are closed here, then exit
     if (!s || us_internal_ssl_socket_is_closed(s)) {
       return NULL;
-    }
-  }
-
-  // --- HANDSHAKE COMPLETION CHECK (initial handshake) ---
-  if (s && !us_internal_ssl_socket_is_closed(s)) {
-    if (s->handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s->ssl)) {
-      us_internal_trigger_handshake_callback(s, 1);
     }
   }
 
@@ -1054,7 +1037,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   }
 
   while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                                SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
 
     X509_STORE_add_cert(store, x);
 
@@ -1921,10 +1904,6 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   }
 
   if (written > 0) {
-    // Check if this SSL_write operation completed a pending initial handshake.
-    if (s->handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s->ssl)) {
-      us_internal_trigger_handshake_callback(s, 1);
-    }
     return written;
   }
 
@@ -1935,9 +1914,7 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
     // these two errors may add to the error queue, which is per thread and
     // must be cleared
-    // Keep the alert on OpenSSL's error queue so higher layers (JS) can
-    // translate it into the correct err.code string.  Do NOT clear it yet.
-    // ERR_clear_error();
+    ERR_clear_error();
     s->fatal_error = 1;
 
     // all errors here except for want write are critical and should not
@@ -1996,9 +1973,7 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
       int err = SSL_get_error(s->ssl, ret);
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         // clear
-        // Keep the alert on OpenSSL's error queue so higher layers (JS) can
-        // translate it into the correct err.code string.  Do NOT clear it yet.
-        // ERR_clear_error();
+        ERR_clear_error();
         s->fatal_error = 1;
       }
 

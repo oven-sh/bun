@@ -347,8 +347,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
             if (result <= 0) {
                 const err = BoringSSL.SSL_get_error(ssl, result);
-                // Preserve error queue for getVerifyError in handshake
-                // BoringSSL.ERR_clear_error();
+                BoringSSL.ERR_clear_error();
                 if (err == BoringSSL.SSL_ERROR_ZERO_RETURN) {
                     // Remotely-Initiated Shutdown
                     // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html

@@ -37,6 +37,7 @@ const FileHandle = $data.FileHandle;
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
+const kProxySocket = Symbol("proxySocket");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
@@ -399,7 +400,10 @@ class Http2ServerRequest extends Readable {
   }
 
   get socket() {
-    return this[kStream]?.[bunHTTP2Session]?.socket;
+    const stream = this[kStream];
+    const proxySocket = stream[kProxySocket];
+    if (proxySocket == null) return (stream[kProxySocket] = new Proxy(stream, proxyCompatSocketHandler));
+    return proxySocket;
   }
 
   get connection() {
@@ -919,6 +923,80 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   server.emit("request", request, response);
 }
 
+const proxyCompatSocketHandler = {
+  has(stream, prop) {
+    const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+    return prop in stream || prop in ref;
+  },
+
+  get(stream, prop) {
+    switch (prop) {
+      case "on":
+      case "once":
+      case "end":
+      case "emit":
+      case "destroy":
+        return stream[prop].bind(stream);
+      case "writable":
+      case "destroyed":
+        return stream[prop];
+      case "readable": {
+        if (stream.destroyed) return false;
+        const request = stream[kRequest];
+        return request ? request.readable : stream.readable;
+      }
+      case "setTimeout": {
+        const session = stream.session;
+        if (session !== undefined) return session.setTimeout.bind(session);
+        return stream.setTimeout.bind(stream);
+      }
+      case "write":
+      case "read":
+      case "pause":
+      case "resume":
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
+      default: {
+        const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+        const value = ref[prop];
+        return typeof value === "function" ? value.bind(ref) : value;
+      }
+    }
+  },
+  getPrototypeOf(stream) {
+    if (stream.session !== undefined) return ReflectGetPrototypeOf(stream.session[bunHTTP2Socket]);
+    return ReflectGetPrototypeOf(stream);
+  },
+  set(stream, prop, value) {
+    switch (prop) {
+      case "writable":
+      case "readable":
+      case "destroyed":
+      case "on":
+      case "once":
+      case "end":
+      case "emit":
+      case "destroy":
+        stream[prop] = value;
+        return true;
+      case "setTimeout": {
+        const session = stream.session;
+        if (session !== undefined) session.setTimeout = value;
+        else stream.setTimeout = value;
+        return true;
+      }
+      case "write":
+      case "read":
+      case "pause":
+      case "resume":
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
+      default: {
+        const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+        ref[prop] = value;
+        return true;
+      }
+    }
+  },
+};
 const proxySocketHandler = {
   get(session, prop) {
     switch (prop) {

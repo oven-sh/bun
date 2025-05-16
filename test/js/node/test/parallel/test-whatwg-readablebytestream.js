@@ -228,7 +228,7 @@ class Source {
   }).then(common.mustCall());
   assert.rejects(reader.cancel(), {
     code: 'ERR_INVALID_STATE',
-  }).then(common.mustCall()).catch(e => console.log(e));
+  }).then(common.mustCall());
 }
 
 {

@@ -4,8 +4,10 @@ const types = require("node:util/types");
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
 const { validateString, validateOneOf } = require("internal/validators");
+const { MIMEType, MIMEParams } = require("internal/util/mime");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -21,7 +23,6 @@ function isFunction(value) {
 
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
-var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
 const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
 
@@ -347,12 +348,12 @@ cjs_exports = {
   // transferableAbortController,
   aborted,
   types,
-  // parseEnv,
+  parseEnv,
   parseArgs,
   TextDecoder,
   TextEncoder,
-  // MIMEType,
-  // MIMEParams,
+  MIMEType,
+  MIMEParams,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

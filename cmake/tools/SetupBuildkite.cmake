@@ -120,6 +120,11 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
     endif()
 
     if(BUILDKITE)
+      if(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-profile.a")
+        set(BUILDKITE_ARTIFACT_PATH libbun-profile.a.gz)
+      elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a")
+        set(BUILDKITE_ARTIFACT_PATH libbun-asan.a.gz)
+      endif()
       set(BUILDKITE_DOWNLOAD_COMMAND buildkite-agent artifact download ${BUILDKITE_ARTIFACT_PATH} . --build ${BUILDKITE_BUILD_UUID} --step ${BUILDKITE_JOB_ID})
     else()
       set(BUILDKITE_DOWNLOAD_COMMAND curl -L -o ${BUILDKITE_ARTIFACT_PATH} ${BUILDKITE_ARTIFACTS_URL}/${BUILDKITE_ARTIFACT_ID})
@@ -135,6 +140,33 @@ foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
       OUTPUT
         ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
     )
+    if(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-profile.a.gz")
+      add_custom_command(
+        COMMENT
+          "Unpacking libbun-profile.a.gz"
+        VERBATIM COMMAND
+          gunzip libbun-profile.a.gz
+        WORKING_DIRECTORY
+          ${BUILD_PATH}
+        OUTPUT
+          ${BUILD_PATH}/libbun-profile.a
+        DEPENDS
+          ${BUILD_PATH}/libbun-profile.a.gz
+      )
+    elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a.gz")
+      add_custom_command(
+        COMMENT
+          "Unpacking libbun-asan.a.gz"
+        VERBATIM COMMAND
+          gunzip libbun-asan.a.gz
+        WORKING_DIRECTORY
+          ${BUILD_PATH}
+        OUTPUT
+          ${BUILD_PATH}/libbun-asan.a
+        DEPENDS
+          ${BUILD_PATH}/libbun-asan.a.gz
+      )
+    endif()
   endforeach()
 
   list(APPEND BUILDKITE_JOBS_MATCH ${BUILDKITE_JOB_NAME})

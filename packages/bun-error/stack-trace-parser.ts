@@ -1,13 +1,5 @@
 const UNKNOWN_FUNCTION = "<unknown>";
-import type {
-  FallbackMessageContainer,
-  JSException,
-  Location,
-  Message,
-  SourceLine,
-  StackFrame,
-  WebsocketMessageBuildFailure,
-} from "../../src/api/schema";
+import type { StackFrame } from "../../src/api/schema";
 
 /**
  * This parses the different stack traces and puts them into one format

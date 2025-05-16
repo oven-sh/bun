@@ -29,6 +29,9 @@ export default [
       unref: {
         fn: "doUnref",
       },
+      flush: {
+        fn: "doFlush",
+      },
 
       queries: {
         getter: "getQueries",
@@ -70,6 +73,10 @@ export default [
       },
       setMode: {
         fn: "setMode",
+        length: 1,
+      },
+      setPendingValue: {
+        fn: "setPendingValue",
         length: 1,
       },
     },

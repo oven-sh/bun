@@ -58,17 +58,18 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(referrer.isString());
-    WTF::String refererString = jsCast<JSC::JSString*>(referrer)->getString(global);
+    if (auto string = jsDynamicCast<JSC::JSString*>(referrer)) {
+        WTF::String refererString = string->getString(global);
 
-    WTF::String keyString = key.toWTFString(global);
-    RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
-
-    if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-        BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+        WTF::String keyString = key.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
-        return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
+            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+            return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+        }
     }
 
     // Use Zig::GlobalObject's function
@@ -127,34 +128,6 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, parameters, script);
 }
 
-#define INHERIT_HOOK_METHOD(name) \
-    Zig::GlobalObject::s_globalObjectMethodTable.name
-
-const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
-    INHERIT_HOOK_METHOD(supportsRichSourceInfo),
-    INHERIT_HOOK_METHOD(shouldInterruptScript),
-    INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
-    INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
-    INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
-    bakeModuleLoaderImportModule,
-    bakeModuleLoaderResolve,
-    bakeModuleLoaderFetch,
-    INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
-    INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
-    INHERIT_HOOK_METHOD(promiseRejectionTracker),
-    INHERIT_HOOK_METHOD(reportUncaughtExceptionAtEventLoop),
-    INHERIT_HOOK_METHOD(currentScriptExecutionOwner),
-    INHERIT_HOOK_METHOD(scriptExecutionStatus),
-    INHERIT_HOOK_METHOD(reportViolationForUnsafeEval),
-    INHERIT_HOOK_METHOD(defaultLanguage),
-    INHERIT_HOOK_METHOD(compileStreaming),
-    INHERIT_HOOK_METHOD(instantiateStreaming),
-    INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
-    INHERIT_HOOK_METHOD(codeForEval),
-    INHERIT_HOOK_METHOD(canCompileStrings),
-    INHERIT_HOOK_METHOD(trustedScriptStructure),
-};
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
     const JSC::GlobalObjectMethodTable* methodTable)
 {
@@ -180,6 +153,40 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 struct BunVirtualMachine;
 extern "C" BunVirtualMachine* Bun__getVM();
 
+const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
+{
+    const auto& parent = Zig::GlobalObject::globalObjectMethodTable();
+#define INHERIT_HOOK_METHOD(name) \
+    parent.name
+
+    static const JSC::GlobalObjectMethodTable table = {
+        INHERIT_HOOK_METHOD(supportsRichSourceInfo),
+        INHERIT_HOOK_METHOD(shouldInterruptScript),
+        INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
+        INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
+        INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
+        bakeModuleLoaderImportModule,
+        bakeModuleLoaderResolve,
+        bakeModuleLoaderFetch,
+        INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
+        INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
+        INHERIT_HOOK_METHOD(promiseRejectionTracker),
+        INHERIT_HOOK_METHOD(reportUncaughtExceptionAtEventLoop),
+        INHERIT_HOOK_METHOD(currentScriptExecutionOwner),
+        INHERIT_HOOK_METHOD(scriptExecutionStatus),
+        INHERIT_HOOK_METHOD(reportViolationForUnsafeEval),
+        INHERIT_HOOK_METHOD(defaultLanguage),
+        INHERIT_HOOK_METHOD(compileStreaming),
+        INHERIT_HOOK_METHOD(instantiateStreaming),
+        INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
+        INHERIT_HOOK_METHOD(codeForEval),
+        INHERIT_HOOK_METHOD(canCompileStrings),
+        INHERIT_HOOK_METHOD(trustedScriptStructure),
+    };
+#undef INHERIT_HOOK_METHOD
+    return table;
+}
+
 // A lot of this function is taken from 'Zig__GlobalObject__create'
 // TODO: remove this entire method
 extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
@@ -192,7 +199,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(
-        vm, structure, &Bake::GlobalObject::s_globalObjectMethodTable);
+        vm, structure, &Bake::GlobalObject::globalObjectMethodTable());
     if (!global)
         BUN_PANIC("Failed to create BakeGlobalObject");
 

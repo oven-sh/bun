@@ -28,10 +28,20 @@ BAR=world
 
 Variables can also be set via the command line.
 
-```sh
+{% codetabs %}
+
+```sh#Linux/macOS
 $ FOO=helloworld bun run dev
 ```
 
----
+```sh#Windows
+# Using CMD
+$ set FOO=helloworld && bun run dev
+
+# Using PowerShell
+$ $env:FOO="helloworld"; bun run dev
+```
+
+## {% /codetabs %}
 
 See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.

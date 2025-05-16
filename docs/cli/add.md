@@ -63,8 +63,8 @@ This will add the following to your `package.json`:
     "react": "^18.2.0", // this matches >= 18.2.0 < 19.0.0
 
     // with --exact
-    "react": "18.2.0" // this matches only 18.2.0 exactly
-  }
+    "react": "18.2.0", // this matches only 18.2.0 exactly
+  },
 }
 ```
 
@@ -169,3 +169,5 @@ This will add the following line to your `package.json`:
   }
 }
 ```
+
+{% bunCLIUsage command="add" /%}

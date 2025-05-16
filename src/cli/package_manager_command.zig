@@ -1,6 +1,6 @@
 const std = @import("std");
 const Progress = std.Progress;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const string = bun.string;
@@ -118,6 +118,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>pack<r>               create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>               do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>           the directory the tarball will be saved in
+            \\  <d>├<r> <cyan>--filename<r>              the name of the tarball
             \\  <d>├<r> <cyan>--ignore-scripts<r>        don't run pre/postpack and prepare scripts
             \\  <d>└<r> <cyan>--gzip-level<r>            specify a custom compression level for gzip (0-9, default is 9)
             \\  <b><green>bun pm<r> <blue>bin<r>                print the path to bin folder
@@ -246,7 +247,7 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
-            const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
+            const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
@@ -273,7 +274,7 @@ pub const PackageManagerCommand = struct {
 
                     // This is to match 'bunx_command.BunxCommand.exec's logic
                     const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
-                        if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId(),
+                        if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
                     });
 
                     var deleted: usize = 0;

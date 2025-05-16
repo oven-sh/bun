@@ -1,16 +1,16 @@
-import { file, write, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { beforeEach, describe, expect, test, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { cp, mkdir, rm, exists } from "fs/promises";
+import { cp, exists, mkdir, rm } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
-  assertManifestsPopulated,
   VerdaccioRegistry,
-  readdirSorted,
 } from "harness";
 import { join } from "path";
 const { parseLockfile } = install_test_helpers;
@@ -1624,5 +1624,60 @@ describe("install --filter", () => {
 
     expect(await exited).toBe(0);
     await checkWorkspace();
+  });
+});
+
+test("can override npm package with workspace package under a different name", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "one-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "workspace:packages/pkg1",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "2.2.2",
+      }),
+    ),
+  ]);
+
+  var { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "pkg1",
+    version: "2.2.2",
+  });
+
+  // another install can use the existing bun.lock successfully
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "pkg1",
+    version: "2.2.2",
   });
 });

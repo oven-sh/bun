@@ -1,11 +1,13 @@
-import { test, expect } from "bun:test";
-import { tmpdirSync } from "harness";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import fsPromises from "fs/promises";
+import { tempDirWithFiles } from "harness";
+import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
-  const testDir = tmpdirSync();
-  const filename = join(testDir, "🌟.txt");
+  const dir = tempDirWithFiles("delete-stat-unicode-path", {
+    "another-file.txt": "HEY",
+  });
+  const filename = join(dir, "🌟.txt");
 
   expect(async () => {
     await Bun.file(filename).delete();
@@ -24,15 +26,18 @@ test("delete() and stat() should work with unicode paths", async () => {
 });
 
 test("writer.end() should not close the fd if it does not own the fd", async () => {
-  const testDir = tmpdirSync();
+  const dir = tempDirWithFiles("writer-end-fd", {
+    "tmp.txt": "HI",
+  });
+  const filename = join(dir, "tmp.txt");
+
   for (let i = 0; i < 30; i++) {
-    const fileHandle = await fsPromises.open(testDir + "/tmp.txt", "w", 0o666);
+    const fileHandle = await fsPromises.open(filename, "w", 0o666);
     const fd = fileHandle.fd;
 
     await Bun.file(fd).writer().end();
     // @ts-ignore
     await fsPromises.close(fd);
-    expect(await Bun.file(testDir + "/tmp.txt").text()).toBe("");
-    await Bun.sleep(50);
+    expect(await Bun.file(filename).text()).toBe("");
   }
 });

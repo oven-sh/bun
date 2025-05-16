@@ -68,11 +68,11 @@ namespace uWS {
         int ssl_prefer_low_memory_usage = 0;
 
         const char **key = nullptr;
-        unsigned int key_count = 0; 
+        unsigned int key_count = 0;
         const char **cert = nullptr;
-        unsigned int cert_count = 0; 
+        unsigned int cert_count = 0;
         const char **ca = nullptr;
-        unsigned int ca_count = 0; 
+        unsigned int ca_count = 0;
         unsigned int secure_options = 0;
         int reject_unauthorized = 0;
         int request_cert = 0;
@@ -105,7 +105,7 @@ public:
 
 
     /* Server name */
-    TemplatedApp &&addServerName(std::string hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
+    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
@@ -121,8 +121,8 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&removeServerName(std::string hostname_pattern) {
-    
+    TemplatedApp &&removeServerName(const std::string &hostname_pattern) {
+
         /* This will do for now, would be better if us_socket_context_remove_server_name returned the user data */
         auto *domainRouter = us_socket_context_find_server_name_userdata(SSL, (struct us_socket_context_t *) httpContext, hostname_pattern.c_str());
         if (domainRouter) {
@@ -133,7 +133,7 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&missingServerName(MoveOnlyFunction<void(const char *hostname)> handler) {
+    TemplatedApp &&missingServerName(MoveOnlyFunction<void(const char *hostname)> &&handler) {
 
         if (!constructorFailed()) {
             httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
@@ -189,6 +189,10 @@ public:
      * This function should probably be optimized a lot in future releases,
      * it could be O(1) with a hash map of fullnames and their counts. */
     unsigned int numSubscribers(std::string_view topic) {
+        if (!topicTree) {
+            return 0;
+        }
+
         Topic *t = topicTree->lookupTopic(topic);
         if (t) {
             return (unsigned int) t->size();
@@ -245,6 +249,7 @@ public:
     }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
+        
         auto* httpContext = HttpContext<SSL>::create(Loop::get(), options);
         if (!httpContext) {
             return nullptr;
@@ -294,7 +299,7 @@ public:
     }
 
     template <typename UserData>
-    TemplatedApp &&ws(std::string pattern, WebSocketBehavior<UserData> &&behavior) {
+    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
         /* Don't compile if alignment rules cannot be satisfied */
         static_assert(alignof(UserData) <= LIBUS_EXT_ALIGNMENT,
         "µWebSockets cannot satisfy UserData alignment requirements. You need to recompile µSockets with LIBUS_EXT_ALIGNMENT adjusted accordingly.");
@@ -408,14 +413,14 @@ public:
         webSocketContext->getExt()->messageHandler = std::move(behavior.message);
         webSocketContext->getExt()->drainHandler = std::move(behavior.drain);
         webSocketContext->getExt()->subscriptionHandler = std::move(behavior.subscription);
-        webSocketContext->getExt()->closeHandler = std::move([closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
+        webSocketContext->getExt()->closeHandler = [closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
             if (closeHandler) {
                 closeHandler(ws, code, message);
             }
 
             /* Destruct user data after returning from close handler */
             ((UserData *) ws->getUserData())->~UserData();
-        });
+        };
         webSocketContext->getExt()->pingHandler = std::move(behavior.ping);
         webSocketContext->getExt()->pongHandler = std::move(behavior.pong);
 
@@ -428,8 +433,8 @@ public:
         webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
         webSocketContext->getExt()->compression = behavior.compression;
 
-        /* Calculate idleTimeoutCompnents */
-        webSocketContext->getExt()->calculateIdleTimeoutCompnents(behavior.idleTimeout);
+        /* Calculate idleTimeoutComponents */
+        webSocketContext->getExt()->calculateIdleTimeoutComponents(behavior.idleTimeout);
 
         httpContext->onHttp("GET", pattern, [webSocketContext, behavior = std::move(behavior)](auto *res, auto *req) mutable {
 
@@ -473,7 +478,7 @@ public:
     }
 
     /* Browse to a server name, changing the router to this domain */
-    TemplatedApp &&domain(std::string serverName) {
+    TemplatedApp &&domain(const std::string &serverName) {
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
         void *domainRouter = us_socket_context_find_server_name_userdata(SSL, (struct us_socket_context_t *) httpContext, serverName.c_str());
@@ -482,46 +487,46 @@ public:
         } else {
             httpContextData->currentRouter = &httpContextData->router;
         }
-    
+
         return std::move(*this);
     }
 
-    TemplatedApp &&get(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("GET", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&post(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("POST", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&options(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&options(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("OPTIONS", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&del(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&del(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("DELETE", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&patch(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&patch(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("PATCH", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&put(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&put(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("PUT", pattern, std::move(handler));
         }
@@ -535,21 +540,21 @@ public:
     }
 
 
-    TemplatedApp &&head(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("HEAD", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&connect(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&connect(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("CONNECT", pattern, std::move(handler));
         }
         return std::move(*this);
     }
 
-    TemplatedApp &&trace(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&trace(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("TRACE", pattern, std::move(handler));
         }
@@ -557,7 +562,7 @@ public:
     }
 
     /* This one catches any method */
-    TemplatedApp &&any(std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
+    TemplatedApp &&any(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("*", pattern, std::move(handler));
         }
@@ -565,8 +570,8 @@ public:
     }
 
     /* Host, port, callback */
-    TemplatedApp &&listen(std::string host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        if (!host.length()) {
+    TemplatedApp &&listen(const std::string &host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+        if (host.empty()) {
             return listen(port, std::move(handler));
         }
         handler(httpContext ? httpContext->listen(host.c_str(), port, 0) : nullptr);
@@ -574,8 +579,8 @@ public:
     }
 
     /* Host, port, options, callback */
-    TemplatedApp &&listen(std::string host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        if (!host.length()) {
+    TemplatedApp &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+        if (host.empty()) {
             return listen(port, options, std::move(handler));
         }
         handler(httpContext ? httpContext->listen(host.c_str(), port, options) : nullptr);
@@ -595,19 +600,43 @@ public:
     }
 
     /* options, callback, path to unix domain socket */
-    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
+    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
         handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 
     /* callback, path to unix domain socket */
-    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path, int options) {
+    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path, int options) {
         handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 
+    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+        httpContext->getSocketContextData()->onSocketClosed = onClose;
+    }
+
+    void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
+        httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+    }
+
     TemplatedApp &&run() {
         uWS::run();
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setUsingCustomExpectHandler(bool value) {
+        httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+        httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
+        httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
+        httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
         return std::move(*this);
     }
 

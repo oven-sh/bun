@@ -1,17 +1,17 @@
-import { describe, expect, test, beforeAll, afterAll, it } from "bun:test";
-import { spawn, file, write } from "bun";
-import { rm, exists } from "fs/promises";
-import { join } from "path";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { exists, rm } from "fs/promises";
 import {
   VerdaccioRegistry,
   bunExe,
   bunEnv as env,
-  stderrForInstall,
-  runBunInstall,
-  pack,
-  tmpdirSync,
   isWindows,
+  pack,
+  runBunInstall,
+  stderrForInstall,
+  tmpdirSync,
 } from "harness";
+import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -592,10 +592,10 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     },
   };
 
-  for (const arg of ["", "--dry-run"]) {
-    test(`should run in order${arg ? " (--dry-run)" : ""}`, async () => {
+  for (const arg of [[], ["--dry-run"]]) {
+    test(`should run in order${arg.length > 0 ? " (--dry-run)" : ""}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
-      const bunfig = await registry.authBunfig("lifecycle" + (arg ? "dry" : ""));
+      const bunfig = await registry.authBunfig("lifecycle" + (arg.length > 0 ? "dry" : ""));
       await Promise.all([
         rm(join(registry.packagesPath, "publish-pkg-4"), { recursive: true, force: true }),
         write(packageJson, JSON.stringify(json)),
@@ -603,7 +603,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         write(join(packageDir, "bunfig.toml"), bunfig),
       ]);
 
-      const { out, err, exitCode } = await publish(env, packageDir, arg);
+      const { out, err, exitCode } = await publish(env, packageDir, ...arg);
       expect(exitCode).toBe(0);
 
       const results = await Promise.all([

@@ -1,7 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-
-pub usingnamespace std.meta;
+const bun = @import("bun");
 
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
@@ -286,6 +284,7 @@ pub fn isSimpleEqlType(comptime T: type) bool {
         .int => true,
         .float => true,
         .@"enum" => true,
+        .@"struct" => |struct_info| struct_info.layout == .@"packed",
         else => false,
     };
 }

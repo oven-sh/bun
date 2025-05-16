@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -231,11 +231,11 @@ pub const EasingFunction = union(enum) {
     pub fn isEase(this: *const EasingFunction) bool {
         return this.* == .ease or
             (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
-            .x1 = 0.25,
-            .y1 = 0.1,
-            .x2 = 0.25,
-            .y2 = 1.0,
-        }));
+                .x1 = 0.25,
+                .y1 = 0.1,
+                .x2 = 0.25,
+                .y2 = 1.0,
+            }));
     }
 };
 
@@ -250,7 +250,7 @@ pub const StepPosition = enum {
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
     @"jump-both",
 
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     const Map = bun.ComptimeEnumMap(enum {
         start,

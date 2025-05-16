@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
@@ -221,6 +221,8 @@ pub const ImportRule = struct {
             dest.allocator,
             this,
             dest.filename(),
+            dest.local_names,
+            dest.symbols,
         ) else null;
 
         // #[cfg(feature = "sourcemap")]

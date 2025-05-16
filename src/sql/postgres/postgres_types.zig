@@ -1,6 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const postgres = bun.JSC.Postgres;
+const bun = @import("bun");
+const postgres = bun.api.Postgres;
 const Data = postgres.Data;
 const protocol = @This();
 const PostgresInt32 = postgres.PostgresInt32;
@@ -365,16 +365,16 @@ pub const Tag = enum(short) {
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             if (tag == .BooleanObject) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return globalObject.ERR_INVALID_ARG_TYPE("Unknown object is not a valid PostgreSQL type", .{}).throw();
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Unknown object is not a valid PostgreSQL type", .{}).throw();
             }
 
             // We will JSON.stringify anything else.
@@ -515,7 +515,7 @@ pub const date = struct {
         else if (value.isNumber())
             value.asNumber()
         else if (value.isString()) brk: {
-            var str = value.toBunString(globalObject);
+            var str = value.toBunString(globalObject) catch @panic("unreachable");
             defer str.deref();
             break :brk str.parseDate(globalObject);
         } else return 0;

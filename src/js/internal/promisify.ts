@@ -1,6 +1,8 @@
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
+const { validateFunction } = require("internal/validators");
+
 function defineCustomPromisify(target, callback) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
     value: callback,
@@ -19,12 +21,10 @@ function defineCustomPromisifyArgs(target, args) {
 }
 
 var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
+  validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
-    if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
-    }
+    validateFunction(custom, "custom");
     // ensure that we don't create another promisified function wrapper
     return defineCustomPromisify(custom, custom);
   }
@@ -33,7 +33,7 @@ var promisify = function promisify(original) {
   function fn(...originalArgs) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {
-      original.$apply(this, [
+      const maybePromise = original.$apply(this, [
         ...originalArgs,
         function (err, ...values) {
           if (err) {
@@ -57,6 +57,14 @@ var promisify = function promisify(original) {
           }
         },
       ]);
+
+      if ($isPromise(maybePromise)) {
+        process.emitWarning(
+          "Calling promisify on a function that returns a Promise is likely a mistake.",
+          "DeprecationWarning",
+          "DEP0174",
+        );
+      }
     } catch (err) {
       reject(err);
     }
@@ -69,29 +77,25 @@ var promisify = function promisify(original) {
 };
 promisify.custom = kCustomPromisifiedSymbol;
 
-// Lazily load node:timers/promises promisified functions onto the global timers.
+// Load node:timers/promises promisified functions onto the global timers.
 {
   const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
+  const {
+    setTimeout: timeoutPromise,
+    setImmediate: immediatePromise,
+    setInterval: intervalPromise,
+  } = require("node:timers/promises");
 
   if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, function setTimeout(arg1) {
-      const fn = defineCustomPromisify(timeout, require("node:timers/promises").setTimeout);
-      return fn.$apply(this, arguments);
-    });
+    defineCustomPromisify(timeout, timeoutPromise);
   }
 
   if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, function setImmediate(arg1) {
-      const fn = defineCustomPromisify(immediate, require("node:timers/promises").setImmediate);
-      return fn.$apply(this, arguments);
-    });
+    defineCustomPromisify(immediate, immediatePromise);
   }
 
   if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, function setInterval(arg1) {
-      const fn = defineCustomPromisify(interval, require("node:timers/promises").setInterval);
-      return fn.$apply(this, arguments);
-    });
+    defineCustomPromisify(interval, intervalPromise);
   }
 }
 

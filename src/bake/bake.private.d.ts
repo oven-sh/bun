@@ -1,3 +1,5 @@
+/** Module Ids are pre-resolved by the bundler, and should be treated as opaque strings.
+ * In practice, these strings are the relative file path to the module. */
 type Id = string;
 
 /** Index with same usage as `IncrementalGraph(.client).Index` */
@@ -11,6 +13,8 @@ interface Config {
   separateSSRGraph?: true;
 
   // Client
+  /** Bun version */
+  bun: string;
   /** Dev Server's `configuration_hash_key` */
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
@@ -20,12 +24,41 @@ interface Config {
    * the framework entry point, as well as every client component.
    */
   roots: FileIndex[];
+  /**
+   * If true, the client will receive console logs from the server.
+   */
+  console: boolean;
 }
 
 /**
- * All modules for the initial bundle.
+ * Set globally in debug builds.
+ * Removed using --drop=ASSERT in releases.
  */
-declare const input_graph: Record<string, ModuleLoadFunction>;
+declare namespace DEBUG {
+  declare function ASSERT(condition: any, message?: string): asserts condition;
+}
+
+/** All modules for the initial bundle. */
+declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
+declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
+declare type UnloadedESM = [
+  deps: EncodedDependencyArray,
+  exportKeys: string[],
+  starImports: Id[],
+  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  isAsync: boolean,
+];
+declare type EncodedDependencyArray = (string | number)[];
+declare type UnloadedCommonJS = (
+  hmr: import("./hmr-module").HMRModule,
+  module: import("./hmr-module").HMRModule["cjs"],
+  exports: unknown,
+) => unknown;
+declare type CommonJSModule = {
+  id: Id;
+  exports: any;
+  require: (id: Id) => unknown;
+};
 
 declare const config: Config;
 
@@ -42,6 +75,9 @@ declare const side: "client" | "server";
  * aimed for the end user should always be enabled.
  */
 declare const IS_BUN_DEVELOPMENT: any;
+
+/** If this is the fallback error page */
+declare const IS_ERROR_RUNTIME: boolean;
 
 declare var __bun_f: any;
 
@@ -72,8 +108,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
 
 declare module "react-server-dom-bun/server.node.unbundled.js" {
   import type { ReactServerManifest } from "bun:bake/server";
-  import type { ReactElement, ReactElement } from "react";
-  import type { Writable } from "node:stream";
+  import type { ReactElement } from "react";
 
   export interface PipeableStream<T> {
     /** Returns the input, which should match the Node.js writable interface */
@@ -98,12 +133,21 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 }
 
 declare module "react-dom/server.node" {
-  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
   import type { ReactElement } from "react";
+  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 
   export type RenderToPipeableStreamOptions = any;
   export function renderToPipeableStream(
     model: ReactElement,
     options: RenderToPipeableStreamOptions,
   ): PipeableStream<Uint8Array>;
+}
+
+declare module "bun:wrap" {
+  export const __name: unique symbol;
+  export const __legacyDecorateClassTS: unique symbol;
+  export const __legacyDecorateParamTS: unique symbol;
+  export const __legacyMetadataTS: unique symbol;
+  export const __using: unique symbol;
+  export const __callDispose: unique symbol;
 }

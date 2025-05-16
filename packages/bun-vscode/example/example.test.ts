@@ -28,4 +28,9 @@ describe("example", () => {
       };
     }).toThrow();
   });
+
+  test("can run with special chars :)", () => {
+    // if this test runs, it's a success.
+    // a failure is if it's either skipped or fails the runner
+  });
 });

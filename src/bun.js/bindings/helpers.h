@@ -12,10 +12,6 @@
 #include <JavaScriptCore/VM.h>
 #include <limits>
 
-using JSC__JSGlobalObject = JSC::JSGlobalObject;
-using JSC__JSValue = JSC::EncodedJSValue;
-using JSC__CallFrame = JSC::CallFrame;
-
 namespace Zig {
 class GlobalObject;
 }
@@ -72,7 +68,7 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     if (ptr == nullptr)
         return;
 
-    ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
+    ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
@@ -193,19 +189,9 @@ static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* globa
     return JSC::jsOwnedString(global->vm(), toString(str));
 }
 
-static const JSC::JSValue toJSStringValue(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::JSValue(toJSString(str, global));
-}
-
-static const JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
+static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
-}
-
-static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject* global)
-{
-    return JSC::JSValue(toJSStringGC(str, global));
 }
 
 static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
@@ -329,7 +315,7 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(ascii);
 }
 
-static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     WTF::String message = toString(*str);
     if (UNLIKELY(message.isNull() && str->len > 0)) {
@@ -343,7 +329,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
     return JSC::JSValue(result);
 }
 
-static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -351,7 +337,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC__JSGlobalObje
     return JSC::JSValue(result);
 }
 
-static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -359,7 +345,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalOb
     return JSC::JSValue(result);
 }
 
-static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -393,7 +379,7 @@ static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 }
 
 template<typename WebCoreType, typename OutType>
-OutType* WebCoreCast(JSC__JSValue JSValue0)
+OutType* WebCoreCast(JSC::EncodedJSValue JSValue0)
 {
     // we must use jsDynamicCast here so that we check that the type is correct
     WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));

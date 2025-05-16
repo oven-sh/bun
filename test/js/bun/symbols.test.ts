@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
-import { $ } from "bun";
+import { $, semver } from "bun";
+import { test } from "bun:test";
 import { bunExe } from "harness";
-import { semver } from "bun";
 
 const BUN_EXE = bunExe();
 

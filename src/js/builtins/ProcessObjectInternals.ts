@@ -30,7 +30,7 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
   $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
 
   let stream;
@@ -82,12 +82,17 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   var shouldUnref = false;
+  let needsInternalReadRefresh = false;
 
   function ref() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(true);
     shouldUnref = false;
+    if (needsInternalReadRefresh) {
+      needsInternalReadRefresh = false;
+      internalRead(stream);
+    }
   }
 
   function unref() {
@@ -104,22 +109,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
         // Releasing the lock is not possible as there are active reads
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldUnref = true;
-
-        // unref the native part of the stream
-        try {
-          $getByIdDirectPrivate(
-            $getByIdDirectPrivate(native, "readableStreamController"),
-            "underlyingByteSource",
-          ).$resume(false);
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
+        source?.updateRef?.(false);
       }
     } else if (source) {
       source.updateRef(false);
@@ -183,25 +173,11 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
-      var done: boolean, value: Uint8Array[];
       $assert(reader);
-      const pendingRead = reader.readMany();
+      const { value } = await reader.read();
 
-      if ($isPromise(pendingRead)) {
-        ({ done, value } = await pendingRead);
-      } else {
-        $debug("readMany() did not return a promise");
-        ({ done, value } = pendingRead);
-      }
-
-      if (!done) {
-        stream.push(value[0]);
-
-        // shouldn't actually happen, but just in case
-        const length = value.length;
-        for (let i = 1; i < length; i++) {
-          stream.push(value[i]);
-        }
+      if (value) {
+        stream.push(value);
 
         if (shouldUnref) unref();
       } else {
@@ -217,23 +193,31 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // Not a bug. Happens in unref().
+        // The stream was unref()ed. It may be ref()ed again in the future,
+        // or maybe it has already been ref()ed again and we just need to
+        // restart the internalRead() function. triggerRead() will figure that out.
+        triggerRead.$call(stream, undefined);
         return;
       }
       stream.destroy(err);
     }
   }
 
-  stream._read = function (size) {
+  function triggerRead(_size) {
     $debug("_read();", reader);
-    if (!reader) return;
 
-    if (!shouldUnref) {
+    if (reader && !shouldUnref) {
       internalRead(this);
+    } else {
+      // The stream has not been ref()ed yet. If it is ever ref()ed,
+      // run internalRead()
+      needsInternalReadRefresh = true;
     }
-  };
+  }
+  stream._read = triggerRead;
 
   stream.on("resume", () => {
+    if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     ref();
     stream._undestroy();
@@ -324,7 +308,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
     setup = undefined;
   };
 
-  function nextTick(cb, args) {
+  function nextTick(cb, ...args) {
     validateFunction(cb, "callback");
     if (setup) {
       setup();
@@ -334,7 +318,9 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
 
     queue.push({
       callback: cb,
-      args: $argumentCount() > 1 ? Array.prototype.slice.$call(arguments, 1) : undefined,
+      // We want to avoid materializing the args if there are none because it's
+      // a waste of memory and Array.prototype.slice shows up in profiling.
+      args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
     });
     $putInternalField(nextTickQueue, 0, 1);

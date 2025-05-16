@@ -108,9 +108,9 @@ const headObserver = new MutationObserver(list => {
 
 function maybeAddCssLink(link: HTMLLinkElement) {
   const pathname = new URL(link.href).pathname;
-  if (pathname.startsWith("/_bun/css/")) {
-    const id = pathname.slice("/_bun/css/".length).slice(0, 16);
-    if ( !/^[a-f0-9]{16}$/.test(id)) {
+  if (pathname.startsWith("/_bun/asset/")) {
+    const id = pathname.slice("/_bun/asset/".length).slice(0, 16);
+    if (!/^[a-f0-9]{16}$/.test(id)) {
       return;
     }
     const existing = cssStore.get(id);
@@ -180,7 +180,8 @@ export function editCssContent(id: string, newContent: string) {
     // Disable the link tag if it exists
     const linkSheet = entry.link?.sheet;
     if (linkSheet) linkSheet.disabled = true;
-    return;
+    return false;
   }
   sheet!.replace(newContent);
+  return !sheet!.disabled;
 }

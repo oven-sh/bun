@@ -419,7 +419,20 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_OUTPUTS ${artifact})
     if(BUILDKITE)
       file(RELATIVE_PATH filename ${BUILD_PATH} ${artifact})
-      list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      if(filename STREQUAL "libbun-profile.a")
+        # libbun-profile.a is now over 5gb in size, compress it first
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-profile.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-profile.a.gz)
+      elseif(filename STREQUAL "libbun-asan.a")
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${BUILD_PATH}/codegen)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} rm -r ${CACHE_PATH})
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} gzip -1 libbun-asan.a)
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload libbun-asan.a.gz)
+      else()
+        list(APPEND CMD_COMMANDS COMMAND ${CMAKE_COMMAND} -E chdir ${BUILD_PATH} buildkite-agent artifact upload ${filename})
+      endif()
     endif()
   endforeach()
 
@@ -625,7 +638,7 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  set(GIT_EFFECTIVE_OUTPUTS)
+  set(GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/.ref)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
   endforeach()
@@ -743,11 +756,17 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)
   endif()
 
+  set(MAKE_SOURCES)
+  if(TARGET clone-${MAKE_TARGET})
+    list(APPEND MAKE_SOURCES ${MAKE_CWD}/.ref)
+  endif()
+
   register_command(
     COMMENT "Configuring ${MAKE_TARGET}"
     TARGET configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_EFFECTIVE_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     OUTPUTS ${MAKE_BUILD_PATH}/CMakeCache.txt
   )
 
@@ -799,6 +818,7 @@ function(register_cmake_command)
     TARGETS configure-${MAKE_TARGET}
     COMMAND ${CMAKE_COMMAND} ${MAKE_BUILD_ARGS}
     CWD ${MAKE_CWD}
+    SOURCES ${MAKE_SOURCES}
     ARTIFACTS ${MAKE_ARTIFACTS}
   )
 

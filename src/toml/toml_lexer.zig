@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = bun.logger;
 const js_ast = bun.JSAst;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -156,11 +156,18 @@ pub const Lexer = struct {
     }
 
     inline fn nextCodepointSlice(it: *Lexer) []const u8 {
+        if (it.current >= it.source.contents.len) {
+            return "";
+        }
         const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
         return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
     }
 
     inline fn nextCodepoint(it: *Lexer) CodePoint {
+        if (it.current >= it.source.contents.len) {
+            it.end = it.source.contents.len;
+            return -1;
+        }
         const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
         const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 
@@ -817,7 +824,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn decodeEscapeSequences(lexer: *Lexer, start: usize, text: string, comptime allow_multiline: bool, comptime BufType: type, buf_: *BufType) !void {
+    pub fn decodeEscapeSequences(lexer: *Lexer, start: usize, text: string, comptime allow_multiline: bool, comptime BufType: type, buf_: *BufType) !void {
         var buf = buf_.*;
         defer buf_.* = buf;
 
@@ -951,7 +958,7 @@ pub const Lexer = struct {
 
                             var value: CodePoint = 0;
                             var c3: CodePoint = 0;
-                            var width3: u3 = 0;
+                            var width3: @TypeOf(iter.width) = 0;
 
                             _ = iterator.next(&iter) or return lexer.syntaxError();
                             c3 = iter.c;

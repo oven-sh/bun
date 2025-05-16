@@ -1,5 +1,5 @@
 const clap = @import("../clap.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 const debug = std.debug;

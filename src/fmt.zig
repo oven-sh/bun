@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const strings = bun.strings;
 const string = bun.string;
@@ -8,8 +8,6 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
-
-pub usingnamespace std.fmt;
 
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
@@ -1491,12 +1489,12 @@ pub const SizeFormatter = struct {
     }
 };
 
-pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+pub fn size(bytes: anytype, opts: SizeFormatter.Options) SizeFormatter {
     return .{
-        .value = switch (@TypeOf(value)) {
-            f64, f32, f128 => @intFromFloat(value),
-            i64, isize => @intCast(value),
-            else => value,
+        .value = switch (@TypeOf(bytes)) {
+            f64, f32, f128 => @intFromFloat(bytes),
+            i64, isize => @intCast(bytes),
+            else => bytes,
         },
         .opts = opts,
     };
@@ -1575,6 +1573,33 @@ pub fn hexIntLower(value: anytype) HexIntFormatter(@TypeOf(value), true) {
 pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
     const Formatter = HexIntFormatter(@TypeOf(value), false);
     return Formatter{ .value = value };
+}
+
+/// Equivalent to `{d:.<precision>}` but trims trailing zeros
+/// if decimal part is less than `precision` digits.
+fn TrimmedPrecisionFormatter(comptime precision: usize) type {
+    return struct {
+        num: f64,
+        precision: usize,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const whole = @trunc(self.num);
+            try writer.print("{d}", .{whole});
+            const rem = self.num - whole;
+            if (rem != 0) {
+                var buf: [2 + precision]u8 = undefined;
+                var formatted = std.fmt.bufPrint(&buf, "{d:." ++ std.fmt.comptimePrint("{d}", .{precision}) ++ "}", .{rem}) catch unreachable;
+                formatted = formatted[2..];
+                const trimmed = std.mem.trimRight(u8, formatted, "0");
+                try writer.print(".{s}", .{trimmed});
+            }
+        }
+    };
+}
+
+pub fn trimmedPrecision(value: f64, comptime precision: usize) TrimmedPrecisionFormatter(precision) {
+    const Formatter = TrimmedPrecisionFormatter(precision);
+    return Formatter{ .num = value, .precision = precision };
 }
 
 const FormatDurationData = struct {
@@ -1770,9 +1795,16 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         msg: []const u8 = "",
 
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-            try writer.writeAll("The value of \"");
-            try writer.writeAll(self.field_name);
-            try writer.writeAll("\" is out of range. It must be ");
+            if (self.field_name.len > 0) {
+                try writer.writeAll("The value of \"");
+                try writer.writeAll(self.field_name);
+                try writer.writeAll("\" is out of range. It must be ");
+            } else {
+                if (comptime Environment.isDebug) {
+                    @panic("Set field_name plz");
+                }
+                try writer.writeAll("The value is out of range. It must be ");
+            }
 
             const min = self.min;
             const max = self.max;
@@ -1807,12 +1839,15 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
 const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
 const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
 const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+const BunStringOutOfRangeFormatter = NewOutOfRangeFormatter(bun.String);
 
 fn OutOfRangeFormatter(comptime T: type) type {
     if (T == f64 or T == f32) {
         return DoubleOutOfRangeFormatter;
     } else if (T == []const u8) {
         return StringOutOfRangeFormatter;
+    } else if (T == bun.String) {
+        return BunStringOutOfRangeFormatter;
     }
 
     return IntOutOfRangeFormatter;

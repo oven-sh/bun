@@ -1,6 +1,7 @@
-const bun = @import("root").bun;
+const std = @import("std");
+const bun = @import("bun");
 const JSC = bun.JSC;
-const Encoder = JSC.WebCore.Encoder;
+const Encoder = JSC.WebCore.encoding;
 const Environment = bun.Environment;
 
 pub const BufferVectorized = struct {
@@ -49,6 +50,8 @@ pub const BufferVectorized = struct {
                 Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .hex),
         } catch return false;
 
+        if (written == 0 and str.length() > 0) return false;
+
         switch (written) {
             0 => return true,
             1 => {
@@ -58,7 +61,7 @@ pub const BufferVectorized = struct {
             inline 4, 8, 16 => |n| if (comptime Environment.isMac) {
                 const pattern = buf[0..n];
                 buf = buf[pattern.len..];
-                @field(bun.C, bun.fmt.comptimePrint("memset_pattern{d}", .{n}))(buf.ptr, pattern.ptr, buf.len);
+                @field(bun.c, std.fmt.comptimePrint("memset_pattern{d}", .{n}))(buf.ptr, pattern.ptr, buf.len);
                 return true;
             },
             else => {},

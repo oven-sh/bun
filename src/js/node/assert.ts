@@ -23,7 +23,17 @@
 
 const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
-const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
+const {
+  isKeyObject,
+  isPromise,
+  isRegExp,
+  isMap,
+  isSet,
+  isDate,
+  isWeakSet,
+  isWeakMap,
+  isAnyArrayBuffer,
+} = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
 
@@ -32,6 +42,7 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayBufferIsView = ArrayBuffer.isView;
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectIs = Object.is;
@@ -377,9 +388,19 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
  * @example
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
-function compareBranch(actual, expected, comparedObjects) {
+function compareBranch(actual, expected, comparedObjects?) {
   // Check for Map object equality
   if (isMap(actual) && isMap(expected)) {
+    return Bun.deepEquals(actual, expected, true);
+  }
+
+  // Check for ArrayBuffer object equality
+  if (
+    ArrayBufferIsView(actual) ||
+    isAnyArrayBuffer(actual) ||
+    ArrayBufferIsView(expected) ||
+    isAnyArrayBuffer(expected)
+  ) {
     return Bun.deepEquals(actual, expected, true);
   }
 
@@ -693,7 +714,7 @@ async function waitForActual(promiseFn) {
   } else if (checkIsPromise(promiseFn)) {
     resultPromise = promiseFn;
   } else {
-    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["Function", "Promise"], promiseFn);
+    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["function", "an instance of Promise"], promiseFn);
   }
 
   try {
@@ -711,17 +732,13 @@ function expectsError(stackStartFn: Function, actual: unknown, error: unknown, m
     }
     if (typeof actual === "object" && actual !== null) {
       if ((actual as { message?: unknown }).message === error) {
-        throw $ERR_AMBIGUOUS_ARGUMENT(
-          `The "error/message" argument is ambiguous. The error message "${(actual as { message?: unknown }).message}" is identical to the message.`,
-        );
+        throw $ERR_AMBIGUOUS_ARGUMENT("error/message", `The error message "${(actual as { message?: unknown }).message}" is identical to the message.`); // prettier-ignore
       }
       if (Object.keys(error).length === 0) {
         throw $ERR_INVALID_ARG_VALUE("error", error, "may not be an empty object");
       }
     } else if (actual === error) {
-      throw $ERR_AMBIGUOUS_ARGUMENT(
-        `The "error/message" argument is ambiguous. The error "${actual}" is identical to the message.`,
-      );
+      throw $ERR_AMBIGUOUS_ARGUMENT("error/message", `The error "${actual}" is identical to the message.`);
     }
     message = error;
     error = undefined;

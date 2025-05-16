@@ -224,4 +224,4 @@ pub const Result = union(enum) {
     err: [:0]const u8,
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");

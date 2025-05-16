@@ -446,7 +446,6 @@ const ServerHandlers: SocketHandler = {
 
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
-        // verifyError is now guaranteed to be an Error if it exists, or was null
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {

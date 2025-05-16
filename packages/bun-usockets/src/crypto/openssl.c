@@ -645,7 +645,7 @@ restart:
           us_internal_trigger_handshake_callback(s, 0);
         }
 
-        /* Terminate connection after reporting the handshake error. */
+        // Terminate connection after reporting the handshake error
         us_internal_ssl_socket_close(s, 0, NULL);
         return NULL; // stop processing data
       } else {

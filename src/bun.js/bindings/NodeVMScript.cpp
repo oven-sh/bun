@@ -245,7 +245,7 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
 {
     VM& vm = JSC::getVM(globalObject);
 
-    if (vm.hasPendingTerminationException() || vm.hasTerminationRequest()) {
+    if (vm.hasTerminationRequest()) {
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
@@ -253,7 +253,7 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
         } else if (options.timeout) {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *options.timeout, "ms"_s));
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to sigint nor to timeout");
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
         }
         return true;
     }
@@ -309,7 +309,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
     }
 
-    if (checkForTermination(globalObject, scope, script, options)) {
+    if (options.breakOnSigint && checkForTermination(globalObject, scope, script, options)) {
         return {};
     }
 
@@ -329,25 +329,18 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = JSC::getVM(globalObject);
-    JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue thisValue = callFrame->thisValue();
+    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     if (UNLIKELY(!script)) {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    JSValue contextArg = callFrame->argument(0);
-    if (contextArg.isUndefined()) {
-        contextArg = JSC::constructEmptyObject(globalObject);
-    }
-
-    if (!contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
-    }
+    JSValue optionsArg = callFrame->argument(0);
 
     RunningScriptOptions options;
-    if (!options.fromJS(globalObject, vm, scope, contextArg)) {
+    if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
         RETURN_IF_EXCEPTION(scope, {});
         options = {};
     }
@@ -366,6 +359,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     if (options.breakOnSigint) {
         auto holder = SigintWatcher::hold(globalObject, script);
+        vm.ensureTerminationException();
         run();
     } else {
         run();
@@ -375,7 +369,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
     }
 
-    if (checkForTermination(globalObject, scope, script, options)) {
+    if (options.breakOnSigint && checkForTermination(globalObject, scope, script, options)) {
         return {};
     }
 

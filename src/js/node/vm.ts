@@ -40,7 +40,7 @@ const {
   createContext,
   isContext,
   runInNewContext,
-  runInThisContext,
+  runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
   kUnlinked,
@@ -55,6 +55,13 @@ function runInContext(code, context, options) {
     options = { filename: options };
   }
   return new Script(code, options).runInContext(context, options);
+}
+
+function runInThisContext(code, options) {
+  if (typeof options === "string") {
+    options = { filename: options };
+  }
+  return new Script(code, options).runInThisContext(options);
 }
 
 function createScript(code, options) {

@@ -506,7 +506,6 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
-  // printf("SSL_do_handshake result: %d\n", result);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
@@ -519,8 +518,8 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+        ERR_clear_error();
         s->fatal_error = 1;
-        us_internal_trigger_handshake_callback(s, 0);
       }
       us_internal_trigger_handshake_callback(s, 0);
     

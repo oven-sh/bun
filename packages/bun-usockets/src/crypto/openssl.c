@@ -335,12 +335,18 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
 
  * Returns 1 if the protocol error was overridden, 0 otherwise
 */
-static int should_override_protocol_error(const char *proto, int is_server, struct us_bun_verify_error_t *verify_error) {
+static int should_override_protocol_error(const char *proto, int is_server, int openssl_reason, struct us_bun_verify_error_t *verify_error) {
     if (!proto) return 0;
     if (is_server) {
         if (strcmp(proto, "TLSv1_method") == 0 || strcmp(proto, "TLSv1_1_method") == 0) {
-            verify_error->code = "ERR_SSL_WRONG_VERSION_NUMBER";
-            verify_error->reason = "Wrong version number on server";
+            if (openssl_reason == SSL_R_WRONG_VERSION_NUMBER) {
+                verify_error->code = "ERR_SSL_WRONG_VERSION_NUMBER";
+                verify_error->reason = "Wrong version number on server";
+            } else if (openssl_reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+                verify_error->code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+                verify_error->reason = "Unsupported protocol on server";
+            }
+
             verify_error->error = -1;
             ERR_clear_error();
             return 1;
@@ -354,6 +360,7 @@ static int should_override_protocol_error(const char *proto, int is_server, stru
             return 1;
         }
     }
+
     return 0;
 }
 
@@ -380,9 +387,45 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
     if (!success) {
-      if (should_override_protocol_error(context->options.secure_protocol_method, SSL_is_server(s->ssl), &verify_error)) {
-          context->on_handshake(s, success, verify_error, context->handshake_data);
-          return;
+      const char *proto = context->options.secure_protocol_method;
+      unsigned long err = ERR_peek_error();
+      int reason = ERR_GET_REASON(err);
+      if (should_override_protocol_error(proto, SSL_is_server(s->ssl), reason, &verify_error)) {
+        context->on_handshake(s, success, verify_error, context->handshake_data);
+        return;
+      }
+
+      if (context->options.secure_protocol_method) {
+        if (SSL_is_server(s->ssl)) {
+          unsigned long err = ERR_peek_error();
+          int reason = ERR_GET_REASON(err);
+          if ((strcmp(proto, "TLSv1_1_method") == 0 || strcmp(proto, "TLSv1_method") == 0)) {
+            if (reason == SSL_R_WRONG_VERSION_NUMBER) {
+              verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
+              verify_error.reason = "Wrong version number on server";
+              verify_error.error = -1;
+              ERR_clear_error();
+              context->on_handshake(s, success, verify_error, context->handshake_data);
+              return;
+            } else if (reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+              verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+              verify_error.reason = "Unsupported protocol on server";
+              verify_error.error = -1;
+              ERR_clear_error();
+              context->on_handshake(s, success, verify_error, context->handshake_data);
+              return;
+            }
+          }
+        } else {
+          if (strcmp(proto, "SSLv23_method") == 0) {
+            verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+            verify_error.reason = "Unsupported protocol";
+            verify_error.error = -1;
+            ERR_clear_error();
+            context->on_handshake(s, success, verify_error, context->handshake_data);
+            return;
+          }
+        }
       }
 
       if (verify_error.error == 0) {

@@ -227,12 +227,12 @@ pub const BuildCommand = struct {
             try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
-        try this_transpiler.configureDefines();
-        this_transpiler.configureLinker();
-
         if (ctx.bundler_options.production) {
             bun.assert(!this_transpiler.options.jsx.development);
         }
+
+        try this_transpiler.configureDefines();
+        this_transpiler.configureLinker();
 
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});

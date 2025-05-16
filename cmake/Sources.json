@@ -59,7 +59,8 @@
       "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
       "src/bun.js/bindings/uv-posix-polyfills.c",
-      "src/bun.js/bindings/uv-posix-stubs.c"
+      "src/bun.js/bindings/uv-posix-stubs.c",
+      "src/*.c"
     ]
   }
 ]

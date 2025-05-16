@@ -1152,7 +1152,6 @@ pub const H2FrameParser = struct {
                 increment_size = this.windowSize -| MAX_WINDOW_SIZE;
             }
             if (new_size == this.windowSize) {
-                // this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
                 return false;
             }
             this.windowSize = new_size;
@@ -1906,6 +1905,7 @@ pub const H2FrameParser = struct {
 
         if (this.remainingLength == 0) {
             this.currentFrame = null;
+            _ = this.ajustWindowSize(stream, frame.length);
             if (emitted) {
                 // we need to revalidate the stream ptr after emitting onStreamData
                 const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;
@@ -2429,7 +2429,6 @@ pub const H2FrameParser = struct {
         this.currentFrame = header;
         this.remainingLength = header.length;
         const stream = this.handleReceivedStreamID(header.streamIdentifier);
-
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
@@ -4257,13 +4256,15 @@ pub const H2FrameParser = struct {
             hpack.deinit();
             this.hpack = null;
         }
-        var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
-            stream.freeResources(this, finalizing);
+        if (finalizing) {
+            var it = this.streams.valueIterator();
+            while (it.next()) |stream| {
+                stream.freeResources(this, finalizing);
+            }
+            var streams = this.streams;
+            defer streams.deinit();
+            this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
         }
-        var streams = this.streams;
-        defer streams.deinit();
-        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
     fn deinit(this: *H2FrameParser) void {

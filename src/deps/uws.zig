@@ -2268,6 +2268,11 @@ pub const SocketContext = opaque {
         return this;
     }
 
+    pub fn unref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_unref(@intFromBool(ssl), this);
+        return this;
+    }
+
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
         const ssl_int: i32 = @intFromBool(is_ssl);
         // replace callbacks with dummy ones
@@ -2393,21 +2398,23 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn inc(this: *PosixLoop) void {
+        log("inc {*} {d} + 1 = {d}", .{ this, this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
     }
 
     pub fn dec(this: *PosixLoop) void {
+        log("dec {*} {d} - 1 = {d}", .{ this, this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
     }
 
     pub fn ref(this: *PosixLoop) void {
-        log("ref {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
+        log("ref {*} {d} + 1 = {d} | {d} + 1 = {d}", .{ this, this.num_polls, this.num_polls + 1, this.active, this.active + 1 });
         this.num_polls += 1;
         this.active += 1;
     }
 
     pub fn unref(this: *PosixLoop) void {
-        log("unref {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
+        log("unref {*} {d} - 1 = {d} | {d} - 1 = {d}", .{ this, this.num_polls, this.num_polls - 1, this.active, this.active -| 1 });
         this.num_polls -= 1;
         this.active -|= 1;
     }
@@ -2430,7 +2437,7 @@ pub const PosixLoop = extern struct {
 
     pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
-        this.num_polls -|= count;
+        this.num_polls -= count;
         this.active -|= @as(u32, @intCast(count));
     }
 

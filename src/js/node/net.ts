@@ -565,6 +565,7 @@ const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
     let { self } = socket.data;
     if (self[kclosed]) return;
     self[kclosed] = true;
+    // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);

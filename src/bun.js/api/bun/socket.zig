@@ -1257,6 +1257,7 @@ pub const Listener = struct {
                     prev.server_name = server_name;
                     bun.assert(prev.socket_context == null);
                     prev.socket_context = socket_context;
+                    prev.ref();
                     break :blk prev;
                 } else bun.new(SocketType, .{
                     .ref_count = .init(),
@@ -1276,7 +1277,8 @@ pub const Listener = struct {
                     return promise_value;
                 };
 
-                socket.poll_ref.ref(handlers.vm);
+                // if this is from node:net there's surface where the user can .ref() and .deref() before the connection starts. make sure we honor that here.
+                if (socket.poll_ref_before_connect >= 0) socket.poll_ref.ref(handlers.vm);
 
                 return promise_value;
             },
@@ -1365,6 +1367,7 @@ fn NewSocket(comptime ssl: bool) type {
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+        poll_ref_before_connect: i16 = 0,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
@@ -1461,9 +1464,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer {
-                this.deref();
-            }
+            errdefer this.deref(); // TODO: why is this only errdefer?
 
             switch (connection) {
                 .host => |c| {
@@ -1496,6 +1497,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) return .undefined;
 
             log("resume", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
@@ -1507,6 +1509,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) return .undefined;
 
             log("pause", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
@@ -1642,6 +1645,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
+            this.poll_ref_before_connect = 0;
             if (vm.isShuttingDown()) {
                 return;
             }
@@ -1855,6 +1859,7 @@ fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onEnd;
             if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
+                this.poll_ref_before_connect = 0;
 
                 // If you don't handle TCP fin, we assume you're done.
                 this.markInactive();
@@ -1955,6 +1960,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
+            this.poll_ref_before_connect = 0;
 
             const callback = handlers.onClose;
 
@@ -2612,6 +2618,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             log("ref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) this.poll_ref_before_connect += 1;
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
@@ -2620,6 +2627,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             log("unref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) this.poll_ref_before_connect -= 1;
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }

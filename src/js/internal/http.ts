@@ -362,10 +362,10 @@ const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
 export {
-  NODE_HTTP_WARNING,
   ConnResetException,
   Headers,
   METHODS,
+  NODE_HTTP_WARNING,
   STATUS_CODES,
   abortedSymbol,
   assignHeadersFast,

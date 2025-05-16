@@ -171,12 +171,14 @@ pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
-extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
+extern "c" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
+extern "c" fn Bun__getQueryIfBunRequest(this_value: JSValue) JSValue;
 
 pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
 
     const params_object = Bun__getParamsIfBunRequest(this_value);
+    const query_object = Bun__getQueryIfBunRequest(this_value);
 
     const class_label = switch (params_object) {
         .zero => "Request",
@@ -205,7 +207,16 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         if (params_object.isCell()) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>params<d>:<r> ", enable_ansi_colors));
-            try formatter.printAs(.Private, Writer, writer, params_object, .Object, enable_ansi_colors);
+            try formatter.printAs(.Object, Writer, writer, params_object, .Object, enable_ansi_colors);
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+        }
+
+        if (query_object.isCell()) {
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>searchParams<d>:<r> ", enable_ansi_colors));
+            const tag = if (Formatter == JSC.ConsoleObject.Formatter) .toJSON else .Object;
+            try formatter.printAs(tag, Writer, writer, query_object, query_object.jsType(), enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
         }

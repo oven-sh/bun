@@ -57,35 +57,35 @@ server.on('listening', common.mustCall(() => {
   const req = client.request(headers);
 
   // State will only be valid after connect event is emitted
-  // req.on('ready', common.mustCall(() => {
+  req.on('ready', common.mustCall(() => {
 
-  //   // Test Stream State.
-  //   {
-  //     const state = req.state;
-  //     assert.strictEqual(typeof state, 'object');
-  //     assert.strictEqual(typeof state.state, 'number');
-  //     assert.strictEqual(typeof state.weight, 'number');
-  //     assert.strictEqual(typeof state.sumDependencyWeight, 'number');
-  //     assert.strictEqual(typeof state.localClose, 'number');
-  //     assert.strictEqual(typeof state.remoteClose, 'number');
-  //     assert.strictEqual(typeof state.localWindowSize, 'number');
-  //   }
+    // Test Stream State.
+    {
+      const state = req.state;
+      assert.strictEqual(typeof state, 'object');
+      assert.strictEqual(typeof state.state, 'number');
+      assert.strictEqual(typeof state.weight, 'number');
+      assert.strictEqual(typeof state.sumDependencyWeight, 'number');
+      assert.strictEqual(typeof state.localClose, 'number');
+      assert.strictEqual(typeof state.remoteClose, 'number');
+      assert.strictEqual(typeof state.localWindowSize, 'number');
+    }
 
-  //   // Test Session State
-  //   {
-  //     const state = req.session.state;
-  //     assert.strictEqual(typeof state, 'object');
-  //     assert.strictEqual(typeof state.effectiveLocalWindowSize, 'number');
-  //     assert.strictEqual(typeof state.effectiveRecvDataLength, 'number');
-  //     assert.strictEqual(typeof state.nextStreamID, 'number');
-  //     assert.strictEqual(typeof state.localWindowSize, 'number');
-  //     assert.strictEqual(typeof state.lastProcStreamID, 'number');
-  //     assert.strictEqual(typeof state.remoteWindowSize, 'number');
-  //     assert.strictEqual(typeof state.outboundQueueSize, 'number');
-  //     assert.strictEqual(typeof state.deflateDynamicTableSize, 'number');
-  //     assert.strictEqual(typeof state.inflateDynamicTableSize, 'number');
-  //   }
-  // }));
+    // Test Session State
+    {
+      const state = req.session.state;
+      assert.strictEqual(typeof state, 'object');
+      assert.strictEqual(typeof state.effectiveLocalWindowSize, 'number');
+      assert.strictEqual(typeof state.effectiveRecvDataLength, 'number');
+      assert.strictEqual(typeof state.nextStreamID, 'number');
+      assert.strictEqual(typeof state.localWindowSize, 'number');
+      assert.strictEqual(typeof state.lastProcStreamID, 'number');
+      assert.strictEqual(typeof state.remoteWindowSize, 'number');
+      assert.strictEqual(typeof state.outboundQueueSize, 'number');
+      assert.strictEqual(typeof state.deflateDynamicTableSize, 'number');
+      assert.strictEqual(typeof state.inflateDynamicTableSize, 'number');
+    }
+  }));
 
   req.on('response', common.mustCall());
   req.resume();

@@ -384,7 +384,7 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
 
-    if (!success) {
+    if (!success && (verify_error.code == NULL || verify_error.code[0] == 0)) {
       const char *proto = context->options.secure_protocol_method;
       unsigned long err = ERR_peek_error();
       int reason = ERR_GET_REASON(err);

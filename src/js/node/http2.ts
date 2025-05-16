@@ -119,6 +119,11 @@ function utcDate() {
   if (!utcCache) cache();
   return utcCache;
 }
+function emitEventNT(self: any, event: string, ...args: any[]) {
+  if (self.listenerCount(event) > 0) {
+    self.emit(event, ...args);
+  }
+}
 function emitErrorNT(self: any, error: any, destroy: boolean) {
   if (destroy) {
     if (self.listenerCount("error") > 0) {
@@ -3529,7 +3534,7 @@ class ClientHttp2Session extends Http2Session {
       } else {
         this.#parser.request(stream_id, req, headers, sensitiveNames, options);
       }
-      req.emit("ready");
+      process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
       this.#connections--;

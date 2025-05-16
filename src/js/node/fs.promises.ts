@@ -4,6 +4,7 @@ const EventEmitter = require("node:events");
 const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
+const { validateInteger } = require("internal/validators");
 
 var PromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
@@ -21,8 +22,6 @@ const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
-
-const { validateInteger } = require("internal/validators");
 
 function watch(
   filename: string | Buffer | URL,
@@ -418,6 +417,13 @@ function asyncWrap(fn: any, name: string) {
     }
 
     async stat(options) {
+      if (!(this instanceof FileHandle)) {
+        const err = new TypeError("handle must be an instance of FileHandle");
+        err.code = "ERR_INTERNAL_ASSERTION";
+        err.name = "AssertionError";
+        throw err;
+      }
+
       const fd = this[kFd];
       throwEBADFIfNecessary("fstat", fd);
 

@@ -276,6 +276,12 @@ typedef struct StringPointer {
 } StringPointer;
 #endif
 
+enum BunDeepEqualsMode {
+    BunDeepEqualsMode_Node,
+    BunDeepEqualsMode_Jest,
+    BunDeepEqualsMode_Bun,
+};
+
 typedef void WebSocketHTTPClient;
 typedef void WebSocketHTTPSClient;
 typedef void WebSocketClient;
@@ -403,7 +409,7 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, BunDeepEqualsMode mode>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
 /**
@@ -438,7 +444,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @return true
  * @return false
  */
-template<bool enableAsymmetricMatchers>
+template<BunDeepEqualsMode enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSC::JSValue object,
     std::set<JSC::EncodedJSValue>* seenObjProperties,

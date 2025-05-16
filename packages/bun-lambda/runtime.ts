@@ -1,5 +1,5 @@
-import type { Server, ServerWebSocket } from "bun";
 import { AwsClient } from "aws4fetch";
+import type { Server, ServerWebSocket } from "bun";
 
 type Lambda = {
   fetch: (request: Request, server: Server) => Promise<Response | undefined>;

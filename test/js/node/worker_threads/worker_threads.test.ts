@@ -399,3 +399,25 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
   });
 });
+
+describe("error event", () => {
+  test("is fired with a copy of the error value", async () => {
+    const worker = new Worker("throw new TypeError('oh no')", { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("oh no");
+  });
+
+  test("falls back to string when the error cannot be serialized", async () => {
+    const worker = new Worker(
+      /* js */ `
+      import { MessageChannel } from "node:worker_threads";
+      const { port1 } = new MessageChannel();
+      throw port1;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
+});

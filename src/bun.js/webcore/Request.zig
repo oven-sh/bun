@@ -118,7 +118,7 @@ pub fn init(
 
 pub fn getContentType(
     this: *Request,
-) ?ZigString.Slice {
+) bun.JSError!?ZigString.Slice {
     if (this.request_context.getRequest()) |req| {
         if (req.header("content-type")) |value| {
             return ZigString.Slice.fromUTF8NeverFree(value);
@@ -139,11 +139,11 @@ pub fn getContentType(
     return null;
 }
 
-pub fn getFormDataEncoding(this: *Request) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormData {
+    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
+    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);
 }
 
 pub fn estimatedSize(this: *Request) callconv(.C) usize {
@@ -243,7 +243,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 
 pub fn mimeType(this: *const Request) string {
     if (this._headers) |headers| {
-        if (headers.fastGet(.ContentType)) |content_type| {
+        if (try headers.fastGet(.ContentType)) |content_type| {
             return content_type.slice();
         }
     }
@@ -629,7 +629,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         }
 
         if (!fields.contains(.body)) {
-            if (value.fastGet(globalThis, .body)) |body_| {
+            if (try value.fastGet(globalThis, .body)) |body_| {
                 fields.insert(.body);
                 req.body.value = try Body.Value.fromJS(globalThis, body_);
             }
@@ -638,14 +638,14 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         }
 
         if (!fields.contains(.url)) {
-            if (value.fastGet(globalThis, .url)) |url| {
+            if (try value.fastGet(globalThis, .url)) |url| {
                 req.url = try bun.String.fromJS(url, globalThis);
                 if (!req.url.isEmpty())
                     fields.insert(.url);
 
                 // first value
             } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
-                value.implementsToString(globalThis))
+                try value.implementsToString(globalThis))
             {
                 const str = try bun.String.fromJS(value, globalThis);
                 req.url = str;
@@ -677,7 +677,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
         if (!fields.contains(.method) or !fields.contains(.headers)) {
             if (globalThis.hasException()) return error.JSError;
             if (try Response.Init.init(globalThis, value)) |response_init| {
-                if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
+                if (!explicit_check or (explicit_check and (try value.fastGet(globalThis, .headers)) != null)) {
                     if (response_init.headers) |headers| {
                         if (!fields.contains(.headers)) {
                             req._headers = headers;
@@ -690,7 +690,7 @@ pub fn constructInto(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSV
 
                 if (globalThis.hasException()) return error.JSError;
 
-                if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                if (!explicit_check or (explicit_check and (try value.fastGet(globalThis, .method)) != null)) {
                     if (!fields.contains(.method)) {
                         req.method = response_init.method;
                         fields.insert(.method);

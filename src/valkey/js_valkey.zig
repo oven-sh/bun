@@ -173,7 +173,7 @@ pub const JSValkeyClient = struct {
         }
 
         const promise_ptr = JSC.JSPromise.create(globalObject);
-        const promise = promise_ptr.asValue(globalObject);
+        const promise = promise_ptr.toJS();
         js.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
@@ -648,6 +648,7 @@ pub const JSValkeyClient = struct {
     pub const expire = fns.expire;
     pub const expiretime = fns.expiretime;
     pub const get = fns.get;
+    pub const getBuffer = fns.getBuffer;
     pub const getdel = fns.getdel;
     pub const getex = fns.getex;
     pub const getset = fns.getset;

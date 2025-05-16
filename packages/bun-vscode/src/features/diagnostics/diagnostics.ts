@@ -10,8 +10,8 @@ import {
   UnixSignal,
 } from "../../../../bun-debug-adapter-protocol";
 import type { JSC } from "../../../../bun-inspector-protocol";
-import { typedGlobalState } from "../../global-state";
 import { getConfig } from "../../extension";
+import { typedGlobalState } from "../../global-state";
 
 const output = vscode.window.createOutputChannel("Bun - Diagnostics");
 

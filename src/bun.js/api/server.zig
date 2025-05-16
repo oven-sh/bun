@@ -1663,7 +1663,7 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Expected onNodeHTTPRequest to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
-                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
+                onRequest.protect();
                 args.onNodeHTTPRequest = onRequest;
             }
 
@@ -1672,7 +1672,7 @@ pub const ServerConfig = struct {
                     return global.throwInvalidArguments("Expected fetch() to be a function", .{});
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
-                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
+                onRequest.protect();
                 args.onRequest = onRequest;
             } else if (args.bake == null and args.onNodeHTTPRequest == .zero and ((args.static_routes.items.len + args.user_routes_to_build.items.len) == 0 and !opts.has_user_routes) and opts.is_fetch_required) {
                 if (global.hasException()) return error.JSError;
@@ -2356,7 +2356,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
-            JSC.C.JSValueProtect(ctx.server.?.globalThis, value.asObjectRef());
+            value.protect();
 
             if (ctx.method == .HEAD) {
                 if (ctx.resp) |resp| {
@@ -5043,8 +5043,9 @@ const ServePlugins = struct {
                     // promise not fulfilled yet
                     .pending => {
                         this.ref();
-                        this.state.pending.promise.strong.set(global, promise.asValue(global));
-                        promise.asValue(global).then(global, this, onResolveImpl, onRejectImpl);
+                        const promise_value = promise.asValue();
+                        this.state.pending.promise.strong.set(global, promise_value);
+                        promise_value.then(global, this, onResolveImpl, onRejectImpl);
                         return;
                     },
                     .fulfilled => {
@@ -5320,9 +5321,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn setRequireHostHeader(this: *ThisServer, require_host_header: bool) void {
+        pub fn setFlags(this: *ThisServer, require_host_header: bool, use_strict_method_validation: bool) void {
             if (this.app) |app| {
-                app.setRequireHostHeader(require_host_header);
+                app.setFlags(require_host_header, use_strict_method_validation);
+            }
+        }
+
+        pub fn setMaxHTTPHeaderSize(this: *ThisServer, max_header_size: u64) void {
+            if (this.app) |app| {
+                app.setMaxHTTPHeaderSize(max_header_size);
             }
         }
 
@@ -5420,7 +5427,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
                         }
 
-                        if (opts.fastGet(globalThis, .data)) |headers_value| {
+                        if (try opts.fastGet(globalThis, .data)) |headers_value| {
                             data_value = headers_value;
                         }
 
@@ -5428,7 +5435,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             return error.JSError;
                         }
 
-                        if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                        if (try opts.fastGet(globalThis, .headers)) |headers_value| {
                             if (headers_value.isEmptyOrUndefinedOrNull()) {
                                 break :getter;
                             }
@@ -5548,7 +5555,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return globalThis.throwInvalidArguments("upgrade options must be an object", .{});
                     }
 
-                    if (opts.fastGet(globalThis, .data)) |headers_value| {
+                    if (try opts.fastGet(globalThis, .data)) |headers_value| {
                         data_value = headers_value;
                     }
 
@@ -5556,7 +5563,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         return error.JSError;
                     }
 
-                    if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                    if (try opts.fastGet(globalThis, .headers)) |headers_value| {
                         if (headers_value.isEmptyOrUndefinedOrNull()) {
                             break :getter;
                         }
@@ -5816,13 +5823,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 if (arguments.len >= 2 and arguments[1].isObject()) {
                     var opts = arguments[1];
-                    if (opts.fastGet(ctx, .method)) |method_| {
+                    if (try opts.fastGet(ctx, .method)) |method_| {
                         var slice_ = try method_.toSlice(ctx, bun.default_allocator);
                         defer slice_.deinit();
                         method = HTTP.Method.which(slice_.slice()) orelse method;
                     }
 
-                    if (opts.fastGet(ctx, .headers)) |headers_| {
+                    if (try opts.fastGet(ctx, .headers)) |headers_| {
                         if (headers_.as(WebCore.FetchHeaders)) |headers__| {
                             headers = headers__;
                         } else if (WebCore.FetchHeaders.createFromJS(ctx, headers_)) |headers__| {
@@ -5830,7 +5837,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     }
 
-                    if (opts.fastGet(ctx, .body)) |body__| {
+                    if (try opts.fastGet(ctx, .body)) |body__| {
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
@@ -6090,7 +6097,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn getAllClosedPromise(this: *ThisServer, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             if (this.listener == null and this.pending_requests == 0) {
-                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).asValue(globalThis);
+                return JSC.JSPromise.resolvedPromise(globalThis, .undefined).toJS();
             }
             const prom = &this.all_closed_promise;
             if (prom.strong.has()) {
@@ -7780,15 +7787,8 @@ pub fn Server__setIdleTimeout_(server: JSC.JSValue, seconds: JSC.JSValue, global
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
 }
-pub export fn Server__setOnClientError(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
-    Server__setOnClientError_(server, callback, globalThis) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-        },
-    };
-}
-pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+
+pub fn Server__setOnClientError_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, callback: JSC.JSValue) bun.JSError!JSC.JSValue {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set clientError: The 'this' value is not a Server.", .{});
     }
@@ -7824,39 +7824,52 @@ pub fn Server__setOnClientError_(server: JSC.JSValue, callback: JSC.JSValue, glo
     } else {
         bun.debugAssert(false);
     }
-}
-pub export fn Server__setRequireHostHeader(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) void {
-    Server__setRequireHostHeader_(server, require_host_header, globalThis) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-        },
-    };
+    return .undefined;
 }
 
-pub fn Server__setRequireHostHeader_(server: JSC.JSValue, require_host_header: bool, globalThis: *JSC.JSGlobalObject) bun.JSError!void {
+pub fn Server__setAppFlags_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, require_host_header: bool, use_strict_method_validation: bool) bun.JSError!JSC.JSValue {
     if (!server.isObject()) {
         return globalThis.throw("Failed to set requireHostHeader: The 'this' value is not a Server.", .{});
     }
 
     if (server.as(HTTPServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(HTTPSServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(DebugHTTPServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else if (server.as(DebugHTTPSServer)) |this| {
-        this.setRequireHostHeader(require_host_header);
+        this.setFlags(require_host_header, use_strict_method_validation);
     } else {
         return globalThis.throw("Failed to set timeout: The 'this' value is not a Server.", .{});
     }
+    return .undefined;
 }
 
+pub fn Server__setMaxHTTPHeaderSize_(globalThis: *JSC.JSGlobalObject, server: JSC.JSValue, max_header_size: u64) bun.JSError!JSC.JSValue {
+    if (!server.isObject()) {
+        return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
+    }
+
+    if (server.as(HTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(HTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else if (server.as(DebugHTTPSServer)) |this| {
+        this.setMaxHTTPHeaderSize(max_header_size);
+    } else {
+        return globalThis.throw("Failed to set maxHeaderSize: The 'this' value is not a Server.", .{});
+    }
+    return .undefined;
+}
 comptime {
     _ = Server__setIdleTimeout;
-    _ = Server__setRequireHostHeader;
     _ = NodeHTTPResponse.create;
-    _ = Server__setOnClientError;
+    @export(&JSC.host_fn.wrap4(Server__setAppFlags_), .{ .name = "Server__setAppFlags" });
+    @export(&JSC.host_fn.wrap3(Server__setOnClientError_), .{ .name = "Server__setOnClientError" });
+    @export(&JSC.host_fn.wrap3(Server__setMaxHTTPHeaderSize_), .{ .name = "Server__setMaxHTTPHeaderSize" });
 }
 
 extern fn NodeHTTPServer__onRequest_http(

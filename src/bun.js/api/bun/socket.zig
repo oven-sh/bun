@@ -1257,7 +1257,6 @@ pub const Listener = struct {
                     prev.server_name = server_name;
                     bun.assert(prev.socket_context == null);
                     prev.socket_context = socket_context;
-                    prev.ref();
                     break :blk prev;
                 } else bun.new(SocketType, .{
                     .ref_count = .init(),
@@ -1464,7 +1463,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer this.deref(); // TODO: why is this only errdefer?
+            errdefer this.deref();
 
             switch (connection) {
                 .host => |c| {

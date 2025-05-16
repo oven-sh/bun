@@ -37,7 +37,7 @@ void SigintWatcher::install()
 
     sigaction(SIGINT, &action, nullptr);
 #else
-    static_assert(false, "TODO(@heimskr): implement sigint handler on Windows");
+    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
 #endif
 
     if (m_installed.exchange(true)) {

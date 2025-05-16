@@ -390,10 +390,6 @@ class Http2ServerRequest extends Readable {
   }
 
   get socket() {
-    console.log("this", new Error().stack);
-    console.log("kStream", !!this[kStream]);
-    console.log("bunHTTP2Session", !!this[kStream]?.[bunHTTP2Session]);
-    console.log("socket", !!this[kStream]?.[bunHTTP2Session]?.socket);
     return this[kStream]?.[bunHTTP2Session]?.socket;
   }
 
@@ -1632,9 +1628,8 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-function rstNextTick(id: number, rstCode: number, stream: Http2Stream) {
+function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
-  this[bunHTTP2Session] = null;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 class Http2Stream extends Duplex {
@@ -1842,13 +1837,14 @@ class Http2Stream extends Duplex {
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     markStreamClosed(this);
+    this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
     if (session) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode, this));
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
     callback(err);
   }
@@ -1972,7 +1968,6 @@ function tryClose(fd) {
 }
 
 function doSendFileFD(options, fd, headers, err, stat) {
-  console.log("doSendFileFD", options, fd, headers, err, stat);
   const onError = options.onError;
   if (err) {
     if (err.code !== "EBADF") {

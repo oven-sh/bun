@@ -269,8 +269,6 @@ pub fn SSLWrapper(comptime T: type) type {
 
             this.flags.authorized = success;
 
-            bun.Output.debug("[ssl_wrapper.zig] triggerHandshakeCallback: success={}, result.code={s}, result.reason={s}", .{ success, result.code, result.reason });
-
             // trigger the handshake callback
             this.handlers.onHandshake(this.handlers.ctx, success, result);
         }

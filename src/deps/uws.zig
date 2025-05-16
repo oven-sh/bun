@@ -2584,16 +2584,32 @@ pub const us_bun_verify_error_t = extern struct {
     reason: [*c]const u8 = null,
 
     pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
-        const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
+        const message_slice = if (this.reason != null and bun.len(this.reason) > 0)
+            this.reason[0..bun.len(this.reason)]
+        else if (this.code != null and bun.len(this.code) > 0)
+            this.code[0..bun.len(this.code)]
+        else
+            "TLS Error";
 
-        const fallback = JSC.SystemError{
-            .code = bun.String.createUTF8(code),
-            .message = bun.String.createUTF8(reason),
+        const code_slice = if (this.code != null and bun.len(this.code) > 0)
+            this.code[0..bun.len(this.code)]
+        else
+            "";
+
+        const sys_error_details = JSC.SystemError{
+            .message = bun.String.createUTF8(message_slice),
+            .code = bun.String.createUTF8(code_slice),
             .errno = this.error_no,
         };
 
-        return fallback.toErrorInstance(globalObject);
+        const js_error_value = sys_error_details.toErrorInstance(globalObject);
+
+        if (code_slice.len > 0) {
+            const js_error_obj = js_error_value.toObject(globalObject) catch bun.outOfMemory();
+            js_error_obj.put(globalObject, JSC.ZigString.static("code"), bun.String.createUTF8ForJS(globalObject, code_slice)) catch bun.outOfMemory();
+        }
+
+        return js_error_value;
     }
 };
 pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;

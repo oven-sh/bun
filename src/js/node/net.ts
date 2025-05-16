@@ -449,19 +449,15 @@ const ServerHandlers: SocketHandler = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          self.emit("secure", self);
           self.emit("_tlsError", verifyError);
           self.server.emit("tlsClientError", verifyError, self);
           self.destroy(verifyError);
           return;
         }
-      } else {
-        self.authorized = true;
       }
-    } else {
       self.authorized = true;
     }
+
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
       connectionListener.$call(server, self);

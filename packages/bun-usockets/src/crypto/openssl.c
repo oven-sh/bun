@@ -642,7 +642,7 @@ restart:
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           s->fatal_error = 1;
-          us_internal_trigger_handshake_callback(s, 0); 
+          us_internal_trigger_handshake_callback(s, 0);
         }
 
         /* Terminate connection after reporting the handshake error. */

@@ -299,11 +299,11 @@ pub fn SSLWrapper(comptime T: type) type {
             }
 
             const ssl = this.ssl orelse return .{};
-            // Capture any handshake error before certificate verify may clear the queue
+
             const peek_err = BoringSSL.ERR_peek_error();
             var verr = uws.us_ssl_socket_verify_error_from_ssl(ssl);
 
-            // If no certificate verification error, fall back to handshake error
+            // no certificate verification = handshake error
             if (verr.code == null and peek_err != 0) {
                 const reason_ptr = BoringSSL.ERR_reason_error_string(peek_err);
 

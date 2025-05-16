@@ -440,7 +440,7 @@ const ServerHandlers: SocketHandler = {
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
-    self.servername = socket.getServername() || socket.host || socket.servername;
+    self.servername = socket.getServername();
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
 

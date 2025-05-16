@@ -1,11 +1,27 @@
 import type { BunRequest, Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+
+let server: Server;
+
+afterAll(() => {
+  server.stop(true);
+});
+
+beforeAll(() => {
+  server = Bun.serve({
+    port: 0,
+    routes: {
+      "/echo-query": req => {
+        return new Response("hello");
+      },
+    },
+  });
+  server.unref();
+});
 
 describe("request.searchParams basic functionality", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
+  beforeEach(() => {
+    server.reload({
       port: 0,
       routes: {
         "/echo-query": req => {
@@ -29,11 +45,6 @@ describe("request.searchParams basic functionality", () => {
         },
       },
     });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
   });
 
   it("handles simple query parameters", async () => {
@@ -109,10 +120,8 @@ describe("request.searchParams basic functionality", () => {
 });
 
 describe("request.searchParams URLSearchParams methods", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
+  beforeEach(() => {
+    server.reload({
       port: 0,
       routes: {
         "/has": req => new Response(req.searchParams.has("key").toString()),
@@ -132,11 +141,6 @@ describe("request.searchParams URLSearchParams methods", () => {
         },
       },
     });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
   });
 
   it("implements has() method", async () => {
@@ -185,10 +189,8 @@ describe("request.searchParams URLSearchParams methods", () => {
 });
 
 describe("request.searchParams with route parameters", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
+  beforeEach(() => {
+    server.reload({
       port: 0,
       routes: {
         "/users/:id": (req: BunRequest<"/users/:id">) => {
@@ -201,11 +203,6 @@ describe("request.searchParams with route parameters", () => {
         },
       },
     });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
   });
 
   it("combines route parameters with query parameters", async () => {
@@ -223,10 +220,8 @@ describe("request.searchParams with route parameters", () => {
 });
 
 describe("request.searchParams manipulation", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
+  beforeEach(() => {
+    server.reload({
       port: 0,
       routes: {
         "/append": req => {
@@ -246,11 +241,6 @@ describe("request.searchParams manipulation", () => {
         },
       },
     });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
   });
 
   it("allows appending new parameters", async () => {
@@ -270,10 +260,8 @@ describe("request.searchParams manipulation", () => {
 });
 
 describe("request.searchParams in async handlers", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
+  beforeEach(() => {
+    server.reload({
       port: 0,
       routes: {
         "/async-echo-query": async req => {
@@ -315,11 +303,6 @@ describe("request.searchParams in async handlers", () => {
         },
       },
     });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
   });
 
   it("handles query parameters in async handlers", async () => {

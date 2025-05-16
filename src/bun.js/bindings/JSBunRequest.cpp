@@ -22,8 +22,10 @@ extern "C" uWS::HttpRequest* Request__getUWSRequest(JSBunRequest*);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
+static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetQuery);
 
 static const HashTableValue JSBunRequestPrototypeValues[] = {
+    { "searchParams"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetQuery, nullptr } },
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
     { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
 };

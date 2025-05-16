@@ -130,6 +130,10 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
     self.emit("error", error);
   }
 }
+
+function emitOutofStreamErrorNT(self: any) {
+  self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
+}
 function cache() {
   const d = new Date();
   utcCache = d.toUTCString();
@@ -1843,7 +1847,7 @@ class Http2Stream extends Duplex {
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
-    if (session) {
+    if (session && typeof this.#id === "number") {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
     callback(err);
@@ -3512,13 +3516,13 @@ class ClientHttp2Session extends Http2Session {
         }
       }
       let stream_id: number = this.#parser.getNextStream();
+      if (stream_id < 0) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(emitOutofStreamErrorNT, req);
+        return req;
+      }
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
-      if (stream_id < 0) {
-        const error = $ERR_HTTP2_OUT_OF_STREAMS();
-        this.emit("error", error);
-        return null;
-      }
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, headers, sensitiveNames);

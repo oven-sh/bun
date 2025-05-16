@@ -3466,6 +3466,22 @@ pub const H2FrameParser = struct {
         const stream_id_arg = args_list.ptr[0];
         bun.debugAssert(stream_id_arg.isNumber());
         this.lastStreamID = stream_id_arg.to(u32);
+        // to set the next stream id we need to decrement because we only keep the last stream id
+        if (this.isServer) {
+            if (this.lastStreamID % 2 == 0) {
+                this.lastStreamID -= 2;
+            } else {
+                this.lastStreamID -= 1;
+            }
+        } else {
+            if (this.lastStreamID % 2 == 0) {
+                this.lastStreamID -= 1;
+            } else if (this.lastStreamID == 1) {
+                this.lastStreamID = 0;
+            } else {
+                this.lastStreamID -= 2;
+            }
+        }
         return .undefined;
     }
 
@@ -3477,6 +3493,9 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
 
         const id = this.getNextStreamID();
+        if (id > MAX_STREAM_ID) {
+            return JSC.JSValue.jsNumber(-1);
+        }
         _ = this.handleReceivedStreamID(id) orelse {
             return JSC.JSValue.jsNumber(-1);
         };

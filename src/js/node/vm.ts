@@ -39,7 +39,7 @@ const {
   Module: ModuleNative,
   createContext,
   isContext,
-  runInNewContext,
+  // runInNewContext: moduleRunInNewContext,
   // runInThisContext: moduleRunInThisContext,
   compileFunction,
   isModuleNamespaceObject,
@@ -62,6 +62,14 @@ function runInThisContext(code, options) {
     options = { filename: options };
   }
   return new Script(code, options).runInThisContext(options);
+}
+
+function runInNewContext(code, contextObject, options) {
+  if (typeof options === "string") {
+    options = { filename: options };
+  }
+  contextObject = createContext(contextObject, options);
+  return createScript(code, options).runInNewContext(contextObject, options);
 }
 
 function createScript(code, options) {
@@ -227,6 +235,7 @@ class Module {
   }
 
   [util.inspect.custom](depth, options) {
+    validateModule(this);
     if (typeof depth === "number" && depth < 0) return this;
 
     const constructor = getConstructorOf(this) || Module;

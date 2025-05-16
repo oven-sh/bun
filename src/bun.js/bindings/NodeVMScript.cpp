@@ -241,7 +241,7 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, RunningScriptOptions& options)
+static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     VM& vm = JSC::getVM(globalObject);
 
@@ -250,8 +250,8 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (options.timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *options.timeout, "ms"_s));
+        } else if (timeout) {
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
         } else {
             RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
         }
@@ -261,12 +261,27 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
     return false;
 }
 
-static void setupWatchdog(VM& vm, int64_t timeout)
+static void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& dog = vm.ensureWatchdog();
     dog.enteredVM();
-    dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+
+    Seconds oldLimit = dog.getTimeLimit();
+
+    if (oldTimeout) {
+        *oldTimeout = oldLimit.milliseconds();
+    }
+
+    if (oldLimit.isInfinity() || timeout < oldLimit.milliseconds()) {
+        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+    } else {
+        timeout = oldLimit.milliseconds();
+    }
+
+    if (newTimeout) {
+        *newTimeout = timeout;
+    }
 }
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
@@ -292,8 +307,10 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     };
 
+    std::optional<double> oldLimit, newLimit;
+
     if (options.timeout) {
-        setupWatchdog(vm, *options.timeout);
+        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
     }
 
     script->setSigintReceived(false);
@@ -306,10 +323,10 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     }
 
     if (options.timeout) {
-        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (options.breakOnSigint && checkForTermination(globalObject, scope, script, options)) {
+    if (checkForTermination(globalObject, scope, script, newLimit)) {
         return {};
     }
 
@@ -351,8 +368,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     };
 
+    std::optional<double> oldLimit, newLimit;
+
     if (options.timeout) {
-        setupWatchdog(vm, *options.timeout);
+        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
     }
 
     script->setSigintReceived(false);
@@ -366,10 +385,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     }
 
     if (options.timeout) {
-        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
-    if (options.breakOnSigint && checkForTermination(globalObject, scope, script, options)) {
+    if (checkForTermination(globalObject, scope, script, newLimit)) {
         return {};
     }
 

@@ -12,7 +12,6 @@ const {
   kBodyChunks,
   kEmitState,
   ClientRequestEmitState,
-  kEmptyObject,
   kHandle,
   getHeader,
   setHeader,
@@ -20,6 +19,8 @@ const {
   getRawKeys,
   kOutHeaders,
 } = require("internal/http");
+
+const { kEmptyObject } = require("internal/shared");
 
 const {
   validateHeaderName,

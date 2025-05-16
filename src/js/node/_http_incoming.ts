@@ -10,7 +10,6 @@ const {
   fakeSocketSymbol,
   isAbortError,
   emitErrorNextTickIfErrorListenerNT,
-  kEmptyObject,
   getIsNextIncomingMessageHTTPS,
   setIsNextIncomingMessageHTTPS,
   NodeHTTPBodyReadState,
@@ -27,6 +26,8 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
 } = require("internal/http");
+
+const { kEmptyObject } = require("internal/shared");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
 

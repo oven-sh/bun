@@ -88,8 +88,6 @@ const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 const kDeferredTimeouts = Symbol("deferredTimeouts");
 
-const kEmptyObject = Object.freeze(Object.create(null));
-
 export const enum ClientRequestEmitState {
   socket = 1,
   prefinish = 2,
@@ -360,7 +358,11 @@ const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTT
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 
+const NODE_HTTP_WARNING =
+  "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
+
 export {
+  NODE_HTTP_WARNING,
   ConnResetException,
   Headers,
   METHODS,
@@ -398,7 +400,6 @@ export {
   kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
-  kEmptyObject,
   kFetchRequest,
   kHandle,
   kHost,

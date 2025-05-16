@@ -3310,15 +3310,11 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     return object;
 }
 
-static int _debugPort;
+static uint16_t debugPort;
 
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    if (_debugPort == 0) {
-        _debugPort = 9229;
-    }
-
-    return JSC::JSValue::encode(jsNumber(_debugPort));
+    return JSC::JSValue::encode(jsNumber(debugPort));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
@@ -3327,21 +3323,19 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
-    if (!value.isInt32AsAnyInt()) {
-        throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+    double port = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (std::isnan(port) || std::isinf(port)) {
+        port = 0;
+    }
+
+    if ((port != 0 && port < 1024) || port > 65535) {
+        throwNodeRangeError(globalObject, scope, "process.debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
-    int port = value.toInt32(globalObject);
-
-    if (port != 0) {
-        if (port < 1024 || port > 65535) {
-            throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
-            return false;
-        }
-    }
-
-    _debugPort = port;
+    debugPort = floor(port);
     return true;
 }
 

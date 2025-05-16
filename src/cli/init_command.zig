@@ -372,6 +372,9 @@ pub const InitCommand = struct {
         var auto_yes = false;
         var parse_flags = true;
         var initialize_in_folder: ?[]const u8 = null;
+
+        var template: Template = .blank;
+        var prev_flag_was_react = false;
         for (init_args) |arg_| {
             const arg = bun.span(arg_);
             if (parse_flags and arg.len > 0 and arg[0] == '-') {
@@ -384,9 +387,20 @@ pub const InitCommand = struct {
                     auto_yes = true;
                 } else if (strings.eqlComptime(arg, "--")) {
                     parse_flags = false;
+                } else if (strings.eqlComptime(arg, "--react") or strings.eqlComptime(arg, "-r")) {
+                    template = .react_blank;
+                    prev_flag_was_react = true;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "tailwind") or strings.eqlComptime(arg, "--react=tailwind")) or strings.eqlComptime(arg, "r=tailwind")) {
+                    template = .react_tailwind;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "shadcn") or strings.eqlComptime(arg, "--react=shadcn")) or strings.eqlComptime(arg, "r=shadcn")) {
+                    template = .react_tailwind_shadcn;
+                    auto_yes = true;
                 } else {
                     // invalid flag; ignore
                 }
+                prev_flag_was_react = false;
             } else {
                 if (initialize_in_folder == null) {
                     initialize_in_folder = arg;
@@ -540,8 +554,6 @@ pub const InitCommand = struct {
                 logger.Loc.Empty,
             ).data.e_object;
         }
-
-        var template: Template = .blank;
 
         if (!auto_yes) {
             if (!did_load_package_json) {

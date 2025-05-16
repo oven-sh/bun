@@ -19,6 +19,7 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+import { Readable } from "node:stream";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -419,5 +420,70 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
+});
+
+describe.only("getHeapSnapshot", () => {
+  test("throws if the wrong options are passed", () => {
+    const worker = new Worker("", { eval: true });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot(0)).toThrow({
+      name: "TypeError",
+      message: 'The "options" argument must be of type object. Received type number (0)',
+    });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot({ exposeInternals: 0 })).toThrow({
+      name: "TypeError",
+      message: 'The "options.exposeInternals" property must be of type boolean. Received type number (0)',
+    });
+    // @ts-expect-error
+    expect(() => worker.getHeapSnapshot({ exposeNumericValues: 0 })).toThrow({
+      name: "TypeError",
+      message: 'The "options.exposeNumericValues" property must be of type boolean. Received type number (0)',
+    });
+  });
+
+  test("returns a rejected promise if the worker is not running", () => {
+    const worker = new Worker("", { eval: true });
+    expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_NOT_RUNNING",
+      message: "Worker instance not running",
+    });
+  });
+
+  test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", () => process.exit(0));
+      `,
+      { eval: true },
+    );
+    await once(worker, "online");
+    const stream = await worker.getHeapSnapshot();
+    expect(stream).toBeInstanceOf(Readable);
+    expect(stream.constructor.name).toBe("HeapSnapshotStream");
+    const json = await new Promise<string>(resolve => {
+      let json = "";
+      stream.on("data", chunk => {
+        json += chunk;
+      });
+      stream.on("end", () => {
+        resolve(json);
+      });
+    });
+    const object = JSON.parse(json);
+    expect(Object.keys(object).toSorted()).toEqual([
+      "edges",
+      "locations",
+      "nodes",
+      "samples",
+      "snapshot",
+      "strings",
+      "trace_function_infos",
+      "trace_tree",
+    ]);
+    worker.postMessage(0);
   });
 });

@@ -1153,6 +1153,7 @@ pub const H2FrameParser = struct {
                 increment_size = this.windowSize -| MAX_WINDOW_SIZE;
             }
             if (new_size == this.windowSize) {
+                // we should just not send more window updates not 100% correct yet
                 return false;
             }
             this.windowSize = new_size;
@@ -1167,6 +1168,10 @@ pub const H2FrameParser = struct {
                 if (new_size > MAX_WINDOW_SIZE) {
                     new_size = MAX_WINDOW_SIZE;
                     increment_size = s.windowSize -| MAX_WINDOW_SIZE;
+                }
+                if (new_size == this.windowSize) {
+                    // we should just not send more window updates not 100% correct yet
+                    return false;
                 }
                 s.windowSize = new_size;
                 this.sendWindowUpdate(s.id, UInt31WithReserved.from(increment_size));

@@ -1144,22 +1144,6 @@ pub const H2FrameParser = struct {
     /// Calculate the new window size for the connection and the stream
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
     fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) bool {
-        this.usedWindowSize += payloadSize;
-        if (this.usedWindowSize >= this.windowSize) {
-            var increment_size: u32 = WINDOW_INCREMENT_SIZE;
-            var new_size = this.windowSize +| increment_size;
-            if (new_size > MAX_WINDOW_SIZE) {
-                new_size = MAX_WINDOW_SIZE;
-                increment_size = this.windowSize -| MAX_WINDOW_SIZE;
-            }
-            if (new_size == this.windowSize) {
-                // we should just not send more window updates not 100% correct yet
-                return false;
-            }
-            this.windowSize = new_size;
-            this.sendWindowUpdate(0, UInt31WithReserved.from(increment_size));
-        }
-
         if (stream) |s| {
             s.usedWindowSize += payloadSize;
             if (s.usedWindowSize >= s.windowSize) {

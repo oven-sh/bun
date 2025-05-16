@@ -6,7 +6,6 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const { Readable } = require("node:stream");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
-const { validateObject, validateBoolean } = require("internal/validators");
 
 const {
   MessageChannel,

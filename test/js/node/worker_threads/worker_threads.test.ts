@@ -2,6 +2,7 @@ import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -19,7 +20,6 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
-import { Readable } from "node:stream";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {

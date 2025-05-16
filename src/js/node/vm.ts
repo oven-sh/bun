@@ -81,6 +81,15 @@ function validateContext(contextifiedObject) {
   }
 }
 
+function validateModule(module, typename = "Module") {
+  if (!isModule(module)) {
+    const error = new Error('The "this" argument must be an instance of ' + typename);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    error.name = "TypeError";
+    throw error;
+  }
+}
+
 let globalModuleId = 0;
 const defaultModuleName = "vm:module";
 
@@ -150,18 +159,22 @@ class Module {
   }
 
   get identifier() {
+    validateModule(this);
     return this[kNative].identifier;
   }
 
   get context() {
+    validateModule(this);
     return this[kContext];
   }
 
   get status() {
+    validateModule(this);
     return this[kNative].getStatus();
   }
 
   get namespace() {
+    validateModule(this);
     if (this[kNative].getStatusCode() < kLinked) {
       throw $ERR_VM_MODULE_STATUS("must not be unlinked or linking");
     }
@@ -170,6 +183,7 @@ class Module {
   }
 
   get error() {
+    validateModule(this);
     if (this[kNative].getStatusCode() !== kErrored) {
       throw $ERR_VM_MODULE_STATUS("must be errored");
     }
@@ -178,6 +192,7 @@ class Module {
   }
 
   async link(linker) {
+    validateModule(this);
     validateFunction(linker, "linker");
 
     if (this[kNative].getStatusCode() === kLinked) {
@@ -193,6 +208,7 @@ class Module {
   }
 
   async evaluate(options = kEmptyObject) {
+    validateModule(this);
     validateObject(options, "options");
 
     let timeout = options.timeout;
@@ -278,6 +294,8 @@ class SourceTextModule extends Module {
   }
 
   async [kLink](linker) {
+    validateModule(this, "SourceTextModule");
+
     if (this[kNative].getStatusCode() >= kLinked) {
       throw $ERR_VM_MODULE_ALREADY_LINKED();
     }
@@ -329,6 +347,7 @@ class SourceTextModule extends Module {
   }
 
   get dependencySpecifiers() {
+    validateModule(this, "SourceTextModule");
     this[kDependencySpecifiers] ??= ObjectFreeze(
       ArrayPrototypeMap.$call(this[kNative].getModuleRequests(), request => request[0]),
     );
@@ -336,6 +355,7 @@ class SourceTextModule extends Module {
   }
 
   get status() {
+    validateModule(this, "SourceTextModule");
     if (this.#error !== kNoError) {
       return "errored";
     }
@@ -346,6 +366,7 @@ class SourceTextModule extends Module {
   }
 
   get error() {
+    validateModule(this, "SourceTextModule");
     if (this.#error !== kNoError) {
       return this.#error;
     }
@@ -353,6 +374,7 @@ class SourceTextModule extends Module {
   }
 
   createCachedData() {
+    validateModule(this, "SourceTextModule");
     const { status } = this;
     if (status === "evaluating" || status === "evaluated" || status === "errored") {
       throw $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA();

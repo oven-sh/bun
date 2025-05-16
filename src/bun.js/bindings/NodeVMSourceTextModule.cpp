@@ -59,7 +59,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
     if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        throwArgumentTypeError(*globalObject, scope, 5, "cachedData"_s, "Module"_s, "Module"_s, "Buffer, TypedArray, or DataView"_s);
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
         return nullptr;
     }
 

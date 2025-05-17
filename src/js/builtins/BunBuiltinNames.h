@@ -49,6 +49,7 @@ using namespace JSC;
     macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
     macro(atimeMs) \
+    macro(attributes) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
@@ -132,6 +133,7 @@ using namespace JSC;
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
+    macro(hostDefinedImportType) \
     macro(hostname) \
     macro(href) \
     macro(httpOnly) \
@@ -234,6 +236,7 @@ using namespace JSC;
     macro(signal) \
     macro(sink) \
     macro(size) \
+    macro(specifier) \
     macro(start) \
     macro(startAlgorithm) \
     macro(startConsumingStream) \

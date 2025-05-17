@@ -35,6 +35,26 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should support skip option", async () => {
+    const { exitCode, stderr } = await runTest("05-skip-todo.js");
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("0 pass");
+    expect(stderr).toContain("4 skip");
+    expect(stderr).toContain("4 todo");
+    expect(stderr).toContain("0 fail");
+  });
+
+  test("should support only option", async () => {
+    const { exitCode, stderr } = await runTest("06-only.js");
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("6 pass");
+    expect(stderr).toContain("0 fail");
+    // output with "only" tests should not even mention other tests
+    expect(stderr).not.toContain("todo");
+    expect(stderr).not.toContain("skip");
+    expect(stderr).not.toContain("should not run");
+  });
 });
 
 async function runTest(filename: string) {

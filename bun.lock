@@ -20,7 +20,7 @@
       "name": "@types/bun",
       "version": "1.2.2",
       "dependencies": {
-        "bun-types": "1.2.2",
+        "bun-types": "workspace:",
       },
     },
     "packages/bun-types": {

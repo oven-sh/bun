@@ -5,6 +5,9 @@
   // - FORCE_COLOR=1 forces colors in the terminal
   // - "${workspaceFolder}/test" is the cwd for `bun test` so it matches CI, we should fix this later
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
+  // - Seeing WebKit files requires `vendor/WebKit` to exist and have code from the right commit.
+  //   Run `bun sync-webkit-source` to ensure that folder is at the right commit. If you haven't
+  //   cloned it at all, that script will suggest how.
   "version": "0.2.0",
   "configurations": [
     // bun test [file]
@@ -21,7 +24,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -36,13 +46,28 @@
         "BUN_DEBUG_jest": "1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
       "name": "Attach",
       "request": "attach",
       "pid": "${command:pickMyProcess}",
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -57,7 +82,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -72,7 +104,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -87,7 +126,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -102,7 +148,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -118,7 +171,14 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -139,7 +199,14 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -160,7 +227,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -178,7 +252,14 @@
         "GOMAXPROCS": "1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -192,7 +273,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -202,14 +290,18 @@
       "args": ["run", "--watch", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
-        // "BUN_DEBUG_DEBUGGER": "1",
-        // "BUN_DEBUG_INTERNAL_DEBUGGER": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        // "BUN_INSPECT": "ws+unix:///var/folders/jk/8fzl9l5119598vsqrmphsw7m0000gn/T/tl15npi7qtf.sock?report=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -223,7 +315,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -239,7 +338,14 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -260,7 +366,14 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -281,7 +394,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -296,7 +416,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -311,7 +438,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -326,7 +460,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -341,7 +482,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -357,7 +505,14 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -378,7 +533,14 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -398,7 +560,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     // bun test [*]
     {
@@ -413,7 +582,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -427,7 +603,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -442,7 +625,14 @@
         "BUN_INSPECT": "ws://localhost:0/",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -461,7 +651,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     {
       "type": "lldb",
@@ -475,7 +672,14 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      // Don't pause when the GC runs while the debugger is open.
+      "sourceMap": {
+        // macOS
+        "/Users/runner/work/_temp/webkit-release/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // linux
+        "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
+      },
     },
     // Windows: bun test [file]
     {
@@ -1133,6 +1337,11 @@
         "handle SIGPWR nostop noprint pass",
         "source ${workspaceFolder}/misctools/gdb/std_gdb_pretty_printers.py",
         "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
+        "set substitute-path /webkitbuild/vendor/WebKit ${workspaceFolder}/vendor/WebKit",
+        "set substitute-path /webkitbuild/.WTF/Headers ${workspaceFolder}/vendor/WebKit/Source/WTF",
+        // uncomment if you like
+        // "set disassembly-flavor intel",
+        "set print asm-demangle",
       ],
     },
   ],

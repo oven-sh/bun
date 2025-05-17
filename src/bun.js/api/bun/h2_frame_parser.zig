@@ -37,7 +37,7 @@ const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
-
+const DEFAULT_WINDOW_SIZE = std.math.maxInt(u16);
 const PaddingStrategy = enum {
     none,
     aligned,
@@ -684,10 +684,20 @@ pub const H2FrameParser = struct {
     remainingLength: i32 = 0,
     // buffer if more data is needed for the current frame
     readBuffer: MutableString,
+
+    // local Window limits the download of data
+
     // current window size for the connection
-    windowSize: u32 = 65535,
+    windowSize: u64 = 65535,
     // used window size for the connection
-    usedWindowSize: u32 = 0,
+    usedWindowSize: u64 = 0,
+
+    // remote Window limits the upload of data
+    // remote window size for the connection
+    remoteWindowSize: u64 = 0,
+    // remote used window size for the connection
+    remoteUsedWindowSize: u64 = 0,
+
     maxHeaderListPairs: u32 = 128,
     maxRejectedStreams: u32 = 100,
     maxOutstandingSettings: u32 = 10,
@@ -764,9 +774,13 @@ pub const H2FrameParser = struct {
         exclusive: bool = false,
         weight: u16 = 36,
         // current window size for the stream
-        windowSize: u32 = 65535,
+        windowSize: u64 = 65535,
         // used window size for the stream
-        usedWindowSize: u32 = 0,
+        usedWindowSize: u64 = 0,
+        // remote window size for the stream
+        remoteWindowSize: u64,
+        // remote used window size for the stream
+        remoteUsedWindowSize: u64 = 0,
         signal: ?*SignalRef = null,
 
         // when we have backpressure we queue the data e round robin the Streams
@@ -837,7 +851,10 @@ pub const H2FrameParser = struct {
                 if (self.len == 0) return &.{};
                 return self.data.items[self.front..][0..self.len];
             }
-
+            pub fn peekFront(self: *PendingQueue) ?*PendingFrame {
+                if (self.len == 0) return null;
+                return &self.data.items[self.front];
+            }
             pub fn dequeue(self: *PendingQueue) ?PendingFrame {
                 if (self.len == 0) {
                     log("PendingQueue.dequeue null", .{});
@@ -864,6 +881,7 @@ pub const H2FrameParser = struct {
         const PendingFrame = struct {
             end_stream: bool = false, // end_stream flag
             len: u32 = 0, // actually payload size
+            offset: u32 = 0, // offset into the buffer (if partial flush due to flow control)
             buffer: []u8 = "", // allocated buffer if len > 0
             callback: JSC.Strong.Optional = .empty, // JSCallback for done
 
@@ -874,6 +892,10 @@ pub const H2FrameParser = struct {
                 }
                 this.len = 0;
                 this.callback.deinit();
+            }
+
+            pub fn slice(this: *const PendingFrame) []u8 {
+                return this.buffer[this.offset..this.len];
             }
         };
 
@@ -899,17 +921,20 @@ pub const H2FrameParser = struct {
         }
         pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) FlushState {
             if (this.canSendData()) {
-                // flush one frame
-                if (this.dataFrameQueue.dequeue()) |frame| {
-                    defer {
-                        var _frame = frame;
-                        if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
-                        _frame.deinit(client.allocator);
-                    }
+                // try to flush one frame
+                if (this.dataFrameQueue.peekFront()) |frame| {
                     const no_backpressure = brk: {
+                        var is_flow_control_limited = false;
+                        defer if (!is_flow_control_limited) {
+                            // only call the callback + free the frame if we write to the socket the full frame
+                            var _frame = this.dataFrameQueue.dequeue().?;
+                            if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
+                            _frame.deinit(client.allocator);
+                        };
                         const writer = client.toWriter();
 
                         if (frame.len == 0) {
+
                             // flush a zero payload frame
                             var dataHeader: FrameHeader = .{
                                 .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
@@ -919,34 +944,72 @@ pub const H2FrameParser = struct {
                             };
                             break :brk dataHeader.write(@TypeOf(writer), writer);
                         } else {
-                            // flush with some payload
-                            client.queuedDataSize -= frame.len;
-                            const padding = this.getPadding(frame.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
-                            const payload_size = frame.len + (if (padding != 0) padding + 1 else 0);
-                            var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
-                            if (padding != 0) {
-                                flags |= @intFromEnum(DataFrameFlags.PADDED);
+                            const frame_slice = frame.slice();
+                            const max_size = @min(frame_slice.len, this.remoteWindowSize - this.remoteUsedWindowSize, this.remoteWindowSize - this.remoteUsedWindowSize);
+                            if (max_size == 0) {
+                                // we are flow control limited
+                                return .no_action;
                             }
-                            var dataHeader: FrameHeader = .{
-                                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                                .flags = flags,
-                                .streamIdentifier = @intCast(this.id),
-                                .length = @intCast(payload_size),
-                            };
-                            _ = dataHeader.write(@TypeOf(writer), writer);
-                            if (padding != 0) {
-                                var buffer = shared_request_buffer[0..];
-                                bun.memmove(buffer[1..frame.len], buffer[0..frame.len]);
-                                buffer[0] = padding;
-                                break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                            if (max_size < frame_slice.len) {
+                                is_flow_control_limited = true;
+                                // we need to break the frame into smaller chunks
+                                frame.offset += @intCast(max_size);
+                                const able_to_send = frame_slice[0..max_size];
+                                log("dataFrame partial flushed {} {}", .{ able_to_send.len, frame.end_stream });
+
+                                const padding = this.getPadding(able_to_send.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const payload_size = able_to_send.len + (if (padding != 0) padding + 1 else 0);
+                                var flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
+                                if (padding != 0) {
+                                    flags |= @intFromEnum(DataFrameFlags.PADDED);
+                                }
+                                var dataHeader: FrameHeader = .{
+                                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                                    .flags = flags,
+                                    .streamIdentifier = @intCast(this.id),
+                                    .length = @intCast(payload_size),
+                                };
+                                _ = dataHeader.write(@TypeOf(writer), writer);
+                                if (padding != 0) {
+                                    var buffer = shared_request_buffer[0..];
+                                    bun.memmove(buffer[1..able_to_send.len], buffer[0..able_to_send.len]);
+                                    buffer[0] = padding;
+                                    break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                                } else {
+                                    break :brk (writer.write(able_to_send) catch 0) != 0;
+                                }
                             } else {
-                                break :brk (writer.write(frame.buffer[0..frame.len]) catch 0) != 0;
+
+                                // flush with some payload
+                                client.queuedDataSize -= frame_slice.len;
+                                written.* += frame_slice.len;
+                                client.outboundQueueSize -= 1;
+                                log("dataFrame flushed {} {}", .{ frame_slice.len, frame.end_stream });
+
+                                const padding = this.getPadding(frame_slice.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                                const payload_size = frame_slice.len + (if (padding != 0) padding + 1 else 0);
+                                var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+                                if (padding != 0) {
+                                    flags |= @intFromEnum(DataFrameFlags.PADDED);
+                                }
+                                var dataHeader: FrameHeader = .{
+                                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                                    .flags = flags,
+                                    .streamIdentifier = @intCast(this.id),
+                                    .length = @intCast(payload_size),
+                                };
+                                _ = dataHeader.write(@TypeOf(writer), writer);
+                                if (padding != 0) {
+                                    var buffer = shared_request_buffer[0..];
+                                    bun.memmove(buffer[1..frame_slice.len], buffer[0..frame_slice.len]);
+                                    buffer[0] = padding;
+                                    break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                                } else {
+                                    break :brk (writer.write(frame_slice) catch 0) != 0;
+                                }
                             }
                         }
                     };
-                    written.* += frame.len;
-                    log("dataFrame flushed {} {}", .{ frame.len, frame.end_stream });
-                    client.outboundQueueSize -= 1;
                     if (this.dataFrameQueue.isEmpty()) {
                         if (frame.end_stream) {
                             if (this.waitForTrailers) {
@@ -1037,11 +1100,12 @@ pub const H2FrameParser = struct {
             client.queuedDataSize += frame.len;
         }
 
-        pub fn init(streamIdentifier: u32, initialWindowSize: u32) Stream {
+        pub fn init(streamIdentifier: u32, initialWindowSize: u32, remoteWindowSize: u32) Stream {
             const stream = Stream{
                 .id = streamIdentifier,
                 .state = .OPEN,
                 .windowSize = initialWindowSize,
+                .remoteWindowSize = remoteWindowSize,
                 .usedWindowSize = 0,
                 .weight = 36,
                 .dataFrameQueue = .{},
@@ -1143,11 +1207,27 @@ pub const H2FrameParser = struct {
 
     /// Calculate the new window size for the connection and the stream
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
-    fn ajustWindowSize(this: *H2FrameParser, stream: *Stream, payloadSize: u32) void {
-        stream.usedWindowSize += payloadSize;
-        if (stream.usedWindowSize >= stream.windowSize) {
-            stream.usedWindowSize = 0;
-            this.sendWindowUpdate(stream.id, UInt31WithReserved.from(stream.windowSize));
+    fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) void {
+        this.usedWindowSize +|= payloadSize;
+        if (this.usedWindowSize == this.windowSize) {
+            this.windowSize += WINDOW_INCREMENT_SIZE;
+            this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
+        } else if (this.usedWindowSize > this.windowSize) {
+            // we are receiving more data than we are allowed to
+            this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+            this.usedWindowSize -= payloadSize;
+        }
+
+        if (stream) |s| {
+            s.usedWindowSize += payloadSize;
+            if (s.usedWindowSize == s.windowSize) {
+                s.windowSize += WINDOW_INCREMENT_SIZE;
+                this.sendWindowUpdate(s.id, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
+            } else if (s.usedWindowSize > s.windowSize) {
+                // we are receiving more data than we are allowed to
+                this.sendGoAway(s.id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                s.usedWindowSize -= payloadSize;
+            }
         }
     }
 
@@ -1728,17 +1808,15 @@ pub const H2FrameParser = struct {
         }
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            // at this point we try to send more data because we received a window update
+            defer _ = this.flushStreamQueue();
             const payload = content.data;
             const windowSizeIncrement = UInt31WithReserved.fromBytes(payload);
             this.readBuffer.reset();
-            // we automatically send a window update when receiving one if we are a client
-            if (!this.isServer) {
-                this.sendWindowUpdate(frame.streamIdentifier, windowSizeIncrement);
-            }
             if (stream) |s| {
-                s.windowSize += windowSizeIncrement.uint31;
+                s.remoteWindowSize += windowSizeIncrement.uint31;
             } else {
-                this.windowSize += windowSizeIncrement.uint31;
+                this.remoteWindowSize += windowSizeIncrement.uint31;
             }
             log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement.uint31 });
             return content.end;
@@ -2246,7 +2324,6 @@ pub const H2FrameParser = struct {
                 log("settings frame ACK", .{});
 
                 // we can now write any request
-                this.remoteSettings = this.localSettings;
                 if (this.outstandingSettings > 0) {
                     this.outstandingSettings -= 1;
                 }
@@ -2257,7 +2334,7 @@ pub const H2FrameParser = struct {
             return 0;
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
-            var remoteSettings = this.remoteSettings orelse this.localSettings;
+            var remoteSettings: FullSettingsPayload = this.remoteSettings orelse .{};
             var i: usize = 0;
             const payload = content.data;
             while (i < payload.len) {
@@ -2268,6 +2345,22 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
+            if (this.remoteWindowSize == 0) {
+                defer _ = this.flushStreamQueue();
+
+                // TODO: handle increase/decrease in streams with usedWindowSize > 0
+                // we need to increase/decrease the initial window size for streams already created
+                // if becames negative should be a flow control error
+
+                // the window size is not set yet, so we use the initial window size
+                this.remoteWindowSize = remoteSettings.initialWindowSize;
+                var it = this.streams.valueIterator();
+                while (it.next()) |stream| {
+                    if (stream.remoteWindowSize == 0) {
+                        stream.remoteWindowSize = this.remoteWindowSize;
+                    }
+                }
+            }
             this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
             return content.end;
         }
@@ -2292,9 +2385,9 @@ pub const H2FrameParser = struct {
         }
 
         // new stream open
-        const settings = this.remoteSettings orelse this.localSettings;
         const entry = this.streams.getOrPut(streamIdentifier) catch bun.outOfMemory();
-        entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize);
+
+        entry.value_ptr.* = Stream.init(streamIdentifier, this.localSettings.initialWindowSize, if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE);
         const ctx_value = this.strong_ctx.get() orelse return entry.value_ptr;
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
@@ -2478,7 +2571,7 @@ pub const H2FrameParser = struct {
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
-                if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
+                if (initialWindowSizeValue > MAX_WINDOW_SIZE or initialWindowSizeValue < 0) {
                     return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
                 }
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
@@ -3079,18 +3172,27 @@ pub const H2FrameParser = struct {
                 _ = dataHeader.write(@TypeOf(writer), writer);
             }
         } else {
-            // max frame size will always be at least 16384
-            const max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
-
             var offset: usize = 0;
 
             while (offset < payload.len) {
+                // max frame size will always be at least 16384 (but we need to respect the flow control)
+                var max_size = @min(@min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME, this.remoteWindowSize - stream.remoteUsedWindowSize), stream.remoteWindowSize - stream.remoteUsedWindowSize);
+                var is_flow_control_limited = false;
+                if (max_size == 0) {
+                    is_flow_control_limited = true;
+                    // this will be handled later if cannot send the entire payload in one frame
+                    max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
+                }
                 const size = @min(payload.len - offset, max_size);
+                defer if (!is_flow_control_limited) {
+                    stream.remoteUsedWindowSize += size;
+                    this.remoteUsedWindowSize += size;
+                };
                 const slice = payload[offset..(size + offset)];
                 offset += size;
                 const end_stream = offset >= payload.len and can_close;
 
-                if (this.hasBackpressure() or this.outboundQueueSize > 0) {
+                if (this.hasBackpressure() or this.outboundQueueSize > 0 or is_flow_control_limited) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended
@@ -4170,6 +4272,7 @@ pub const H2FrameParser = struct {
         }
         if (try options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
+                log("settings received in the constructor", .{});
                 try this.loadSettingsFromJSValue(globalObject, settings_js);
 
                 if (try settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {

@@ -3708,9 +3708,9 @@ pub const H2FrameParser = struct {
 
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
-            if (this.isServer) {
-                if (stream.id % 2 == 0) continue;
-            } else if (stream.id % 2 != 0) continue;
+            // if (this.isServer) {
+            //     if (stream.id % 2 == 0) continue;
+            // } else if (stream.id % 2 != 0) continue;
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);

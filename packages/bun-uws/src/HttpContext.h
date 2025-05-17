@@ -33,6 +33,9 @@
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 #include <span>
+#include <array>
+#include <mutex>
+
 namespace uWS {
 template<bool> struct HttpResponse;
 
@@ -107,7 +110,7 @@ private:
     
     static std::span<const std::string> getAllHttpMethods() {
         static once_flag flag;
-        static std::array<const std::string, 35> methods;
+        static std::array<std::string, 35> methods;
         call_once(flag, []() {
             methods = { 
                 #define MACRO(name) std::string {name},

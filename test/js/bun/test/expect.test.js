@@ -4854,6 +4854,14 @@ describe("expect()", () => {
       expect(e.message).toContain('"ball"');
     }
   });
+
+  test("does not crash with non-cell error", () => {
+    expect(() => {
+      expect(() => {
+        throw 25;
+      }).toThrow(Error);
+    }).toThrow();
+  });
 });
 
 function tmpFile(exists) {

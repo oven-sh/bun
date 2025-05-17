@@ -3,7 +3,7 @@ const string = @import("./string_types.zig").string;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Fs = @import("./fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 pub const import_path = "/bun-vfs$$/node_modules/";
@@ -17,7 +17,24 @@ comptime {
 pub const FallbackModule = struct {
     path: Fs.Path,
     package_json: *const PackageJSON,
-    code: string,
+    code: *const fn () string,
+
+    // This workaround exists to allow bun.runtimeEmbedFile to work.
+    // Using `@embedFile` forces you to wait for the Zig build to finish in
+    // debug builds, even when you only changed JS builtins.
+    fn createSourceCodeGetter(comptime code_path: string) *const fn () string {
+        const Getter = struct {
+            fn get() string {
+                if (bun.Environment.codegen_embed) {
+                    return @embedFile(code_path);
+                }
+
+                return bun.runtimeEmbedFile(.codegen, code_path);
+            }
+        };
+
+        return Getter.get;
+    }
 
     pub fn init(comptime name: string) FallbackModule {
         @setEvalBranchQuota(99999);
@@ -29,13 +46,12 @@ pub const FallbackModule = struct {
                 .name = name,
                 .version = version,
                 .module_type = .esm,
-                .hash = @as(u32, @truncate(bun.hash(name ++ "@" ++ version))),
                 .main_fields = undefined,
                 .browser_map = undefined,
                 .source = logger.Source.initPathString(import_path ++ name ++ "/package.json", ""),
                 .side_effects = .false,
             },
-            .code = @embedFile(code_path),
+            .code = createSourceCodeGetter(code_path),
         };
     }
 };
@@ -74,7 +90,7 @@ pub fn contentsFromPath(path: string) ?string {
     module_name = module_name[0 .. std.mem.indexOfScalar(u8, module_name, '/') orelse module_name.len];
 
     if (Map.get(module_name)) |mod| {
-        return mod.code;
+        return mod.code();
     }
 
     return null;

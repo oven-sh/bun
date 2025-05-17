@@ -17,10 +17,10 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 ```jsonc
 {
   "compilerOptions": {
-    // Enable latest features
+    // Environment setup & latest features
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
@@ -35,12 +35,14 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
 
-    // Some stricter flags
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noPropertyAccessFromIndexSignature": true
-  }
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+  },
 }
 ```
 

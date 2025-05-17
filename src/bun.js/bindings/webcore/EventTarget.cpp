@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "Event.h"
+#include "EventPath.h"
 
 #include "EventTarget.h"
 
@@ -48,7 +49,7 @@
 // #include "ScriptController.h"
 // #include "ScriptDisallowedScope.h"
 // #include "Settings.h"
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -58,8 +59,8 @@
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTarget);
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTargetWithInlineData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTarget);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTargetWithInlineData);
 
 Ref<EventTarget> EventTarget::create(ScriptExecutionContext& context)
 {
@@ -248,10 +249,12 @@ void EventTarget::dispatchEvent(Event& event)
     ASSERT(event.isInitialized());
     ASSERT(!event.isBeingDispatched());
 
+    EventPath eventPath(*this);
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
     event.resetBeforeDispatch();
+    event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
     event.resetAfterDispatch();

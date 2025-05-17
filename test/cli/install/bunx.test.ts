@@ -1,11 +1,10 @@
 import { spawn } from "bun";
-import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import { readdirSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { readdirSorted } from "./dummy.registry";
 
 let x_dir: string;
 let current_tmpdir: string;
@@ -84,7 +83,7 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
       cwd: x_dir,
       stdout: "pipe",
       stdin: "ignore",
-      stderr: "inherit",
+      stderr: "ignore",
       env: {
         ...env,
         // BUN_DEBUG_QUIET_LOGS: undefined,
@@ -281,7 +280,7 @@ it("should work for github repository with committish", async () => {
 
   // cached
   const cached = spawn({
-    cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
+    cmd: [bunExe(), "x", "--no-install", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
@@ -395,5 +394,106 @@ it('should set "npm_config_user_agent" to bun', async () => {
 
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain(`bun/${Bun.version}`);
+  expect(exited).toBe(0);
+});
+
+/**
+ * IMPORTANT
+ * Please only use packages with small unpacked sizes for tests. It helps keep them fast.
+ */
+describe("bunx --no-install", () => {
+  const run = (...args: string[]): Promise<[stderr: string, stdout: string, exitCode: number]> => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: x_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return Promise.all([
+      new Response(subprocess.stderr).text(),
+      new Response(subprocess.stdout).text(),
+      subprocess.exited,
+    ] as const);
+  };
+
+  it("if the package is not installed, it should fail and print an error message", async () => {
+    const [err, out, exited] = await run("--no-install", "http-server", "--version");
+
+    expect(err.trim()).toContain("Could not find an existing 'http-server' binary to run.");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  });
+
+  /*
+    yes, multiple package tests are neccessary.
+      1. there's specialized logic for `bunx tsc` and `bunx typescript`
+      2. http-server checks for non-alphanumeric edge cases. Plus it's small
+      3. eslint is alphanumeric and extremely common
+   */
+  it.each(["typescript", "http-server", "eslint"])("`bunx --no-install %s` should find cached packages", async pkg => {
+    // not cached
+    {
+      const [err, out, code] = await run(pkg, "--version");
+      expect(err).not.toContain("error:");
+      expect(out).not.toBeEmpty();
+      expect(code).toBe(0);
+    }
+
+    // cached
+    {
+      const [err, out, code] = await run("--no-install", pkg, "--version");
+      expect(err).not.toContain("error:");
+      expect(out).not.toBeEmpty();
+      expect(code).toBe(0);
+    }
+  });
+
+  it("when an exact version match is found, should find cached packages", async () => {
+    // not cached
+    {
+      const [err, out, code] = await run("http-server@14.0.0", "--version");
+      expect(err).not.toContain("error:");
+      expect(out).not.toBeEmpty();
+      expect(code).toBe(0);
+    }
+
+    // cached
+    {
+      const [err, out, code] = await run("--no-install", "http-server@14.0.0", "--version");
+      expect(err).not.toContain("error:");
+      expect(out).not.toBeEmpty();
+      expect(code).toBe(0);
+    }
+  });
+});
+
+it("should handle postinstall scripts correctly with symlinked bunx", async () => {
+  // Create a symlink to bun called "bunx"
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
+
+  const subprocess = spawn({
+    cmd: ["bunx", "esbuild@latest", "--version"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: {
+      ...env,
+      PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+    },
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Cannot find module 'exec'");
+  expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });

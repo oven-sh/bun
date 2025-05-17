@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
@@ -42,6 +42,9 @@ pub const SupportsCondition = union(enum) {
         /// The property id for the declaration.
         property_id: css.PropertyId,
         /// The raw value of the declaration.
+        ///
+        /// What happens if the value is a URL? A URL in this context does nothing
+        /// e.g. `@supports (background-image: url('example.png'))`
         value: []const u8,
 
         pub fn eql(this: *const @This(), other: *const @This()) bool {
@@ -58,6 +61,33 @@ pub const SupportsCondition = union(enum) {
 
     /// An unknown condition.
     unknown: []const u8,
+
+    pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .not => |not| {
+                not.deinit(allocator);
+                allocator.destroy(not);
+            },
+            inline .@"and", .@"or" => |*list| {
+                css.deepDeinit(SupportsCondition, allocator, list);
+            },
+            .declaration => {},
+            .selector => {},
+            .unknown => {},
+        }
+    }
+
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return deepClone(this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
         return css.implementEql(SupportsCondition, this, other);
@@ -204,7 +234,7 @@ pub const SupportsCondition = union(enum) {
         }
 
         if (conditions.items.len == 1) {
-            const ret = conditions.pop();
+            const ret = conditions.pop().?;
             defer conditions.deinit(input.allocator());
             return .{ .result = ret };
         }
@@ -313,7 +343,7 @@ pub const SupportsCondition = union(enum) {
                 try dest.writeChar('(');
 
                 const prefix: css.VendorPrefix = property_id.prefix().orNone();
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar('(');
                 }
 
@@ -335,7 +365,7 @@ pub const SupportsCondition = union(enum) {
                     }
                 }
 
-                if (!prefix.eq(css.VendorPrefix{ .none = true })) {
+                if (prefix != css.VendorPrefix{ .none = true }) {
                     try dest.writeChar(')');
                 }
                 try dest.writeChar(')');

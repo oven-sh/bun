@@ -16,14 +16,12 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -33,14 +31,12 @@
       "args": ["test", "--only", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
         "BUN_DEBUG_jest": "1",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -56,14 +52,12 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -73,14 +67,12 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -90,14 +82,12 @@
       "args": ["test", "--watch", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -107,14 +97,12 @@
       "args": ["test", "--hot", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -124,7 +112,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -132,7 +119,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -147,7 +133,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -155,7 +140,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -168,7 +152,7 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
@@ -177,17 +161,15 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
         "BUN_DEBUG_IncrementalGraph": "1",
@@ -197,62 +179,58 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "--watch", "${fileBasename}"],
+      "args": ["run", "--watch", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
+        // "BUN_DEBUG_DEBUGGER": "1",
+        // "BUN_DEBUG_INTERNAL_DEBUGGER": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        // "BUN_INSPECT": "ws+unix:///var/folders/jk/8fzl9l5119598vsqrmphsw7m0000gn/T/tl15npi7qtf.sock?report=1",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "--hot", "${fileBasename}"],
+      "args": ["run", "--hot", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
@@ -262,7 +240,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -274,7 +251,7 @@
       "request": "launch",
       "name": "bun run [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
@@ -284,7 +261,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -300,14 +276,12 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -317,14 +291,12 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -334,14 +306,12 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -351,14 +321,12 @@
       "args": ["test", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -368,14 +336,12 @@
       "args": ["test", "--hot", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -385,7 +351,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -393,7 +358,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -408,7 +372,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
@@ -416,7 +379,6 @@
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -432,13 +394,11 @@
       "args": ["exec", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     // bun test [*]
     {
@@ -449,13 +409,11 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -465,13 +423,11 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -481,14 +437,12 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -503,13 +457,11 @@
       "args": ["install"],
       "cwd": "${fileDirname}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -519,13 +471,11 @@
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     // Windows: bun test [file]
     {
@@ -539,10 +489,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -569,10 +515,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -597,10 +539,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -627,10 +565,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "0",
         },
@@ -655,10 +589,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -693,10 +623,6 @@
       "args": ["test", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -733,10 +659,6 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -762,10 +684,6 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -787,11 +705,11 @@
       "cwd": "${fileDirname}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
+          "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
         {
-          "name": "BUN_DEBUG_QUIET_LOGS",
+          "name": "BUN_DEBUG_SYS",
           "value": "1",
         },
         {
@@ -811,10 +729,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -845,10 +759,6 @@
       "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -881,10 +791,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -909,10 +815,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -939,10 +841,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "0",
         },
@@ -967,10 +865,6 @@
       "args": ["test", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -997,10 +891,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1025,10 +915,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1063,10 +949,6 @@
       "args": ["test", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1103,10 +985,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1129,10 +1007,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1153,10 +1027,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1182,10 +1052,6 @@
       "args": ["test"],
       "cwd": "${workspaceFolder}",
       "environment": [
-        {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
@@ -1221,10 +1087,6 @@
       "cwd": "${workspaceFolder}",
       "environment": [
         {
-          "name": "FORCE_COLOR",
-          "value": "1",
-        },
-        {
           "name": "BUN_DEBUG_QUIET_LOGS",
           "value": "1",
         },
@@ -1239,7 +1101,28 @@
       ],
       "console": "internalConsole",
       // Don't pause when the GC runs while the debugger is open.
-      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
+    },
+    {
+      "type": "bun",
+      "name": "[JS] bun test [file]",
+      "runtime": "${workspaceFolder}/build/debug/bun-debug",
+      "runtimeArgs": ["test", "${file}"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+    },
+    {
+      "type": "midas-rr",
+      "request": "attach",
+      "name": "rr",
+      "trace": "Off",
+      "setupCommands": [
+        "handle SIGPWR nostop noprint pass",
+        "source ${workspaceFolder}/misctools/gdb/std_gdb_pretty_printers.py",
+        "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
+      ],
     },
   ],
   "inputs": [

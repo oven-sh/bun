@@ -152,7 +152,7 @@ public:
 
     static JSMockImplementation* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, Kind kind, JSC::JSValue heldValue, bool isOnce)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSMockImplementation* impl = new (NotNull, allocateCell<JSMockImplementation>(vm)) JSMockImplementation(vm, structure, kind);
         impl->finishCreation(vm, heldValue, isOnce ? jsNumber(1) : jsUndefined());
         return impl;
@@ -490,7 +490,7 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMockFunction);
 static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     if (auto* current = tryJSDynamicCast<JSMockImplementation*, Unknown>(fn->fallbackImplmentation)) {
         current->underlyingValue.set(vm, current, value);
@@ -510,7 +510,7 @@ static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockI
 static void pushImplOnce(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSMockImplementation* impl = JSMockImplementation::create(globalObject, globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject), kind, value, true);
 
@@ -762,6 +762,17 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     return mock;
 }
 
+template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
+{
+#define VISIT_JSMOCKMODULE_GC_MEMBER(T, name) \
+    name.visit(visitor);
+    FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
+#undef VISIT_JSMOCKMODULE_GC_MEMBER
+}
+
+template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
+template void JSMockModule::visit(JSC::SlotVisitor&);
+
 extern Structure* createMockResultStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
@@ -798,7 +809,7 @@ static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, co
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSMockFunction* fn = jsDynamicCast<JSMockFunction*>(callframe->jsCallee());
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (UNLIKELY(!fn)) {
@@ -954,7 +965,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObje
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1017,7 +1028,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globa
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue)
 
@@ -1033,7 +1044,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockClear, (JSC::JSGlobalObject * globalO
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1046,7 +1057,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReset, (JSC::JSGlobalObject * globalO
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1059,7 +1070,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRestore, (JSC::JSGlobalObject * globa
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1069,7 +1080,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRestore, (JSC::JSGlobalObject * globa
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSValue thisValue = callframe->thisValue();
@@ -1091,7 +1102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementation, (JSC::JSGlobalObject 
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSValue thisValue = callframe->thisValue();
@@ -1116,13 +1127,12 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalOb
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
     // https://github.com/jestjs/jest/blob/bd1c6db7c15c23788ca3e09c919138e48dd3b28a/packages/jest-mock/src/index.ts#L849-L856
     if (callframe->argument(0).toBoolean(globalObject)) {
-        RETURN_IF_EXCEPTION(scope, {});
         WTF::String name = callframe->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->setName(name);
@@ -1137,7 +1147,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnThis, (JSC::JSGlobalObject * gl
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1150,7 +1160,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnValue, (JSC::JSGlobalObject * g
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1163,7 +1173,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnValueOnce, (JSC::JSGlobalObject
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1176,7 +1186,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject *
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1189,7 +1199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1202,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject *
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1215,7 +1225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1225,7 +1235,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue thisObject = callframe->thisValue();
     if (UNLIKELY(!thisObject.isObject())) {
@@ -1319,7 +1329,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     JSValue thisValue = callframe->thisValue();
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(thisValue);
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
@@ -1426,7 +1436,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsClearAllMocks, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -1545,7 +1555,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 

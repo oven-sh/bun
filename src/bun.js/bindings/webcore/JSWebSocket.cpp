@@ -145,7 +145,7 @@ static_assert(WebSocket::CLOSED == 3, "CLOSED in WebSocket does not match value 
 
 static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -172,7 +172,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalG
 
 static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -199,7 +199,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
 
 static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
@@ -262,7 +262,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     size_t argsCount = std::min<size_t>(2, callFrame->argumentCount());
@@ -374,7 +374,7 @@ JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWebSocketPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -894,6 +894,12 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
+}
+
+size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
+{
+    auto* thisObject = jsCast<JSWebSocket*>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

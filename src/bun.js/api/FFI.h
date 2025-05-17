@@ -15,6 +15,11 @@
 
 #define ZIG_REPR_TYPE int64_t
 
+#ifdef _WIN32
+#define BUN_FFI_IMPORT __declspec(dllimport)
+#else
+#define BUN_FFI_IMPORT
+#endif
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -60,8 +65,9 @@ typedef enum {
   napi_detachable_arraybuffer_expected,
   napi_would_deadlock // unused
 } napi_status;
-void* NapiHandleScope__open(void* jsGlobalObject, bool detached);
-void NapiHandleScope__close(void* jsGlobalObject, void* handleScope);
+BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
+BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
 #endif
 
 
@@ -135,7 +141,7 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
-ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
@@ -347,7 +353,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
+BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 

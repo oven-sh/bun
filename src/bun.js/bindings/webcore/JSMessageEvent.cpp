@@ -56,13 +56,14 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
 
 template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -151,7 +152,16 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!portsValue.isUndefined()) {
-        result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(lexicalGlobalObject, portsValue);
+        result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(
+            lexicalGlobalObject,
+            portsValue,
+            [](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
+                Bun::ERR::INVALID_ARG_TYPE(throwScope,
+                    &lexicalGlobalObject,
+                    "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort."_s);
+            },
+            "MessageEvent constructor"_s,
+            "eventInitDict.ports"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.ports = Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {};
@@ -162,11 +172,14 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         sourceValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "source"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
-    // if (!sourceValue.isUndefined()) {
-    //     result.source = convert<IDLNullable<IDLUnion<IDLInterface<WindowProxy>, IDLInterface<MessagePort>, IDLInterface<ServiceWorker>>>>(lexicalGlobalObject, sourceValue);
-    //     RETURN_IF_EXCEPTION(throwScope, {});
-    // } else
-    result.source = std::nullopt;
+    if (!sourceValue.isUndefinedOrNull()) {
+        result.source = convert<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, sourceValue, [&sourceValue](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
+            Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "eventInitDict.source"_s, "MessagePort"_s, sourceValue);
+        });
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        result.source = nullptr;
+    }
     return result;
 }
 
@@ -219,7 +232,7 @@ using JSMessageEventDOMConstructor = JSDOMConstructor<JSMessageEvent>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSMessageEventDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -315,7 +328,7 @@ JSValue JSMessageEvent::getConstructor(VM& vm, const JSGlobalObject* globalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(jsMessageEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSMessageEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -351,10 +364,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_lastEventId, (JSGlobalObject * lexicalGl
 
 static inline JSValue jsMessageEvent_sourceGetter(JSGlobalObject& lexicalGlobalObject, JSMessageEvent& thisObject)
 {
-    return jsNull();
-    // auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // auto& impl = thisObject.wrapped();
-    // RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLUnion<IDLInterface<WindowProxy>, IDLInterface<MessagePort>, IDLInterface<ServiceWorker>>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.source())));
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = thisObject.wrapped();
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.source())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsMessageEvent_source, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
@@ -412,8 +425,7 @@ static inline JSC::EncodedJSValue jsMessageEventPrototypeFunction_initMessageEve
     auto lastEventId = argument5.value().isUndefined() ? emptyString() : convert<IDLDOMString>(*lexicalGlobalObject, argument5.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument6 = callFrame->argument(6);
-    auto source = WebCore::MessageEventSource();
-    // auto source = argument6.value().isUndefined() ? std::nullopt : convert<IDLNullable<IDLUnion<IDLInterface<WindowProxy>, IDLInterface<MessagePort>, IDLInterface<ServiceWorker>>>>(*lexicalGlobalObject, argument6.value());
+    RefPtr<MessagePort> source = argument6.value().isUndefined() ? nullptr : convert<IDLNullable<IDLInterface<MessagePort>>>(*lexicalGlobalObject, argument6.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument7 = callFrame->argument(7);
     auto messagePorts = argument7.value().isUndefined() ? Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {} : convert<IDLSequence<IDLInterface<MessagePort>>>(*lexicalGlobalObject, argument7.value());

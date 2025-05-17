@@ -1,16 +1,12 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "skipLibCheck": false,
-    "strict": true,
-    "target": "esnext",
-    "module": "esnext",
-    "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
-    "disableSolutionSearching": true,
-    "noUnusedLocals": true,
-    "noEmit": true,
-    "resolveJsonModule": true
+    "skipLibCheck": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "declarationDir": "out"
   },
+  "include": ["**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

@@ -16,7 +16,7 @@ Set these variables in a `.env` file.
 Bun reads the following files automatically (listed in order of increasing precedence).
 
 - `.env`
-- `.env.production` or `.env.development` (depending on value of `NODE_ENV`)
+- `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
 ```txt#.env
@@ -28,10 +28,20 @@ BAR=world
 
 Variables can also be set via the command line.
 
-```sh
+{% codetabs %}
+
+```sh#Linux/macOS
 $ FOO=helloworld bun run dev
 ```
 
----
+```sh#Windows
+# Using CMD
+$ set FOO=helloworld && bun run dev
+
+# Using PowerShell
+$ $env:FOO="helloworld"; bun run dev
+```
+
+## {% /codetabs %}
 
 See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.

@@ -26,7 +26,7 @@ using namespace Inspector;
 using ScriptArguments = Inspector::ScriptArguments;
 using MessageType = JSC::MessageType;
 using MessageLevel = JSC::MessageLevel;
-using JSGlobalObject = JSC__JSGlobalObject;
+using JSGlobalObject = JSC::JSGlobalObject;
 
 using String = WTF::String;
 
@@ -39,9 +39,9 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
         }
     }
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto args = arguments.ptr();
-    JSC__JSValue jsArgs[255];
+    JSC::EncodedJSValue jsArgs[255];
 
     auto count = std::min(args->argumentCount(), (size_t)255);
     for (size_t i = 0; i < count; i++) {
@@ -55,11 +55,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         return;
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type),
-        static_cast<uint32_t>(level), globalObject, jsArgs,
-        count);
-    scope.clearException();
+    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count);
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
@@ -89,7 +85,7 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     auto input = label.tryGetUTF8().value();
 
     auto args = arguments.ptr();
-    JSC__JSValue jsArgs[255];
+    JSC::EncodedJSValue jsArgs[255];
     auto count = std::min(args->argumentCount(), (size_t)255);
     for (size_t i = 0; i < count; i++) {
         auto val = args->argumentAt(i);

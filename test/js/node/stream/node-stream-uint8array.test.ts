@@ -47,7 +47,7 @@ describe("Writable", () => {
         expect(chunk instanceof Buffer).toBe(false);
         expect(chunk instanceof Uint8Array).toBe(true);
         expect(chunk).toStrictEqual(ABC);
-        expect(encoding).toBe("utf8");
+        expect(encoding).toBeUndefined();
         cb();
       }, 0),
     });

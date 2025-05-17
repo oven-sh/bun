@@ -21,7 +21,15 @@ export type Location = {
 );
 
 export interface SourceMap {
+  /**
+   * Converts a location in the original source to a location in the generated source.
+   * @param request A request
+   */
   generatedLocation(request: LocationRequest): Location;
+  /**
+   * Converts a location in the generated source to a location in the original source.
+   * @param request A request
+   */
   originalLocation(request: LocationRequest): Location;
 }
 

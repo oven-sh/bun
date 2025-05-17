@@ -58,7 +58,7 @@ Then add the following to your `compilerOptions` in `tsconfig.json`:
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "Preserve",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -92,7 +92,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +     "start": "bun run index.ts"
 +   },
     "devDependencies": {
-      "@types/bun": "^1.0.0"
+      "@types/bun": "latest"
     }
   }
 ```

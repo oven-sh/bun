@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+test("use strict causes CommonJS", () => {
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), require.resolve("./use-strict-fixture.js")],
+    env: bunEnv,
+  });
+  expect(stdout.toString()).toBe("function\n");
+  expect(exitCode).toBe(0);
+});
+
 test("non-ascii regexp literals", () => {
   var str = "🔴11 54 / 10,000";
   expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");

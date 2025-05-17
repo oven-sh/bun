@@ -1,15 +1,15 @@
 const HeaderBuilder = @This();
-const StringBuilder = @import("../string_builder.zig");
-const Headers = @import("./headers.zig");
+const StringBuilder = bun.StringBuilder;
+const Headers = bun.http.Headers;
 const string = bun.string;
 const HTTPClient = @import("../http.zig");
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-content: StringBuilder = StringBuilder{},
+content: StringBuilder = .{},
 header_count: u64 = 0,
-entries: Headers.Entries = Headers.Entries{},
+entries: Headers.Entry.List = .empty,
 
 pub fn count(this: *HeaderBuilder, name: string, value: string) void {
     this.header_count += 1;
@@ -34,7 +34,7 @@ pub fn append(this: *HeaderBuilder, name: string, value: string) void {
         .length = @as(u32, @truncate(value.len)),
     };
     _ = this.content.append(value);
-    this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
+    this.entries.appendAssumeCapacity(.{ .name = name_ptr, .value = value_ptr });
 }
 
 pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args: anytype) void {
@@ -52,7 +52,7 @@ pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args:
         .length = @as(u32, @truncate(value.len)),
     };
 
-    this.entries.appendAssumeCapacity(Headers.Kv{ .name = name_ptr, .value = value_ptr });
+    this.entries.appendAssumeCapacity(.{ .name = name_ptr, .value = value_ptr });
 }
 
 pub fn apply(this: *HeaderBuilder, client: *HTTPClient) void {

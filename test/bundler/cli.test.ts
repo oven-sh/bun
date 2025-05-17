@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
-import { isWindows } from "harness";
 
 describe("bun build", () => {
   test("warnings dont return exit code 1", () => {
@@ -170,4 +169,106 @@ test.skipIf(!isWindows)("should be able to handle pretty path on windows #13897"
     ],
   });
   expect(buildOut?.success).toBe(true);
+});
+
+test("you can use --outfile=... and --sourcemap", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const originalContent = fs.readFileSync(inputFile, "utf8");
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + path.relative(tmpdir, outFile), "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+
+  expect(exitCode).toBe(0);
+
+  // Verify that the input file wasn't overwritten
+  expect(fs.readFileSync(inputFile, "utf8")).toBe(originalContent);
+
+  // Verify that the output file was created
+  expect(fs.existsSync(outFile)).toBe(true);
+
+  // Verify that the sourcemap file was created
+  expect(fs.existsSync(outFile + ".map")).toBe(true);
+
+  // Verify that the output file contains sourceMappingURL comment
+  const outputContent = fs.readFileSync(outFile, "utf8");
+  expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
+
+  expect(stdout.toString()).toMatchInlineSnapshot();
+});
+
+test("some log cases", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  // absolute path
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + outFile, "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      out.js      120 bytes  (entry point)
+      out.js.map  213 bytes  (source map)
+
+    "
+  `);
+});
+
+test("log case 1", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const inputFile2 = path.join(tmpdir, "input-twooo.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+  writeFileSync(inputFile2, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile, inputFile2],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      input.js        42 bytes  (entry point)
+      input-twooo.js  48 bytes  (entry point)
+
+    "
+  `);
+});
+
+test("log case 2", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().replace(/in \d+ms/g, "in {time}ms")).toMatchInlineSnapshot(`
+    "Bundled 1 module in {time}ms
+
+      input.js  42 bytes  (entry point)
+
+    "
+  `);
 });

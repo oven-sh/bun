@@ -43,6 +43,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -98,5 +99,7 @@ template<> struct JSDOMWrapperConverterTraits<FetchHeaders> {
 };
 
 JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl);
+
+JSC_DECLARE_HOST_FUNCTION(jsFetchHeaders_getRawKeys);
 
 } // namespace WebCore

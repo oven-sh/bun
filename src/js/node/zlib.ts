@@ -12,9 +12,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const StringPrototypeStartsWith = String.prototype.startsWith;
-const MathMax = Math.max;
-const ArrayPrototypeMap = Array.prototype.map;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
@@ -24,21 +21,9 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const {
-  ERR_BROTLI_INVALID_PARAM,
-  ERR_BUFFER_TOO_LARGE,
-  ERR_INVALID_ARG_TYPE,
-  ERR_OUT_OF_RANGE,
-  ERR_ZLIB_INITIALIZATION_FAILED,
-} = require("internal/errors");
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
-const {
-  checkRangesOrGetDefault,
-  validateFunction,
-  validateUint32,
-  validateFiniteNumber,
-} = require("internal/validators");
+const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
 const kError = Symbol("kError");
@@ -97,7 +82,7 @@ function zlibBufferOnData(chunk) {
   if (this.nread > this._maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb(ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
   }
 }
 
@@ -126,7 +111,7 @@ function zlibBufferSync(engine, buffer) {
     if (isAnyArrayBuffer(buffer)) {
       buffer = Buffer.from(buffer);
     } else {
-      throw ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
     }
   }
   buffer = processChunkSync(engine, buffer, engine._finishFlushFlag);
@@ -171,7 +156,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
     if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
-      throw ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+      throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
     }
 
     // prettier-ignore
@@ -331,7 +316,7 @@ function processChunkSync(self, chunk, flushFlag) {
   let offset = self._outOffset;
   const chunkSize = self._chunkSize;
 
-  let error;
+  let error: Error | undefined;
   self.on("error", function onError(er) {
     error = er;
   });
@@ -346,8 +331,14 @@ function processChunkSync(self, chunk, flushFlag) {
       offset, // out_off
       availOutBefore, // out_len
     );
-    if (error) throw error;
-    else if (self[kError]) throw self[kError];
+    if (error) {
+      if (typeof error === "string") {
+        error = new Error(error);
+      } else if (!Error.isError(error)) {
+        error = new Error(String(error));
+      }
+      throw error;
+    } else if (self[kError]) throw self[kError];
 
     availOutAfter = state[0];
     availInAfter = state[1];
@@ -364,7 +355,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
       if (nread > self._maxOutputLength) {
         _close(self);
-        throw ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
       }
     } else {
       assert(have === 0, "have should not go down");
@@ -562,7 +553,7 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
       }
     }
   }
@@ -681,12 +672,12 @@ function Brotli(opts, mode) {
     ArrayPrototypeForEach.$call(ObjectKeys(opts.params), origKey => {
       const key = +origKey;
       if (NumberIsNaN(key) || key < 0 || key > kMaxBrotliParam || (brotliInitParamsArray[key] | 0) !== -1) {
-        throw ERR_BROTLI_INVALID_PARAM(origKey);
+        throw $ERR_BROTLI_INVALID_PARAM(origKey);
       }
 
       const value = opts.params[origKey];
       if (typeof value !== "number" && typeof value !== "boolean") {
-        throw ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
+        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
       brotliInitParamsArray[key] = value;
     });
@@ -696,7 +687,7 @@ function Brotli(opts, mode) {
 
   this._writeState = new Uint32Array(2);
   if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
-    throw ERR_ZLIB_INITIALIZATION_FAILED();
+    throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);

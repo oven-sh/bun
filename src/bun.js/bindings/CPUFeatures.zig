@@ -1,89 +1,71 @@
-const bun = @import("root").bun;
-const std = @import("std");
+const CPUFeatures = @This();
 
-fn Impl(comptime T: type) type {
-    return struct {
-        pub fn format(this: T, comptime _: []const u8, _: anytype, writer: anytype) !void {
-            var is_first = true;
-            inline for (comptime std.meta.fieldNames(T)) |fieldName| {
-                if (comptime bun.strings.eqlComptime(fieldName, "padding") or bun.strings.eqlComptime(fieldName, "none"))
-                    continue;
+flags: Flags,
 
-                const value = @field(this, fieldName);
-                if (value) {
-                    if (!is_first)
-                        try writer.writeAll(" ");
-                    is_first = false;
-                    try writer.writeAll(fieldName);
-                }
-            }
+extern "c" fn bun_cpu_features() u8;
+
+pub const Flags = switch (@import("builtin").cpu.arch) {
+    .x86_64 => packed struct(u8) {
+        none: bool,
+
+        sse42: bool,
+        popcnt: bool,
+        avx: bool,
+        avx2: bool,
+        avx512: bool,
+
+        padding: u2 = 0,
+    },
+    .aarch64 => packed struct(u8) {
+        none: bool,
+
+        neon: bool,
+        fp: bool,
+        aes: bool,
+        crc32: bool,
+        atomics: bool,
+        sve: bool,
+
+        padding: u1 = 0,
+    },
+    else => unreachable,
+};
+
+pub fn format(features: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    var is_first = true;
+    inline for (@typeInfo(Flags).@"struct".fields) |field| brk: {
+        if (comptime (bun.strings.eql(field.name, "padding") or
+            bun.strings.eql(field.name, "none")))
+            break :brk;
+
+        if (@field(features.flags, field.name)) {
+            if (!is_first)
+                try writer.writeAll(" ");
+            is_first = false;
+            try writer.writeAll(field.name);
         }
-
-        pub fn isEmpty(this: T) bool {
-            return @as(u8, @bitCast(this)) == 0;
-        }
-
-        pub fn get() T {
-            const this: T = @bitCast(bun_cpu_features());
-
-            // sanity check
-            assert(this.none == false and this.padding == 0);
-
-            if (bun.Environment.isX64) {
-                bun.analytics.Features.no_avx += @as(usize, @intFromBool(!this.avx));
-                bun.analytics.Features.no_avx2 += @as(usize, @intFromBool(!this.avx2));
-            }
-
-            return this;
-        }
-    };
+    }
 }
 
-const X86CPUFeatures = packed struct(u8) {
-    none: bool = false,
+pub fn isEmpty(features: CPUFeatures) bool {
+    return @as(u8, @bitCast(features.flags)) == 0;
+}
 
-    sse42: bool = false,
-    popcnt: bool = false,
-    avx: bool = false,
-    avx2: bool = false,
-    avx512: bool = false,
+pub fn hasAnyAVX(features: CPUFeatures) bool {
+    return features.flags.avx or features.flags.avx2 or features.flags.avx512;
+}
 
-    padding: u2 = 0,
+pub fn get() CPUFeatures {
+    const flags: Flags = @bitCast(bun_cpu_features());
+    bun.debugAssert(flags.none == false and flags.padding == 0); // sanity check
 
-    pub usingnamespace Impl(@This());
-};
-const AArch64CPUFeatures = packed struct(u8) {
-    none: bool = false,
+    if (bun.Environment.isX64) {
+        bun.analytics.Features.no_avx += @as(usize, @intFromBool(!flags.avx));
+        bun.analytics.Features.no_avx2 += @as(usize, @intFromBool(!flags.avx2));
+    }
 
-    neon: bool = false,
-    fp: bool = false,
-    aes: bool = false,
-    crc32: bool = false,
-    atomics: bool = false,
-    sve: bool = false,
+    return .{ .flags = flags };
+}
 
-    padding: u1 = 0,
-
-    pub usingnamespace Impl(@This());
-};
-
-pub const CPUFeatures = if (bun.Environment.isX64)
-    X86CPUFeatures
-else if (bun.Environment.isAarch64)
-    AArch64CPUFeatures
-else
-    struct {
-        pub fn get() @This() {
-            return .{};
-        }
-
-        pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
-
-        pub fn isEmpty(_: @This()) bool {
-            return true;
-        }
-    };
-
-extern "C" fn bun_cpu_features() u8;
-
-const assert = bun.debugAssert;
+const std = @import("std");
+const bun = @import("bun");

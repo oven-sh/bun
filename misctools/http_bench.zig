@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,6 @@ const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("../src/bun.js/webcore/response.zig").Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);

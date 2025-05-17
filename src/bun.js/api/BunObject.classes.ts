@@ -48,6 +48,7 @@ export default [
     finalize: true,
     hasPendingActivity: true,
     configurable: false,
+    memoryCost: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -116,10 +117,12 @@ export default [
       },
       exited: {
         getter: "getExited",
+        this: true,
       },
       stdio: {
         getter: "getStdio",
       },
     },
+    values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
   }),
 ];

@@ -6,5 +6,4 @@ fixtures/source-map
 fixtures/snapshot
 fixtures/repl*
 .tmp.*
-*shadow-realm*
 **/fails.txt

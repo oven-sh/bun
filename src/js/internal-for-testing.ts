@@ -1,3 +1,5 @@
+// Hardcoded module "bun:internal-for-testing"
+
 // If you want to test an internal API, add a binding into this file.
 //
 // Then at test time: import ... from "bun:internal-for-testing"
@@ -5,15 +7,10 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-/// <reference path="./private.d.ts" />
+const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 
-const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
-  code: string,
-  id: number,
-) => string;
-
-export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
-export const escapePowershell = (code: string) => fmtBinding(code, 1);
+export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -58,8 +55,12 @@ export const iniInternals = {
 
 export const cssInternals = {
   minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
   testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
   prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
+  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
+  _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
 };
 
@@ -100,7 +101,7 @@ export const memfd_create: (size: number) => number = $newZigFunction(
 );
 
 export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "javascript.zig",
+  "virtual_machine_exports.zig",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
@@ -144,8 +145,44 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 );
 
 export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
-  parseRoutePattern: () => void;
+  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
   FrameworkRouter: {
-    new(): any;
+    new (opts: any): any;
   };
 };
+
+export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+  add: (a: any, b: any) => number;
+  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+};
+
+export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+export const Dequeue = require("internal/fifo");
+
+export const fs = require("node:fs/promises").$data;
+
+export const fsStreamInternals = {
+  writeStreamFastPath(str) {
+    return str[require("internal/fs/streams").kWriteStreamFastPath];
+  },
+};
+
+export const arrayBufferViewHasBuffer = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_arrayBufferViewHasBuffer",
+  1,
+);
+
+export const timerInternals = {
+  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+};
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
+export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);

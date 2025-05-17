@@ -81,7 +81,7 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
 
@@ -525,15 +525,16 @@ for (let [gcTick, label] of [
             cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
-        }).toThrow("No such file or directory");
+        }).toThrow("no such file or directory");
       });
     });
   });
 }
 
 // This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
-  it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+  "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
+  async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],
       env: {
@@ -547,8 +548,9 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
       stdin: "inherit",
     });
     expect(result.exitCode).toBe(0);
-  }, 128_000);
-}
+  },
+  192_000,
+);
 
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
@@ -823,4 +825,14 @@ it("dispose keyword works", async () => {
   expect(captured.killed).toBe(true);
   expect(captured.exitCode).toBe(null);
   expect(captured.signalCode).toBe("SIGTERM");
+});
+
+it("error does not UAF", async () => {
+  let emsg = "";
+  try {
+    Bun.spawnSync({ cmd: ["command-is-not-found-uh-oh"] });
+  } catch (e) {
+    emsg = (e as Error).message;
+  }
+  expect(emsg).toInclude(" ");
 });

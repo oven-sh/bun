@@ -1,9 +1,9 @@
 import { realpathSync } from "fs";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
-import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -285,7 +285,8 @@ describe("net.createServer listen", () => {
 
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
-        expect(err!.name).toBe("ECONNREFUSED");
+        expect(err!.name).toBe("Error");
+        expect(err!.code).toBe("ECONNREFUSED");
 
         server.close();
         done();

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
@@ -32,7 +32,7 @@ pub const NamespaceRule = struct {
         }
 
         try css.css_values.string.CSSStringFns.toCss(&this.url, W, dest);
-        try dest.writeChar(':');
+        try dest.writeChar(';');
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

@@ -30,7 +30,6 @@ Bun implements the vast majority of Jest's matchers, but compatibility isn't 100
 
 Some notable missing features:
 
-- `expect().toMatchInlineSnapshot()`
 - `expect().toHaveReturned()`
 
 ---
@@ -57,7 +56,7 @@ Replace `bail` in your Jest config with the `--bail` CLI flag.
 ``` -->
 
 ```sh
-$ bun test --bail 3
+$ bun test --bail=3
 ```
 
 ---

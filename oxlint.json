@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/refs/heads/main/npm/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "const-comparisons": "error",
+    "no-cond-assign": "error",
+    "no-const-assign": "error",
+    "no-debugger": "error",
+    "no-dupe-class-members": "error",
+    "no-dupe-keys": "error",
+    "no-empty-pattern": "error",
+    "import/no-duplicates": "error",
+
+    "no-control-regex": "off",
+
+    "no-useless-escape": "off",
+    "no-this-alias": "off", // many intentional this aliases
+    "triple-slash-reference": "off", // many intentional triple slash references
+
+    // This rule is dumb.
+    // Array.from is MUCH slower than new Array(size).
+    "no-new-array": "off",
+
+    // We have custom thenables. This is not a bug.
+    "no-thenable": "off",
+
+    "no-undef-init": "error",
+
+    // We use this in some cases. The ordering is deliberate.
+    "no-unsafe-finally": "off",
+
+    // We use !!$debug to check if the debugger is enabled.
+    // Boolean() is also generally slower than !!.
+    "no-extra-boolean-cast": "off",
+
+    // Eslint is not a type checker.
+    "no-throw-literal": "off"
+  },
+  "ignorePatterns": [
+    "vendor",
+    "build",
+    "bench",
+    "bench/react-hello-world/*.js",
+    "bun.lock",
+
+    "test/js/node/**/parallel/**",
+    "test/js/node/test/fixtures", // full of JS with intentional syntax errors
+    "test/snippets/**",
+    "test/regression/issue/14477/*.tsx",
+    "test/js/**/*bad.js",
+    "test/bundler/transpiler/decorators.test.ts", // uses `arguments` as decorator
+    "test/bundler/native-plugin.test.ts", // parser doesn't handle import metadata
+    "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
+    "test/js/node/module/extensions-fixture", // these files are not meant to be linted
+    "test/cli/run/module-type-fixture",
+    "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
+
+    // TODO: fix these
+    "src/js/node/http2.ts",
+    "src/js/node/http.ts"
+  ],
+
+  "overrides": [
+    {
+      "files": ["test/**", "examples/**", "packages/bun-internal/test/runners/**"],
+      "rules": {
+        "no-unused-vars": "off",
+        "no-unused-private-class-members": "off",
+        "no-unnecessary-await": "off"
+      }
+    },
+    {
+      "files": ["test/**", "bench/**"],
+      "rules": {
+        "no-shadow-restricted-names": "off",
+        "no-empty-file": "off",
+        "no-unnecessary-await": "off"
+      }
+    }
+  ]
+}

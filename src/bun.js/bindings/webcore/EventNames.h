@@ -29,15 +29,16 @@
 
 namespace WebCore {
 
-#define DOM_EVENT_NAMES_FOR_EACH(macro)   \
-    macro(error)                          \
-        macro(abort)                      \
-            macro(close)                  \
-                macro(open)               \
-                    macro(rename)         \
-                        macro(message)    \
-                            macro(change) \
-                                macro(messageerror)
+#define DOM_EVENT_NAMES_FOR_EACH(macro)             \
+    macro(error)                                    \
+        macro(abort)                                \
+            macro(close)                            \
+                macro(open)                         \
+                    macro(rename)                   \
+                        macro(message)              \
+                            macro(change)           \
+                                macro(messageerror) \
+                                    macro(resourcetimingbufferfull)
 
 struct EventNames {
     WTF_MAKE_NONCOPYABLE(EventNames);
@@ -80,7 +81,7 @@ private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
     // friend class ThreadGlobalData; // Allow ThreadGlobalData to create the per-thread EventNames object.
 
-    int dummy; // Needed to make initialization macro work.
+    [[maybe_unused]] int dummy; // Needed to make initialization macro work.
 };
 
 const EventNames& eventNames();

@@ -58,12 +58,123 @@ it("long arrays get cutoff", () => {
 });
 
 it("console.group", async () => {
+  const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({
-    cmd: [bunExe(), join(import.meta.dir, "console-group.fixture.js")],
-    env: bunEnv,
+    cmd: [bunExe(), filepath],
+    env: { ...bunEnv, "BUN_JSC_showPrivateScriptsInStackTraces": "0" },
     stdio: ["inherit", "pipe", "pipe"],
   });
   expect(proc.exitCode).toBe(0);
-  expect(proc.stderr.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-error");
-  expect(proc.stdout.toString("utf8").replaceAll("\r\n", "\n").trim()).toMatchSnapshot("console-group-output");
+  let stdout = proc.stdout
+    .toString("utf8")
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\\", "/")
+    .trim()
+    .replaceAll(filepath, "<file>");
+  let stderr = proc.stderr
+    .toString("utf8")
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\\", "/")
+    .trim()
+    .replaceAll(filepath, "<file>");
+  expect(stdout).toMatchInlineSnapshot(`
+"Basic group
+  Inside basic group
+Outer group
+  Inside outer group
+  Inner group
+    Inside inner group
+  Back to outer group
+Level 1
+  Level 2
+    Level 3
+      Deep inside
+undefined
+Empty nested
+Test extra end
+  Inside
+Different logs
+  Regular log
+  Info log
+  Debug log
+Complex types
+  {
+    a: 1,
+    b: 2,
+  }
+  [ 1, 2, 3 ]
+null
+  undefined
+    0
+      false
+        
+          Inside falsy groups
+🎉 Unicode!
+  Inside unicode group
+  Tab\tNewline
+Quote"Backslash
+    Special chars"
+`);
+  expect(stderr).toMatchInlineSnapshot(`
+"Warning log
+  warn: console.warn an error
+      at <file>:56:14
+      at loadAndEvaluateModule (2:1)
+
+  52 | console.group("Different logs");
+53 | console.log("Regular log");
+54 | console.info("Info log");
+55 | console.warn("Warning log");
+56 | console.warn(new Error("console.warn an error"));
+57 | console.error(new Error("console.error an error"));
+                   ^
+error: console.error an error
+      at <file>:57:15
+      at loadAndEvaluateModule (2:1)
+
+  41 | console.groupEnd(); // Extra
+42 | console.groupEnd(); // Extra
+43 | 
+44 | class NamedError extends Error {
+45 |   constructor(message) {
+46 |     super(message);
+         ^
+NamedError: console.error a named error
+      at new NamedError (<file>:46:5)
+      at <file>:58:15
+      at loadAndEvaluateModule (2:1)
+
+  NamedError: console.warn a named error
+      at new NamedError (<file>:46:5)
+      at <file>:59:14
+      at loadAndEvaluateModule (2:1)
+
+  Error log"
+`);
+});
+
+it("console.log with SharedArrayBuffer", () => {
+  const proc = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      console.log(new ArrayBuffer(0));
+      console.log(new SharedArrayBuffer(0));
+      console.log(new ArrayBuffer(3));
+      console.log(new SharedArrayBuffer(3));
+    `,
+    ],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(proc.stderr.toString("utf8")).toBeEmpty();
+  expect(proc.exitCode).toBe(0);
+  expect(proc.stdout.toString("utf8")).toMatchInlineSnapshot(`
+    "ArrayBuffer(0) []
+    SharedArrayBuffer(0) []
+    ArrayBuffer(3) [ 0, 0, 0 ]
+    SharedArrayBuffer(3) [ 0, 0, 0 ]
+    "
+  `);
 });

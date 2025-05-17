@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -591,7 +591,7 @@ pub const UrlSource = struct {
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, &this.tech, W, dest);
+            try css.to_css.fromList(FontTechnology, this.tech.items, W, dest);
             try dest.writeChar(')');
         }
     }

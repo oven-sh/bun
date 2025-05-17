@@ -88,9 +88,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr std::pair<ComparableASCIILiteral, CryptoKey::Type> mappings[] = {
-        { "private", CryptoKey::Type::Private },
-        { "public", CryptoKey::Type::Public },
-        { "secret", CryptoKey::Type::Secret },
+        { "private"_s, CryptoKey::Type::Private },
+        { "public"_s, CryptoKey::Type::Public },
+        { "secret"_s, CryptoKey::Type::Secret },
     };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))
@@ -221,7 +221,7 @@ void JSCryptoKey::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSCryptoKeyPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

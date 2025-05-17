@@ -1,130 +1,332 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
-import { onErrorClearedMessage, onErrorMessage } from "./client/overlay";
-import { Bake } from "bun";
-import { td } from "./shared";
-import { DataViewReader } from "./client/reader";
-import { routeMatch } from "./client/route";
+import { editCssArray, editCssContent } from "./client/css-reloader";
+import { DataViewReader } from "./client/data-view";
+import { inspect } from "./client/inspect";
+import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
+import {
+  addMapping,
+  clearDisconnectedSourceMaps,
+  configureSourceMapGCSize,
+  getKnownSourceMaps,
+  SourceMapURL,
+} from "./client/stack-trace";
 import { initWebSocket } from "./client/websocket";
+import "./debug";
 import { MessageId } from "./generated";
+import {
+  emitEvent,
+  fullReload,
+  loadModuleAsync,
+  onServerSideReload,
+  replaceModules,
+  setRefreshRuntime,
+} from "./hmr-module";
+import { td } from "./shared";
+
+const consoleErrorWithoutInspector = console.error;
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+let isPerformingRouteReload = false;
+let shouldPerformAnotherRouteReload = false;
+let currentRouteIndex: number = -1;
+
 async function performRouteReload() {
   console.info("[Bun] Server-side code changed, reloading!");
+  if (isPerformingRouteReload) {
+    shouldPerformAnotherRouteReload = true;
+    return;
+  }
+
   if (onServerSideReload) {
     try {
-      await onServerSideReload();
+      isPerformingRouteReload = true;
+      do {
+        shouldPerformAnotherRouteReload = false;
+        await onServerSideReload();
+      } while (shouldPerformAnotherRouteReload);
+      isPerformingRouteReload = false;
       return;
     } catch (err) {
       console.error("Failed to perform Server-side reload.");
       console.error(err);
       console.error("The page will hard-reload now.");
-      if (IS_BUN_DEVELOPMENT) {
-        // return showErrorOverlay(err);
-      }
     }
   }
 
   // Fallback for when reloading fails or is not implemented by the framework is
   // to hard-reload.
-  location.reload();
+  fullReload();
 }
 
-let main;
-
-try {
-  main = loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
-  var { onServerSideReload, ...rest } = main.exports;
-  if (Object.keys(rest).length > 0) {
-    console.warn(
-      `Framework client entry point (${config.main}) exported unknown properties, found: ${Object.keys(rest).join(", ")}`,
-    );
-  }
-} catch (e) {
-  // showErrorOverlay(e);
-  console.error(e);
-}
-
-/**
- * Map between CSS identifier and its style tag.
- * If a file is not present in this map, it might exist as a link tag in the HTML.
- */
-const cssStore = new Map<string, CSSStyleSheet>();
+// HMR payloads are script tags that call this internal function.
+// A previous version of this runtime used `eval`, but browser support around
+// mapping stack traces of eval'd frames is poor (the case the error overlay).
+const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
+globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
+  const entry = scriptTags.get(id);
+  if (!entry) throw new Error("Unknown HMR script: " + id);
+  const [script, size] = entry;
+  scriptTags.delete(id);
+  const url = script.src;
+  const map: SourceMapURL = {
+    id,
+    url,
+    refs: Object.keys(modules).length,
+    size,
+  };
+  addMapping(url, map);
+  script.remove();
+  replaceModules(modules, map).catch(e => {
+    console.error(e);
+    fullReload();
+  });
+};
 
 let isFirstRun = true;
-initWebSocket({
+const handlers = {
   [MessageId.version](view) {
     if (td.decode(view.buffer.slice(1)) !== config.version) {
       console.error("Version mismatch, hard-reloading");
-      location.reload();
+      fullReload();
+      return;
     }
 
     if (isFirstRun) {
       isFirstRun = false;
+    } else {
+      // It would be possible to use `performRouteReload` to do a hot-reload,
+      // but the issue lies in possibly outdated client files. For correctness,
+      // all client files have to be HMR reloaded or proven unchanged.
+      // Configuration changes are already handled by the `config.version` data.
+      fullReload();
       return;
     }
 
-    // It would be possible to use `performRouteReload` to do a hot-reload,
-    // but the issue lies in possibly outdated client files. For correctness,
-    // all client files have to be HMR reloaded or proven unchanged.
-    // Configuration changes are already handled by the `config.version` data.
-    location.reload();
+    ws.sendBuffered("she"); // IncomingMessageId.subscribe with hot_update and errors
+    ws.sendBuffered("n" + location.pathname); // IncomingMessageId.set_url
+
+    const fn = globalThis[Symbol.for("bun:loadData")];
+    if (fn) {
+      document.removeEventListener("visibilitychange", fn);
+      ws.send("i" + config.generation);
+    }
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
 
-    const cssCount = reader.u32();
-    if (cssCount > 0) {
-      for (let i = 0; i < cssCount; i++) {
-        const moduleId = reader.stringWithLength(16);
-        const content = reader.string32();
-        reloadCss(moduleId, content);
-      }
-    }
+    // The code genearting each list is annotated with equivalent "List n"
+    // comments in DevServer.zig's finalizeBundle function.
 
-    if (reader.hasMoreData()) {
-      const code = td.decode(reader.rest());
-      const modules = (0, eval)(code);
-      replaceModules(modules);
-    }
-  },
-  [MessageId.route_update](view) {
-    const reader = new DataViewReader(view, 1);
-    let routeCount = reader.u32();
+    // List 1
+    const serverSideRoutesUpdated = new Set();
+    do {
+      const routeId = reader.i32();
+      if (routeId === -1 || routeId == undefined) break;
+      serverSideRoutesUpdated.add(routeId);
+    } while (true);
+    // List 2
+    let isServerSideRouteUpdate = false;
+    do {
+      const routeId = reader.i32();
+      if (routeId === -1 || routeId == undefined) break;
+      if (routeId === currentRouteIndex) {
+        isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
+        const cssCount = reader.i32();
+        if (cssCount !== -1) {
+          const cssArray = new Array<string>(cssCount);
+          for (let i = 0; i < cssCount; i++) {
+            cssArray[i] = reader.stringWithLength(16);
+          }
+          editCssArray(cssArray);
+        }
 
-    while (routeCount > 0) {
-      routeCount -= 1;
-      const routeId = reader.u32();
-      const routePattern = reader.string32();
-      if (routeMatch(routeId, routePattern)) {
-        performRouteReload();
+        // Skip to the last route
+        let nextRouteId = reader.i32();
+        while (nextRouteId != null && nextRouteId !== -1) {
+          const i = reader.i32();
+          reader.cursor += 16 * Math.max(0, i);
+          nextRouteId = reader.i32();
+        }
         break;
+      } else {
+        // Skip to the next route
+        const i = reader.i32();
+        reader.cursor += 16 * Math.max(0, i);
+      }
+    } while (true);
+    // List 3
+    {
+      let i = reader.u32();
+      while (i--) {
+        const identifier = reader.stringWithLength(16);
+        const code = reader.string32();
+        editCssContent(identifier, code);
       }
     }
+    if (hasFatalError && (isServerSideRouteUpdate || reader.hasMoreData())) {
+      fullReload();
+      return;
+    }
+    if (isServerSideRouteUpdate) {
+      performRouteReload();
+      return;
+    }
+    // JavaScript modules
+    if (reader.hasMoreData()) {
+      const sourceMapSize = reader.u32();
+      const rest = reader.rest();
+      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
+      DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
+      const blob = new Blob([rest], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      const script = document.createElement("script");
+      scriptTags.set(sourceMapId, [script, sourceMapSize]);
+      script.className = "bun-hmr-script";
+      script.src = url;
+      script.onerror = onHmrLoadError;
+      document.head.appendChild(script);
+    } else {
+      // Needed for testing.
+      emitEvent("bun:afterUpdate", null);
+    }
   },
-  [MessageId.errors]: onErrorMessage,
-  [MessageId.errors_cleared]: onErrorClearedMessage,
+  [MessageId.set_url_response](view) {
+    const reader = new DataViewReader(view, 1);
+    currentRouteIndex = reader.u32();
+  },
+  [MessageId.errors]: onServerErrorPayload,
+};
+const ws = initWebSocket(handlers, {
+  onStatusChange(connected) {
+    emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
+  },
 });
 
-function reloadCss(id: string, newContent: string) {
-  console.log(`[Bun] Reloading CSS: ${id}`);
+function onHmrLoadError(event: Event | string, source?: string, lineno?: number, colno?: number, error?: Error) {
+  if (typeof event === "string") {
+    console.error(event);
+  } else if (error) {
+    console.error(error);
+  } else {
+    console.error("Failed to load HMR script", event);
+  }
+  fullReload();
+}
 
-  // TODO: can any of the following operations throw?
-  let sheet = cssStore.get(id);
-  if (!sheet) {
-    sheet = new CSSStyleSheet();
-    sheet.replace(newContent);
-    document.adoptedStyleSheets.push(sheet);
-    cssStore.set(id, sheet);
+// Before loading user code, instrument some globals.
+{
+  const truePushState = History.prototype.pushState;
+  History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
+    truePushState.call(this, state, title, url);
+    ws.sendBuffered("n" + location.pathname);
+  };
+  const trueReplaceState = History.prototype.replaceState;
+  History.prototype.replaceState = function replaceState(
+    this: History,
+    state: any,
+    title: string,
+    url?: string | null,
+  ) {
+    trueReplaceState.call(this, state, title, url);
+    ws.sendBuffered("n" + location.pathname);
+  };
+}
 
-    // Delete the link tag if it exists
-    document.querySelector(`link[href="/_bun/css/${id}.css"]`)?.remove();
-    return;
+window.addEventListener("error", event => {
+  onRuntimeError(event.error, true, false);
+});
+window.addEventListener("unhandledrejection", event => {
+  onRuntimeError(event.reason, true, true);
+});
+
+{
+  let reloadError: any = sessionStorage?.getItem?.("bun:hmr:message");
+  if (reloadError) {
+    sessionStorage.removeItem("bun:hmr:message");
+    reloadError = JSON.parse(reloadError);
+    if (reloadError.kind === "warn") {
+      console.warn(reloadError.message);
+    } else {
+      console.error(reloadError.message);
+    }
+  }
+}
+
+// This implements streaming console.log and console.error from the browser to the server.
+//
+//   Bun.serve({
+//     development: {
+//       console: true,
+//       ^^^^^^^^^^^^^^^^
+//     },
+//   })
+//
+
+if (config.console) {
+  // Ensure it only runs once, and avoid the extra noise in the HTML.
+  const originalLog = console.log;
+
+  function websocketInspect(logLevel: "l" | "e", values: any[]) {
+    let str = "l" + logLevel;
+    let first = true;
+    for (const value of values) {
+      if (first) {
+        first = false;
+      } else {
+        str += " ";
+      }
+
+      if (typeof value === "string") {
+        str += value;
+      } else {
+        str += inspect(value);
+      }
+    }
+
+    ws.sendBuffered(str);
   }
 
-  sheet.replace(newContent);
+  if (typeof originalLog === "function") {
+    console.log = function log(...args: any[]) {
+      originalLog(...args);
+      websocketInspect("l", args);
+    };
+  }
+
+  if (typeof consoleErrorWithoutInspector === "function") {
+    console.error = function error(...args: any[]) {
+      consoleErrorWithoutInspector(...args);
+      websocketInspect("e", args);
+    };
+  }
+}
+
+// The following API may be altered at any point.
+// Thankfully, you can just call `import.meta.hot.on`
+let testingHook = globalThis[Symbol.for("bun testing api, may change at any time")];
+testingHook?.({
+  configureSourceMapGCSize,
+  clearDisconnectedSourceMaps,
+  getKnownSourceMaps,
+});
+
+try {
+  const { refresh } = config;
+  if (refresh) {
+    const refreshRuntime = await loadModuleAsync(refresh, false, null);
+    setRefreshRuntime(refreshRuntime);
+  }
+
+  await loadModuleAsync(config.main, false, null);
+
+  emitEvent("bun:ready", null);
+} catch (e) {
+  // Use consoleErrorWithoutInspector to avoid double-reporting errors.
+  consoleErrorWithoutInspector(e);
+
+  onRuntimeError(e, true, false);
 }

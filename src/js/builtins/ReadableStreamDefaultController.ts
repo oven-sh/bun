@@ -31,7 +31,7 @@ export function initializeReadableStreamDefaultController(this, stream, underlyi
 }
 
 export function enqueue(this, chunk) {
-  if (!$isReadableStreamDefaultController(this)) throw $makeThisTypeError("ReadableStreamDefaultController", "enqueue");
+  if (!$isReadableStreamDefaultController(this)) throw $ERR_INVALID_THIS("ReadableStreamDefaultController");
 
   if (!$readableStreamDefaultControllerCanCloseOrEnqueue(this)) {
     throw $ERR_INVALID_STATE("ReadableStreamDefaultController is not in a state where chunk can be enqueued");
@@ -41,12 +41,12 @@ export function enqueue(this, chunk) {
 }
 
 export function error(this, err) {
-  if (!$isReadableStreamDefaultController(this)) throw $makeThisTypeError("ReadableStreamDefaultController", "error");
+  if (!$isReadableStreamDefaultController(this)) throw $ERR_INVALID_THIS("ReadableStreamDefaultController");
   $readableStreamDefaultControllerError(this, err);
 }
 
 export function close(this) {
-  if (!$isReadableStreamDefaultController(this)) throw $makeThisTypeError("ReadableStreamDefaultController", "close");
+  if (!$isReadableStreamDefaultController(this)) throw $ERR_INVALID_THIS("ReadableStreamDefaultController");
 
   if (!$readableStreamDefaultControllerCanCloseOrEnqueue(this))
     throw new TypeError("ReadableStreamDefaultController is not in a state where it can be closed");

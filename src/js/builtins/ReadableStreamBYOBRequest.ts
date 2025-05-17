@@ -31,7 +31,7 @@ export function initializeReadableStreamBYOBRequest(this, controller, view) {
 }
 
 export function respond(this, bytesWritten) {
-  if (!$isReadableStreamBYOBRequest(this)) throw $makeThisTypeError("ReadableStreamBYOBRequest", "respond");
+  if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
   if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") === undefined)
     throw new TypeError("ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined");
@@ -43,7 +43,7 @@ export function respond(this, bytesWritten) {
 }
 
 export function respondWithNewView(this, view) {
-  if (!$isReadableStreamBYOBRequest(this)) throw $makeThisTypeError("ReadableStreamBYOBRequest", "respond");
+  if (!$isReadableStreamBYOBRequest(this)) throw $ERR_INVALID_THIS("ReadableStreamBYOBRequest");
 
   if ($getByIdDirectPrivate(this, "associatedReadableByteStreamController") === undefined)
     throw new TypeError("ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined");

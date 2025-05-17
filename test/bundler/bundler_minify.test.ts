@@ -502,4 +502,128 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  itBundled("minify/ImportMetaHotTreeShaking", {
+    files: {
+      "/entry.ts": `
+        import { value } from "./other.ts";
+        capture(import.meta.hot);
+        if (import.meta.hot) {
+          throw new Error("FAIL");
+        }
+        import.meta.hot.accept(() => {"FAIL";value});
+        import.meta.hot.dispose(() => {"FAIL";value});
+        import.meta.hot.on(() => {"FAIL";value});
+        import.meta.hot.off(() => {"FAIL";value});
+        import.meta.hot.send(() => {"FAIL";value});
+        import.meta.hot.invalidate(() => {"FAIL";value});
+        import.meta.hot.prune(() => {"FAIL";value});
+        capture(import.meta.hot.accept());
+        capture("This should remain");
+        import.meta.hot.accept(async() => {
+          await import("crash");
+          require("crash");
+        });
+        capture(import.meta.hot.data);
+        capture(import.meta.hot.data.value ??= "hello");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("FAIL");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
+  itBundled("minify/ProductionMode", {
+    files: {
+      "/entry.jsx": `
+        import {foo} from 'dev-trap';
+        capture(process.env.NODE_ENV);
+        capture(1232 + 521)
+        console.log(<div>Hello</div>);
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        throw new Error("Should not use dev runtime");
+      `,
+      "/node_modules/react/jsx-runtime.js": `
+        export function jsx(type, props) {
+          return {type, props};
+        }
+        export const Fragment = Symbol.for("jsx-runtime");
+      `,
+      "/node_modules/dev-trap/package.json": `{
+        "name": "dev-trap",
+        "exports": {
+          "development": "./dev.js",
+          "default": "./prod.js"
+        }
+      }`,
+      "/node_modules/dev-trap/dev.js": `
+        throw new Error("FAIL");
+      `,
+      "/node_modules/dev-trap/prod.js": `
+        export const foo = "production";
+      `,
+    },
+    capture: ['"production"', "1753"],
+    production: true,
+    onAfterBundle(api) {
+      const output = api.readFile("out.js");
+
+      expect(output).not.toContain("FAIL");
+
+      // Check minification
+      expect(output).not.toContain("\t");
+      expect(output).not.toContain("  ");
+
+      // Check NODE_ENV is inlined
+      expect(output).toContain('"production"');
+      expect(output).not.toContain("process.env.NODE_ENV");
+
+      // Check JSX uses production runtime
+      expect(output).toContain("jsx-runtime");
+    },
+  });
+  itBundled("minify/UnusedInCommaExpression", {
+    files: {
+      "/entry.ts": `
+        let flag = computeSomethingUnknown();
+        // the expression 'flag === 1' has no side effects
+        capture((flag === 1234 ? "a" : "b", "c"));
+        // 'flag == 1234' may invoke a side effect
+        capture((flag == 1234 ? "a" : "b", "c"));
+        // 'unbound' may invoke a side effect
+        capture((unbound ? "a" : "b", "c"));
+        // two side effects
+        capture((flag == 1234 ? "a" : unbound, "c"));
+        // two side effects 2
+        capture(([flag == 1234] ? unbound : other, "c"));
+        // new expression
+        capture((new Date(), 123));
+        // call expression
+        const funcWithNoSideEffects = () => 1;
+        capture((/* @__PURE__ */ funcWithNoSideEffects(), 456));
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      // 'flag' cannot throw on access or comparison via '==='
+      '"c"',
+      // 0 is inserted instead of 1234 because it is shorter and invokes the same coercion side effects
+      '(flag == 0, "c")',
+      // 'unbound' may throw on access
+      '(unbound, "c")',
+      // 0 is not inserted here because the result of 'flag == 1234' is used by the ternary
+      '(flag == 1234 || unbound, "c")',
+      // || is not inserted since the condition is always true, can simplify '1234' to '0'
+      '(flag == 0, unbound, "c")',
+      "123",
+      "456",
+    ],
+  });
 });

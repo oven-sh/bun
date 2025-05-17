@@ -278,3 +278,96 @@ fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
 
 const bun = @import("bun");
 const std = @import("std");
+
+pub const aarch64 = struct {
+    /// JS Math.max for two f64 values.
+    /// Intentionally using fmax, not fmaxnm since fmax is aligned to JS Math.max semantics.
+    /// fmaxnm returns non-NaN number when either lhs or rhs is NaN. But Math.max returns NaN.
+    pub inline fn jsMaxDouble(lhs: f64, rhs: f64) f64 {
+        return asm (
+            \\fmax d0, d1, d2
+            : [ret] "={d0}" (-> f64),
+            : [lhs] "{d1}" (lhs),
+              [rhs] "{d2}" (rhs),
+        );
+    }
+
+    /// JS Math.min for two f64 values.
+    /// Intentionally using fmin, not fminnm since fmin is aligned to JS Math.min semantics.
+    /// fminnm returns non-NaN number when either lhs or rhs is NaN. But Math.min returns NaN.
+    pub inline fn jsMinDouble(lhs: f64, rhs: f64) f64 {
+        return asm (
+            \\fmin d0, d1, d2
+            : [ret] "={d0}" (-> f64),
+            : [lhs] "{d1}" (lhs),
+              [rhs] "{d2}" (rhs),
+        );
+    }
+
+    /// JavaScript ToInt32 - converts a double to int32 using AARCH64-specific instruction fjcvtzs
+    pub inline fn toInt32(number: f64) i32 {
+        return asm (
+            \\fjcvtzs w0, d0
+            : [ret] "={w0}" (-> i32),
+            : [num] "{d0}" (number),
+            : "cc"
+        );
+    }
+};
+
+pub const generic = struct {
+    /// Equivalent of esbuild's js_ast_helpers.ToInt32
+    pub fn toInt32(f: f64) i32 {
+        // Special-case non-finite numbers
+        if (!std.math.isFinite(f))
+            return 0;
+
+        const uint: u32 = @intFromFloat(@mod(@abs(f), std.math.maxInt(u32) + 1));
+        const int: i32 = @bitCast(uint);
+        return if (f < 0) @as(i32, 0) -% int else int;
+    }
+
+    pub fn jsMaxDouble(lhs: f64, rhs: f64) f64 {
+        return @max(lhs, rhs);
+    }
+
+    pub fn jsMinDouble(lhs: f64, rhs: f64) f64 {
+        return @min(lhs, rhs);
+    }
+};
+
+pub fn toInt32(f: f64) i32 {
+    if (bun.Environment.isAarch64) {
+        const arm = aarch64.toInt32(f);
+        if (bun.Environment.isDebug) {
+            bun.debugAssert(arm == generic.toInt32(f));
+        }
+        return arm;
+    }
+
+    return generic.toInt32(f);
+}
+
+pub fn jsMaxDouble(lhs: f64, rhs: f64) f64 {
+    if (bun.Environment.isAarch64) {
+        const arm = aarch64.jsMaxDouble(lhs, rhs);
+        if (bun.Environment.isDebug) {
+            bun.debugAssert(arm == generic.jsMaxDouble(lhs, rhs));
+        }
+        return arm;
+    }
+
+    return generic.jsMaxDouble(lhs, rhs);
+}
+
+pub fn jsMinDouble(lhs: f64, rhs: f64) f64 {
+    if (bun.Environment.isAarch64) {
+        const arm = aarch64.jsMinDouble(lhs, rhs);
+        if (bun.Environment.isDebug) {
+            bun.debugAssert(arm == generic.jsMinDouble(lhs, rhs));
+        }
+        return arm;
+    }
+
+    return generic.jsMinDouble(lhs, rhs);
+}

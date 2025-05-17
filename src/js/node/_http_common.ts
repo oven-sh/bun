@@ -1,5 +1,7 @@
 const { checkIsHttpToken } = require("internal/validators");
 
+const { methods, allMethods, HTTPParser } = process.binding("http_parser");
+
 const kIncomingMessage = Symbol("IncomingMessage");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -34,44 +36,6 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
-const methods = [
-  "DELETE",
-  "GET",
-  "HEAD",
-  "POST",
-  "PUT",
-  "CONNECT",
-  "OPTIONS",
-  "TRACE",
-  "COPY",
-  "LOCK",
-  "MKCOL",
-  "MOVE",
-  "PROPFIND",
-  "PROPPATCH",
-  "SEARCH",
-  "UNLOCK",
-  "BIND",
-  "REBIND",
-  "UNBIND",
-  "ACL",
-  "REPORT",
-  "MKACTIVITY",
-  "CHECKOUT",
-  "MERGE",
-  "M-SEARCH",
-  "NOTIFY",
-  "SUBSCRIBE",
-  "UNSUBSCRIBE",
-  "PATCH",
-  "PURGE",
-  "MKCALENDAR",
-  "LINK",
-  "UNLINK",
-  "SOURCE",
-  "QUERY",
-];
-
 export default {
   _checkIsHttpToken: checkIsHttpToken,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
@@ -79,6 +43,8 @@ export default {
   continueExpression: /(?:^|\W)100-continue(?:$|\W)/i,
   CRLF: "\r\n",
   methods,
+  allMethods,
+  HTTPParser,
   kIncomingMessage,
   validateHeaderName,
   validateHeaderValue,

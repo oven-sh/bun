@@ -11,6 +11,7 @@ src/bun.js/bindings/bindings.cpp
 src/bun.js/bindings/blob.cpp
 src/bun.js/bindings/bun-simdutf.cpp
 src/bun.js/bindings/bun-spawn.cpp
+src/bun.js/bindings/bun.cpp
 src/bun.js/bindings/BunClientData.cpp
 src/bun.js/bindings/BunCommonStrings.cpp
 src/bun.js/bindings/BunDebugger.cpp
@@ -141,6 +142,12 @@ src/bun.js/bindings/node/crypto/JSSign.cpp
 src/bun.js/bindings/node/crypto/JSVerify.cpp
 src/bun.js/bindings/node/crypto/KeyObject.cpp
 src/bun.js/bindings/node/crypto/node_crypto_binding.cpp
+src/bun.js/bindings/node/http/JSConnectionsList.cpp
+src/bun.js/bindings/node/http/JSConnectionsListConstructor.cpp
+src/bun.js/bindings/node/http/JSConnectionsListPrototype.cpp
+src/bun.js/bindings/node/http/JSHTTPParser.cpp
+src/bun.js/bindings/node/http/JSHTTPParserConstructor.cpp
+src/bun.js/bindings/node/http/JSHTTPParserPrototype.cpp
 src/bun.js/bindings/node/NodeTimers.cpp
 src/bun.js/bindings/NodeAsyncHooks.cpp
 src/bun.js/bindings/NodeDirent.cpp
@@ -161,6 +168,7 @@ src/bun.js/bindings/Path.cpp
 src/bun.js/bindings/ProcessBindingBuffer.cpp
 src/bun.js/bindings/ProcessBindingConstants.cpp
 src/bun.js/bindings/ProcessBindingFs.cpp
+src/bun.js/bindings/ProcessBindingHTTPParser.cpp
 src/bun.js/bindings/ProcessBindingNatives.cpp
 src/bun.js/bindings/ProcessBindingTTYWrap.cpp
 src/bun.js/bindings/ProcessBindingUV.cpp

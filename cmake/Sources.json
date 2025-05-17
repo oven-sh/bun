@@ -44,6 +44,7 @@
       "src/bun.js/bindings/webcrypto/*/*.cpp",
       "src/bun.js/bindings/node/*.cpp",
       "src/bun.js/bindings/node/crypto/*.cpp",
+      "src/bun.js/bindings/node/http/*.cpp",
       "src/bun.js/bindings/v8/*.cpp",
       "src/bun.js/bindings/v8/shim/*.cpp",
       "src/bake/*.cpp",

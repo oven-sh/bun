@@ -981,7 +981,7 @@ pub const H2FrameParser = struct {
                                 frame.offset += @intCast(max_size);
                                 const able_to_send = frame_slice[0..max_size];
                                 client.queuedDataSize -= able_to_send.len;
-                                written.* += frame_slice.len;
+                                written.* += able_to_send.len;
                                 this.remoteUsedWindowSize += able_to_send.len;
                                 client.remoteUsedWindowSize += able_to_send.len;
 
@@ -1180,8 +1180,9 @@ pub const H2FrameParser = struct {
             }
             while (queue.dequeue()) |item| {
                 var frame = item;
-                log("dataFrame dropped {}", .{frame.len});
-                client.queuedDataSize -= frame.len;
+                const len = frame.slice().len;
+                log("dataFrame dropped {}", .{len});
+                client.queuedDataSize -= len;
                 if (!finalizing) {
                     if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
                 }
@@ -2582,11 +2583,11 @@ pub const H2FrameParser = struct {
             if (headerTableSize.isNumber()) {
                 const headerTableSizeValue = headerTableSize.toInt32();
                 if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                    return globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected headerTableSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
                 this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected headerTableSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected headerTableSize to be a number", .{}).throw();
             }
         }
 
@@ -2594,7 +2595,7 @@ pub const H2FrameParser = struct {
             if (enablePush.isBoolean()) {
                 this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
             } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected enablePush to be a boolean", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected enablePush to be a boolean", .{}).throw();
             }
         }
 
@@ -2602,12 +2603,11 @@ pub const H2FrameParser = struct {
             if (initialWindowSize.isNumber()) {
                 const initialWindowSizeValue = initialWindowSize.toInt32();
                 if (initialWindowSizeValue > MAX_WINDOW_SIZE or initialWindowSizeValue < 0) {
-                    return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
-                log("initialWindowSize is not a number", .{});
-                return globalObject.throw("Expected initialWindowSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number", .{}).throw();
             }
         }
 
@@ -2615,11 +2615,11 @@ pub const H2FrameParser = struct {
             if (maxFrameSize.isNumber()) {
                 const maxFrameSizeValue = maxFrameSize.toInt32();
                 if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                    return globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{}).throw();
                 }
                 this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxFrameSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxFrameSize to be a number", .{}).throw();
             }
         }
 
@@ -2627,11 +2627,11 @@ pub const H2FrameParser = struct {
             if (maxConcurrentStreams.isNumber()) {
                 const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
                 if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                    return globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{}).throw();
                 }
                 this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxConcurrentStreams to be a number", .{}).throw();
             }
         }
 
@@ -2639,11 +2639,11 @@ pub const H2FrameParser = struct {
             if (maxHeaderListSize.isNumber()) {
                 const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
                 if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                    return globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxHeaderListSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderListSize to be a number", .{}).throw();
             }
         }
 
@@ -2651,11 +2651,11 @@ pub const H2FrameParser = struct {
             if (maxHeaderSize.isNumber()) {
                 const maxHeaderSizeValue = maxHeaderSize.toInt32();
                 if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                    return globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
                 this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxHeaderSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderSize to be a number", .{}).throw();
             }
         }
         return;

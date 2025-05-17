@@ -22,6 +22,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
+const { getAllowUnauthorized } = require("internal/tls");
 const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
   "socket.zig",
   "createNodeTLSBinding",
@@ -100,6 +101,7 @@ const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
+const kSocketOptions = Symbol("kSocketOptions");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -272,15 +274,21 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
+
     if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
       const cert = self.getPeerCertificate(true);
       verifyError = checkServerIdentity(self.servername, cert);
     }
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         if (self._rejectUnauthorized) {
+          self.emit("error", verifyError);
+          self.emit("secure", self);
+          self.emit("_tlsError", verifyError);
+          self.server.emit("tlsClientError", verifyError, self);
           self.destroy(verifyError);
           return;
         }
@@ -290,7 +298,9 @@ const SocketHandlers: SocketHandler = {
     } else {
       self.authorized = true;
     }
-    self.emit("secureConnect", verifyError);
+    if (success) {
+      self.emit("secureConnect", verifyError);
+    }
     self.removeListener("end", onConnectEnd);
   },
   timeout(socket) {
@@ -350,8 +360,18 @@ const ServerHandlers: SocketHandler = {
     const self = this.data;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({});
+
+    const {
+      pauseOnConnect,
+      connectionListener,
+      [kSocketClass]: SClass,
+      [kSocketOptions]: socketOptions = {},
+      requestCert,
+      rejectUnauthorized,
+    } = options;
+
+    const _socket = new SClass(socketOptions);
+
     _socket.isServer = true;
     _socket.server = self;
     _socket._requestCert = requestCert;
@@ -394,48 +414,63 @@ const ServerHandlers: SocketHandler = {
 
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
+
     if (!success && verifyError?.code === "ECONNRESET") {
+      if (self._hadError) return;
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
       self.server.emit("tlsClientError", err, self);
       self._hadError = true;
+
       // error before handshake on the server side will only be emitted using tlsClientError
       self.destroy();
       return;
     }
+
+    if (!success) {
+      const err = verifyError || $ERR_SSL_UNSUPPORTED_PROTOCOL("TLS handshake failed");
+
+      self._hadError = true;
+      self.emit("_tlsError", err);
+      self.server.emit("tlsClientError", err, self);
+      self.destroy();
+      return;
+    }
+
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
+
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
-          // if we reject we still need to emit secure
-          self.emit("secure", self);
+          self.emit("_tlsError", verifyError);
+          self.server.emit("tlsClientError", verifyError, self);
           self.destroy(verifyError);
           return;
         }
-      } else {
-        self.authorized = true;
       }
-    } else {
       self.authorized = true;
     }
+
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
       connectionListener.$call(server, self);
     }
-    server.emit("secureConnection", self);
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
-    if (!server.pauseOnConnect) {
-      self.resume();
+
+    if (success) {
+      server.emit("secureConnection", self);
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+
+      if (!server.pauseOnConnect) {
+        self.resume();
+      }
     }
   },
   error(socket, error) {
@@ -735,7 +770,13 @@ Socket.prototype.connect = function connect(...args) {
   const bunTLS = this[bunTlsSymbol];
   var tls = undefined;
   if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(this, port, host, true);
+    tls = bunTLS.$call(
+      this,
+      port,
+      host,
+      true, // isClient
+    );
+
     // Client always request Cert
     this._requestCert = true;
     if (tls) {
@@ -743,7 +784,9 @@ Socket.prototype.connect = function connect(...args) {
         this._rejectUnauthorized = rejectUnauthorized;
         tls.rejectUnauthorized = rejectUnauthorized;
       } else {
-        this._rejectUnauthorized = tls.rejectUnauthorized;
+        const allowUnauth = getAllowUnauthorized();
+        this._rejectUnauthorized = !allowUnauth;
+        tls.rejectUnauthorized = !allowUnauth;
       }
       tls.requestCert = true;
       tls.session = session || tls.session;
@@ -1447,7 +1490,15 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (typeof bunTLS === "function") {
       [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
       options.servername = tls.serverName;
+      options.minVersion = tls.minVersion;
+      options.maxVersion = tls.maxVersion;
+
       options[kSocketClass] = TLSSocketClass;
+      options[kSocketOptions] = {
+        minVersion: tls.minVersionName,
+        maxVersion: tls.maxVersionName,
+      };
+
       contexts = tls.contexts;
       if (!tls.requestCert) {
         tls.rejectUnauthorized = false;

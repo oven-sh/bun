@@ -1,10 +1,15 @@
-// Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const {
+  TLS_VERSION_REVERSE_MAP,
+  resolveTLSVersions,
+  DEFAULT_MIN_VERSION,
+  DEFAULT_MAX_VERSION,
+  validateTLSOptions,
+} = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -202,62 +207,36 @@ var InternalSecureContext = class SecureContext {
   passphrase;
   servername;
   secureOptions;
+  ciphers;
+
+  secureProtocol: string | undefined;
+  minVersion: number | undefined;
+  maxVersion: number | undefined;
 
   constructor(options) {
     const context = {};
 
     if (options) {
+      validateTLSOptions(options);
+
       let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
+      if (cert) this.cert = cert;
 
       let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
+      if (key) this.key = key;
 
-      let ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
+      const ca = options.ca;
+      if (ca) this.ca = ca;
 
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
-      }
-      this.passphrase = passphrase;
+      this.ciphers = options.ciphers;
+      this.passphrase = options.passphrase;
+      this.servername = options.servername;
+      this.secureOptions = options.secureOptions || 0;
+      this.secureProtocol = options.secureProtocol;
 
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
-      }
-
-      this.secureOptions = secureOptions;
-
-      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine)) {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        } else if (typeof options.privateKeyEngine !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
-        }
-
-        if (typeof options.privateKeyIdentifier !== "string") {
-          // prettier-ignore
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], options.privateKeyIdentifier);
-        }
-      }
+      const [minVersion, maxVersion] = resolveTLSVersions(options);
+      this.minVersion = minVersion;
+      this.maxVersion = maxVersion;
     }
 
     this.context = context;
@@ -304,6 +283,8 @@ function TLSSocket(socket?, options?) {
   this.authorizationError;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
+  this.ciphers = undefined;
+  this.ecdhCurve = undefined;
 
   const isNetSocketOrDuplex = socket instanceof Duplex;
 
@@ -313,6 +294,12 @@ function TLSSocket(socket?, options?) {
 
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
+
+    // use `in` check because passing undefined should throw according to node tests
+    if ("checkServerIdentity" in options && typeof options.checkServerIdentity !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.checkServerIdentity", "function", options.checkServerIdentity);
+    }
+
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
     }
@@ -481,6 +468,9 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
+    minVersionName: TLS_VERSION_REVERSE_MAP[this[ksecureContext].minVersion],
+    maxVersionName: TLS_VERSION_REVERSE_MAP[this[ksecureContext].maxVersion],
+    secureProtocol: this[ksecureContext].secureProtocol,
     ...this[ksecureContext],
   };
 };
@@ -505,6 +495,10 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
 
+  const [minVersion, maxVersion] = resolveTLSVersions(options || {});
+  this.minVersion = minVersion;
+  this.maxVersion = maxVersion;
+
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
   this.addContext = function (hostname, context) {
@@ -527,6 +521,7 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      validateTLSOptions(options);
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
@@ -534,48 +529,26 @@ function Server(options, secureConnectionListener): void {
       }
 
       let cert = options.cert;
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-        this.cert = cert;
-      }
+      if (cert) this.cert = cert;
 
       let key = options.key;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-        this.key = key;
-      }
+      if (key) this.key = key;
 
       let ca = options.ca;
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-        this.ca = ca;
-      }
+      if (ca) this.ca = ca;
 
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-      }
-      this.secureOptions = secureOptions;
+      this.ciphers = options.ciphers;
+      this.ecdhCurve = options.ecdhCurve;
+      this.passphrase = options.passphrase;
+      this.servername = options.servername;
+      this.secureOptions = options.secureOptions || 0;
+      this.secureProtocol = options.secureProtocol;
 
       const requestCert = options.requestCert || false;
-
       if (requestCert) this._requestCert = requestCert;
       else this._requestCert = undefined;
 
       const rejectUnauthorized = options.rejectUnauthorized;
-
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
@@ -586,7 +559,11 @@ function Server(options, secureConnectionListener): void {
     throw Error("Not implented in Bun yet");
   };
 
-  Server.prototype.setTicketKeys = function () {
+  Server.prototype.setTicketKeys = function (ticketKeys) {
+    if (!Buffer.isBuffer(ticketKeys) || ticketKeys.length !== 48) {
+      throw $ERR_INVALID_ARG_TYPE("Session ticket keys must be a 48-byte buffer");
+    }
+
     throw Error("Not implented in Bun yet");
   };
 
@@ -598,6 +575,11 @@ function Server(options, secureConnectionListener): void {
         cert: this.cert,
         ca: this.ca,
         passphrase: this.passphrase,
+        minVersion: this.minVersion,
+        maxVersion: this.maxVersion,
+        secureProtocol: this.secureProtocol,
+        minVersionName: TLS_VERSION_REVERSE_MAP[this.minVersion],
+        maxVersionName: TLS_VERSION_REVERSE_MAP[this.maxVersion],
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
@@ -620,12 +602,11 @@ function createServer(options, connectionListener) {
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
-    "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
-  DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3";
+    "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256";
 
 function normalizeConnectArgs(listArgs) {
-  const args = net._normalizeArgs(listArgs);
+  // Cast to any to use internal _normalizeArgs helper as in Node.js implementation
+  const args = (net as any)._normalizeArgs(listArgs);
   $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.
@@ -648,10 +629,13 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
+
   const { ALPNProtocols } = options;
+
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);
   }
+
   return new TLSSocket(options).connect(normal);
 }
 
@@ -669,9 +653,11 @@ function convertProtocols(protocols) {
       (p, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
-          throw new RangeError(
+          const err = new RangeError(
             `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
           );
+          err.code = "ERR_OUT_OF_RANGE";
+          throw err;
         }
         lens[i] = len;
         return p + 1 + len;
@@ -696,7 +682,9 @@ function convertALPNProtocols(protocols, out) {
     out.ALPNProtocols = convertProtocols(protocols);
   } else if (isTypedArray(protocols)) {
     // Copy new buffer not to be modified by user.
-    out.ALPNProtocols = Buffer.from(protocols);
+    out.ALPNProtocols = Buffer.from(
+      protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
+    );
   } else if (isArrayBufferView(protocols)) {
     out.ALPNProtocols = Buffer.from(
       protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),

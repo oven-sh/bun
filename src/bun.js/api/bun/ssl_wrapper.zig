@@ -268,6 +268,7 @@ pub fn SSLWrapper(comptime T: type) type {
             if (this.flags.closed_notified) return;
 
             this.flags.authorized = success;
+
             // trigger the handshake callback
             this.handlers.onHandshake(this.handlers.ctx, success, result);
         }
@@ -297,8 +298,25 @@ pub fn SSLWrapper(comptime T: type) type {
             if (this.isShutdown()) {
                 return .{};
             }
+
             const ssl = this.ssl orelse return .{};
-            return uws.us_ssl_socket_verify_error_from_ssl(ssl);
+
+            const peek_err = BoringSSL.ERR_peek_error();
+            var verr = uws.us_ssl_socket_verify_error_from_ssl(ssl);
+
+            // no certificate verification = handshake error
+            if (verr.code == null and peek_err != 0) {
+                const reason_ptr = BoringSSL.ERR_reason_error_string(peek_err);
+
+                verr = uws.us_bun_verify_error_t{
+                    .error_no = @intCast(peek_err),
+                    .code = reason_ptr,
+                    .reason = reason_ptr,
+                };
+                BoringSSL.ERR_clear_error();
+            }
+
+            return verr;
         }
 
         /// Update the handshake state

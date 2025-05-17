@@ -925,12 +925,33 @@ pub const H2FrameParser = struct {
                 if (this.dataFrameQueue.peekFront()) |frame| {
                     const no_backpressure = brk: {
                         var is_flow_control_limited = false;
-                        defer if (!is_flow_control_limited) {
-                            // only call the callback + free the frame if we write to the socket the full frame
-                            var _frame = this.dataFrameQueue.dequeue().?;
-                            if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
-                            _frame.deinit(client.allocator);
-                        };
+                        defer {
+                            if (!is_flow_control_limited) {
+                                // only call the callback + free the frame if we write to the socket the full frame
+                                var _frame = this.dataFrameQueue.dequeue().?;
+                                client.outboundQueueSize -= 1;
+
+                                if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
+                                if (this.dataFrameQueue.isEmpty()) {
+                                    if (_frame.end_stream) {
+                                        if (this.waitForTrailers) {
+                                            client.dispatch(.onWantTrailers, this.getIdentifier());
+                                        } else {
+                                            const identifier = this.getIdentifier();
+                                            identifier.ensureStillAlive();
+                                            if (this.state == .HALF_CLOSED_REMOTE) {
+                                                this.state = .CLOSED;
+                                            } else {
+                                                this.state = .HALF_CLOSED_LOCAL;
+                                            }
+                                            client.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(this.state)));
+                                        }
+                                    }
+                                }
+                                _frame.deinit(client.allocator);
+                            }
+                        }
+
                         const writer = client.toWriter();
 
                         if (frame.len == 0) {
@@ -947,6 +968,7 @@ pub const H2FrameParser = struct {
                             const frame_slice = frame.slice();
                             const max_size = @min(frame_slice.len, this.remoteWindowSize - this.remoteUsedWindowSize, this.remoteWindowSize - this.remoteUsedWindowSize);
                             if (max_size == 0) {
+                                log("dataFrame flow control limited", .{});
                                 // we are flow control limited
                                 return .no_action;
                             }
@@ -955,6 +977,9 @@ pub const H2FrameParser = struct {
                                 // we need to break the frame into smaller chunks
                                 frame.offset += @intCast(max_size);
                                 const able_to_send = frame_slice[0..max_size];
+                                client.queuedDataSize -= able_to_send.len;
+                                written.* += frame_slice.len;
+
                                 log("dataFrame partial flushed {} {}", .{ able_to_send.len, frame.end_stream });
 
                                 const padding = this.getPadding(able_to_send.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
@@ -983,7 +1008,6 @@ pub const H2FrameParser = struct {
                                 // flush with some payload
                                 client.queuedDataSize -= frame_slice.len;
                                 written.* += frame_slice.len;
-                                client.outboundQueueSize -= 1;
                                 log("dataFrame flushed {} {}", .{ frame_slice.len, frame.end_stream });
 
                                 const padding = this.getPadding(frame_slice.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
@@ -1010,22 +1034,7 @@ pub const H2FrameParser = struct {
                             }
                         }
                     };
-                    if (this.dataFrameQueue.isEmpty()) {
-                        if (frame.end_stream) {
-                            if (this.waitForTrailers) {
-                                client.dispatch(.onWantTrailers, this.getIdentifier());
-                            } else {
-                                const identifier = this.getIdentifier();
-                                identifier.ensureStillAlive();
-                                if (this.state == .HALF_CLOSED_REMOTE) {
-                                    this.state = .CLOSED;
-                                } else {
-                                    this.state = .HALF_CLOSED_LOCAL;
-                                }
-                                client.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(this.state)));
-                            }
-                        }
-                    }
+
                     return if (no_backpressure) .flushed else .backpressure;
                 }
             }
@@ -1209,10 +1218,7 @@ pub const H2FrameParser = struct {
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
     fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) void {
         this.usedWindowSize +|= payloadSize;
-        if (this.usedWindowSize == this.windowSize) {
-            this.windowSize += WINDOW_INCREMENT_SIZE;
-            this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
-        } else if (this.usedWindowSize > this.windowSize) {
+        if (this.usedWindowSize > this.windowSize) {
             // we are receiving more data than we are allowed to
             this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
             this.usedWindowSize -= payloadSize;
@@ -1220,13 +1226,24 @@ pub const H2FrameParser = struct {
 
         if (stream) |s| {
             s.usedWindowSize += payloadSize;
-            if (s.usedWindowSize == s.windowSize) {
-                s.windowSize += WINDOW_INCREMENT_SIZE;
-                this.sendWindowUpdate(s.id, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
-            } else if (s.usedWindowSize > s.windowSize) {
+            if (s.usedWindowSize > s.windowSize) {
                 // we are receiving more data than we are allowed to
                 this.sendGoAway(s.id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
                 s.usedWindowSize -= payloadSize;
+            }
+        }
+    }
+
+    fn incrementWindowSizeIfNeeded(this: *H2FrameParser) void {
+        if (this.usedWindowSize == this.windowSize) {
+            this.windowSize += WINDOW_INCREMENT_SIZE;
+            this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
+        }
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
+            if (stream.usedWindowSize == stream.windowSize) {
+                stream.windowSize += WINDOW_INCREMENT_SIZE;
+                this.sendWindowUpdate(stream.id, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
             }
         }
     }
@@ -2576,6 +2593,7 @@ pub const H2FrameParser = struct {
                 }
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
+                log("initialWindowSize is not a number", .{});
                 return globalObject.throw("Expected initialWindowSize to be a number", .{});
             }
         }
@@ -4100,6 +4118,7 @@ pub const H2FrameParser = struct {
         if (args_list.len < 1) {
             return globalObject.throw("Expected 1 argument", .{});
         }
+        defer this.incrementWindowSizeIfNeeded();
         const buffer = args_list.ptr[0];
         buffer.ensureStillAlive();
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
@@ -4118,6 +4137,7 @@ pub const H2FrameParser = struct {
         log("onNativeRead", .{});
         this.ref();
         defer this.deref();
+        defer this.incrementWindowSizeIfNeeded();
         var bytes = data;
         while (bytes.len > 0) {
             const result = try this.readBytes(bytes);
@@ -4322,7 +4342,7 @@ pub const H2FrameParser = struct {
         this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
-
+        this.windowSize = this.localSettings.initialWindowSize;
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

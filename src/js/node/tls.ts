@@ -264,8 +264,10 @@ var InternalSecureContext = class SecureContext {
   }
 };
 
-function SecureContext(options) {
-  return new InternalSecureContext(options);
+function SecureContext(options): void {
+  // TODO: The `never` exists because TypeScript only lets you construct functions that return void
+  // but in reality we should just be calling like InternalSecureContext.$call or similar
+  return new InternalSecureContext(options) as never;
 }
 
 function createSecureContext(options) {
@@ -579,6 +581,21 @@ function Server(options, secureConnectionListener): void {
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
+
+      if (typeof options.ciphers !== "undefined") {
+        if (typeof options.ciphers !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
+        }
+
+        const requested = options.ciphers.split(":");
+        for (const r of requested) {
+          if (!DEFAULT_CIPHERS_SET.has(r)) {
+            throw $ERR_SSL_NO_CIPHER_MATCH();
+          }
+        }
+
+        // TODO: Use the ciphers?
+      }
     }
   };
 
@@ -624,6 +641,9 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
 
+const DEFAULT_CIPHERS_LIST = DEFAULT_CIPHERS.split(":");
+const DEFAULT_CIPHERS_SET = new Set([...DEFAULT_CIPHERS_LIST.map(c => c.toLowerCase()), ...DEFAULT_CIPHERS_LIST]);
+
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);
   $assert($isObject(args[0]));
@@ -648,10 +668,12 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols } = options;
+  const { ALPNProtocols } = options as { ALPNProtocols?: unknown };
+
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);
   }
+
   return new TLSSocket(options).connect(normal);
 }
 

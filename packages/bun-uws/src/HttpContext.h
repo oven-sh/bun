@@ -88,7 +88,7 @@ private:
         MACRO("UNSUBSCRIBE") \
     
 
-#ifndef __WIN32
+#ifndef _WIN32
     static constexpr std::array<const std::string, 35> HTTP_METHODS = {
         #define MACRO(name) std::string {name},
         FOR_EACH_HTTP_METHOD(MACRO)

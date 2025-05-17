@@ -554,6 +554,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+
     if (normalized == BufferEncodingType::hex) {
         auto data = callFrame->argument(0);
 
@@ -572,6 +573,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
             length = lengthValue.toLength(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
         }
+
         if (length % 2 != 0) {
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length));
         }

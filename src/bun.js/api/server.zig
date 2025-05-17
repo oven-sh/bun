@@ -7157,7 +7157,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             // --- 2. Setup WebSocket handler's app reference ---
-            var has_user_defined_ws_catch_all = false;
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = app;
@@ -7167,6 +7166,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // --- 3. Register compiled user routes (this.user_routes) & Track "/*" Coverage ---
             var star_methods_covered_by_user = bun.http.Method.Set.initEmpty();
             var has_any_user_route_for_star_path = false; // True if "/*" path appears in user_routes at all
+            var has_any_ws_route_for_star_path = false;
 
             for (this.user_routes.items) |*user_route| {
                 const is_star_path = strings.eqlComptime(user_route.route.path, "/*");
@@ -7181,26 +7181,38 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (is_star_path) {
                             star_methods_covered_by_user = .initFull();
                         }
+
+                        if (this.config.websocket) |*websocket| {
+                            if (is_star_path) {
+                                has_any_ws_route_for_star_path = true;
+                            }
+                            app.ws(
+                                user_route.route.path,
+                                user_route,
+                                1, // id 1 means is a user route
+                                ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                            );
+                        }
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
                         app.method(method_val, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
                         if (is_star_path) {
                             star_methods_covered_by_user.insert(method_val);
                         }
-                    },
-                }
 
-                // Register WebSocket routes if applicable
-                if (this.config.websocket) |*websocket_config| {
-                    if (is_star_path) {
-                        has_user_defined_ws_catch_all = true;
-                    }
-                    app.ws(
-                        user_route.route.path,
-                        user_route,
-                        1, // id 1 -> user route
-                        ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket_config.toBehavior()),
-                    );
+                        // Setup user websocket in the route if needed.
+                        if (this.config.websocket) |*websocket| {
+                            // Websocket upgrade is a GET request
+                            if (method_val == .GET) {
+                                app.ws(
+                                    user_route.route.path,
+                                    user_route,
+                                    1, // id 1 means is a user route
+                                    ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                                );
+                            }
+                        }
+                    },
                 }
             }
 
@@ -7273,8 +7285,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 9. Consolidated "/*" HTTP Fallback Registration ---
+            // Setup user websocket fallback route aka fetch function if fetch is not provided will respond with 403.
+            if (!has_any_ws_route_for_star_path) {
+                if (this.config.websocket) |*websocket| {
+                    app.ws(
+                        "/*",
+                        this,
+                        0, // id 0 means is a fallback route and ctx is the server
+                        ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                    );
+                }
+            }
 
+            // --- 9. Consolidated "/*" HTTP Fallback Registration ---
             if (star_methods_covered_by_user.eql(bun.http.Method.Set.initFull())) {
                 // User/Static/Dev has already provided a "/*" handler for ALL methods.
                 // No further global "/*" HTTP fallback needed.
@@ -7307,18 +7330,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // for specific Node API routes, even if it's not the main "/*" handler.
             if (this.config.onNodeHTTPRequest != .zero) {
                 NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
-            }
-
-            // --- 10. Consolidated "/*" WebSocket Catch-all Registration ---
-            if (!has_user_defined_ws_catch_all) {
-                if (this.config.websocket) |*websocket_config| {
-                    app.ws(
-                        "/*",
-                        this,
-                        0, // id 0 -> fallback WS route
-                        ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket_config.toBehavior()),
-                    );
-                }
             }
 
             return route_list_value;

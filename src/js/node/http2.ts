@@ -2825,7 +2825,7 @@ class ServerHttp2Session extends Http2Session {
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: options || {},
+      settings: { ...options, ...options?.settings },
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });
@@ -3690,7 +3690,6 @@ function connectionListener(socket: Socket) {
     }
     return;
   }
-
   // setup session
   const session = new ServerHttp2Session(socket, options, this);
   session.on("error", sessionOnError);

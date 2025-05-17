@@ -2,7 +2,6 @@
 #include "JSConnectionsList.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
-#include "bun.h"
 
 namespace Bun {
 
@@ -103,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_expired, (JSGlobalObject * globalObje
         std::swap(headersTimeout, requestTimeout);
     }
 
-    const uint64_t now = Bun::now();
+    const uint64_t now = Bun::hrtime();
 
     const uint64_t headersDeadline = (headersTimeout > 0 && now > headersTimeout) ? now - headersTimeout : 0;
     const uint64_t requestDeadline = (requestTimeout > 0 && now > requestTimeout) ? now - requestTimeout : 0;

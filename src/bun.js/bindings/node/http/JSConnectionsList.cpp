@@ -160,4 +160,24 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     return result;
 }
 
+void JSConnectionsList::push(JSGlobalObject* globalObject, JSHTTPParser* parser)
+{
+    allConnections()->add(globalObject, parser);
+}
+
+void JSConnectionsList::pop(JSGlobalObject* globalObject, JSHTTPParser* parser)
+{
+    allConnections()->remove(globalObject, parser);
+}
+
+void JSConnectionsList::pushActive(JSGlobalObject* globalObject, JSHTTPParser* parser)
+{
+    activeConnections()->add(globalObject, parser);
+}
+
+void JSConnectionsList::popActive(JSGlobalObject* globalObject, JSHTTPParser* parser)
+{
+    activeConnections()->remove(globalObject, parser);
+}
+
 } // namespace Bun

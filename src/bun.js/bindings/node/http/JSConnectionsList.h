@@ -4,6 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
+#include "JSHTTPParser.h"
 
 namespace Bun {
 
@@ -58,6 +59,11 @@ public:
     JSC::JSArray* idle(JSC::JSGlobalObject*);
     JSC::JSArray* active(JSC::JSGlobalObject*);
     JSC::JSArray* expired(JSC::JSGlobalObject*, uint64_t headersDeadline, uint64_t requestDeadline);
+
+    void push(JSC::JSGlobalObject*, JSHTTPParser*);
+    void pop(JSC::JSGlobalObject*, JSHTTPParser*);
+    void pushActive(JSC::JSGlobalObject*, JSHTTPParser*);
+    void popActive(JSC::JSGlobalObject*, JSHTTPParser*);
 };
 
 void setupConnectionsListClassStructure(JSC::LazyClassStructure::Initializer&);

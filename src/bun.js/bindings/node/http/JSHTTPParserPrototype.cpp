@@ -1,15 +1,42 @@
 #include "JSHTTPParserPrototype.h"
+#include "JSHTTPParser.h"
+#include "JSConnectionsList.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
 using namespace JSC;
 
-JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_wat);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_close);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_free);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_remove);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_execute);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_finish);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_initialize);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_pause);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_resume);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_consume);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_unconsume);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_duration);
+JSC_DECLARE_HOST_FUNCTION(jsHTTPParser_headersCompleted);
 
 const ClassInfo JSHTTPParserPrototype::s_info = { "HTTPParser"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHTTPParserPrototype) };
 
 static const HashTableValue JSHTTPParserPrototypeTableValues[] = {
-    { "wat"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_wat, 0 } },
+    { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_close, 0 } },
+    { "free"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_free, 0 } },
+    { "remove"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_remove, 0 } },
+    { "execute"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_execute, 0 } },
+    { "finish"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_finish, 0 } },
+    { "initialize"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_initialize, 0 } },
+    { "pause"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_pause, 0 } },
+    { "resume"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_resume, 0 } },
+    { "consume"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_consume, 0 } },
+    { "unconsume"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_unconsume, 0 } },
+    { "getCurrentBuffer"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_getCurrentBuffer, 0 } },
+    { "duration"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_duration, 0 } },
+    { "headersCompleted"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHTTPParser_headersCompleted, 0 } },
 };
 
 void JSHTTPParserPrototype::finishCreation(VM& vm)
@@ -19,12 +46,213 @@ void JSHTTPParserPrototype::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_wat, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_close, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // our HTTPParser is the js object itself
+    parser->m_freed = true;
+
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_free, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+    // parser->emitTraceEventDestroy();
+    // parser->emitDestroy();
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_remove, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (JSCell* connectionsCell = parser->m_connectionsList.get()) {
+        if (JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(connectionsCell)) {
+            connections->pop(globalObject, parser);
+            connections->popActive(globalObject, parser);
+        }
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_finish, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_resume, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_consume, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_unconsume, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // TODO: TODO!
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSUint8Array* buffer = JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), parser->currentBufferLen());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    memcpy(buffer->vector(), parser->currentBufferData(), parser->currentBufferLen());
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (parser->lastMessageStart() == 0) {
+        return JSValue::encode(jsNumber(0));
+    }
+
+    double duration = (Bun::hrtime() - parser->lastMessageStart()) / 1e6;
+
+    return JSValue::encode(jsNumber(duration));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_headersCompleted, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    if (!parser || parser->freed()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsBoolean(parser->headersCompleted()));
 }
 
 } // namespace Bun

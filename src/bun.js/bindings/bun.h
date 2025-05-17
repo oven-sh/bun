@@ -4,6 +4,6 @@
 
 namespace Bun {
 
-uint64_t now();
+uint64_t hrtime();
 
 } // namespace Bun

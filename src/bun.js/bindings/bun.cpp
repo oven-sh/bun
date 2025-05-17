@@ -6,7 +6,7 @@
 
 namespace Bun {
 
-uint64_t now()
+uint64_t hrtime()
 {
 #if OS(WINDOWS)
     return uv_hrtime();

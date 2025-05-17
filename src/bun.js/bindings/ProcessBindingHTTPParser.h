@@ -4,6 +4,12 @@
 
 namespace Bun {
 
+// shared data across 'http_parser' objects
+struct HTTPParserBindingData {
+    WTF::Vector<char> parserBuffer;
+    bool parserBufferInUse = false;
+};
+
 // The object returned from process.binding('http_parser')
 class ProcessBindingHTTPParser final : public JSC::JSNonFinalObject {
 public:
@@ -16,18 +22,20 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ProcessBindingHTTPParser, Base);
         return &vm.plainObjectSpace();
     }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    HTTPParserBindingData data;
+
 private:
     void finishCreation(JSC::VM&);
 
     ProcessBindingHTTPParser(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
+        , data()
     {
     }
 };

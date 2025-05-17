@@ -500,7 +500,7 @@ public:
         getSocketContextData()->filterHandlers.emplace_back(std::move(filterHandler));
     }
 
-    static constexpr std::array<std::string, 35> HTTP_METHODS = {
+    static constexpr  std::array<const std::string, 35> HTTP_METHODS = {
         "ACL",
         "BIND",
         "CHECKOUT",
@@ -547,7 +547,7 @@ public:
         std::array<std::string, 1> methods_buffer;
         // When it's NOT node:http, allow the uWS default precedence ordering.
         if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
-            methods = HTTP_METHODS;
+            methods = {HTTP_METHODS.data(), HTTP_METHODS.size()};
         } else {
             methods_buffer[0] = std::string(method);
             methods = {methods_buffer.data(), 1};   

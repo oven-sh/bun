@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
-import * as ServerOptions from "./bun-serve-exports-fixture.js";
+import { describe, expect, test } from "bun:test";
 import * as RequestOptions from "./bun-request-fixture.js";
+import * as ServerOptions from "./bun-serve-exports-fixture.js";
 
 describe("getIfPropertyExists", () => {
   test("Bun.serve()", async () => {

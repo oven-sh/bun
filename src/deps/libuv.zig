@@ -2826,7 +2826,7 @@ pub const ReturnCode = enum(c_int) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.sys.E.ACCES)) {
+    pub inline fn errno(this: ReturnCode) ?u16 {
         return if (this.int() < 0)
             switch (this.int()) {
                 UV_EPERM => @intFromEnum(bun.sys.E.PERM),

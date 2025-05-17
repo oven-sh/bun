@@ -2,11 +2,11 @@ import { readFileSync, realpathSync } from "fs";
 import { tls as cert1 } from "harness";
 import { AddressInfo } from "net";
 import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
 import tls, { connect, createServer, rootCertificates, Server, TLSSocket } from "tls";
-import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 

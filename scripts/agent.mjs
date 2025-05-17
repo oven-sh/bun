@@ -2,27 +2,27 @@
 
 // An agent that starts buildkite-agent and runs others services.
 
-import { join } from "node:path";
 import { realpathSync } from "node:fs";
+import { join } from "node:path";
+import { parseArgs } from "node:util";
 import {
-  isWindows,
-  getOs,
-  getArch,
-  getKernel,
   getAbi,
   getAbiVersion,
-  getDistro,
-  getDistroVersion,
-  getHostname,
+  getArch,
   getCloud,
   getCloudMetadataTag,
-  which,
+  getDistro,
+  getDistroVersion,
   getEnv,
-  writeFile,
-  spawnSafe,
+  getHostname,
+  getKernel,
+  getOs,
+  isWindows,
   mkdir,
+  spawnSafe,
+  which,
+  writeFile,
 } from "./utils.mjs";
-import { parseArgs } from "node:util";
 
 /**
  * @param {"install" | "start"} action

@@ -1,4 +1,4 @@
-import { test, expect, describe, afterAll } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie validation tests", () => {
   describe("expires validation", () => {

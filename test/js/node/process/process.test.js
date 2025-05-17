@@ -1,9 +1,9 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
+import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
-import { familySync } from "detect-libc";
+import { basename, join, resolve } from "path";
 
 expect.extend({
   toRunInlineFixture(input) {

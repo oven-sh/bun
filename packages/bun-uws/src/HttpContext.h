@@ -71,7 +71,7 @@ private:
             // if we are SSL we need to handle the handshake properly
             us_socket_context_on_handshake(SSL, getSocketContext(), [](us_socket_t *s, int success,  struct us_bun_verify_error_t verify_error, void* custom_data) {
                 // if we are closing or already closed, we don't need to do anything
-                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
+                if (!us_socket_is_closed(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
                     httpContextData->flags.isAuthorized = success;
                     if(httpContextData->flags.rejectUnauthorized) {
@@ -123,11 +123,8 @@ private:
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            if(httpContextData->flags.isParsingHttp) {
-                if(httpContextData->onClientError) {
-                    httpContextData->onClientError(SSL, s,uWS::HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
-                }
-            }
+
+            
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
             }
@@ -149,6 +146,7 @@ private:
 
         /* Handle HTTP data streams */
         us_socket_context_on_data(SSL, getSocketContext(), [](us_socket_t *s, char *data, int length) {
+
             // ref the socket to make sure we process it entirely before it is closed
             us_socket_ref(s);
 
@@ -172,7 +170,6 @@ private:
 
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
-
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -182,7 +179,8 @@ private:
 #endif
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
-            auto [err, parserError, returnedSocket] = httpResponseData->consumePostPadded(httpContextData->flags.requireHostHeader,data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+
+            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -201,6 +199,7 @@ private:
 
                 /* Mark pending request and emit it */
                 httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+                
 
                 /* Mark this response as connectionClose if ancient or connection: close */
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -208,7 +207,6 @@ private:
                 }
 
                 httpResponseData->fromAncientRequest = httpRequest->isAncient();
-
 
                 /* Select the router based on SNI (only possible for SSL) */
                 auto *selectedRouter = &httpContextData->router;
@@ -261,7 +259,7 @@ private:
             }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
-
+                    
                     /* Todo: can this handle timeout for non-post as well? */
                     if (fin) {
                         /* If we just got the last chunk (or empty chunk), disable timeout */
@@ -298,29 +296,30 @@ private:
                 return user;
             });
 
+            auto httpErrorStatusCode = result.httpErrorStatusCode();
+            
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
-            if (returnedSocket == FULLPTR) {
+            if (httpErrorStatusCode) {
                 if(httpContextData->onClientError) {
-                    httpContextData->onClientError(SSL, s, parserError, data, length);
+                    httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-                us_socket_write(SSL, s, httpErrorResponses[err].data(), (int) httpErrorResponses[err].length(), false);
+                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false);
                 us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
-                /* This just makes the following code act as if the socket was closed from error inside the parser. */
-                returnedSocket = nullptr;
             }
-
+        
+            auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
-            if (returnedSocket != nullptr) {
+            if (returnedData != nullptr) {
                 /* We don't want open sockets to keep the event loop alive between HTTP requests */
-                us_socket_unref((us_socket_t *) returnedSocket);
+                us_socket_unref((us_socket_t *) returnedData);
 
                 /* Timeout on uncork failure */
-                auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
+                auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
                 if (written > 0 || failed) {
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                     ((HttpResponse<SSL> *) s)->resetTimeout();
@@ -337,7 +336,7 @@ private:
                         }
                     }
                 }
-                return (us_socket_t *) returnedSocket;
+                return (us_socket_t *) returnedData;
             }
 
             /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */

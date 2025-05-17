@@ -750,7 +750,7 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
                     if (!promise.isHandled(vm.global.vm()) and this.tag != .fail) {
-                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     }
 
                     return switch (this.tag) {
@@ -1110,7 +1110,7 @@ pub const DescribeScope = struct {
                 switch (prom.status(globalObject.vm())) {
                     .fulfilled => {},
                     else => {
-                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue(globalObject));
+                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.vm()), prom.asValue());
                         return .undefined;
                     },
                 }
@@ -1560,6 +1560,7 @@ pub const TestRunnerTask = struct {
                 }
             };
 
+            this.globalThis.clearTerminationException();
             _ = vm.uncaughtException(this.globalThis, err, true);
         }
 

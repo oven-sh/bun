@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 
 it("Set is propperly formatted in Bun.inspect()", () => {
   const set = new Set(["foo", "bar"]);

@@ -1,14 +1,14 @@
+import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { mkdir } from "fs/promises";
-import { test, expect } from "bun:test";
 import { tmpdirSync } from "harness";
-import { join } from "path";
+import { join, toNamespacedPath } from "path";
 
 test("fs.mkdir recursive should not error on existing", async () => {
   const testDir = tmpdirSync();
 
   const dir1 = join(testDir, "test123");
-  expect(mkdirSync(dir1, { recursive: true })).toBe(dir1);
+  expect(mkdirSync(dir1, { recursive: true })).toBe(toNamespacedPath(dir1));
   expect(mkdirSync(dir1, { recursive: true })).toBeUndefined();
   expect(() => {
     mkdirSync(dir1);
@@ -29,7 +29,7 @@ test("fs.mkdir recursive should not error on existing", async () => {
 
   // nested
   const dir3 = join(testDir, "test789", "nested");
-  expect(mkdirSync(dir3, { recursive: true })).toBe(join(testDir, "test789"));
+  expect(mkdirSync(dir3, { recursive: true })).toBe(toNamespacedPath(join(testDir, "test789")));
   expect(mkdirSync(dir3, { recursive: true })).toBeUndefined();
 
   // file

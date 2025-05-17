@@ -8,9 +8,9 @@ for (let builtin of builtinModules) {
     path,
     `
 const builtin = ${JSON.stringify(builtin)};
-const now = require("perf_hooks").performance.now();
+const now = performance.now();
 require(builtin);
-const end = require("perf_hooks").performance.now();
+const end = performance.now();
 process.stdout.write(JSON.stringify({builtin, time: end - now}) + "\\n");
   `,
   );

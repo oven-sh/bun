@@ -307,6 +307,20 @@ pub const JSGlobalObject = opaque {
         }
     }
 
+    pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSError!JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = try bun.MutableString.init2048(stack_fallback.get());
+            defer buf.deinit();
+            var writer = buf.writer();
+            try writer.print(fmt, args);
+            var str = ZigString.fromUTF8(buf.slice());
+            return str.toDOMExceptionInstance(this, code);
+        } else {
+            return ZigString.static(fmt).toDOMExceptionInstance(this, code);
+        }
+    }
+
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
@@ -424,6 +438,11 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(instance);
     }
 
+    pub fn throwDOMException(this: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        const instance = try this.createDOMExceptionInstance(code, fmt, args);
+        return this.throwValue(instance);
+    }
+
     pub fn throwError(this: *JSGlobalObject, err: anyerror, comptime fmt: [:0]const u8) bun.JSError {
         if (err == error.OutOfMemory) {
             return this.throwOutOfMemory();
@@ -533,7 +552,10 @@ pub const JSGlobalObject = opaque {
     ///         return global.reportActiveExceptionAsUnhandled(err);
     ///
     pub fn reportActiveExceptionAsUnhandled(this: *JSGlobalObject, err: bun.JSError) void {
-        _ = this.bunVM().uncaughtException(this, this.takeException(err), false);
+        const exception = this.takeException(err);
+        if (!exception.isTerminationException(this.vm())) {
+            _ = this.bunVM().uncaughtException(this, exception, false);
+        }
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -852,6 +874,12 @@ pub const JSGlobalObject = opaque {
     ) JSC.JSValue {
         @branchHint(.cold);
         return JSC.Error.INVALID_ARG_TYPE.fmt(global, fmt, args);
+    }
+
+    extern fn ScriptExecutionContextIdentifier__forGlobalObject(global: *JSC.JSGlobalObject) u32;
+
+    pub fn scriptExecutionContextIdentifier(global: *JSC.JSGlobalObject) bun.webcore.ScriptExecutionContext.Identifier {
+        return @enumFromInt(ScriptExecutionContextIdentifier__forGlobalObject(global));
     }
 
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };

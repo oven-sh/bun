@@ -2527,16 +2527,13 @@ pub const DNSResolver = struct {
                 break :brk RecordType.default;
             }
 
-            const record_type_str = record_type_value.toStringOrNull(globalThis) orelse {
-                return .zero;
-            };
-
+            const record_type_str = try record_type_value.toJSString(globalThis);
             if (record_type_str.length() == 0) {
                 break :brk RecordType.default;
             }
 
             break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), JSC.ZigString.eqlComptime) orelse {
-                return globalThis.throwInvalidArgumentType("resolve", "record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT");
+                return globalThis.throwInvalidArgumentPropertyValue("record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT", record_type_value);
             };
         };
 
@@ -2546,10 +2543,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolve", "name", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolve", "name", "non-empty string");
         }
@@ -2610,9 +2604,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "string");
         }
 
-        const ip_str = ip_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+        const ip_str = try ip_value.toJSString(globalThis);
         if (ip_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("reverse", "ip", "non-empty string");
         }
@@ -2670,10 +2662,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookup", "hostname", "non-empty string");
         }
@@ -2754,10 +2743,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
         }
@@ -2784,10 +2770,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
@@ -2810,10 +2793,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
         }
@@ -2840,9 +2820,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNs", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+        const name_str = try name_value.toJSString(globalThis);
 
         const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
         return this.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
@@ -2866,10 +2844,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
         }
@@ -2896,10 +2871,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
         }
@@ -2926,10 +2898,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
         }
@@ -2956,10 +2925,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
         }
@@ -2986,10 +2952,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
         }
@@ -3016,10 +2979,7 @@ pub const DNSResolver = struct {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "string");
         }
 
-        const name_str = name_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
-
+        const name_str = try name_value.toJSString(globalThis);
         if (name_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("resolveAny", "hostname", "non-empty string");
         }
@@ -3375,9 +3335,8 @@ pub const DNSResolver = struct {
         if (addr_value.isEmptyOrUndefinedOrNull() or !addr_value.isString()) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "string");
         }
-        const addr_str = addr_value.toStringOrNull(globalThis) orelse {
-            return .zero;
-        };
+
+        const addr_str = try addr_value.toJSString(globalThis);
         if (addr_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "non-empty string");
         }

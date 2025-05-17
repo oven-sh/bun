@@ -54,6 +54,7 @@
 #include <wtf/PointerPreparations.h>
 #include "ErrorCode.h"
 #include <wtf/URL.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -311,14 +312,28 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
     if (UNLIKELY(!context))
         return JSValue::encode(jsUndefined());
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto signals = convert<IDLSequence<IDLInterface<AbortSignal>>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+
+    // manual conversion to nodejs error handling
+    Vector<RefPtr<AbortSignal>> signals;
+    if (argument0.value().isUndefinedOrNull()) {
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "signals can not be converted to sequence"_s);
+        return {};
+    }
+
+    size_t i = 0;
+    forEachInIterable(lexicalGlobalObject, argument0.value(), [&](VM& vm, JSGlobalObject* globalObject, JSValue item) {
+        if (auto* signal = JSAbortSignal::toWrapped(vm, item)) {
+            signals.append(signal);
+        } else {
+            Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, makeString("signals["_s, i, "]"_s), "AbortSignal"_s, item);
+        }
+        i++;
+    });
+
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTFMove(signals)))));
 }
 

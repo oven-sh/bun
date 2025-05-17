@@ -1,5 +1,5 @@
 # Dockerfile
-FROM postgres:15
+FROM postgres:15.13
 
 # Create directory for SSL certificates
 RUN mkdir -p /etc/postgresql/ssl

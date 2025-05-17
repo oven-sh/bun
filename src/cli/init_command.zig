@@ -383,24 +383,28 @@ pub const InitCommand = struct {
                     Global.exit(0);
                 } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
                     minimal = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
                     auto_yes = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "--")) {
                     parse_flags = false;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "--react") or strings.eqlComptime(arg, "-r")) {
                     template = .react_blank;
                     prev_flag_was_react = true;
                     auto_yes = true;
                 } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "tailwind") or strings.eqlComptime(arg, "--react=tailwind")) or strings.eqlComptime(arg, "r=tailwind")) {
                     template = .react_tailwind;
+                    prev_flag_was_react = false;
                     auto_yes = true;
                 } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "shadcn") or strings.eqlComptime(arg, "--react=shadcn")) or strings.eqlComptime(arg, "r=shadcn")) {
                     template = .react_tailwind_shadcn;
+                    prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
-                    // invalid flag; ignore
+                    prev_flag_was_react = false;
                 }
-                prev_flag_was_react = false;
             } else {
                 if (initialize_in_folder == null) {
                     initialize_in_folder = arg;

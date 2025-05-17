@@ -73,9 +73,11 @@ enum ExceptionCode : uint8_t {
     // Used to indicate to the bindings that a JS exception was thrown below and it should be propagated.
     ExistingExceptionError,
 
+    // Node errors
     InvalidThisError,
     InvalidURLError,
     CryptoOperationFailedError,
+    EVENT_RECURSION,
 };
 
 } // namespace WebCore

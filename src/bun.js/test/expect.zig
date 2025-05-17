@@ -2099,7 +2099,7 @@ pub const Expect = struct {
             return .undefined;
         }
 
-        const expected_diff = std.math.pow(f64, 10, -precision) / 2;
+        const expected_diff = bun.pow(10, -precision) / 2;
         const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
@@ -2318,7 +2318,6 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
-
                 try result.fastGet(globalThis, .message)
             else
                 JSValue.fromCell(try result.toJSString(globalThis));

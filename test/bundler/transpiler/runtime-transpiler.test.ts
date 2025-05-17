@@ -194,3 +194,12 @@ describe("with statement", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("math.pow", () => {
+  function func_result(foo) {
+    return 10 ** (foo / 20);
+  }
+
+  expect(func_result(-1) + "").toEqual("0.8912509381337456");
+  expect(10 ** (-1 / 20) + "").toEqual("0.8912509381337456");
+});

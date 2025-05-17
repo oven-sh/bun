@@ -998,6 +998,7 @@ pub const CopyFileWindows = struct {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         const err_instance = err.toJSC(globalThis);
+
         var event_loop = this.event_loop;
         event_loop.enter();
         defer event_loop.exit();
@@ -1109,9 +1110,10 @@ pub const CopyFileWindows = struct {
     fn onMkdirpComplete(this: *CopyFileWindows) void {
         this.event_loop.unrefConcurrently();
 
-        if (this.err) |err| {
+        if (bun.take(&this.err)) |err| {
             this.throw(err);
-            bun.default_allocator.free(err.path);
+            var err2 = err;
+            err2.deinit();
             return;
         }
 

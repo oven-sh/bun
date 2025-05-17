@@ -581,7 +581,8 @@ pub const ShellRmTask = struct {
                         this.task_manager.err = err;
                         this.task_manager.error_signal.store(true, .seq_cst);
                     } else {
-                        bun.default_allocator.free(err.path);
+                        var err2 = err;
+                        err2.deinit();
                     }
                 },
                 .result => {},
@@ -596,7 +597,7 @@ pub const ShellRmTask = struct {
                 this.task_manager.err = err;
                 this.task_manager.error_signal.store(true, .seq_cst);
             } else {
-                bun.default_allocator.free(err.path);
+                this.task_manager.err.?.deinit();
             }
         }
 

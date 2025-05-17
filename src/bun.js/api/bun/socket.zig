@@ -1066,6 +1066,10 @@ pub const Listener = struct {
     }
 
     pub fn connect(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
+        return connectInner(globalObject, null, null, opts);
+    }
+
+    pub fn connectInner(globalObject: *JSC.JSGlobalObject, prev_maybe_tcp: ?*TCPSocket, prev_maybe_tls: ?*TLSSocket, opts: JSValue) bun.JSError!JSValue {
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             return globalObject.throwInvalidArguments("Expected options object", .{});
         }
@@ -1133,14 +1137,23 @@ pub const Listener = struct {
 
                 var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
                 handlers_ptr.* = handlers;
-                handlers_ptr.is_server = false;
 
                 var promise = JSC.JSPromise.create(globalObject);
                 const promise_value = promise.toJS();
                 handlers_ptr.promise.set(globalObject, promise_value);
 
                 if (ssl_enabled) {
-                    var tls = TLSSocket.new(.{
+                    var tls = if (prev_maybe_tls) |prev| blk: {
+                        bun.destroy(prev.handlers);
+                        bun.assert(prev.this_value != .zero);
+                        prev.handlers = handlers_ptr;
+                        bun.assert(prev.socket.socket == .detached);
+                        prev.connection = connection;
+                        prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
+                        prev.server_name = server_name;
+                        bun.assert(prev.socket_context == null);
+                        break :blk prev;
+                    } else TLSSocket.new(.{
                         .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
@@ -1166,7 +1179,17 @@ pub const Listener = struct {
                         tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
                     }
                 } else {
-                    var tcp = TCPSocket.new(.{
+                    var tcp = if (prev_maybe_tcp) |prev| blk: {
+                        bun.destroy(prev.handlers);
+                        bun.assert(prev.this_value != .zero);
+                        prev.handlers = handlers_ptr;
+                        bun.assert(prev.socket.socket == .detached);
+                        bun.assert(prev.connection == null);
+                        bun.assert(prev.protos == null);
+                        bun.assert(prev.server_name == null);
+                        bun.assert(prev.socket_context == null);
+                        break :blk prev;
+                    } else TCPSocket.new(.{
                         .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
@@ -1242,7 +1265,20 @@ pub const Listener = struct {
         switch (ssl_enabled) {
             inline else => |is_ssl_enabled| {
                 const SocketType = NewSocket(is_ssl_enabled);
-                const socket = bun.new(SocketType, .{
+                const maybe_previous: ?*SocketType = if (is_ssl_enabled) prev_maybe_tls else prev_maybe_tcp;
+
+                const socket = if (maybe_previous) |prev| blk: {
+                    bun.destroy(prev.handlers);
+                    bun.assert(prev.this_value != .zero);
+                    prev.handlers = handlers_ptr;
+                    bun.assert(prev.socket.socket == .detached);
+                    prev.connection = connection;
+                    prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
+                    prev.server_name = server_name;
+                    bun.assert(prev.socket_context == null);
+                    prev.socket_context = socket_context;
+                    break :blk prev;
+                } else bun.new(SocketType, .{
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .this_value = .zero,
@@ -1252,7 +1288,7 @@ pub const Listener = struct {
                     .server_name = server_name,
                     .socket_context = socket_context, // owns the socket context
                 });
-
+                socket.ref();
                 SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
@@ -1260,7 +1296,8 @@ pub const Listener = struct {
                     return promise_value;
                 };
 
-                socket.poll_ref.ref(handlers.vm);
+                // if this is from node:net there's surface where the user can .ref() and .deref() before the connection starts. make sure we honor that here.
+                if (socket.poll_ref_before_connect >= 0) socket.poll_ref.ref(handlers.vm);
 
                 return promise_value;
             },
@@ -1349,6 +1386,7 @@ fn NewSocket(comptime ssl: bool) type {
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+        poll_ref_before_connect: i16 = 0,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
@@ -1445,9 +1483,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer {
-                this.deref();
-            }
+            errdefer this.deref();
 
             switch (connection) {
                 .host => |c| {
@@ -1480,6 +1516,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) return .undefined;
 
             log("resume", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
@@ -1491,6 +1528,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) return .undefined;
 
             log("pause", .{});
             // we should not allow pausing/resuming a wrapped socket because a wrapped socket is 2 sockets and this can cause issues
@@ -1612,7 +1650,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn handleConnectError(this: *This, errno: c_int) void {
-            log("onConnectError {s} ({d}, {})", .{ if (this.handlers.is_server) "S" else "C", errno, this.ref_count });
+            log("onConnectError {s} ({d}, {d})", .{ if (this.handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -1626,21 +1664,24 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
+            this.poll_ref_before_connect = 0;
             if (vm.isShuttingDown()) {
                 return;
             }
 
+            bun.assert(errno >= 0);
+            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+            const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
+            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
+
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
             const err = JSC.SystemError{
-                .errno = errno,
+                .errno = -errno_,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
-                // For some reason errno is 0 which causes this to be success.
-                // Unix socket emits ENOENT
-                .code = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-                // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
-                // .code = bun.String.static(@tagName(@as(bun.sys.E, @enumFromInt(errno)))),
+                .code = code_,
             };
             vm.eventLoop().enter();
             defer {
@@ -1728,11 +1769,11 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            log("onOpen {s} {*} {} {}", .{ if (this.handlers.is_server) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
 
-            log("onOpen {s} {} {}", .{ if (this.handlers.is_server) "S" else "C", this.socket.isDetached(), this.ref_count });
             // update the internal socket instance to the one that was just connected
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = socket;
@@ -1798,9 +1839,7 @@ fn NewSocket(comptime ssl: bool) type {
             const vm = handlers.vm;
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-            }) catch |err| globalObject.takeException(err);
+            const result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
 
             if (result.toError()) |err| {
                 defer this.markInactive();
@@ -1811,7 +1850,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
 
                 if (handlers.rejectPromise(err)) return;
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, err });
             }
         }
 
@@ -1839,6 +1878,7 @@ fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onEnd;
             if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
+                this.poll_ref_before_connect = 0;
 
                 // If you don't handle TCP fin, we assume you're done.
                 this.markInactive();
@@ -1939,6 +1979,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
+            this.poll_ref_before_connect = 0;
 
             const callback = handlers.onClose;
 
@@ -2058,6 +2099,14 @@ fn NewSocket(comptime ssl: bool) type {
             this.socket.setTimeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
+        }
+
+        pub fn inspectCustom(this: *This, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+            _ = callFrame;
+            return bun.String.createFormatForJS(globalObject, "{s}{{ socket:{s} }}", .{
+                if (ssl) "TLSSocket" else "TCPSocket",
+                @tagName(this.socket.socket),
+            });
         }
 
         pub fn getAuthorizationError(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
@@ -2560,6 +2609,15 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn close(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+            JSC.markBinding(@src());
+            _ = callframe;
+            this.socket.close(.normal);
+            this.socket.detach();
+            this.poll_ref.unref(globalObject.bunVM());
+            return .jsUndefined();
+        }
+
         pub fn end(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
@@ -2585,14 +2643,18 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+            log("ref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) this.poll_ref_before_connect += 1;
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
         pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+            log("unref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
+            if (this.socket.isDetached()) this.poll_ref_before_connect -= 1;
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
@@ -3182,7 +3244,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const args = callframe.arguments_old(1);
             var abbreviated: bool = true;
-            if (args.len > 0) {
+            if (args.len > 0 and !args.ptr[0].isUndefined()) {
                 const arg = args.ptr[0];
                 if (!arg.isBoolean()) {
                     return globalObject.throw("Expected abbreviated to be a boolean", .{});
@@ -3347,7 +3409,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
 
             if (globalObject.hasException()) {
                 return .zero;

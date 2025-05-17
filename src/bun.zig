@@ -3275,7 +3275,7 @@ pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
 }
 
-pub const DebugThreadLock = if (Environment.isDebug)
+pub const DebugThreadLock = if (Environment.isDebug or Environment.enable_asan)
     struct {
         owning_thread: ?std.Thread.Id,
         locked_at: crash_handler.StoredTrace,

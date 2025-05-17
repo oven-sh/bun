@@ -1,5 +1,5 @@
 const enable_debug = bun.Environment.isDebug;
-const enable_single_threaded_checks = enable_debug;
+const enable_single_threaded_checks = enable_debug or bun.Environment.enable_asan;
 
 pub const RefCountOptions = struct {
     /// Defaults to the type basename.

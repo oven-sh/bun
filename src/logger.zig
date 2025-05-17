@@ -633,13 +633,15 @@ pub const Log = struct {
     msgs: std.ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
     clone_line_text: bool = false,
+
+    /// This data structure is not thread-safe, but in nearly all cases we already clone the logs
+    /// Unless you're in `bun install`, there are a couple spots.
+    /// Generally, you want to write to a local logger.Log and then clone it into the parent's list at the end.
     lock: bun.Mutex = .{},
 
     pub fn memoryCost(this: *const Log) usize {
         var cost: usize = 0;
-        this.lock.lock();
-        defer this.lock.unlock();
-        for (this.msgs.items) |msg| {
+        for (this.msgs.items) |*msg| {
             cost += msg.memoryCost();
         }
         return cost;
@@ -1348,13 +1350,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *const Log, to: anytype) !void {
+    pub fn print(self: *Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         self.lock.lock();
         defer self.lock.unlock();

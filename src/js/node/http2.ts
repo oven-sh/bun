@@ -1933,6 +1933,7 @@ class Http2Stream extends Duplex {
     if (session && typeof this.#id === "number") {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
+
     callback(err);
   }
 
@@ -2417,15 +2418,16 @@ function emitConnectNT(self, socket) {
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     let error_instance: Error | number | undefined = undefined;
-    if (typeof error === "number") {
-      stream.rstCode = error;
-      if (error != 0) {
-        error_instance = streamErrorFromCode(error);
+    if (stream.listenerCount("error") > 0) {
+      if (typeof error === "number") {
+        stream.rstCode = error;
+        if (error != 0) {
+          error_instance = streamErrorFromCode(error);
+        }
+      } else {
+        error_instance = error;
       }
-    } else {
-      error_instance = error;
     }
-
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
@@ -2672,8 +2674,7 @@ class ServerHttp2Session extends Http2Session {
     },
     error(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      const error_instance = sessionErrorFromCode(errorCode);
-      self.destroy(error_instance);
+      self.destroy(errorCode);
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self || typeof stream !== "object") return;
@@ -3063,6 +3064,7 @@ class ClientHttp2Session extends Http2Session {
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
+
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },

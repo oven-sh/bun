@@ -1143,7 +1143,17 @@ pub const Listener = struct {
                 handlers_ptr.promise.set(globalObject, promise_value);
 
                 if (ssl_enabled) {
-                    var tls = TLSSocket.new(.{
+                    var tls = if (prev_maybe_tls) |prev| blk: {
+                        bun.destroy(prev.handlers);
+                        bun.assert(prev.this_value != .zero);
+                        prev.handlers = handlers_ptr;
+                        bun.assert(prev.socket.socket == .detached);
+                        prev.connection = connection;
+                        prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
+                        prev.server_name = server_name;
+                        bun.assert(prev.socket_context == null);
+                        break :blk prev;
+                    } else TLSSocket.new(.{
                         .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
@@ -1169,7 +1179,17 @@ pub const Listener = struct {
                         tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
                     }
                 } else {
-                    var tcp = TCPSocket.new(.{
+                    var tcp = if (prev_maybe_tcp) |prev| blk: {
+                        bun.destroy(prev.handlers);
+                        bun.assert(prev.this_value != .zero);
+                        prev.handlers = handlers_ptr;
+                        bun.assert(prev.socket.socket == .detached);
+                        bun.assert(prev.connection == null);
+                        bun.assert(prev.protos == null);
+                        bun.assert(prev.server_name == null);
+                        bun.assert(prev.socket_context == null);
+                        break :blk prev;
+                    } else TCPSocket.new(.{
                         .ref_count = .init(),
                         .handlers = handlers_ptr,
                         .this_value = .zero,
@@ -1268,7 +1288,7 @@ pub const Listener = struct {
                     .server_name = server_name,
                     .socket_context = socket_context, // owns the socket context
                 });
-
+                socket.ref();
                 SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
                 socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
@@ -2079,6 +2099,14 @@ fn NewSocket(comptime ssl: bool) type {
             this.socket.setTimeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
+        }
+
+        pub fn inspectCustom(this: *This, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+            _ = callFrame;
+            return bun.String.createFormatForJS(globalObject, "{s}{{ socket:{s} }}", .{
+                if (ssl) "TLSSocket" else "TCPSocket",
+                @tagName(this.socket.socket),
+            });
         }
 
         pub fn getAuthorizationError(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

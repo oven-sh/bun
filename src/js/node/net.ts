@@ -884,7 +884,7 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd) {
-      Bun.connect({
+      doConnect(this._handle, {
         data: this,
         fd: fd,
         socket: SocketHandlers,

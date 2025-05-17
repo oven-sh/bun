@@ -8,6 +8,7 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     memoryCost: true,
+    inspectCustom: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -458,7 +459,7 @@ export default [
     call: false,
     finalize: true,
     estimatedSize: true,
-    // customInspect: true,
+    // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251 },
     JSType: "0b11101110",
     klass: {

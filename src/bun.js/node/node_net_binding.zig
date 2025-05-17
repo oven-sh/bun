@@ -97,7 +97,6 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
                 .is_server = false,
             }),
         });
-        socket.ref();
         return socket.getThisValue(globalThis);
     } else {
         const socket = bun.api.TLSSocket.new(.{
@@ -111,7 +110,6 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
                 .is_server = false,
             }),
         });
-        socket.ref();
         return socket.getThisValue(globalThis);
     }
 }

@@ -164,12 +164,13 @@ pub const WatchEvent = struct {
         };
     }
 
-    pub const Op = packed struct {
+    pub const Op = packed struct(u8) {
         delete: bool = false,
         metadata: bool = false,
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
+        _padding: u3 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -185,6 +186,7 @@ pub const WatchEvent = struct {
             try w.writeAll("{");
             var first = true;
             inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (comptime std.mem.eql(u8, name, "_padding")) continue;
                 if (@field(op, name)) {
                     if (!first) {
                         try w.writeAll(",");

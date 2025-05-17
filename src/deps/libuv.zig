@@ -1426,6 +1426,10 @@ pub const Pipe = extern struct {
     pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
         uv_pipe_pending_instances(this, count);
     }
+
+    pub fn asStream(this: *@This()) *uv_stream_t {
+        return @ptrCast(this);
+    }
 };
 const union_unnamed_416 = extern union {
     fd: c_int,
@@ -2822,7 +2826,7 @@ pub const ReturnCode = enum(c_int) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.sys.E.ACCES)) {
+    pub inline fn errno(this: ReturnCode) ?u16 {
         return if (this.int() < 0)
             switch (this.int()) {
                 UV_EPERM => @intFromEnum(bun.sys.E.PERM),

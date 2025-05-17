@@ -16,6 +16,7 @@ const errors: ErrorCodeMapping = [
   ["ABORT_ERR", Error, "AbortError"],
   ["ERR_ACCESS_DENIED", Error],
   ["ERR_AMBIGUOUS_ARGUMENT", TypeError],
+  ["ERR_ARG_NOT_ITERABLE", TypeError],
   ["ERR_ASSERTION", Error],
   ["ERR_ASYNC_CALLBACK", TypeError],
   ["ERR_ASYNC_TYPE", TypeError],
@@ -116,6 +117,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_STREAM_ERROR", Error],
   ["ERR_HTTP2_TRAILERS_ALREADY_SENT", Error],
   ["ERR_HTTP2_TRAILERS_NOT_READY", Error],
+  ["ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS", Error],
+  ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_INVALID_ADDRESS", Error],
@@ -127,6 +130,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_CURSOR_POS", TypeError],
   ["ERR_INVALID_FILE_URL_HOST", TypeError],
   ["ERR_INVALID_FILE_URL_PATH", TypeError],
+  ["ERR_INVALID_HANDLE_TYPE", TypeError],
   ["ERR_INVALID_HTTP_TOKEN", TypeError],
   ["ERR_INVALID_IP_ADDRESS", TypeError],
   ["ERR_INVALID_MIME_SYNTAX", TypeError],
@@ -281,5 +285,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_VM_MODULE_DIFFERENT_CONTEXT", Error],
   ["ERR_VM_MODULE_LINK_FAILURE", Error],
   ["ERR_VM_MODULE_CACHED_DATA_REJECTED", Error],
+  ["HPE_INVALID_HEADER_TOKEN", Error],
+  ["HPE_HEADER_OVERFLOW", Error],
 ];
 export default errors;

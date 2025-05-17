@@ -643,7 +643,7 @@ pub const WriteFilePromise = struct {
         var promise = handler.promise.swap();
         const globalThis = handler.globalThis;
         bun.destroy(handler);
-        const value = promise.asValue(globalThis);
+        const value = promise.toJS();
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {

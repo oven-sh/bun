@@ -72,6 +72,7 @@ using namespace JSC;
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
+    macro(cmd) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \

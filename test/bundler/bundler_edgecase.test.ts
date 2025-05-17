@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
+import { isBroken, isWindows } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -2304,9 +2304,9 @@ describe("bundler", () => {
         +[hello,world,etc,blah];
       `,
     },
-    target: 'bun',
+    target: "bun",
     onAfterBundle(api) {
-      api.expectFile('out.js').toMatchInlineSnapshot(`
+      api.expectFile("out.js").toMatchInlineSnapshot(`
         "// @bun
         // entry.ts
         import * as hello from "node:test";
@@ -2327,9 +2327,9 @@ describe("bundler", () => {
         +[hello,world,etc];
       `,
     },
-    target: 'node',
+    target: "node",
     onAfterBundle(api) {
-      api.expectFile('out.js').toMatchInlineSnapshot(`
+      api.expectFile("out.js").toMatchInlineSnapshot(`
         "// entry.ts
         import * as hello from "node:test";
         import * as world from "node:fs";

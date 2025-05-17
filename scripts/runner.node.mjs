@@ -14,21 +14,21 @@ import {
   appendFileSync,
   existsSync,
   constants as fs,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   statSync,
+  symlinkSync,
   unlink,
   unlinkSync,
   writeFileSync,
-  linkSync,
-  symlinkSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep, extname } from "node:path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
   getAbi,
@@ -132,7 +132,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "4" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",
@@ -748,7 +748,9 @@ async function spawnSafe(options) {
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
-    (error = /oh no: Bun has crashed/i.exec(buffer))
+    (error = /oh no: Bun has crashed/i.exec(buffer)) ||
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer)) ||
+    (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
@@ -1864,9 +1866,15 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
-  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
+  return (
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("sigtrap") ||
+    error.includes("error: addresssanitizer")
+  );
 }
 
 /**

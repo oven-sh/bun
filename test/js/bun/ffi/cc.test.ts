@@ -1,8 +1,8 @@
-import { describe, beforeAll, afterAll, expect, it } from "bun:test";
+import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
-import { promises as fs } from "fs";
-import { cc, type Library, type FFIFunction, CString, ptr } from "bun:ffi";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.

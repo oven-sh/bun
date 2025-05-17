@@ -1,3 +1,5 @@
+include(PathUtils)
+
 if(DEBUG)
   set(bun bun-debug)
 elseif(ENABLE_ASAN)
@@ -44,13 +46,7 @@ endif()
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
-file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_ERROR_SOURCE}/*.json
-  ${BUN_ERROR_SOURCE}/*.ts
-  ${BUN_ERROR_SOURCE}/*.tsx
-  ${BUN_ERROR_SOURCE}/*.css
-  ${BUN_ERROR_SOURCE}/img/*
-)
+absolute_sources(BUN_ERROR_SOURCES ${CWD}/cmake/BunErrorSources.txt)
 
 set(BUN_ERROR_OUTPUT ${CODEGEN_PATH}/bun-error)
 set(BUN_ERROR_OUTPUTS
@@ -139,9 +135,7 @@ register_command(
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
 
-file(GLOB BUN_NODE_FALLBACKS_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_NODE_FALLBACKS_SOURCE}/*.js
-)
+absolute_sources(BUN_NODE_FALLBACKS_SOURCES ${CWD}/cmake/NodeFallbacksSources.txt)
 
 set(BUN_NODE_FALLBACKS_OUTPUT ${CODEGEN_PATH}/node-fallbacks)
 set(BUN_NODE_FALLBACKS_OUTPUTS)
@@ -241,13 +235,7 @@ register_command(
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
-file(GLOB BUN_ZIG_GENERATED_CLASSES_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/bun.js/*.classes.ts
-  ${CWD}/src/bun.js/api/*.classes.ts
-  ${CWD}/src/bun.js/node/*.classes.ts
-  ${CWD}/src/bun.js/test/*.classes.ts
-  ${CWD}/src/bun.js/webcore/*.classes.ts
-)
+absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/ZigGeneratedClassesSources.txt)
 
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
@@ -280,14 +268,8 @@ register_command(
 
 set(BUN_JAVASCRIPT_CODEGEN_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
-file(GLOB_RECURSE BUN_JAVASCRIPT_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/js/*.js
-  ${CWD}/src/js/*.ts
-)
-
-file(GLOB BUN_JAVASCRIPT_CODEGEN_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/codegen/*.ts
-)
+absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/JavaScriptSources.txt)
+absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/JavaScriptCodegenSources.txt)
 
 list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -329,11 +311,7 @@ register_command(
 
 set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
-file(GLOB_RECURSE BUN_BAKE_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/bake/*.ts
-  ${CWD}/src/bake/*/*.ts
-  ${CWD}/src/bake/*/*.css
-)
+absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/BakeRuntimeSources.txt)
 
 list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -366,9 +344,7 @@ register_command(
 
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
-file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/**/*.bind.ts
-)
+absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/BindgenSources.txt)
 
 set(BUN_BINDGEN_CPP_OUTPUTS
   ${CODEGEN_PATH}/GeneratedBindings.cpp
@@ -525,9 +501,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/*.zig
-)
+absolute_sources(BUN_ZIG_SOURCES ${CWD}/cmake/ZigSources.txt)
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
@@ -624,32 +598,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 # hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/io/*.cpp
-  ${CWD}/src/bun.js/modules/*.cpp
-  ${CWD}/src/bun.js/bindings/*.cpp
-  ${CWD}/src/bun.js/bindings/webcore/*.cpp
-  ${CWD}/src/bun.js/bindings/sqlite/*.cpp
-  ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
-  ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
-  ${CWD}/src/bun.js/bindings/node/*.cpp
-  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
-  ${CWD}/src/bun.js/bindings/v8/*.cpp
-  ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
-  ${CWD}/src/bake/*.cpp
-  ${CWD}/src/deps/*.cpp
-  ${CWD}/src/vm/*.cpp
-  ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
-)
-
-file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_USOCKETS_SOURCE}/src/*.c
-  ${BUN_USOCKETS_SOURCE}/src/eventing/*.c
-  ${BUN_USOCKETS_SOURCE}/src/internal/*.c
-  ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
-  ${CWD}/src/bun.js/bindings/uv-posix-polyfills.c
-  ${CWD}/src/bun.js/bindings/uv-posix-stubs.c
-)
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)

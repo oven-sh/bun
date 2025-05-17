@@ -41,7 +41,7 @@ spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
-node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
+node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
@@ -438,9 +438,8 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    const opts: uws.us_socket_context_options_t = .{};
-    const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    IPC.Socket.configure(ctx, true, *JSC.Subprocess, JSC.Subprocess.IPCHandler);
+    const ctx = uws.us_create_bun_nossl_socket_context(vm.event_loop_handle.?, @sizeOf(usize)).?;
+    IPC.Socket.configure(ctx, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }
@@ -454,11 +453,11 @@ pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *api.DNS.DNSR
     return &rare.global_dns_data.?.resolver;
 }
 
-pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *StatWatcherScheduler {
-    return rare.node_fs_stat_watcher_scheduler orelse {
-        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
-        return rare.node_fs_stat_watcher_scheduler.?;
-    };
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) bun.ptr.RefPtr(StatWatcherScheduler) {
+    return (rare.node_fs_stat_watcher_scheduler orelse init: {
+        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm);
+        break :init rare.node_fs_stat_watcher_scheduler.?;
+    }).dupeRef();
 }
 
 pub fn s3DefaultClient(rare: *RareData, globalThis: *JSC.JSGlobalObject) JSC.JSValue {

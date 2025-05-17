@@ -8,6 +8,13 @@
 namespace WebCore {
 
 struct WorkerOptions {
+    enum class Kind : uint8_t {
+        // Created by the global Worker constructor
+        Web,
+        // Created by the `require("node:worker_threads").Worker` constructor
+        Node,
+    };
+
     String name;
     bool mini { false };
     bool unref { false };
@@ -16,7 +23,11 @@ struct WorkerOptions {
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the
     // Blob URL.
     bool evalMode { false };
-    RefPtr<SerializedScriptValue> data;
+    Kind kind { Kind::Web };
+    // Serialized array containing [workerData, environmentData]
+    // (environmentData is always a Map)
+    RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
+    // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env; // TODO(@190n) allow shared

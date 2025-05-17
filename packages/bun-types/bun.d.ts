@@ -3302,7 +3302,66 @@ declare module "bun" {
   }
 
   interface BunRequest<T extends string = string> extends Request {
+    /**
+     * The `:param` part of the URL as an object. If the URL is `/users/:id`,
+     * then `req.params` is `{ id: "123" }`. If the URL has no parameters, its
+     * an empty object.
+     *
+     * @example
+     * ```ts
+     * const server = Bun.serve({
+     *   routes: {
+     *     "/:foo/:bar": (req, server) => {
+     *       console.log(req.params.foo); // "bar"
+     *     }
+     *   }
+     * })
+     * await fetch(`${server.url}/foo/bar`)
+     * ```
+     */
     params: RouterTypes.ExtractRouteParams<T>;
+
+    /**
+     * The `?query` part of the URL as a {@link URLSearchParams} object.
+     *
+     * If no query is provided, it returns an empty URLSearchParams object.
+     *
+     * @example
+     *
+     * ```ts
+     * const server = Bun.serve({
+     *   routes: {
+     *     "/": (req, server) => {
+     *       console.log(req.query.get("foo")); // "bar"
+     *     }
+     *   }
+     * })
+     *
+     * await fetch(`${server.url}/?foo=bar`)
+     * ```
+     */
+    readonly searchParams: URLSearchParams;
+
+    /**
+     * The `Cookie` header as a {@link CookieMap} object.
+     *
+     * @example
+     * ```ts
+     * const server = Bun.serve({
+     *   routes: {
+     *     "/": (req, server) => {
+     *       console.log(req.cookies.get("foo")); // "bar"
+     *     }
+     *   }
+     * })
+     *
+     * await fetch(`${server.url}`, {
+     *   headers: {
+     *     Cookie: "foo=bar"
+     *   }
+     * })
+     * ```
+     */
     readonly cookies: CookieMap;
   }
 

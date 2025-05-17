@@ -36,12 +36,16 @@ public:
     JSObject* cookies() const;
     void setCookies(JSObject* cookies);
 
+    JSObject* query() const;
+    void setQuery(JSObject* query);
+
 private:
     JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
     void finishCreation(JSC::VM& vm, JSObject* params);
 
     mutable JSC::WriteBarrier<JSC::JSObject> m_params;
     mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;
+    mutable JSC::WriteBarrier<JSC::JSObject> m_query;
 };
 
 JSC::Structure* createJSBunRequestStructure(JSC::VM&, Zig::GlobalObject*);

@@ -12,13 +12,20 @@
 #include "Cookie.h"
 #include "CookieMap.h"
 #include "JSDOMExceptionHandling.h"
-
+#include <bun-uws/src/App.h>
+#include "JSURLSearchParams.h"
+#include "URLSearchParams.h"
+#include <wtf/URLParser.h>
 namespace Bun {
+
+extern "C" uWS::HttpRequest* Request__getUWSRequest(JSBunRequest*);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
+static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetQuery);
 
 static const HashTableValue JSBunRequestPrototypeValues[] = {
+    { "searchParams"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetQuery, nullptr } },
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
     { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
 };
@@ -66,6 +73,19 @@ JSObject* JSBunRequest::cookies() const
     return nullptr;
 }
 
+JSObject* JSBunRequest::query() const
+{
+    if (m_query) {
+        return m_query.get();
+    }
+    return nullptr;
+}
+
+void JSBunRequest::setQuery(JSObject* query)
+{
+    m_query.set(Base::vm(), this, query);
+}
+
 extern "C" void Request__setCookiesOnRequestContext(void* internalZigRequestPointer, CookieMap* cookieMap);
 
 void JSBunRequest::setCookies(JSObject* cookies)
@@ -85,6 +105,7 @@ void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
     Base::finishCreation(vm);
     m_params.setMayBeNull(vm, this, params);
     m_cookies.clear();
+    m_query.clear();
     Bun__JSRequest__calculateEstimatedByteSize(this->wrapped());
 
     auto size = Request__estimatedSize(this->wrapped());
@@ -98,6 +119,7 @@ void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisCallSite, visitor);
     visitor.append(thisCallSite->m_params);
     visitor.append(thisCallSite->m_cookies);
+    visitor.append(thisCallSite->m_query);
 }
 
 DEFINE_VISIT_CHILDREN(JSBunRequest);
@@ -162,6 +184,73 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
     return JSValue::encode(params);
 }
 
+static JSValue createQueryObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBunRequest* request)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uws = Request__getUWSRequest(request);
+    auto* global = defaultGlobalObject(globalObject);
+
+    // First, try to get it from uWS::HttpRequest
+    if (uws) {
+        auto query = uws->getQuery();
+        auto span = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(query.data()), query.size());
+        // This should always be URL-encoded
+        WTF::String queryString = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+        auto searchParams = WebCore::URLSearchParams::create(queryString, nullptr);
+        return WebCore::toJSNewlyCreated(global, global, WTFMove(searchParams));
+    }
+
+    // Otherwise, get it by reading the url property.
+    auto& names = builtinNames(vm);
+    auto url = request->get(globalObject, names.urlPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* urlString = url.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto view = urlString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Figure out where the query string is
+    const auto findQustionMark = view->find('?');
+    WTF::StringView queryView;
+
+    if (findQustionMark != WTF::notFound) {
+        queryView = view->substring(findQustionMark + 1, view->length() - findQustionMark - 1);
+    }
+
+    // Parse the query string
+    auto searchParams = queryView.length() > 0 ? WebCore::URLSearchParams::create(WTF::URLParser::parseURLEncodedForm(queryView)) : WebCore::URLSearchParams::create({});
+
+    // If for any reason that failed, throw an error
+    if (searchParams.hasException()) [[unlikely]] {
+        WebCore::propagateException(*globalObject, scope, searchParams.releaseException());
+        return {};
+    }
+
+    return WebCore::toJSNewlyCreated(global, global, searchParams.releaseReturnValue());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetQuery, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+
+    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
+    if (!request)
+        return JSValue::encode(jsUndefined());
+
+    if (auto* query = request->query()) {
+        return JSValue::encode(query);
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto result = createQueryObject(vm, globalObject, request);
+    RETURN_IF_EXCEPTION(scope, {});
+    request->setQuery(result.getObject());
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
@@ -222,6 +311,25 @@ extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisVal
     }
 
     return JSValue::encode({});
+}
+
+extern "C" EncodedJSValue Bun__getQueryIfBunRequest(JSC::EncodedJSValue thisValue)
+{
+    if (auto* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue))) {
+        if (auto* query = request->query()) {
+            return JSValue::encode(query);
+        }
+
+        auto* globalObject = request->globalObject();
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto result = createQueryObject(vm, globalObject, request);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        request->setQuery(result.getObject());
+        return JSValue::encode(result);
+    }
+
+    return JSValue::encode(jsUndefined());
 }
 
 } // namespace Bun

@@ -62,6 +62,7 @@ Routes in `Bun.serve()` receive a `BunRequest` (which extends [`Request`](https:
 interface BunRequest<T extends string> extends Request {
   params: Record<T, string>;
   readonly cookies: CookieMap;
+  readonly searchParams: URLSearchParams;
 }
 ```
 
@@ -131,6 +132,47 @@ Bun.serve({
 ```
 
 Percent-encoded route parameter values are automatically decoded. Unicode characters are supported. Invalid unicode is replaced with the unicode replacement character `&0xFFFD;`.
+
+#### Query parameters
+
+Request query parameters (the part after `?` in the URL) are accessible via `request.searchParams`, which returns a standard [URLSearchParams](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams) object.
+
+```ts
+import { serve } from "bun";
+
+serve({
+  routes: {
+    "/search": req => {
+      // URL: /search?q=bun&limit=10
+
+      // Get a single value
+      const query = req.searchParams.get("q"); // "bun"
+
+      // Get a value with fallback
+      const limit = req.searchParams.get("limit") || "20"; // "10"
+
+      // Check if parameter exists
+      const hasFilter = req.searchParams.has("filter"); // false
+
+      // Get all values for a parameter (useful for repeated params)
+      const tags = req.searchParams.getAll("tag"); // [] (empty if none)
+
+      // Convert to plain object
+      const allParams = Object.fromEntries(req.searchParams); // { q: "bun", limit: "10" }
+
+      return Response.json({ query, limit: Number(limit), hasFilter, tags });
+    },
+
+    // Works with route parameters too
+    "/users/:id/posts": req => {
+      const userId = req.params.id;
+      const page = req.searchParams.get("page") || "1";
+
+      return Response.json({ userId, page: Number(page) });
+    },
+  },
+});
+```
 
 ### Static responses
 

@@ -3,20 +3,12 @@
   "name": "bun",
   "version": "1.2.14",
   "workspaces": [
-    "./packages/bun-types"
+    "./packages/bun-types",
+    "./packages/@types/bun"
   ],
   "devDependencies": {
-    "@mdn/browser-compat-data": "~5.5.28",
-    "@types/bun": "*",
     "@types/react": "^18.3.3",
-    "@typescript-eslint/eslint-plugin": "^7.11.0",
-    "@typescript-eslint/parser": "^7.11.0",
-    "@vscode/debugadapter": "^1.65.0",
-    "autoprefixer": "^10.4.19",
-    "caniuse-lite": "^1.0.30001620",
     "esbuild": "^0.21.4",
-    "eslint": "^9.4.0",
-    "eslint-config-prettier": "^9.1.0",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
     "prettier": "^3.5.3",
@@ -27,7 +19,8 @@
     "typescript": "^5.7.2"
   },
   "resolutions": {
-    "bun-types": "workspace:packages/bun-types"
+    "bun-types": "workspace:packages/bun-types",
+    "@types/bun": "workspace:packages/@types/bun"
   },
   "scripts": {
     "build": "bun run build:debug",

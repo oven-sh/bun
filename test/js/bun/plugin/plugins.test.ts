@@ -14,6 +14,25 @@ declare global {
 }
 
 plugin({
+  name: "text",
+  setup(builder) {
+    builder.onLoad({ filter: /my-text-file/, namespace: "text" }, async ({ path }) => {
+      console.log("text", path);
+      return {
+        contents: "hello!!",
+        loader: "text",
+      };
+    });
+    builder.onResolve({ filter: /my-text-file/, namespace: "text" }, ({ path }) => {
+      return {
+        path,
+        namespace: "text",
+      };
+    });
+  },
+});
+
+plugin({
   name: "url text file loader",
   setup(builder) {
     var chainedThis = builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
@@ -548,4 +567,9 @@ it("recursion throws stack overflow at entry point", () => {
   });
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
+});
+
+it("text loader works", () => {
+  const result = require("text:my-text-file");
+  expect(result).toBe("hello!!");
 });

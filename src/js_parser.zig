@@ -3189,6 +3189,7 @@ pub const Parser = struct {
                 };
                 var buffered_writer = std.io.bufferedWriter(writer);
                 const actual = buffered_writer.writer();
+
                 for (self.log.msgs.items) |msg| {
                     var m: logger.Msg = msg;
                     m.writeFormat(actual, true) catch {};

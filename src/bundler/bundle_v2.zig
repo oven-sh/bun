@@ -2290,7 +2290,7 @@ pub const BundleV2 = struct {
                     const source = &this.graph.input_files.items(.source)[load.source_index.get()];
                     // A stack-allocated Log object containing the singular message
                     var msg_mut = msg;
-                    const temp_log: Logger.Log = .{
+                    var temp_log: Logger.Log = .{
                         .clone_line_text = false,
                         .errors = @intFromBool(msg.kind == .err),
                         .warnings = @intFromBool(msg.kind == .warn),

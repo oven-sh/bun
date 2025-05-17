@@ -2390,7 +2390,7 @@ pub fn renameatConcurrently(
     from: [:0]const u8,
     to_dir_fd: bun.FileDescriptor,
     to: [:0]const u8,
-    comptime opts: struct { move_fallback: bool = false },
+    opts: struct { move_fallback: bool = false },
 ) Maybe(void) {
     switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
         .result => return Maybe(void).success,
@@ -2413,7 +2413,7 @@ pub fn renameatConcurrentlyWithoutFallback(
     var did_atomically_replace = false;
 
     attempt_atomic_rename_and_fallback_to_racy_delete: {
-        {
+        if (!bun.getRuntimeFeatureFlag("BUN_DISABLE_ATOMIC_RENAME")) {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
             var err = switch (renameat2(from_dir_fd, from, to_dir_fd, to, .{
@@ -4779,8 +4779,8 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         }
 
         if (comptime Environment.isPosix) {
-            _ = bun.c.fchmod(out_handle.cast(), stat_.mode);
-            _ = bun.c.fchown(out_handle.cast(), stat_.uid, stat_.gid);
+            _ = bun.sys.fchmod(out_handle, @intCast(stat_.mode));
+            _ = bun.sys.fchown(out_handle, @intCast(stat_.uid), @intCast(stat_.gid));
         }
 
         return Maybe(void).success;

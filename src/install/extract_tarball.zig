@@ -474,7 +474,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
-            bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
+            bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {
@@ -509,37 +509,39 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         };
     }
 
-    // create an index storing each version of a package installed
-    if (strings.indexOfChar(basename, '/') == null) create_index: {
-        const dest_name = switch (this.resolution.tag) {
-            .github => folder_name["@GH@".len..],
-            // trim "name@" from the prefix
-            .npm => folder_name[name.len + 1 ..],
-            else => folder_name,
-        };
-
-        if (comptime Environment.isWindows) {
-            bun.MakePath.makePath(u8, cache_dir, name) catch {
-                break :create_index;
+    if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX")) {
+        // create an index storing each version of a package installed
+        if (strings.indexOfChar(basename, '/') == null) create_index: {
+            const dest_name = switch (this.resolution.tag) {
+                .github => folder_name["@GH@".len..],
+                // trim "name@" from the prefix
+                .npm => folder_name[name.len + 1 ..],
+                else => folder_name,
             };
 
-            var dest_buf: bun.PathBuffer = undefined;
-            const dest_path = bun.path.joinAbsStringBufZ(
-                // only set once, should be fine to read not on main thread
-                this.package_manager.cache_directory_path,
-                &dest_buf,
-                &[_]string{ name, dest_name },
-                .windows,
-            );
+            if (comptime Environment.isWindows) {
+                bun.MakePath.makePath(u8, cache_dir, name) catch {
+                    break :create_index;
+                };
 
-            bun.sys.sys_uv.symlinkUV(final_path, dest_path, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION).unwrap() catch {
-                break :create_index;
-            };
-        } else {
-            var index_dir = bun.FD.fromStdDir(bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index);
-            defer index_dir.close();
+                var dest_buf: bun.PathBuffer = undefined;
+                const dest_path = bun.path.joinAbsStringBufZ(
+                    // only set once, should be fine to read not on main thread
+                    this.package_manager.cache_directory_path,
+                    &dest_buf,
+                    &[_]string{ name, dest_name },
+                    .windows,
+                );
 
-            bun.sys.symlinkat(final_path, index_dir, dest_name).unwrap() catch break :create_index;
+                bun.sys.sys_uv.symlinkUV(final_path, dest_path, bun.windows.libuv.UV_FS_SYMLINK_JUNCTION).unwrap() catch {
+                    break :create_index;
+                };
+            } else {
+                var index_dir = bun.FD.fromStdDir(bun.MakePath.makeOpenPath(cache_dir, name, .{}) catch break :create_index);
+                defer index_dir.close();
+
+                bun.sys.symlinkat(final_path, index_dir, dest_name).unwrap() catch break :create_index;
+            }
         }
     }
 

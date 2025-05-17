@@ -803,7 +803,8 @@ const ServerPrototype = {
     }
     if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
     this.listening = false;
-    server.stop();
+    server.stop(true);
+    return this;
   },
   [EventEmitter.captureRejectionSymbol]: function (err, event, ...args) {
     switch (event) {

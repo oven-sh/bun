@@ -52,6 +52,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "ErrorCode.h"
 #include <wtf/URL.h>
 #include "ErrorCode.h"
 
@@ -64,6 +65,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_timeout);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_any);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted);
+static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_customInspect);
 
 // Attributes
 
@@ -160,6 +162,7 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
+    this->putDirectNativeFunction(vm, this->globalObject(), builtinNames(vm).inspectCustomPublicName(), 2, jsAbortSignalPrototypeFunction_customInspect, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::Function | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -352,6 +355,78 @@ static inline JSC::EncodedJSValue jsAbortSignalPrototypeFunction_throwIfAbortedB
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSAbortSignal>::call<jsAbortSignalPrototypeFunction_throwIfAbortedBody>(*lexicalGlobalObject, *callFrame, "throwIfAborted");
+}
+
+static inline JSC::EncodedJSValue jsAbortSignalPrototypeFunction_customInspectBody(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, typename IDLOperation<JSAbortSignal>::ClassParameter castedThis)
+{
+
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSValue depthValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+
+    auto depth = depthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (depth < 0) {
+        return JSValue::encode(jsNontrivialString(vm, "[AbortSignal]"_s));
+    }
+
+    if (!depthValue.isUndefinedOrNull()) {
+        depthValue = jsNumber(depth - 1);
+    }
+
+    JSObject* options = optionsValue.toObject(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    PropertyNameArray optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    options->getPropertyNames(lexicalGlobalObject, optionsArray, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject* newOptions = constructEmptyObject(lexicalGlobalObject);
+    for (size_t i = 0; i < optionsArray.size(); i++) {
+        auto name = optionsArray[i];
+
+        JSValue value = options->get(lexicalGlobalObject, name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        newOptions->putDirect(vm, name, value, 0);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    PutPropertySlot slot(newOptions);
+    newOptions->put(newOptions, lexicalGlobalObject, Identifier::fromString(vm, "depth"_s), depthValue, slot);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto& impl = castedThis->wrapped();
+
+    JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
+
+    inputObj->putDirect(vm, Identifier::fromString(vm, "aborted"_s), jsBoolean(impl.aborted()), 0);
+
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    auto callData = JSC::getCallData(utilInspect);
+    MarkedArgumentBuffer arguments;
+    arguments.append(inputObj);
+    arguments.append(newOptions);
+
+    auto inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, inputObj, arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto inspectStringView = inspectString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSValue result = jsString(vm, makeString("AbortSignal "_s, inspectStringView.data));
+
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSAbortSignal>::call<jsAbortSignalPrototypeFunction_customInspectBody>(*lexicalGlobalObject, *callFrame, "inspect");
 }
 
 size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

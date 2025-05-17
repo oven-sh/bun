@@ -351,6 +351,13 @@ declare module "bun" {
      *     });
      */
     method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+
+    /**
+     * The content length of the object to be uploaded.
+     * This is primarily used for "PUT" and "POST" requests.
+     * If provided for "PUT" or "POST", "Content-Length" will be included in the signed headers.
+     */
+    contentLength?: number;
   }
 
   interface S3Stats {

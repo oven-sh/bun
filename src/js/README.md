@@ -5,7 +5,7 @@
 - `./node` contains all `node:*` modules
 - `./bun` contains all `bun:*` modules
 - `./thirdparty` contains npm modules we replace like `ws`
-- `./internal` contains modules that aren't assigned to the module resolver
+- `./internal` contains modules that aren't directly exposed to userland but can be used by other internal modules. There's no registration required, you can just `require("internal/path/to/module")` and it'll work.
 
 Each `.ts`/`.js` file above is assigned a numeric id at compile time and inlined into an array of lazily initialized modules. Internal modules referencing each other is extremely optimized, skipping the module resolver entirely.
 

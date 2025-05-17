@@ -36,6 +36,7 @@
 #include <array>
 #include <mutex>
 
+
 namespace uWS {
 template<bool> struct HttpResponse;
 
@@ -109,9 +110,9 @@ private:
     };
     
     static std::span<const std::string> getAllHttpMethods() {
-        static once_flag flag;
+        static std::once_flag flag;
         static std::array<std::string, 35> methods;
-        call_once(flag, []() {
+        std::call_once(flag, []() {
             methods = { 
                 #define MACRO(name) std::string {name},
                 FOR_EACH_HTTP_METHOD(MACRO)

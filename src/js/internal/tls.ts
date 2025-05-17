@@ -12,6 +12,22 @@ const getDefaultMaxTLSVersionFromCLIFlag = $newZigFunction(
   0,
 ) as () => number | null;
 
+const TLS_VERSION_MAP = {
+  "TLSv1": 0x0301,
+  "TLSv1.1": 0x0302,
+  "TLSv1.2": 0x0303,
+  "TLSv1.3": 0x0304,
+} as const satisfies Record<import("node:tls").SecureVersion, number>;
+
+const TLS_VERSION_REVERSE_MAP: {
+  [Key in keyof typeof TLS_VERSION_MAP as (typeof TLS_VERSION_MAP)[Key]]: Key;
+} = {
+  0x0301: "TLSv1",
+  0x0302: "TLSv1.1",
+  0x0303: "TLSv1.2",
+  0x0304: "TLSv1.3",
+};
+
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
 }
@@ -77,22 +93,6 @@ const DEFAULT_MAX_VERSION: import("node:tls").SecureVersion = getTlsVersionOrDef
   getDefaultMaxTLSVersionFromCLIFlag(),
   "TLSv1.3",
 );
-
-const TLS_VERSION_MAP = {
-  "TLSv1": 0x0301,
-  "TLSv1.1": 0x0302,
-  "TLSv1.2": 0x0303,
-  "TLSv1.3": 0x0304,
-} as const satisfies Record<import("node:tls").SecureVersion, number>;
-
-const TLS_VERSION_REVERSE_MAP: {
-  [Key in keyof typeof TLS_VERSION_MAP as (typeof TLS_VERSION_MAP)[Key]]: Key;
-} = {
-  0x0301: "TLSv1",
-  0x0302: "TLSv1.1",
-  0x0303: "TLSv1.2",
-  0x0304: "TLSv1.3",
-};
 
 // const forbiddenProtocols = ["SSLv23_method", "TLSv1_1_method", "TLSv1_method"];
 

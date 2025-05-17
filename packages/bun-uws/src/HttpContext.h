@@ -500,17 +500,66 @@ public:
         getSocketContextData()->filterHandlers.emplace_back(std::move(filterHandler));
     }
 
+    static constexpr std::array<std::string, 35> HTTP_METHODS = {
+        "ACL",
+        "BIND",
+        "CHECKOUT",
+        "CONNECT",
+        "COPY",
+        "DELETE",
+        "GET",
+        "HEAD",
+        "LINK",
+        "LOCK",
+        "M-SEARCH",
+        "MERGE",
+        "MKACTIVITY",
+        "MKCALENDAR",
+        "MKCOL",
+        "MOVE",
+        "NOTIFY",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PROPFIND",
+        "PROPPATCH",
+        "PURGE",
+        "PUT",
+        // https://httpwg.org/http-extensions/draft-ietf-httpbis-safe-method-w-body.html
+        "QUERY",
+        "REBIND",
+        "REPORT",
+        "SEARCH",
+        "SOURCE",
+        "SUBSCRIBE",
+        "TRACE",
+        "UNBIND",
+        "UNLINK",
+        "UNLOCK",
+        "UNSUBSCRIBE"
+    };
+
     /* Register an HTTP route handler acording to URL pattern */
     void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
         HttpContextData<SSL> *httpContextData = getSocketContextData();
 
-        std::vector<std::string> methods{std::string(method)};
+        std::span<const std::string> methods;
+        std::array<std::string, 1> methods_buffer;
+        // When it's NOT node:http, allow the uWS default precedence ordering.
+        if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
+            methods = HTTP_METHODS;
+        } else {
+            methods_buffer[0] = std::string(method);
+            methods = {methods_buffer.data(), 1};   
+        }
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
 
         /* If we are passed nullptr then remove this */
         if (!handler) {
-            httpContextData->currentRouter->remove(methods[0], pattern, priority);
+            for (const auto &method : methods) {
+                httpContextData->currentRouter->remove(method, pattern, priority);
+            }
             return;
         }
 

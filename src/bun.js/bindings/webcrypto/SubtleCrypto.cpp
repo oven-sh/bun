@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmRegistry.h"
+#include "CryptoAlgorithmX25519Params.h"
 #include "JSAesCbcCfbParams.h"
 #include "JSAesCtrParams.h"
 #include "JSAesGcmParams.h"
@@ -46,6 +47,7 @@
 #include "JSHmacKeyParams.h"
 #include "JSJsonWebKey.h"
 #include "JSPbkdf2Params.h"
+#include "JSX25519Params.h"
 #include "JSRsaHashedImportParams.h"
 #include "JSRsaHashedKeyGenParams.h"
 #include "JSRsaKeyGenParams.h"
@@ -280,6 +282,19 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmEcdhKeyDeriveParams>(params);
+            break;
+        }
+        case CryptoAlgorithmIdentifier::X25519: {
+            // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
+            JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+            JSValue publicValue = value.get()->get(&state, vm.propertyNames->publicKeyword);
+            JSObject* newValue = constructEmptyObject(&state);
+            newValue->putDirect(vm, vm.propertyNames->name, nameValue);
+            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+
+            auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            result = makeUnique<CryptoAlgorithmX25519Params>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::HKDF: {

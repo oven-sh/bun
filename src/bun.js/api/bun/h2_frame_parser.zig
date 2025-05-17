@@ -2673,11 +2673,19 @@ pub const H2FrameParser = struct {
             return globalObject.throwInvalidArguments("Expected windowSize to be a number", .{});
         }
         const windowSizeValue: u32 = windowSize.to(u32);
-        if (windowSizeValue > MAX_WINDOW_SIZE or windowSizeValue < 0) {
-            return globalObject.throw("Expected windowSize to be a number between 0 and 2^32-1", .{});
+        if (this.usedWindowSize > windowSizeValue) {
+            return globalObject.throwInvalidArguments("Expected windowSize to be greater than usedWindowSize", .{});
         }
-        if (windowSizeValue > this.windowSize) {
-            this.windowSize = windowSizeValue;
+        this.windowSize = windowSizeValue;
+        if (this.localSettings.initialWindowSize < windowSizeValue) {
+            this.localSettings.initialWindowSize = windowSizeValue;
+        }
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
+            if (stream.usedWindowSize > windowSizeValue) {
+                continue;
+            }
+            stream.windowSize = windowSizeValue;
         }
         return .undefined;
     }
@@ -2690,11 +2698,11 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("nextStreamID"), JSC.JSValue.jsNumber(this.getNextStreamID()));
         result.put(globalObject, JSC.ZigString.static("lastProcStreamID"), JSC.JSValue.jsNumber(this.lastStreamID));
 
-        const settings = this.remoteSettings orelse this.localSettings;
+        const settings: FullSettingsPayload = this.remoteSettings orelse .{};
         result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.initialWindowSize));
-        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.windowSize));
-        result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
-        result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
+        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
+        result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(this.localSettings.headerTableSize));
+        result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(this.localSettings.headerTableSize));
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(this.outboundQueueSize));
         return result;
     }
@@ -4343,6 +4351,7 @@ pub const H2FrameParser = struct {
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
         this.windowSize = this.localSettings.initialWindowSize;
+
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

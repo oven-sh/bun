@@ -102,6 +102,7 @@ const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kMaxStreams = 2 ** 32 - 1;
 const kMaxInt = 4294967295;
+const kMaxWindowSize = 2 ** 31 - 1;
 const {
   validateInteger,
   validateString,
@@ -110,6 +111,7 @@ const {
   checkIsHttpToken,
   validateLinkHeaderValue,
   validateUint32,
+  validateInt32,
   validateBuffer,
   validateNumber,
 } = require("internal/validators");
@@ -2953,6 +2955,9 @@ class ServerHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
+    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
+
+    validateInt32(windowSize, "windowSize", 0, kMaxWindowSize);
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
@@ -3374,6 +3379,9 @@ class ClientHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
+    if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
+
+    validateInt32(windowSize, "windowSize", 0, kMaxWindowSize);
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {

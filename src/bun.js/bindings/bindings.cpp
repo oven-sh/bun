@@ -10,6 +10,8 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
+#include "JavaScriptCore/BigIntObject.h"
+#include "JavaScriptCore/SymbolObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSPromiseConstructor.h"
@@ -456,7 +458,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                         ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                         Vector<std::pair<JSValue, JSValue>, 16> stack;
                         MarkedArgumentBuffer gcBuffer;
-                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, &scope, true)) {
+                        if (Bun__deepEquals<false, BunDeepEqualsMode_Jest>(globalObject, expectedValue, otherValue, gcBuffer, stack, &scope, true)) {
                             found = true;
                             break;
                         }
@@ -481,9 +483,9 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             if (otherProp.isObject()) {
                 ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 // SAFETY: visited property sets are not required when
-                // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
+                // `mode == BunDeepEqualsMode_Jest` and `isMatchingObjectContaining`
                 // are both true
-                if (Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, &scope, nullptr, false, true)) {
+                if (Bun__deepMatch<BunDeepEqualsMode_Jest>(otherProp, nullptr, patternObject, nullptr, globalObject, &scope, nullptr, false, true)) {
                     return AsymmetricMatcherResult::PASS;
                 }
             }
@@ -607,10 +609,10 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, BunDeepEqualsMode mode>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, BunDeepEqualsMode mode>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
@@ -621,7 +623,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
-    if constexpr (enableAsymmetricMatchers) {
+    if constexpr (mode == BunDeepEqualsMode_Jest) {
         if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
@@ -685,9 +687,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSCell* c2 = v2.asCell();
     ASSERT(c1);
     ASSERT(c2);
-    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c1, c2);
+    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, mode>(globalObject, gcBuffer, stack, scope, c1, c2);
     if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
+    isSpecialEqual = specialObjectsDequal<isStrict, mode>(globalObject, gcBuffer, stack, scope, c2, c1);
     if (isSpecialEqual.has_value()) return std::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
@@ -734,7 +736,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, mode>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
@@ -789,7 +791,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, mode>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
@@ -799,6 +801,22 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         RETURN_IF_EXCEPTION(*scope, false);
 
         return true;
+    }
+
+    // Handle boxed primitives
+    auto v1IsBoxedPrimitive = v1.inherits<NumberObject>() || v1.inherits<StringObject>() || v1.inherits<BooleanObject>() || v1.inherits<BigIntObject>() || v1.inherits<SymbolObject>();
+    auto v2IsBoxedPrimitive = v2.inherits<NumberObject>() || v2.inherits<StringObject>() || v2.inherits<BooleanObject>() || v2.inherits<BigIntObject>() || v2.inherits<SymbolObject>();
+    if (v1IsBoxedPrimitive != v2IsBoxedPrimitive) {
+        return false; // one is a boxed primitive, the other is not
+    }
+    if (v1IsBoxedPrimitive && v2IsBoxedPrimitive) {
+        auto v1Wrapper = jsCast<JSC::JSWrapperObject*>(v1);
+        auto v2Wrapper = jsCast<JSC::JSWrapperObject*>(v2);
+        auto v1Value = v1Wrapper->internalValue();
+        auto v2Value = v2Wrapper->internalValue();
+        if (!Bun__deepEquals<isStrict, mode>(globalObject, v1Value, v2Value, gcBuffer, stack, scope, addToStack)) {
+            return false;
+        }
     }
 
     if constexpr (isStrict) {
@@ -838,7 +856,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, mode>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -854,7 +872,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     count++;
 
                     JSValue left = o1->getDirect(entry.offset());
-                    JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+                    JSValue right;
+                    if (o2->hasEnumerableProperty(globalObject, JSC::PropertyName(entry.key()))) {
+                        right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+                    } else {
+                        right = JSValue();
+                    }
 
                     if constexpr (!isStrict) {
                         if (left.isUndefined() && right.isEmpty()) {
@@ -871,7 +894,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, mode>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -957,7 +980,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+        if (!Bun__deepEquals<isStrict, mode>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
             return false;
         }
 
@@ -980,11 +1003,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-template<bool isStrict, bool enableAsymmetricMatchers>
+template bool Bun__deepEquals<false, BunDeepEqualsMode_Node>(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack);
+template bool Bun__deepEquals<true, BunDeepEqualsMode_Node>(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack);
+
+template<bool isStrict, BunDeepEqualsMode mode>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     uint8_t c1Type = c1->type();
     uint8_t c2Type = c2->type();
+    std::optional<bool> matchMaybeCheckProperties = true;
+    if constexpr (mode == BunDeepEqualsMode_Node) {
+        matchMaybeCheckProperties = std::nullopt;
+    }
 
     switch (c1Type) {
     case JSSetType: {
@@ -1012,7 +1042,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                if (Bun__deepEquals<isStrict, mode>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
                     foundMatchingKey = true;
                     break;
                 }
@@ -1024,7 +1054,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        return true;
+        return matchMaybeCheckProperties;
     }
     case JSMapType: {
         if (c2Type != JSMapType) {
@@ -1051,7 +1081,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    if (Bun__deepEquals<isStrict, mode>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
                         foundMatchingKey = true;
                         break;
                     }
@@ -1065,12 +1095,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 // Compare both values below.
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
+            if (!Bun__deepEquals<isStrict, mode>(globalObject, value1, value2, gcBuffer, stack, scope, false)) {
                 return false;
             }
         }
 
-        return true;
+        return matchMaybeCheckProperties;
     }
     case ArrayBufferType: {
         if (c2Type != ArrayBufferType) {
@@ -1090,7 +1120,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (byteLength == 0)
-            return true;
+            return matchMaybeCheckProperties;
 
         if (UNLIKELY(right->isDetached() || left->isDetached())) {
             return false;
@@ -1103,7 +1133,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (UNLIKELY(vector == rightVector))
-            return true;
+            return matchMaybeCheckProperties;
 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }
@@ -1176,7 +1206,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             RETURN_IF_EXCEPTION(*scope, false);
             auto rightCause = right->get(globalObject, cause);
             RETURN_IF_EXCEPTION(*scope, false);
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, mode>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
                 return false;
             }
             RETURN_IF_EXCEPTION(*scope, false);
@@ -1226,7 +1256,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
 
-                if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+                if (!Bun__deepEquals<isStrict, mode>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
                     return false;
                 }
 
@@ -1281,7 +1311,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (byteLength == 0)
-            return true;
+            return matchMaybeCheckProperties;
 
         if (UNLIKELY(right->isDetached() || left->isDetached())) {
             return false;
@@ -1294,7 +1324,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
 
         if (UNLIKELY(vector == rightVector))
-            return true;
+            return matchMaybeCheckProperties;
 
         // For Float32Array and Float64Array, when not in strict mode, we need to
         // handle +0 and -0 as equal, and NaN as not equal to itself.
@@ -1309,7 +1339,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return matchMaybeCheckProperties;
             } else if (c1Type == Float32ArrayType) {
                 auto* leftFloat = static_cast<const float*>(vector);
                 auto* rightFloat = static_cast<const float*>(rightVector);
@@ -1320,7 +1350,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return matchMaybeCheckProperties;
             } else { // Float64Array
                 auto* leftDouble = static_cast<const double*>(vector);
                 auto* rightDouble = static_cast<const double*>(rightVector);
@@ -1331,11 +1361,15 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         return false;
                     }
                 }
-                return true;
+                return matchMaybeCheckProperties;
             }
         }
 
-        return (memcmp(vector, rightVector, byteLength) == 0);
+        if (memcmp(vector, rightVector, byteLength) == 0) {
+            return matchMaybeCheckProperties;
+        }
+
+        return false;
     }
     case StringObjectType: {
         if (c2Type != StringObjectType) {
@@ -1349,7 +1383,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         JSString* s1 = c1->toStringInline(globalObject);
         JSString* s2 = c2->toStringInline(globalObject);
 
-        return s1->equal(globalObject, s2);
+        if (s1->equal(globalObject, s2)) {
+            return matchMaybeCheckProperties;
+        }
+        return false;
     }
     case JSFunctionType: {
         return false;
@@ -1371,7 +1408,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             } else {
                 if ((url1 == nullptr) != (url2 == nullptr)) {
-                    goto compareAsNormalValue;
+                    return matchMaybeCheckProperties;
                 }
             }
 
@@ -1384,7 +1421,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
 
-                goto compareAsNormalValue;
+                return matchMaybeCheckProperties;
             }
 
             // TODO: FormData.
@@ -1410,7 +1447,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     }
 
-                    goto compareAsNormalValue;
+                    return matchMaybeCheckProperties;
                 } else {
                     if constexpr (isStrict) {
                         // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
@@ -1419,7 +1456,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     } else {
                         if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
-                            goto compareAsNormalValue;
+                            return matchMaybeCheckProperties;
                         }
                     }
                 }
@@ -1449,7 +1486,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     }
 
-                    goto compareAsNormalValue;
+                    return matchMaybeCheckProperties;
                 } else {
                     if constexpr (isStrict) {
                         // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
@@ -1458,17 +1495,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                         }
                     } else {
                         if ((headers1 == nullptr) != (headers2 == nullptr)) {
-                            goto compareAsNormalValue;
+                            return matchMaybeCheckProperties;
                         }
                     }
                 }
             }
         }
-
-        goto compareAsNormalValue;
-
-    compareAsNormalValue:
-        break;
     }
     // globalThis is only equal to globalThis
     // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
@@ -1497,14 +1529,14 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
  * @note
  * The sets recording already visited properties (`seenObjProperties`,
  * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
- * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
+ * `mode == BunDeepEqualsMode_Jest` and `isMatchingObjectContaining` are true. In
  * this case, it is safe to pass a `nullptr`.
  *
  * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
  * properties currently within those stacks. Likely unnecessary, but better to
  * be safe tnan sorry
  *
- * @tparam enableAsymmetricMatchers
+ * @tparam mode
  * @param objValue
  * @param seenObjProperties already visited properties of `objValue`.
  * @param subsetValue
@@ -1518,7 +1550,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
  * @return true
  * @return false
  */
-template<bool enableAsymmetricMatchers>
+template<BunDeepEqualsMode mode>
 bool Bun__deepMatch(
     JSValue objValue,
     std::set<EncodedJSValue>* seenObjProperties,
@@ -1574,7 +1606,7 @@ bool Bun__deepMatch(
         JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
         JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
 
-        if constexpr (enableAsymmetricMatchers) {
+        if constexpr (mode == BunDeepEqualsMode_Jest) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
                 switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
@@ -1608,10 +1640,10 @@ bool Bun__deepMatch(
             // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
             // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
             // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
-            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+            if (mode == BunDeepEqualsMode_Jest && isMatchingObjectContaining) {
                 Vector<std::pair<JSValue, JSValue>, 16> stack;
                 MarkedArgumentBuffer gcBuffer;
-                if (!Bun__deepEquals<false, true>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true)) {
+                if (!Bun__deepEquals<false, BunDeepEqualsMode_Jest>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true)) {
                     return false;
                 }
             } else {
@@ -1624,7 +1656,7 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                if (!Bun__deepMatch<mode>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
                     return false;
                 }
             }
@@ -1640,14 +1672,14 @@ bool Bun__deepMatch(
 
 // anonymous namespace to avoid name collision
 namespace {
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, BunDeepEqualsMode mode>
 inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* global)
 {
     auto& vm = global->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
     MarkedArgumentBuffer args;
-    return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+    return Bun__deepEquals<isStrict, mode>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
 }
 }
 
@@ -2537,22 +2569,22 @@ bool JSC__JSValue__isSameValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue
 
 bool JSC__JSValue__deepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
-    return deepEqualsWrapperImpl<false, false>(JSValue0, JSValue1, globalObject);
+    return deepEqualsWrapperImpl<false, BunDeepEqualsMode_Bun>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
-    return deepEqualsWrapperImpl<false, true>(JSValue0, JSValue1, globalObject);
+    return deepEqualsWrapperImpl<false, BunDeepEqualsMode_Jest>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
-    return deepEqualsWrapperImpl<true, false>(JSValue0, JSValue1, globalObject);
+    return deepEqualsWrapperImpl<true, BunDeepEqualsMode_Bun>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
-    return deepEqualsWrapperImpl<true, true>(JSValue0, JSValue1, globalObject);
+    return deepEqualsWrapperImpl<true, BunDeepEqualsMode_Jest>(JSValue0, JSValue1, globalObject);
 }
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
@@ -2567,7 +2599,7 @@ bool JSC__JSValue__deepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue J
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    return Bun__deepMatch<false>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
+    return Bun__deepMatch<BunDeepEqualsMode_Bun>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
@@ -2580,7 +2612,7 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    return Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
+    return Bun__deepMatch<BunDeepEqualsMode_Jest>(obj, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false);
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)

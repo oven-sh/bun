@@ -11,6 +11,7 @@ JSC_DECLARE_HOST_FUNCTION(functionBunDeepMatch);
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 JSC_DECLARE_HOST_FUNCTION(functionPathToFileURL);
 JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_nodeIsDeepStrictEqual);
 
 JSC::JSValue constructBunFetchObject(VM& vm, JSObject* bunObject);
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject);

@@ -2536,7 +2536,7 @@ pub const Arguments = struct {
 
                 const written = strings.decodeHexToBytes(buf, u8, input) catch
                     return ctx.ERR(.INVALID_ARG_VALUE, "'encoding' is invalid for data of length {d}", .{len}).throw();
-                std.debug.assert(written == dest_len);
+                bun.assert(written == dest_len);
 
                 const slice = JSC.ZigString.Slice.init(bun.default_allocator, buf);
                 defer ctx.vm().reportExtraMemory(slice.len);

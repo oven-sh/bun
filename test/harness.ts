@@ -51,7 +51,7 @@ export const bunEnv: NodeJS.ProcessEnv = {
 const ciEnv = { ...bunEnv };
 
 if (isASAN) {
-  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
 }
 
 if (isWindows) {

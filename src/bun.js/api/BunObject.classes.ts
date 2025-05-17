@@ -119,10 +119,14 @@ export default [
         getter: "getExited",
         this: true,
       },
+      success: {
+        getter: "getSuccess",
+        this: true,
+      },
       stdio: {
         getter: "getStdio",
       },
     },
-    values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
+    values: ["exitedPromise", "successPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
   }),
 ];

@@ -118,7 +118,6 @@ private:
                 FOR_EACH_HTTP_METHOD(MACRO)
                 #undef MACRO
             };
-            return methods;
         });
         return {methods.data(), methods.size()};
     }

@@ -134,12 +134,53 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSConnectionsList* connections = nullptr;
+    uint64_t maxHttpHeaderSize = 0;
+    uint32_t lenientFlags = kLenientNone;
+
+    // TODO: TODO!
+    (void)lenientFlags;
+
+    JSValue maxHttpHeaderSizeValue = callFrame->argument(2);
+
+    if (maxHttpHeaderSizeValue.isNumber()) {
+        maxHttpHeaderSize = static_cast<uint64_t>(maxHttpHeaderSizeValue.asNumber());
+    }
+    if (maxHttpHeaderSize == 0) {
+        // TODO: TODO!
+        // maxHttpHeaderSize = ;
+    }
+
+    JSValue lenientFlagsValue = callFrame->argument(3);
+    if (lenientFlagsValue.isInt32()) {
+        lenientFlags = lenientFlagsValue.asInt32();
+    }
+
+    if (callFrame->argumentCount() > 4) {
+        JSValue connectionsListValue = callFrame->argument(4);
+        connections = jsDynamicCast<JSConnectionsList*>(connectionsListValue);
+    }
+
+    JSValue typeValue = callFrame->argument(0);
+
+    int32_t type = static_cast<int32_t>(typeValue.asNumber());
+
+    ASSERT(type == HTTP_REQUEST || type == HTTP_RESPONSE);
+
     JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
     if (!parser || parser->freed()) {
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
+    if (connections) {
+        parser->m_connectionsList.set(vm, parser, connections);
+        parser->m_lastMessageStart = Bun::hrtime();
+
+        connections->push(globalObject, parser);
+        connections->pushActive(globalObject, parser);
+    } else {
+        parser->m_connectionsList.clear();
+    }
 
     return JSValue::encode(jsUndefined());
 }

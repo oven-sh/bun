@@ -121,6 +121,34 @@ public:
     void execute();
     void finish();
     void initialize();
+
+    void init(int32_t type, uint64_t maxHttpHeaderSize, uint32_t lenientFlags)
+    {
+        // TODO: parser init??
+
+        m_headerNread = 0;
+        // m_url.reset();
+        // m_statusMessage.reset();
+        m_numFields = 0;
+        m_numValues = 0;
+        m_haveFlushed = false;
+        m_gotException = false;
+        m_headersCompleted = false;
+        m_maxHttpHeaderSize = maxHttpHeaderSize;
+    }
+
+    bool lessThan(JSHTTPParser& other) const
+    {
+        if (lastMessageStart() == 0 && other.lastMessageStart() == 0) {
+            return this < &other;
+        } else if (lastMessageStart() == 0) {
+            return true;
+        } else if (other.lastMessageStart() == 0) {
+            return false;
+        }
+
+        return lastMessageStart() < other.lastMessageStart();
+    }
 };
 
 void setupHTTPParserClassStructure(JSC::LazyClassStructure::Initializer&);

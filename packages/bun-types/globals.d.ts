@@ -1897,5 +1897,63 @@ declare namespace fetch {
       https?: boolean;
     },
   ): void;
+
+  /**
+   * Statistics about fetch() & node:http client requests.
+   *
+   * @example
+   * ```js
+   * console.log(fetch.stats);
+   * // {
+   * //   requests: 10,
+   * //   bytesWritten: 1000,
+   * //   bytesRead: 500,
+   * //   fail: 1,
+   * //   redirect: 2,
+   * //   success: 7,
+   * //   timeout: 0,
+   * //   refused: 0,
+   * //   active: 0,
+   * // }
+   * ```
+   */
+  export const stats: {
+    /**
+     * Total number of HTTP requests initiated since the process started
+     */
+    readonly requests: number;
+    /**
+     * Total number of bytes written in HTTP requests across the process (including Worker threads)
+     */
+    readonly bytesWritten: number;
+    /**
+     * Total number of bytes read from fetch responses across the process (including Worker threads)
+     */
+    readonly bytesRead: number;
+    /**
+     * Number of HTTP requests that failed for any reason across the process (including Worker threads)
+     */
+    readonly fail: number;
+    /**
+     * Number of HTTP requests that were redirected across the process (including Worker threads)
+     */
+    readonly redirect: number;
+    /**
+     * Number of HTTP requests that succeeded across the process (including Worker threads)
+     */
+    readonly success: number;
+    /**
+     * Number of HTTP requests that timed out across the process (including Worker threads)
+     */
+    readonly timeout: number;
+    /**
+     * Number of HTTP requests that were refused by the server across the process (including Worker threads)
+     */
+    readonly refused: number;
+    /**
+     * Number of HTTP requests currently in progress across the process (including Worker threads)
+     */
+    readonly active: number;
+  };
 }
 //#endregion

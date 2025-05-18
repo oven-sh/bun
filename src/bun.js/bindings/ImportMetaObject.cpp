@@ -1,7 +1,8 @@
-#include "ErrorCode.h"
+
 #include "root.h"
 #include "headers.h"
 
+#include "ErrorCode.h"
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
 #include "ActiveDOMObject.h"
@@ -49,6 +50,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
 #include "wtf/text/StringView.h"
+#include "JSHTTPStats.h"
 
 #include "isBuiltinModule.h"
 

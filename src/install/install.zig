@@ -3335,7 +3335,7 @@ pub const PackageManager = struct {
                                     };
 
                                     if (PackageManager.verbose_install and manager.pendingTaskCount() > 0) {
-                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{closure.manager.pendingTaskCount()});
+                                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n{}", .{ closure.manager.pendingTaskCount(), bun.http.Stats.fmt() });
                                     }
                                 }
 
@@ -14379,7 +14379,7 @@ pub const PackageManager = struct {
                         if (PackageManager.verbose_install and closure.manager.pendingTaskCount() > 0) {
                             const pending_task_count = closure.manager.pendingTaskCount();
                             if (pending_task_count > 0 and PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) {
-                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_task_count});
+                                Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n{}", .{ pending_task_count, bun.http.Stats.fmt() });
                             }
                         }
 
@@ -15005,7 +15005,7 @@ pub const PackageManager = struct {
                             const pending_tasks = this.pendingTaskCount();
 
                             if (PackageManager.verbose_install and pending_tasks > 0) {
-                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_tasks});
+                                if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks{}\n", .{ pending_tasks, bun.http.Stats.fmt() });
                             }
 
                             return pending_tasks == 0;

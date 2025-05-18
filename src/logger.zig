@@ -901,7 +901,9 @@ pub const Log = struct {
                 log.lock.unlock();
             }
         }
-
+        for (log.msgs.items) |*msg| {
+            msg.deinit(log.msgs.allocator);
+        }
         log.msgs.clearAndFree();
         // log.warnings = 0;
         // log.errors = 0;

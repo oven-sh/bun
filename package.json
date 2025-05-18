@@ -24,7 +24,6 @@
   },
   "scripts": {
     "build": "bun run build:debug",
-    "postinstall": "sleep 30s",
     "watch": "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "watch-windows": "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "agent": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",

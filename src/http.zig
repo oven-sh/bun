@@ -4165,21 +4165,24 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     var decoder = &this.state.chunked_decoder;
     const buffer_ptr = this.state.getBodyBuffer();
     var buffer = buffer_ptr.*;
+    // record the buffer length prior to appending new data
+    const prev_len = buffer.list.items.len;
     try buffer.appendSlice(incoming_data);
 
     // set consume_trailer to 1 to discard the trailing header
     // using content-encoding per chunk is not supported
     decoder.consume_trailer = 1;
 
-    var bytes_decoded = incoming_data.len;
+    var buf_len = buffer.list.items.len;
     // phr_decode_chunked mutates in-place
     const pret = picohttp.phr_decode_chunked(
         decoder,
-        buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
-        &bytes_decoded,
+        buffer.list.items.ptr,
+        &buf_len,
     );
-    buffer.list.items.len -|= incoming_data.len - bytes_decoded;
-    this.state.total_body_received += bytes_decoded;
+    const consumed = buf_len - prev_len;
+    this.state.total_body_received += consumed;
+    buffer.list.items.len = buf_len;
 
     buffer_ptr.* = buffer;
 
@@ -4249,15 +4252,16 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         @memcpy(buffer[0..incoming_data.len], incoming_data);
     }
 
-    var bytes_decoded = incoming_data.len;
+    var buf_len = buffer.len;
     // phr_decode_chunked mutates in-place
     const pret = picohttp.phr_decode_chunked(
         decoder,
-        buffer.ptr + (buffer.len -| incoming_data.len),
-        &bytes_decoded,
+        buffer.ptr,
+        &buf_len,
     );
-    buffer.len -|= incoming_data.len - bytes_decoded;
-    this.state.total_body_received += bytes_decoded;
+    const consumed = buf_len;
+    this.state.total_body_received += consumed;
+    buffer.len = buf_len;
 
     switch (pret) {
         // Invalid HTTP response body

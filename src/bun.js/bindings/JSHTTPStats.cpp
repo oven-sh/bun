@@ -12,16 +12,17 @@ namespace Bun {
 using namespace JSC;
 
 struct Bun__HTTPStats {
-    uint64_t total_requests;
-    uint64_t total_bytes_sent;
-    uint64_t total_bytes_received;
-    uint64_t total_requests_failed;
-    uint64_t total_requests_redirected;
-    uint64_t total_requests_succeeded;
-    uint64_t total_requests_timed_out;
-    uint64_t total_requests_connection_refused;
+    std::atomic<uint64_t> total_requests;
+    std::atomic<uint64_t> total_bytes_sent;
+    std::atomic<uint64_t> total_bytes_received;
+    std::atomic<uint64_t> total_requests_failed;
+    std::atomic<uint64_t> total_requests_redirected;
+    std::atomic<uint64_t> total_requests_succeeded;
+    std::atomic<uint64_t> total_requests_timed_out;
+    std::atomic<uint64_t> total_requests_connection_refused;
 };
 extern "C" Bun__HTTPStats Bun__HTTPStats;
+static_assert(std::atomic<uint64_t>::is_always_lock_free, "Bun__HTTPStats must be lock-free");
 
 // clang-format off
 #define STATS_GETTER(name) \
@@ -48,7 +49,7 @@ FOR_EACH_STATS_FIELD(STATS_GETTER)
 #undef STATS_GETTER
 #undef FOR_EACH_STATS_FIELD
 
-extern "C" uint64_t Bun__HTTPStats__total_requests_active;
+extern "C" std::atomic<uint64_t> Bun__HTTPStats__total_requests_active;
 
 JSC_DEFINE_CUSTOM_GETTER(getStatsField_total_requests_active, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {

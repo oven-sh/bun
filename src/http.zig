@@ -196,19 +196,11 @@ pub const Stats = extern struct {
 
             switch (this.enable_color) {
                 inline else => |enable_ansi_colors| {
-                    try writer.writeAll(Output.prettyFmt("HTTP stats <d>|<r> ", enable_ansi_colors));
+                    try writer.writeAll(Output.prettyFmt("\n  <d>http stats | <r> ", enable_ansi_colors));
                     needs_space = false;
 
-                    if (total_requests > 0) {
-                        try writer.print(
-                            Output.prettyFmt("total<d>:<r> <b>{d}<r>", enable_ansi_colors),
-                            .{total_requests},
-                        );
-                        needs_space = true;
-                    }
-
                     if (active_requests > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         try writer.print(
                             Output.prettyFmt("active<d>:<r> <blue><b>{}<r>", enable_ansi_colors),
                             .{active_requests},
@@ -217,7 +209,7 @@ pub const Stats = extern struct {
                     }
 
                     if (total_requests_succeeded > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         needs_space = true;
                         try writer.print(
                             Output.prettyFmt("ok<d>:<r> <green><b>{}<r>", enable_ansi_colors),
@@ -225,26 +217,8 @@ pub const Stats = extern struct {
                         );
                     }
 
-                    if (total_bytes_sent > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
-                        try writer.print(
-                            Output.prettyFmt("sent<d>:<r> <b>{}<r>", enable_ansi_colors),
-                            .{bun.fmt.size(total_bytes_sent, .{})},
-                        );
-                        needs_space = true;
-                    }
-
-                    if (total_bytes_received > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
-                        try writer.print(
-                            Output.prettyFmt("recv<d>:<r> <b>{}<r>", enable_ansi_colors),
-                            .{bun.fmt.size(total_bytes_received, .{})},
-                        );
-                        needs_space = true;
-                    }
-
                     if (total_requests_failed > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         try writer.print(
                             Output.prettyFmt("fail<d>:<r> <red><b>{}<r>", enable_ansi_colors),
                             .{total_requests_failed},
@@ -252,8 +226,26 @@ pub const Stats = extern struct {
                         needs_space = true;
                     }
 
+                    if (total_bytes_received > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("recv<d>:<r> <b>{}<r>", enable_ansi_colors),
+                            .{bun.fmt.size(total_bytes_received, .{})},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_bytes_sent > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("sent<d>:<r> <b>{}<r>", enable_ansi_colors),
+                            .{bun.fmt.size(total_bytes_sent, .{})},
+                        );
+                        needs_space = true;
+                    }
+
                     if (total_requests_redirected > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         try writer.print(
                             Output.prettyFmt("redirect<d>:<r> <yellow>{}<r>", enable_ansi_colors),
                             .{total_requests_redirected},
@@ -262,7 +254,7 @@ pub const Stats = extern struct {
                     }
 
                     if (total_requests_timed_out > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         needs_space = true;
                         try writer.print(
                             Output.prettyFmt("timeout<d>:<r> <b>{}<r>", enable_ansi_colors),
@@ -272,7 +264,7 @@ pub const Stats = extern struct {
                     }
 
                     if (total_requests_connection_refused > 0) {
-                        if (needs_space) try writer.writeAll(" | ");
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
                         needs_space = true;
                         try writer.print(
                             Output.prettyFmt("refused<d>:<r> <red>{}<r>", enable_ansi_colors),

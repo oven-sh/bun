@@ -13,6 +13,7 @@ test("sum", () => {
 ## Matchers
 
 ### `.toBe()`
+
 Checks strict equality.
 
 ```ts
@@ -24,10 +25,11 @@ toBe(expected: T): void;
 ```
 
 ### `.toEqual()`
+
 Compares values recursively.
 
 ```ts
-expect({a: 1}).toEqual({a: 1});
+expect({ a: 1 }).toEqual({ a: 1 });
 ```
 
 ```ts
@@ -35,6 +37,7 @@ toEqual(expected: T): void;
 ```
 
 ### `.toBeNull()`
+
 Asserts that a value is `null`.
 
 ```ts
@@ -46,6 +49,7 @@ toBeNull(): void;
 ```
 
 ### `.toBeUndefined()`
+
 Asserts that a value is `undefined`.
 
 ```ts
@@ -57,6 +61,7 @@ toBeUndefined(): void;
 ```
 
 ### `.toBeNaN()`
+
 Asserts that a value is `NaN`.
 
 ```ts
@@ -68,6 +73,7 @@ toBeNaN(): void;
 ```
 
 ### `.toBeDefined()`
+
 Checks that a value is not `undefined`.
 
 ```ts
@@ -79,6 +85,7 @@ toBeDefined(): void;
 ```
 
 ### `.toBeFalsy()`
+
 Checks that a value is falsy.
 
 ```ts
@@ -90,6 +97,7 @@ toBeFalsy(): void;
 ```
 
 ### `.toBeTruthy()`
+
 Checks that a value is truthy.
 
 ```ts
@@ -101,6 +109,7 @@ toBeTruthy(): void;
 ```
 
 ### `.toContain()`
+
 Asserts that an array or string contains a value.
 
 ```ts
@@ -112,6 +121,7 @@ toContain(expected: unknown): void;
 ```
 
 ### `.toHaveLength()`
+
 Checks the `.length` property of a value.
 
 ```ts
@@ -123,10 +133,11 @@ toHaveLength(length: number): void;
 ```
 
 ### `.toHaveProperty()`
+
 Verifies that an object has a property.
 
 ```ts
-expect({a: {b: 1}}).toHaveProperty("a.b", 1);
+expect({ a: { b: 1 } }).toHaveProperty("a.b", 1);
 ```
 
 ```ts
@@ -134,6 +145,7 @@ toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknow
 ```
 
 ### `.toHaveBeenCalled()`
+
 Asserts that a mock function was called.
 
 ```ts
@@ -147,6 +159,7 @@ toHaveBeenCalled(): void;
 ```
 
 ### `.toHaveBeenCalledTimes()`
+
 Checks how many times a mock function was called.
 
 ```ts
@@ -160,6 +173,7 @@ toHaveBeenCalledTimes(expected: number): void;
 ```
 
 ### `.toHaveBeenCalledWith()`
+
 Ensures a mock function was called with specific arguments.
 
 ```ts
@@ -173,10 +187,13 @@ toHaveBeenCalledWith(...expected: unknown[]): void;
 ```
 
 ### `.toThrow()`
+
 Expects a function to throw.
 
 ```ts
-expect(() => { throw new Error("oops"); }).toThrow();
+expect(() => {
+  throw new Error("oops");
+}).toThrow();
 ```
 
 ```ts
@@ -184,6 +201,7 @@ toThrow(expected?: unknown): void;
 ```
 
 ### `.toHaveReturned()`
+
 Asserts that a mock function returned at least once.
 
 ```ts
@@ -197,6 +215,7 @@ toHaveReturned(): void;
 ```
 
 ### `.toHaveReturnedTimes()`
+
 Checks how many times a mock function returned.
 
 ```ts
@@ -210,6 +229,7 @@ toHaveReturnedTimes(times: number): void;
 ```
 
 ### `.toBeGreaterThan()`
+
 Asserts that a number is greater than another.
 
 ```ts
@@ -221,6 +241,7 @@ toBeGreaterThan(expected: number | bigint): void;
 ```
 
 ### `.toBeLessThan()`
+
 Asserts that a number is less than another.
 
 ```ts
@@ -232,6 +253,7 @@ toBeLessThan(expected: number | bigint): void;
 ```
 
 ### `.toBeCloseTo()`
+
 Checks that a number is close to another within a precision.
 
 ```ts
@@ -243,6 +265,7 @@ toBeCloseTo(expected: number, numDigits?: number): void;
 ```
 
 ### `.toBeGreaterThanOrEqual()`
+
 Asserts that a number is greater than or equal to another.
 
 ```ts
@@ -254,6 +277,7 @@ toBeGreaterThanOrEqual(expected: number | bigint): void;
 ```
 
 ### `.toBeLessThanOrEqual()`
+
 Asserts that a number is less than or equal to another.
 
 ```ts
@@ -265,6 +289,7 @@ toBeLessThanOrEqual(expected: number | bigint): void;
 ```
 
 ### `.toBeOdd()`
+
 Asserts that a number is odd.
 
 ```ts
@@ -276,6 +301,7 @@ toBeOdd(): void;
 ```
 
 ### `.toBeEven()`
+
 Asserts that a number is even.
 
 ```ts
@@ -287,6 +313,7 @@ toBeEven(): void;
 ```
 
 ### `.toBeWithin()`
+
 Checks that a number falls within a range.
 
 ```ts
@@ -298,6 +325,7 @@ toBeWithin(start: number, end: number): void;
 ```
 
 ### `.toBeEmpty()`
+
 Asserts that a value is empty.
 
 ```ts
@@ -309,6 +337,7 @@ toBeEmpty(): void;
 ```
 
 ### `.toBeEmptyObject()`
+
 Checks that an object has no own properties.
 
 ```ts
@@ -320,6 +349,7 @@ toBeEmptyObject(): void;
 ```
 
 ### `.toBeNil()`
+
 Asserts that a value is `null` or `undefined`.
 
 ```ts
@@ -331,6 +361,7 @@ toBeNil(): void;
 ```
 
 ### `.toBeArray()`
+
 Checks that a value is an array.
 
 ```ts
@@ -342,6 +373,7 @@ toBeArray(): void;
 ```
 
 ### `.toBeArrayOfSize()`
+
 Asserts that an array has a specific length.
 
 ```ts
@@ -353,6 +385,7 @@ toBeArrayOfSize(size: number): void;
 ```
 
 ### `.toBeBoolean()`
+
 Asserts that a value is a boolean.
 
 ```ts
@@ -364,6 +397,7 @@ toBeBoolean(): void;
 ```
 
 ### `.toBeTypeOf()`
+
 Checks a value's type string.
 
 ```ts
@@ -375,6 +409,7 @@ toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "stri
 ```
 
 ### `.toBeTrue()`
+
 Asserts that a value is `true`.
 
 ```ts
@@ -386,6 +421,7 @@ toBeTrue(): void;
 ```
 
 ### `.toBeFalse()`
+
 Asserts that a value is `false`.
 
 ```ts
@@ -397,6 +433,7 @@ toBeFalse(): void;
 ```
 
 ### `.toBeNumber()`
+
 Checks that a value is a number.
 
 ```ts
@@ -408,6 +445,7 @@ toBeNumber(): void;
 ```
 
 ### `.toBeInteger()`
+
 Asserts that a number is an integer.
 
 ```ts
@@ -419,6 +457,7 @@ toBeInteger(): void;
 ```
 
 ### `.toBeObject()`
+
 Checks that a value is an object.
 
 ```ts
@@ -430,6 +469,7 @@ toBeObject(): void;
 ```
 
 ### `.toBeFinite()`
+
 Asserts that a number is finite.
 
 ```ts
@@ -441,6 +481,7 @@ toBeFinite(): void;
 ```
 
 ### `.toBePositive()`
+
 Checks that a number is positive.
 
 ```ts
@@ -452,6 +493,7 @@ toBePositive(): void;
 ```
 
 ### `.toBeNegative()`
+
 Checks that a number is negative.
 
 ```ts
@@ -461,4 +503,3 @@ expect(-1).toBeNegative();
 ```ts
 toBeNegative(): void;
 ```
-

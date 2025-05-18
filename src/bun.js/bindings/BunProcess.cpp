@@ -2290,6 +2290,12 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, Enc
     return true;
 }
 
+static JSValue processGetEval(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    return JSValue::decode(Bun__Process__getEval(globalObject));
+}
+
 static JSValue constructBrowser(VM& vm, JSObject* processObject)
 {
     return jsBoolean(false);
@@ -3574,6 +3580,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0
   _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _eval                            processGetEval                                      PropertyCallback
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0

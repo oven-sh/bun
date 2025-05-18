@@ -9,6 +9,7 @@ comptime {
     @export(&createArgv0, .{ .name = "Bun__Process__createArgv0" });
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&createExecArgv, .{ .name = "Bun__Process__createExecArgv" });
+    @export(&getEval, .{ .name = "Bun__Process__getEval" });
 }
 
 var title_mutex = bun.Mutex{};
@@ -335,3 +336,11 @@ const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const Syscall = bun.sys;
 const strings = bun.strings;
+
+pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.module_loader.eval_source) |source| {
+        return JSC.ZigString.init(source.contents).toJS(globalObject);
+    }
+    return JSC.JSValue.jsUndefined();
+}

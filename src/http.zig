@@ -161,20 +161,23 @@ pub const Stats = extern struct {
     }
 
     pub fn fmt() Formatter {
-        return .{ .enable_color = bun.Output.enable_ansi_colors_stderr };
+        return .{
+            .enable_color = bun.Output.enable_ansi_colors_stderr,
+        };
     }
 
     pub const Formatter = struct {
         enable_color: bool = false,
+
         pub fn format(this: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const total_requests = instance.total_requests.load(.monotonic);
-            const total_bytes_sent = instance.total_bytes_sent.load(.monotonic);
-            const total_bytes_received = instance.total_bytes_received.load(.monotonic);
-            const total_requests_failed = instance.total_requests_failed.load(.monotonic);
-            const total_requests_redirected = instance.total_requests_redirected.load(.monotonic);
-            const total_requests_succeeded = instance.total_requests_succeeded.load(.monotonic);
-            const total_requests_timed_out = instance.total_requests_timed_out.load(.monotonic);
-            const total_requests_connection_refused = instance.total_requests_connection_refused.load(.monotonic);
+            const total_requests = Stats.instance.total_requests.load(.monotonic);
+            const total_bytes_sent = Stats.instance.total_bytes_sent.load(.monotonic);
+            const total_bytes_received = Stats.instance.total_bytes_received.load(.monotonic);
+            const total_requests_failed = Stats.instance.total_requests_failed.load(.monotonic);
+            const total_requests_redirected = Stats.instance.total_requests_redirected.load(.monotonic);
+            const total_requests_succeeded = Stats.instance.total_requests_succeeded.load(.monotonic);
+            const total_requests_timed_out = Stats.instance.total_requests_timed_out.load(.monotonic);
+            const total_requests_connection_refused = Stats.instance.total_requests_connection_refused.load(.monotonic);
             const active_requests = AsyncHTTP.active_requests_count.load(.monotonic);
             var needs_space = false;
 
@@ -193,95 +196,86 @@ pub const Stats = extern struct {
 
             switch (this.enable_color) {
                 inline else => |enable_ansi_colors| {
-                    try writer.writeAll("HTTP stats: ");
+                    try writer.writeAll(Output.prettyFmt("HTTP stats <d>|<r> ", enable_ansi_colors));
                     needs_space = false;
 
                     if (total_requests > 0) {
                         try writer.print(
-                            Output.prettyFmt("<b>{d}<r> total reqs", enable_ansi_colors),
+                            Output.prettyFmt("total<d>:<r> <b>{d}<r>", enable_ansi_colors),
                             .{total_requests},
                         );
                         needs_space = true;
                     }
 
                     if (active_requests > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         try writer.print(
-                            Output.prettyFmt("<blue><b>{}<r> active", enable_ansi_colors),
+                            Output.prettyFmt("active<d>:<r> <blue><b>{}<r>", enable_ansi_colors),
                             .{active_requests},
                         );
                         needs_space = true;
                     }
 
                     if (total_requests_succeeded > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
+                        needs_space = true;
                         try writer.print(
-                            Output.prettyFmt("<green><b>{}<r> succeeded", enable_ansi_colors),
+                            Output.prettyFmt("ok<d>:<r> <green><b>{}<r>", enable_ansi_colors),
                             .{total_requests_succeeded},
                         );
-                        needs_space = true;
                     }
 
                     if (total_bytes_sent > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         try writer.print(
-                            Output.prettyFmt("<b>{}<r> sent", enable_ansi_colors),
+                            Output.prettyFmt("sent<d>:<r> <b>{}<r>", enable_ansi_colors),
                             .{bun.fmt.size(total_bytes_sent, .{})},
                         );
                         needs_space = true;
                     }
 
                     if (total_bytes_received > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         try writer.print(
-                            Output.prettyFmt("<b>{}<r> recv", enable_ansi_colors),
+                            Output.prettyFmt("recv<d>:<r> <b>{}<r>", enable_ansi_colors),
                             .{bun.fmt.size(total_bytes_received, .{})},
                         );
                         needs_space = true;
                     }
 
                     if (total_requests_failed > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         try writer.print(
-                            Output.prettyFmt("<red><b>{}<r> failed", enable_ansi_colors),
+                            Output.prettyFmt("fail<d>:<r> <red><b>{}<r>", enable_ansi_colors),
                             .{total_requests_failed},
                         );
                         needs_space = true;
                     }
 
                     if (total_requests_redirected > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         try writer.print(
-                            Output.prettyFmt("<b>{}<r> redirects", enable_ansi_colors),
+                            Output.prettyFmt("redirect<d>:<r> <yellow>{}<r>", enable_ansi_colors),
                             .{total_requests_redirected},
                         );
                         needs_space = true;
                     }
 
-                    if (total_requests_succeeded > 0) {
-                        if (needs_space) try writer.writeAll(" ");
-                        needs_space = true;
-                        try writer.print(
-                            Output.prettyFmt("<b>{}<r> succeeded", enable_ansi_colors),
-                            .{total_requests_succeeded},
-                        );
-                    }
-
                     if (total_requests_timed_out > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         needs_space = true;
                         try writer.print(
-                            Output.prettyFmt("<b>{}<r> timed out", enable_ansi_colors),
+                            Output.prettyFmt("timeout<d>:<r> <b>{}<r>", enable_ansi_colors),
                             .{total_requests_timed_out},
                         );
                         needs_space = true;
                     }
 
                     if (total_requests_connection_refused > 0) {
-                        if (needs_space) try writer.writeAll(" ");
+                        if (needs_space) try writer.writeAll(" | ");
                         needs_space = true;
                         try writer.print(
-                            Output.prettyFmt("<b>{}<r> connection refused", enable_ansi_colors),
+                            Output.prettyFmt("refused<d>:<r> <red>{}<r>", enable_ansi_colors),
                             .{total_requests_connection_refused},
                         );
                         needs_space = true;

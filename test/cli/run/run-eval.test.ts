@@ -155,7 +155,7 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
     const { stdout } = run(code);
 
     // the file piping one on windows can include extra carriage returns
-    if (isWindows ) {
+    if (isWindows) {
       expect(stdout.toString("utf8")).toInclude(code);
     } else {
       expect(stdout.toString("utf8")).toEqual(code + "\n");

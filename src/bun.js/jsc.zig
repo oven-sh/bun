@@ -337,7 +337,7 @@ pub const generic = struct {
 };
 
 pub fn toInt32(f: f64) i32 {
-    if (bun.Environment.isAarch64) {
+    if (bun.Environment.isAarch64 and bun.Environment.isMac) {
         const arm = aarch64.toInt32(f);
         if (bun.Environment.isDebug) {
             bun.debugAssert(arm == generic.toInt32(f));
@@ -349,7 +349,7 @@ pub fn toInt32(f: f64) i32 {
 }
 
 pub fn jsMaxDouble(lhs: f64, rhs: f64) f64 {
-    if (bun.Environment.isAarch64) {
+    if (bun.Environment.isAarch64 and bun.Environment.isMac) {
         const arm = aarch64.jsMaxDouble(lhs, rhs);
         if (bun.Environment.isDebug) {
             bun.debugAssert(arm == generic.jsMaxDouble(lhs, rhs));
@@ -361,7 +361,7 @@ pub fn jsMaxDouble(lhs: f64, rhs: f64) f64 {
 }
 
 pub fn jsMinDouble(lhs: f64, rhs: f64) f64 {
-    if (bun.Environment.isAarch64) {
+    if (bun.Environment.isAarch64 and bun.Environment.isMac) {
         const arm = aarch64.jsMinDouble(lhs, rhs);
         if (bun.Environment.isDebug) {
             bun.debugAssert(arm == generic.jsMinDouble(lhs, rhs));

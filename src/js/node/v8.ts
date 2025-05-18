@@ -149,29 +149,12 @@ function writeHeapSnapshot(path, _options) {
 function setHeapSnapshotNearHeapLimit() {
   notimpl("setHeapSnapshotNearHeapLimit");
 }
-const promiseHooks = {
-    createHook: () => {
-      notimpl("createHook");
-    },
-    onInit: () => {
-      notimpl("onInit");
-    },
-    onBefore: () => {
-      notimpl("onBefore");
-    },
-    onAfter: () => {
-      notimpl("onAfter");
-    },
-    onSettled: () => {
-      notimpl("onSettled");
-    },
-  },
-  startupSnapshot = {
-    addDeserializeCallback: () => notimpl("addDeserializeCallback"),
-    addSerializeCallback: () => notimpl("addSerializeCallback"),
-    setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
-    isBuildingSnapshot: () => notimpl("isBuildingSnapshot"),
-  };
+const startupSnapshot = {
+  addDeserializeCallback: () => notimpl("addDeserializeCallback"),
+  addSerializeCallback: () => notimpl("addSerializeCallback"),
+  setDeserializeMainFunction: () => notimpl("setDeserializeMainFunction"),
+  isBuildingSnapshot: () => notimpl("isBuildingSnapshot"),
+};
 
 export default {
   cachedDataVersionTag,
@@ -186,7 +169,6 @@ export default {
   serialize,
   writeHeapSnapshot,
   setHeapSnapshotNearHeapLimit,
-  promiseHooks,
   startupSnapshot,
   Deserializer,
   Serializer,

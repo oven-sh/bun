@@ -2780,11 +2780,6 @@ pub const PackageManager = struct {
     last_reported_slow_lifecycle_script_at: u64 = 0,
     cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
-    /// When retrying, we re-enqueue the same tasks
-    ///
-    /// This can lead to over-incrementing the pending task count when there are retries. Let's avoid doing that.
-    number_of_pending_tasks_that_are_retries: u64 = 0,
-
     pub const WorkspaceFilter = union(enum) {
         all,
         name: []const u8,
@@ -5890,13 +5885,7 @@ pub const PackageManager = struct {
     }
 
     pub fn scheduleTasks(manager: *PackageManager) usize {
-        const count =
-            (manager.task_batch.len +
-                manager.network_resolve_batch.len +
-                manager.network_tarball_batch.len +
-                manager.patch_apply_batch.len +
-                manager.patch_calc_hash_batch.len) - manager.number_of_pending_tasks_that_are_retries;
-        manager.number_of_pending_tasks_that_are_retries = 0;
+        const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
 
         _ = manager.incrementPendingTasks(@truncate(count));
         manager.thread_pool.schedule(manager.patch_apply_batch);
@@ -6441,7 +6430,6 @@ pub const PackageManager = struct {
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            manager.number_of_pending_tasks_that_are_retries += 1;
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {
@@ -6624,7 +6612,6 @@ pub const PackageManager = struct {
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            manager.number_of_pending_tasks_that_are_retries += 1;
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {

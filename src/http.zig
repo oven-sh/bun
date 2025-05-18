@@ -3676,6 +3676,12 @@ pub fn handleOnDataHeaders(
     if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
         // we are proxing we dont need to cloneMetadata yet
         this.startProxyHandshake(is_ssl, socket);
+
+        if (body_buf.len > 0) {
+            if (this.proxy_tunnel) |proxy| {
+                proxy.receiveData(body_buf);
+            }
+        }
         return;
     }
 

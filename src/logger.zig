@@ -896,6 +896,11 @@ pub const Log = struct {
                 @panic("Cannot deinit the log while a thread is active");
             }
         }
+        defer {
+            if (Environment.isDebug or Environment.enable_asan) {
+                log.lock.unlock();
+            }
+        }
 
         log.msgs.clearAndFree();
         // log.warnings = 0;

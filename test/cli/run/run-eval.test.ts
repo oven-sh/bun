@@ -153,7 +153,13 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("process._eval", async () => {
     const code = "console.log(process._eval)";
     const { stdout } = run(code);
-    expect(stdout.toString("utf8")).toEqual(code + "\n");
+
+    // the file piping one on windows can include extra carriage returns
+    if (isWindows ) {
+      expect(stdout.toString("utf8")).toInclude(code);
+    } else {
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    }
   });
 }
 

@@ -1,6 +1,5 @@
 #include "root.h"
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSValue.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -97,14 +96,14 @@ private:
 /* Source for JSHTTPStats.lut.h
 @begin jsHTTPStatsObjectTable
     requests                      getStatsField_total_requests                    CustomAccessor|ReadOnly|DontDelete
+    active                        getStatsField_total_requests_active              CustomAccessor|ReadOnly|DontDelete
+    success                       getStatsField_total_requests_succeeded          CustomAccessor|ReadOnly|DontDelete
     bytesWritten                  getStatsField_total_bytes_sent                  CustomAccessor|ReadOnly|DontDelete
     bytesRead                     getStatsField_total_bytes_received              CustomAccessor|ReadOnly|DontDelete
     fail                        getStatsField_total_requests_failed             CustomAccessor|ReadOnly|DontDelete
     redirect                    getStatsField_total_requests_redirected         CustomAccessor|ReadOnly|DontDelete
-    success                       getStatsField_total_requests_succeeded          CustomAccessor|ReadOnly|DontDelete
     timeout                       getStatsField_total_requests_timed_out          CustomAccessor|ReadOnly|DontDelete
     refused                       getStatsField_total_requests_connection_refused  CustomAccessor|ReadOnly|DontDelete
-    active                        getStatsField_total_requests_active              CustomAccessor|ReadOnly|DontDelete
 @end
 */
 #include "JSHTTPStats.lut.h"

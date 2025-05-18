@@ -777,6 +777,7 @@ pub const Task = struct {
                 }
 
                 const result = this.request.extract.tarball.run(
+                    &this.log,
                     bytes,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -798,7 +799,7 @@ pub const Task = struct {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
                         this.request.git_clone.env,
-                        manager.log,
+                        &this.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
@@ -822,7 +823,7 @@ pub const Task = struct {
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
@@ -846,7 +847,7 @@ pub const Task = struct {
                 const data = Repository.checkout(
                     manager.allocator,
                     this.request.git_checkout.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
@@ -897,6 +898,7 @@ pub const Task = struct {
                     &this.request.local_tarball.tarball,
                     tarball_path,
                     normalize,
+                    &this.log,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -918,13 +920,14 @@ pub const Task = struct {
         tarball: *const ExtractTarball,
         tarball_path: string,
         normalize: bool,
+        log: *logger.Log,
     ) !ExtractData {
         const bytes = if (normalize)
             try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
         else
             try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
-        return tarball.run(bytes);
+        return tarball.run(log, bytes);
     }
 
     pub const Tag = enum(u3) {
@@ -6782,6 +6785,10 @@ pub const PackageManager = struct {
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
+                if (task.log.errors > 0) {
+                    manager.any_failed_to_install = true;
+                }
+                task.log.deinit();
             }
 
             switch (task.tag) {

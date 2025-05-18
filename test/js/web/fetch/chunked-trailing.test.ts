@@ -1,4 +1,4 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 
 it("handles trailing headers split across packets", async () => {
   const server = await Bun.listen({

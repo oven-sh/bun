@@ -864,6 +864,10 @@ pub const Log = struct {
     }
 
     pub fn deinit(log: *Log) void {
+        for (log.msgs.items) |*msg| {
+            msg.deinit(log.msgs.allocator);
+        }
+
         log.msgs.clearAndFree();
         // log.warnings = 0;
         // log.errors = 0;

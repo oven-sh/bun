@@ -4,8 +4,6 @@
  * originally developed by Node.js contributors and Joyent, Inc.
  *
  * Copyright Node.js contributors. All rights reserved.
- * Copyright Joyent, Inc. and other Node contributors. All rights reserved.
- *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -32,8 +30,7 @@ const { STATUS_CODES } = require("internal/http");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-const { $data } = require("node:fs/promises");
-const FileHandle = $data.FileHandle;
+const { FileHandle } = require("internal/fs/FileHandle");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");

@@ -194,6 +194,14 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
+pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.module_loader.eval_source) |source| {
+        return JSC.ZigString.init(source.contents).toJS(globalObject);
+    }
+    return JSC.JSValue.jsUndefined();
+}
+
 pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
 }
@@ -336,11 +344,3 @@ const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const Syscall = bun.sys;
 const strings = bun.strings;
-
-pub fn getEval(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    const vm = globalObject.bunVM();
-    if (vm.module_loader.eval_source) |source| {
-        return JSC.ZigString.init(source.contents).toJS(globalObject);
-    }
-    return JSC.JSValue.jsUndefined();
-}

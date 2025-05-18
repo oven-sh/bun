@@ -64,6 +64,15 @@ for (const flag of ["-e", "--print"]) {
       testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
       // testProcessArgv(["--", "abc", "--", "def"], [exe, "abc", "--", "def"]);
     });
+
+    test("process._eval", async () => {
+      const code = flag === "--print" ? "process._eval" : "console.log(process._eval)";
+      const { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, code],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    });
   });
 }
 
@@ -140,6 +149,12 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
     const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
     expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
+
+  test("process._eval", async () => {
+    const code = "console.log(process._eval)";
+    const { stdout } = run(code);
+    expect(stdout.toString("utf8")).toEqual(code + "\n");
+  });
 }
 
 describe("bun run - < file-path.js", () => {
@@ -197,77 +212,17 @@ describe("echo | bun run -", () => {
   group(run);
 });
 
-describe("process._eval", () => {
-  test("`-e` sets process._eval to the evaluated code", async () => {
-    const code = "console.log(process._eval)";
-    const { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    expect(stdout.toString("utf8").trim()).toBe(code);
+test("process._eval (undefined for normal run)", async () => {
+  const cwd = tmpdirSync();
+  const file = join(cwd, "test.js");
+  writeFileSync(file, "console.log(process._eval)");
+
+  const { stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", file],
+    cwd: cwd,
+    env: bunEnv,
   });
+  expect(stdout.toString("utf8")).toEqual("undefined\n");
 
-  test("`--print` sets process._eval to the evaluated code", async () => {
-    const code = "process._eval";
-    const { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "--print", code],
-      env: bunEnv, 
-      stdout: "pipe",
-    });
-    expect(stdout.toString("utf8").trim()).toBe(code);
-  });
-
-  test("`bun run -` sets process._eval to piped code", async () => {
-    const code = "console.log(process._eval)";
-    const { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
-      env: bunEnv,
-      stdin: Buffer.from(code),
-      stdout: "pipe",
-    });
-    expect(stdout.toString("utf8").trim()).toBe(code);
-  });
-
-  test("`bun run - < file` sets process._eval to file contents", async () => {
-    const code = "console.log(process._eval)";
-    const file = join(tmpdir(), "test.js");
-    writeFileSync(file, code);
-
-    let result;
-    if (isWindows) {
-      result = Bun.spawnSync(["powershell", "-c", `Get-Content ${file} | ${bunExe()} run -`], {
-        env: bunEnv,
-        stdout: "pipe",
-      });
-    } else {
-      result = Bun.spawnSync(["bash", "-c", `${bunExe()} run - < ${file}`], {
-        env: bunEnv,
-        stdout: "pipe", 
-      });
-    }
-
-    expect(result.stdout.toString("utf8").trim()).toBe(code);
-
-    try {
-      rmSync(file);
-    } catch {}
-  });
-
-  test("normal bun run has process._eval undefined", async () => {
-    const file = join(tmpdir(), "test.js");
-    writeFileSync(file, "console.log(process._eval)");
-
-    const { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", file],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-
-    expect(stdout.toString("utf8").trim()).toBe("undefined");
-
-    try {
-      rmSync(file);
-    } catch {}
-  });
+  rmSync(cwd, { recursive: true, force: true });
 });

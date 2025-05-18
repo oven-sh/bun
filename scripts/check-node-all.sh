@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 i=0
 j=0
@@ -19,6 +19,8 @@ esac
 
 export BUN_DEBUG_QUIET_LOGS=1
 
+fails=()
+
 for x in $(find test/js/node/test/parallel -type f -name "test-$1*.js" | sort)
 do
   i=$((i+1))
@@ -27,8 +29,17 @@ do
   then
     j=$((j+1))
     git add $x
+  else
+    fails[${#fails[@]}]="$x"
   fi
 done
 
 echo $i tests tested
 echo $j tests passed
+
+echo
+echo fails:
+for x in "${fails[@]}"
+do
+  echo -- $x
+done

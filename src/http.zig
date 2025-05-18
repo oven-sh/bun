@@ -2549,7 +2549,9 @@ const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
 const accept_encoding_compression = "gzip, deflate, br";
+const accept_encoding_compression_for_proxy = "gzip, deflate";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
+const accept_encoding_header_compression_for_proxy = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression_for_proxy };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 
 const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_client)
@@ -3158,7 +3160,11 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_accept_encoding and !this.flags.disable_decompression) {
-        request_headers_buf[header_count] = accept_encoding_header;
+        request_headers_buf[header_count] = if (this.http_proxy != null or this.proxy_tunnel != null)
+            // Disable brotli compression for HTTP Proxies due to issues with transfer-encoding chunked + brotli.
+            accept_encoding_header_compression_for_proxy
+        else
+            accept_encoding_header;
 
         header_count += 1;
     }

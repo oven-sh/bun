@@ -1629,6 +1629,8 @@ pub fn resolveMaybeNeedsTrailingSlash(
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
         var err = err_;
         const msg: logger.Msg = brk: {
+            log.lock.lock();
+            defer log.lock.unlock();
             const msgs: []logger.Msg = log.msgs.items;
 
             for (msgs) |m| {

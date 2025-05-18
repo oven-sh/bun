@@ -632,12 +632,16 @@ pub const Log = struct {
     errors: u32 = 0,
     msgs: std.ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
-
     clone_line_text: bool = false,
+
+    /// This data structure is not thread-safe, but in nearly all cases we already clone the logs
+    /// Unless you're in `bun install`, there are a couple spots.
+    /// Generally, you want to write to a local logger.Log and then clone it into the parent's list at the end.
+    lock: bun.Mutex = .{},
 
     pub fn memoryCost(this: *const Log) usize {
         var cost: usize = 0;
-        for (this.msgs.items) |msg| {
+        for (this.msgs.items) |*msg| {
             cost += msg.memoryCost();
         }
         return cost;
@@ -648,6 +652,8 @@ pub const Log = struct {
     }
 
     pub fn reset(this: *Log) void {
+        this.lock.lock();
+        defer this.lock.unlock();
         this.msgs.clearRetainingCapacity();
         this.warnings = 0;
         this.errors = 0;
@@ -821,11 +827,27 @@ pub const Log = struct {
     }
 
     pub fn appendTo(self: *Log, other: *Log) OOM!void {
-        try self.cloneTo(other);
-        self.msgs.clearAndFree();
+        {
+            self.lock.lock();
+            other.lock.lock();
+            defer self.lock.unlock();
+            defer other.lock.unlock();
+            try self.cloneTo(other);
+        }
+
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            self.msgs.clearAndFree();
+        }
     }
 
     pub fn cloneToWithRecycled(self: *Log, other: *Log, recycled: bool) OOM!void {
+        self.lock.lock();
+        other.lock.lock();
+        defer self.lock.unlock();
+        defer other.lock.unlock();
+
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
@@ -856,7 +878,12 @@ pub const Log = struct {
 
     pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) OOM!void {
         try self.cloneToWithRecycled(other, recycled);
-        self.msgs.clearAndFree();
+
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            self.msgs.clearAndFree();
+        }
     }
 
     pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) OOM!void {
@@ -864,6 +891,12 @@ pub const Log = struct {
     }
 
     pub fn deinit(log: *Log) void {
+        if (Environment.isDebug or Environment.enable_asan) {
+            if (!log.lock.tryLock()) {
+                @panic("Cannot deinit the log while a thread is active");
+            }
+        }
+
         log.msgs.clearAndFree();
         // log.warnings = 0;
         // log.errors = 0;
@@ -1240,7 +1273,7 @@ pub const Log = struct {
     pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
         @branchHint(.cold);
         if (!Kind.shouldPrint(.debug, log.level)) return;
-        // log.de += 1;
+
         try log.addMsg(.{
             .kind = Kind.debug,
             .data = rangeData(source, r, text),
@@ -1270,6 +1303,8 @@ pub const Log = struct {
     }
 
     pub fn addMsg(self: *Log, msg: Msg) OOM!void {
+        self.lock.lock();
+        defer self.lock.unlock();
         try self.msgs.append(msg);
     }
 
@@ -1315,14 +1350,17 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *const Log, to: anytype) !void {
+    pub fn print(self: *Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
+        self.lock.lock();
+        defer self.lock.unlock();
+
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
             // errors at the bottom

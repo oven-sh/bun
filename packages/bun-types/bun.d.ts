@@ -1126,6 +1126,7 @@ declare module "bun" {
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
+     * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
      *
      * @example
      * ```js
@@ -1135,7 +1136,7 @@ declare module "bun" {
      * await fetch('https://example.com');
      * ```
      */
-    function prefetch(hostname: string): void;
+    function prefetch(hostname: string, port?: number): void;
 
     /**
      * **Experimental API**

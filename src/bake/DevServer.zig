@@ -2960,7 +2960,7 @@ pub fn handleParseTaskFailure(
     err: anyerror,
     graph: bake.Graph,
     abs_path: []const u8,
-    log: *const Log,
+    log: *Log,
     bv2: *BundleV2,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
@@ -4703,7 +4703,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .abs_path => []const u8,
                 .index => FileIndex,
             },
-            log: *const Log,
+            log: *Log,
             is_ssr_graph: bool,
         ) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();

@@ -2489,6 +2489,7 @@ pub const E = struct {
         }
 
         pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
+            bun.assert(s.next == null);
             return if (s.isUTF8())
                 strings.eqlComptime(s.data, value)
             else
@@ -6209,6 +6210,7 @@ pub const Expr = struct {
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
+                                l.resolveRopeIfNeeded(p.allocator);
                                 if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
                                     return Equality.true;
                                 }
@@ -8268,9 +8270,9 @@ pub const Macro = struct {
 
                         if (value.jsType() == .DOMWrapper) {
                             if (value.as(JSC.WebCore.Response)) |resp| {
-                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                                return this.run(try resp.getBlobWithoutCallFrame(this.global));
                             } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                return this.run(resp.getBlobWithoutCallFrame(this.global));
+                                return this.run(try resp.getBlobWithoutCallFrame(this.global));
                             } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
@@ -8449,7 +8451,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue(this.global));
+                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue());
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

@@ -3820,6 +3820,9 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T
     }
 
     const s3 = p[3];
+
+    if ((s3 & 0xC0) != 0x80) return zero;
+
     {
         const cp = (@as(T, p[0] & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
         if (cp < 0x10000 or cp > 0x10FFFF) return zero;

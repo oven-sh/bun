@@ -87,7 +87,7 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, JSMessageChannelPrototype::Base);
 
-using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel>;
+using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel, Bun::ErrorCode::ERR_CONSTRUCT_CALL_REQUIRED>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {

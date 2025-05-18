@@ -222,6 +222,7 @@ src/bun.js/webcore/Response.zig
 src/bun.js/webcore/S3Client.zig
 src/bun.js/webcore/S3File.zig
 src/bun.js/webcore/S3Stat.zig
+src/bun.js/webcore/ScriptExecutionContext.zig
 src/bun.js/webcore/Sink.zig
 src/bun.js/webcore/streams.zig
 src/bun.js/webcore/TextDecoder.zig

@@ -55,6 +55,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "BunProcess.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -223,6 +224,23 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<AddEventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    // Emit a warning if listener is null, as it has no effect
+    if (!listener) {
+        String warningMessage;
+        if (argument1.value().isNull()) {
+            warningMessage = "addEventListener called with null listener, which has no effect."_s;
+        } else {
+            warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
+        }
+        auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
+        errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
+        JSObject& target = *castedThis;
+        errorInstance->putDirect(vm, vm.propertyNames->target, &target);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTFMove(type)));
+        Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());

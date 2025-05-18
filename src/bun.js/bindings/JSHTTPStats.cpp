@@ -110,7 +110,7 @@ private:
 
 const ClassInfo JSHTTPStatsObject::s_info = { "HTTPStats"_s, &Base::s_info, &jsHTTPStatsObjectTable, nullptr, CREATE_METHOD_TABLE(JSHTTPStatsObject) };
 
-JSValue constructBunHTTPStatsObject(JSC::JSGlobalObject* globalObject)
+JSC::JSObject* constructBunHTTPStatsObject(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
 

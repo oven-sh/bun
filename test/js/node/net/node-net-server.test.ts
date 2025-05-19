@@ -286,7 +286,7 @@ describe("net.createServer listen", () => {
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
         expect(err!.name).toBe("Error");
-        expect(err!.code).toBe("ECONNREFUSED");
+        expect((err as { code?: string }).code).toBe("ECONNREFUSED");
 
         server.close();
         done();
@@ -455,12 +455,22 @@ describe("net.createServer events", () => {
           });
         }
 
-        const promises = [];
+        const promises: Promise<void>[] = [];
         for (let i = 0; i < maxClients; i++) {
           promises.push(spawnClient());
         }
         await Promise.all(promises).catch(closeAndFail);
       });
+  });
+
+  it("should error on an invalid port", () => {
+    const server = createServer();
+
+    expect(() => server.listen(123456)).toThrow(
+      expect.objectContaining({
+        code: "ERR_SOCKET_BAD_PORT",
+      }),
+    );
   });
 
   it("should call abort with signal", done => {

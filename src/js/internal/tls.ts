@@ -69,9 +69,9 @@ export {
   DEFAULT_CIPHERS,
   DEFAULT_CIPHERS_LIST,
   DEFAULT_CIPHERS_SET,
+  VALID_TLS_ERROR_MESSAGE_TYPES,
   isValidTLSArray,
   isValidTLSItem,
   throwOnInvalidTLSArray,
-  VALID_TLS_ERROR_MESSAGE_TYPES,
   validateCiphers,
 };

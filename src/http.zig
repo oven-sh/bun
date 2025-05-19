@@ -521,6 +521,7 @@ const ProxyTunnel = struct {
             // Cycle to through the SSL state machine
             _ = wrapper.flush();
         }
+        // we still call onWritable because if we used tryWrite we need to retry when onWritable!
         this.onWritable(is_ssl, socket);
     }
 
@@ -532,7 +533,7 @@ const ProxyTunnel = struct {
         }
     }
 
-    pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
+    pub fn tryWrite(this: *ProxyTunnel, buf: []const u8) !usize {
         if (this.wrapper) |*wrapper| {
             return try wrapper.writeData(buf);
         }
@@ -3483,7 +3484,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.setTimeout(socket, 5);
 
                         const to_send = this.state.request_body;
-                        const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                        const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                         this.state.request_sent_len += @as(usize, @intCast(amount));
                         this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
@@ -3501,7 +3502,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                         if (stream.buffer.isNotEmpty()) {
                             const to_send = stream.buffer.slice();
-                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                            const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
                             this.state.request_sent_len += amount;
                             stream.buffer.cursor += @truncate(amount);
                             if (amount < to_send.len) {
@@ -3559,7 +3560,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     assert(!socket.isShutdown());
                     assert(!socket.isClosed());
                 }
-                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                 if (comptime is_first_call) {
                     if (amount == 0) {

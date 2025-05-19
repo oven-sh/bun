@@ -674,6 +674,7 @@ pub const BunxCommand = struct {
             "add",
             install_param,
             "--no-summary",
+            "--trust",
         }) catch
             unreachable; // upper bound is known
 
@@ -697,9 +698,6 @@ pub const BunxCommand = struct {
             args.append("--silent") catch
                 unreachable; // upper bound is known
         }
-
-        args.append("--trust") catch
-            unreachable; // upper bound is known
 
         const argv_to_use = args.slice();
 

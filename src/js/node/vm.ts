@@ -64,12 +64,15 @@ function runInThisContext(code, options) {
   return new Script(code, options).runInThisContext(options);
 }
 
-function runInNewContext(code, contextObject, options) {
+function runInNewContext(code, context, options) {
+  if (context !== undefined && (typeof context !== "object" || context === null)) {
+    validateContext(context);
+  }
   if (typeof options === "string") {
     options = { filename: options };
   }
-  contextObject = createContext(contextObject, options);
-  return createScript(code, options).runInNewContext(contextObject, options);
+  context = createContext(context, options);
+  return createScript(code, options).runInNewContext(context, options);
 }
 
 function createScript(code, options) {
@@ -81,7 +84,7 @@ function measureMemory() {
 }
 
 function validateContext(contextifiedObject) {
-  if (!isContext(contextifiedObject)) {
+  if (!isContext(contextifiedObject) && contextifiedObject !== constants.DONT_CONTEXTIFY) {
     const error = new Error('The "contextifiedObject" argument must be an vm.Context');
     error.code = "ERR_INVALID_ARG_TYPE";
     error.name = "TypeError";

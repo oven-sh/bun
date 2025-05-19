@@ -369,7 +369,12 @@ describe("napi", () => {
     });
   });
 
-  // TODO(@190n) test allocating in a finalizer from a napi module with the right version
+  describe("finalizers", () => {
+    it("runs asynchronously on the JS thread", () => {
+      const out = checkSameOutput("test_external_buffer_finalizer", []);
+      expect(out).toMatch(/^(buffer_finalizer run from js thread\n)+resolved to undefined$/);
+    });
+  });
 
   describe("napi_wrap", () => {
     it("accepts the right kinds of values", () => {

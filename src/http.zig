@@ -506,7 +506,6 @@ const ProxyTunnel = struct {
         log("ProxyTunnel onWritable", .{});
         this.ref();
         defer this.deref();
-        // we still call onWritable because if we used tryWrite we need to retry when onWritable!
         const encoded_data = this.write_buffer.slice();
         if (encoded_data.len == 0) {
             return;
@@ -532,7 +531,7 @@ const ProxyTunnel = struct {
         }
     }
 
-    pub fn tryWrite(this: *ProxyTunnel, buf: []const u8) !usize {
+    pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
         if (this.wrapper) |*wrapper| {
             return try wrapper.writeData(buf);
         }
@@ -3481,40 +3480,42 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 switch (this.state.original_request_body) {
                     .bytes => {
                         this.setTimeout(socket, 5);
+                        while (true) {
+                            const to_send = this.state.request_body;
+                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                        const to_send = this.state.request_body;
-                        const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                            this.state.request_sent_len += @as(usize, @intCast(amount));
+                            this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
 
-                        this.state.request_sent_len += @as(usize, @intCast(amount));
-                        this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
-
-                        if (this.state.request_body.len == 0) {
-                            this.state.request_stage = .done;
-                            return;
+                            if (this.state.request_body.len == 0) {
+                                this.state.request_stage = .done;
+                                return;
+                            }
                         }
                     },
                     .stream => {
                         var stream = &this.state.original_request_body.stream;
                         stream.has_backpressure = false;
                         this.setTimeout(socket, 5);
-
-                        // to simplify things here the buffer contains the raw data we just need to flush to the socket it
-                        if (stream.buffer.isNotEmpty()) {
-                            const to_send = stream.buffer.slice();
-                            const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            this.state.request_sent_len += amount;
-                            stream.buffer.cursor += @truncate(amount);
-                            if (amount < to_send.len) {
-                                stream.has_backpressure = true;
+                        while (!stream.has_backpressure) {
+                            // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+                            if (stream.buffer.isNotEmpty()) {
+                                const to_send = stream.buffer.slice();
+                                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                                this.state.request_sent_len += amount;
+                                stream.buffer.cursor += @truncate(amount);
+                                if (amount < to_send.len) {
+                                    stream.has_backpressure = true;
+                                }
+                                if (stream.buffer.isEmpty()) {
+                                    stream.buffer.reset();
+                                }
                             }
-                            if (stream.buffer.isEmpty()) {
-                                stream.buffer.reset();
+                            if (stream.hasEnded()) {
+                                this.state.request_stage = .done;
+                                stream.buffer.deinit();
+                                return;
                             }
-                        }
-                        if (stream.hasEnded()) {
-                            this.state.request_stage = .done;
-                            stream.buffer.deinit();
-                            return;
                         }
                     },
                     .sendfile => {
@@ -3559,7 +3560,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     assert(!socket.isShutdown());
                     assert(!socket.isClosed());
                 }
-                const amount = proxy.tryWrite(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                 if (comptime is_first_call) {
                     if (amount == 0) {

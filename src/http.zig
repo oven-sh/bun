@@ -506,6 +506,7 @@ const ProxyTunnel = struct {
         log("ProxyTunnel onWritable", .{});
         this.ref();
         defer this.deref();
+        // we still call onWritable because if we used tryWrite we need to retry when onWritable!
         const encoded_data = this.write_buffer.slice();
         if (encoded_data.len == 0) {
             return;
@@ -521,8 +522,6 @@ const ProxyTunnel = struct {
             // Cycle to through the SSL state machine
             _ = wrapper.flush();
         }
-        // we still call onWritable because if we used tryWrite we need to retry when onWritable!
-        this.onWritable(is_ssl, socket);
     }
 
     pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {

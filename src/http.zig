@@ -1878,11 +1878,13 @@ pub fn onClose(
         // as if the transfer had complete, browsers appear to ignore
         // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
-            const buf = client.state.getBodyBuffer();
-            if (!client.state.flags.received_last_chunk and buf.list.items.len > 0) {
-                client.state.flags.received_last_chunk = true;
-                client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
-                return;
+            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+                const buf = client.state.getBodyBuffer();
+                if (buf.list.items.len > 0) {
+                    client.state.flags.received_last_chunk = true;
+                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
             }
         } else if (client.state.content_length == null and client.state.response_stage == .body) {
             // no content length informed so we are done here
@@ -2178,7 +2180,7 @@ pub const InternalState = struct {
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
-    chunked_decoder: uws.ChunkedDecoder = .{},
+    chunked_decoder: picohttp.phr_chunked_decoder = .{},
     decompressor: Decompressor = .{ .none = {} },
     stage: Stage = Stage.pending,
     /// This is owned by the user and should not be freed here
@@ -2221,9 +2223,6 @@ pub const InternalState = struct {
     }
 
     pub fn reset(this: *InternalState, allocator: std.mem.Allocator) void {
-        // Chunked Decoder always uses default_allocator.
-        this.chunked_decoder.reset(bun.default_allocator);
-
         this.compressed_body.deinit();
         this.response_message_buffer.deinit();
 
@@ -2351,11 +2350,11 @@ pub const InternalState = struct {
             this.gzip_elapsed = gzip_timer.read();
     }
 
-    fn decompress(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool) !void {
-        try this.decompressBytes(buffer, body_out_str, is_final_chunk);
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString, is_final_chunk: bool) !void {
+        try this.decompressBytes(buffer.list.items, body_out_str, is_final_chunk);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: []const u8, is_final_chunk: bool) !bool {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_chunk: bool) !bool {
         if (this.flags.is_redirect_pending) return false;
 
         var body_out_str = this.body_out_str.?;
@@ -2365,8 +2364,8 @@ pub const InternalState = struct {
                 try this.decompress(buffer, body_out_str, is_final_chunk);
             },
             else => {
-                if (!body_out_str.owns(buffer)) {
-                    body_out_str.append(buffer) catch |err| {
+                if (!body_out_str.owns(buffer.list.items)) {
+                    body_out_str.append(buffer.list.items) catch |err| {
                         Output.prettyErrorln("<r><red>Failed to append to body buffer: {s}<r>", .{bun.asByteSlice(@errorName(err))});
                         Output.flush();
                         return err;
@@ -4327,7 +4326,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const is_final_chunk = is_done;
-        const processed = try this.state.processBodyBuffer(buffer.list.items, is_final_chunk);
+        const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
 
         // We can only use the libdeflate fast path when we are not streaming
         // If we ever call processBodyBuffer again, it cannot go through the fast path.
@@ -4343,68 +4342,159 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     return false;
 }
 
-fn handleResponseBodyChunkedEncoding(
+pub fn handleResponseBodyChunkedEncoding(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    if (incoming_data.len <= single_packet_small_buffer.len and this.state.getBodyBuffer().list.items.len == 0) {
+        return try this.handleResponseBodyChunkedEncodingFromSinglePacket(incoming_data);
+    } else {
+        return try this.handleResponseBodyChunkedEncodingFromMultiplePackets(incoming_data);
+    }
+}
+
+fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     this: *HTTPClient,
     incoming_data: []const u8,
 ) !bool {
     var decoder = &this.state.chunked_decoder;
+    const buffer_ptr = this.state.getBodyBuffer();
+    var buffer = buffer_ptr.*;
+    try buffer.appendSlice(incoming_data);
 
-    var buffer_to_use = incoming_data;
-    if (decoder.buffer.items.len > 0) {
-        try decoder.append(bun.default_allocator, incoming_data);
-        buffer_to_use = decoder.buffer.items;
+    // set consume_trailer to 1 to discard the trailing header
+    // using content-encoding per chunk is not supported
+    decoder.consume_trailer = 1;
+
+    var bytes_decoded = incoming_data.len;
+    // phr_decode_chunked mutates in-place
+    const pret = picohttp.phr_decode_chunked(
+        decoder,
+        buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
+        &bytes_decoded,
+    );
+    buffer.list.items.len -|= incoming_data.len - bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
+
+    buffer_ptr.* = buffer;
+
+    switch (pret) {
+        // Invalid HTTP response body
+        -1 => return error.InvalidHTTPResponse,
+        // Needs more data
+        -2 => {
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.list.items.len);
+                progress.context.maybeRefresh();
+            }
+            // streaming chunks
+            if (this.signals.get(.body_streaming)) {
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.flags.is_libdeflate_fast_path_disabled = true;
+                return try this.state.processBodyBuffer(buffer, false);
+            }
+
+            return false;
+        },
+        // Done
+        else => {
+            this.state.flags.received_last_chunk = true;
+            _ = try this.state.processBodyBuffer(
+                buffer,
+                true,
+            );
+
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.list.items.len);
+                progress.context.maybeRefresh();
+            }
+
+            return true;
+        },
     }
 
-    while (true) {
-        const prev_buffer_to_use = buffer_to_use;
-        switch (decoder.next(&buffer_to_use)) {
-            .chunk => |chunk| {
-                this.state.total_body_received += chunk.len;
+    unreachable;
+}
 
-                if (this.progress_node) |progress| {
-                    progress.activate();
-                    progress.setCompletedItems(this.state.total_body_received);
-                    progress.context.maybeRefresh();
-                }
+// the first packet for Transfer-Encoding: chunked
+// is usually pretty small or sometimes even just a length
+// so we can avoid allocating a temporary buffer to copy the data in
+var single_packet_small_buffer: [16 * 1024]u8 = undefined;
+fn handleResponseBodyChunkedEncodingFromSinglePacket(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    var decoder = &this.state.chunked_decoder;
+    assert(incoming_data.len <= single_packet_small_buffer.len);
 
-                if (this.signals.get(.body_streaming)) {
-                    this.state.flags.is_libdeflate_fast_path_disabled = true;
-                    if (!try this.state.processBodyBuffer(chunk, false)) {
-                        return false;
-                    }
-                } else {
-                    try this.state.getBodyBuffer().appendSliceExact(chunk);
-                }
-            },
-            .eof => {
-                decoder.reset(bun.default_allocator);
-                this.state.flags.received_last_chunk = true;
+    // set consume_trailer to 1 to discard the trailing header
+    // using content-encoding per chunk is not supported
+    decoder.consume_trailer = 1;
 
-                if (this.progress_node) |progress| {
-                    progress.activate();
-                    progress.setCompletedItems(this.state.getBodyBuffer().list.items.len);
-                    progress.context.maybeRefresh();
-                }
+    var buffer: []u8 = undefined;
 
-                _ = try this.state.processBodyBuffer(
-                    this.state.getBodyBuffer().list.items,
-                    true,
-                );
-
-                return true;
-            },
-            .fail => {
-                decoder.reset(bun.default_allocator);
-                return error.InvalidHTTPResponse;
-            },
-            .need_more => {
-                if (!bun.isSliceInBuffer(prev_buffer_to_use, decoder.buffer.items)) {
-                    try decoder.buffer.appendSlice(bun.default_allocator, prev_buffer_to_use);
-                }
-                return false;
-            },
-        }
+    if (
+    // if we've already copied the buffer once, we can avoid copying it again.
+    this.state.response_message_buffer.owns(incoming_data)) {
+        buffer = @constCast(incoming_data);
+    } else {
+        buffer = single_packet_small_buffer[0..incoming_data.len];
+        @memcpy(buffer[0..incoming_data.len], incoming_data);
     }
+
+    var bytes_decoded = incoming_data.len;
+    // phr_decode_chunked mutates in-place
+    const pret = picohttp.phr_decode_chunked(
+        decoder,
+        buffer.ptr + (buffer.len -| incoming_data.len),
+        &bytes_decoded,
+    );
+    buffer.len -|= incoming_data.len - bytes_decoded;
+    this.state.total_body_received += bytes_decoded;
+
+    switch (pret) {
+        // Invalid HTTP response body
+        -1 => {
+            return error.InvalidHTTPResponse;
+        },
+        // Needs more data
+        -2 => {
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
+                progress.context.maybeRefresh();
+            }
+            const body_buffer = this.state.getBodyBuffer();
+            try body_buffer.appendSliceExact(buffer);
+
+            // streaming chunks
+            if (this.signals.get(.body_streaming)) {
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.flags.is_libdeflate_fast_path_disabled = true;
+
+                return try this.state.processBodyBuffer(body_buffer.*, true);
+            }
+
+            return false;
+        },
+        // Done
+        else => {
+            this.state.flags.received_last_chunk = true;
+            try this.handleResponseBodyFromSinglePacket(buffer);
+            assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
+                progress.context.maybeRefresh();
+            }
+
+            return true;
+        },
+    }
+
+    unreachable;
 }
 
 const ShouldContinue = enum {

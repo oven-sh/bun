@@ -521,6 +521,7 @@ const ProxyTunnel = struct {
             // Cycle to through the SSL state machine
             _ = wrapper.flush();
         }
+        this.onWritable(is_ssl, socket);
     }
 
     pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
@@ -1844,7 +1845,6 @@ fn writeProxyConnect(
     _ = writer.write("\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
     if (client.proxy_authorization) |auth| {
-        log("Proxy-Authorization: {s}\n", .{auth});
         _ = writer.write("Proxy-Authorization: ") catch 0;
         _ = writer.write(auth) catch 0;
         _ = writer.write("\r\n") catch 0;

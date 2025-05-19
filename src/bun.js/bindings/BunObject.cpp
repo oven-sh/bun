@@ -41,7 +41,7 @@
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
-
+#include "JSHTTPStats.h"
 #ifdef WIN32
 #include <ws2def.h>
 #else
@@ -328,11 +328,13 @@ static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 {
-    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
+    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
+    JSFunction* fetchFn = JSFunction::create(vm, globalObject, 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
 
-    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+
+    fetchFn->putDirect(vm, JSC::Identifier::fromString(vm, "stats"_s), Bun::constructBunHTTPStatsObject(bunObject->globalObject()), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return fetchFn;
 }

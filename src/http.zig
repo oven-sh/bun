@@ -116,6 +116,170 @@ pub const FetchRedirect = enum(u8) {
     });
 };
 
+pub const Stats = extern struct {
+    total_requests: std.atomic.Value(u64) = .init(0),
+    total_bytes_sent: std.atomic.Value(u64) = .init(0),
+    total_bytes_received: std.atomic.Value(u64) = .init(0),
+    total_requests_failed: std.atomic.Value(u64) = .init(0),
+    total_requests_redirected: std.atomic.Value(u64) = .init(0),
+    total_requests_succeeded: std.atomic.Value(u64) = .init(0),
+    total_requests_timed_out: std.atomic.Value(u64) = .init(0),
+    total_requests_connection_refused: std.atomic.Value(u64) = .init(0),
+
+    pub var instance: Stats = .{};
+
+    pub fn addRequest() void {
+        _ = instance.total_requests.fetchAdd(1, .monotonic);
+    }
+
+    pub fn addBytesSent(bytes: u64) void {
+        _ = instance.total_bytes_sent.fetchAdd(bytes, .monotonic);
+    }
+
+    pub fn addBytesReceived(bytes: u64) void {
+        _ = instance.total_bytes_received.fetchAdd(bytes, .monotonic);
+    }
+
+    pub fn addRequestsFailed() void {
+        _ = instance.total_requests_failed.fetchAdd(1, .monotonic);
+    }
+
+    pub fn addRequestsRedirected() void {
+        _ = instance.total_requests_redirected.fetchAdd(1, .monotonic);
+    }
+
+    pub fn addRequestsSucceeded() void {
+        _ = instance.total_requests_succeeded.fetchAdd(1, .monotonic);
+    }
+
+    pub fn addRequestsTimedOut() void {
+        _ = instance.total_requests_timed_out.fetchAdd(1, .monotonic);
+    }
+
+    pub fn addRequestsConnectionRefused() void {
+        _ = instance.total_requests_connection_refused.fetchAdd(1, .monotonic);
+    }
+
+    pub fn fmt() Formatter {
+        return .{
+            .enable_color = bun.Output.enable_ansi_colors_stderr,
+        };
+    }
+
+    pub const Formatter = struct {
+        enable_color: bool = false,
+
+        pub fn format(this: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const total_requests = Stats.instance.total_requests.load(.monotonic);
+            const total_bytes_sent = Stats.instance.total_bytes_sent.load(.monotonic);
+            const total_bytes_received = Stats.instance.total_bytes_received.load(.monotonic);
+            const total_requests_failed = Stats.instance.total_requests_failed.load(.monotonic);
+            const total_requests_redirected = Stats.instance.total_requests_redirected.load(.monotonic);
+            const total_requests_succeeded = Stats.instance.total_requests_succeeded.load(.monotonic);
+            const total_requests_timed_out = Stats.instance.total_requests_timed_out.load(.monotonic);
+            const total_requests_connection_refused = Stats.instance.total_requests_connection_refused.load(.monotonic);
+            const active_requests = AsyncHTTP.active_requests_count.load(.monotonic);
+            var needs_space = false;
+
+            if (!(total_bytes_received > 0 or
+                total_bytes_sent > 0 or
+                total_requests > 0 or
+                active_requests > 0 or
+                total_requests_failed > 0 or
+                total_requests_redirected > 0 or
+                total_requests_succeeded > 0 or
+                total_requests_timed_out > 0 or
+                total_requests_connection_refused > 0))
+            {
+                return;
+            }
+
+            switch (this.enable_color) {
+                inline else => |enable_ansi_colors| {
+                    try writer.writeAll(Output.prettyFmt("\n  <d>http stats | <r> ", enable_ansi_colors));
+                    needs_space = false;
+
+                    if (active_requests > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("active<d>:<r> <blue><b>{}<r>", enable_ansi_colors),
+                            .{active_requests},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_requests_succeeded > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        needs_space = true;
+                        try writer.print(
+                            Output.prettyFmt("ok<d>:<r> <green><b>{}<r>", enable_ansi_colors),
+                            .{total_requests_succeeded},
+                        );
+                    }
+
+                    if (total_requests_failed > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("fail<d>:<r> <red><b>{}<r>", enable_ansi_colors),
+                            .{total_requests_failed},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_bytes_received > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("recv<d>:<r> <b>{}<r>", enable_ansi_colors),
+                            .{bun.fmt.size(total_bytes_received, .{})},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_bytes_sent > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("sent<d>:<r> <b>{}<r>", enable_ansi_colors),
+                            .{bun.fmt.size(total_bytes_sent, .{})},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_requests_redirected > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        try writer.print(
+                            Output.prettyFmt("redirect<d>:<r> <yellow>{}<r>", enable_ansi_colors),
+                            .{total_requests_redirected},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_requests_timed_out > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        needs_space = true;
+                        try writer.print(
+                            Output.prettyFmt("timeout<d>:<r> <b>{}<r>", enable_ansi_colors),
+                            .{total_requests_timed_out},
+                        );
+                        needs_space = true;
+                    }
+
+                    if (total_requests_connection_refused > 0) {
+                        if (needs_space) try writer.writeAll(Output.prettyFmt(" <d>|<r> ", enable_ansi_colors));
+                        needs_space = true;
+                        try writer.print(
+                            Output.prettyFmt("refused<d>:<r> <red>{}<r>", enable_ansi_colors),
+                            .{total_requests_connection_refused},
+                        );
+                        needs_space = true;
+                    }
+
+                    try writer.writeAll("\n");
+                },
+            }
+        }
+    };
+};
+
 pub const HTTPRequestBody = union(enum) {
     bytes: []const u8,
     sendfile: Sendfile,
@@ -411,7 +575,9 @@ const ProxyTunnel = struct {
                 .tcp => |socket| socket.write(encoded_data, true),
                 .none => 0,
             };
-            const pending = encoded_data[@intCast(written)..];
+            const written_bytes: usize = @intCast(@max(written, 0));
+            Stats.addBytesSent(written_bytes);
+            const pending = encoded_data[written_bytes..];
             if (pending.len > 0) {
                 // lets flush when we are truly writable
                 proxy.write_buffer.write(pending) catch bun.outOfMemory();
@@ -489,6 +655,8 @@ const ProxyTunnel = struct {
             return;
         }
         const written = socket.write(encoded_data, true);
+        const written_bytes: usize = @intCast(@max(written, 0));
+        Stats.addBytesSent(written_bytes);
         if (written == encoded_data.len) {
             this.write_buffer.reset();
             return;
@@ -1512,6 +1680,7 @@ pub const HTTPThread = struct {
 
         {
             var batch_ = batch;
+            _ = Stats.instance.total_requests.fetchAdd(batch.len, .monotonic);
             while (batch_.pop()) |task| {
                 const http: *AsyncHTTP = @fieldParentPtr("task", task);
                 this.queued_tasks.push(http);
@@ -1746,12 +1915,14 @@ pub fn onTimeout(
     log("Timeout  {s}\n", .{client.url.href});
 
     defer NewHTTPContext(is_ssl).terminateSocket(socket);
+    Stats.addRequestsTimedOut();
     client.fail(error.Timeout);
 }
 pub fn onConnectError(
     client: *HTTPClient,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
+    Stats.addRequestsConnectionRefused();
     client.fail(error.ConnectionRefused);
 }
 
@@ -1779,13 +1950,6 @@ inline fn getRequestBodySendBuffer(this: *@This()) HTTPThread.RequestBodyBuffer 
 pub inline fn cleanup(force: bool) void {
     default_arena.gc(force);
 }
-
-pub const SOCKET_FLAGS: u32 = if (Environment.isLinux)
-    SOCK.CLOEXEC | posix.MSG.NOSIGNAL
-else
-    SOCK.CLOEXEC;
-
-pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
 pub const extremely_verbose = false;
 
@@ -2452,6 +2616,11 @@ pub const AsyncHTTP = struct {
 
     pub var active_requests_count = std.atomic.Value(usize).init(0);
     pub var max_simultaneous_requests = std.atomic.Value(usize).init(256);
+
+    comptime {
+        // This is not part of Stats because it's used in other places
+        @export(&active_requests_count, .{ .name = "Bun__HTTPStats__total_requests_active" });
+    }
 
     pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
         if (env.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
@@ -3272,7 +3441,9 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
         return error.WriteFailed;
     }
 
-    this.state.request_sent_len += @as(usize, @intCast(amount));
+    const sent_bytes: usize = @intCast(@max(amount, 0));
+    this.state.request_sent_len += sent_bytes;
+    Stats.addBytesSent(sent_bytes);
     const has_sent_headers = this.state.request_sent_len >= headers_len;
 
     if (has_sent_headers and this.verbose != .none) {
@@ -3371,9 +3542,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.closeAndFail(error.WriteFailed, is_ssl, socket);
                         return;
                     }
+                    const sent_bytes: usize = @intCast(@max(amount, 0));
 
-                    this.state.request_sent_len += @as(usize, @intCast(amount));
-                    this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                    Stats.addBytesSent(sent_bytes);
+                    this.state.request_sent_len += sent_bytes;
+                    this.state.request_body = this.state.request_body[sent_bytes..];
 
                     if (this.state.request_body.len == 0) {
                         this.state.request_stage = .done;
@@ -3391,8 +3564,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                             this.closeAndFail(error.WriteFailed, is_ssl, socket);
                             return;
                         }
-                        this.state.request_sent_len += @as(usize, @intCast(amount));
-                        stream.buffer.cursor += @intCast(amount);
+                        const sent_bytes: usize = @intCast(@max(amount, 0));
+                        this.state.request_sent_len += sent_bytes;
+                        Stats.addBytesSent(sent_bytes);
+                        stream.buffer.cursor += sent_bytes;
                         if (amount < to_send.len) {
                             stream.has_backpressure = true;
                         }
@@ -3436,8 +3611,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         const to_send = this.state.request_body;
                         const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                        this.state.request_sent_len += @as(usize, @intCast(amount));
-                        this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                        const sent_bytes: usize = @intCast(@max(amount, 0));
+                        this.state.request_sent_len += sent_bytes;
+                        Stats.addBytesSent(sent_bytes);
+                        this.state.request_body = this.state.request_body[sent_bytes..];
 
                         if (this.state.request_body.len == 0) {
                             this.state.request_stage = .done;
@@ -3452,8 +3629,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         if (stream.buffer.isNotEmpty()) {
                             const to_send = stream.buffer.slice();
                             const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            this.state.request_sent_len += amount;
-                            stream.buffer.cursor += @truncate(amount);
+                            const sent_bytes: usize = @intCast(@max(amount, 0));
+                            this.state.request_sent_len += sent_bytes;
+                            Stats.addBytesSent(sent_bytes);
+                            stream.buffer.cursor += sent_bytes;
                             if (amount < to_send.len) {
                                 stream.has_backpressure = true;
                             }
@@ -3517,7 +3696,9 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     }
                 }
 
-                this.state.request_sent_len += @as(usize, @intCast(amount));
+                const sent_bytes: usize = @intCast(@max(amount, 0));
+                this.state.request_sent_len += sent_bytes;
+                Stats.addBytesSent(sent_bytes);
                 const has_sent_headers = this.state.request_sent_len >= headers_len;
 
                 if (has_sent_headers and this.state.request_body.len > 0) {
@@ -3676,6 +3857,12 @@ pub fn handleOnDataHeaders(
     if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
         // we are proxing we dont need to cloneMetadata yet
         this.startProxyHandshake(is_ssl, socket);
+
+        if (body_buf.len > 0) {
+            if (this.proxy_tunnel) |proxy| {
+                proxy.receiveData(body_buf);
+            }
+        }
         return;
     }
 
@@ -3731,6 +3918,7 @@ pub fn onData(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onData {}", .{incoming_data.len});
+    Stats.addBytesReceived(incoming_data.len);
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
@@ -3823,13 +4011,13 @@ fn fail(this: *HTTPClient, err: anyerror) void {
         this.state.response_stage = .fail;
         this.state.fail = err;
         this.state.stage = .fail;
+        Stats.addRequestsFailed();
 
         if (!this.flags.defer_fail_until_connecting_is_complete) {
             const callback = this.result_callback;
             const result = this.toResult();
             this.state.reset(this.allocator);
             this.flags.proxy_tunneling = false;
-
             callback.run(@fieldParentPtr("client", this), result);
         }
     }
@@ -3915,6 +4103,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             this.state.request_stage = .done;
             this.state.stage = .done;
             this.flags.proxy_tunneling = false;
+            Stats.addRequestsSucceeded();
         }
 
         result.body.?.* = body;
@@ -4647,6 +4836,7 @@ pub fn handleResponseMetadata(
                         }
                     }
                     this.state.flags.is_redirect_pending = true;
+                    Stats.addRequestsRedirected();
                     if (this.method.hasRequestBody()) {
                         this.state.flags.resend_request_body_on_redirect = true;
                     }
@@ -4847,3 +5037,7 @@ pub const Headers = struct {
         return headers;
     }
 };
+
+comptime {
+    @export(&Stats.instance, .{ .name = "Bun__HTTPStats" });
+}

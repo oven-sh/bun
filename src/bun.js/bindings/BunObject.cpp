@@ -512,14 +512,38 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     if (strict.isBoolean() && strict.asBoolean()) {
 
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<true, BunDeepEqualsMode_Bun>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<false, BunDeepEqualsMode_Bun>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_nodeIsDeepStrictEqual, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    auto& vm = JSC::getVM(global);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        return {};
+    }
+
+    JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
+    JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
+
+    Vector<std::pair<JSValue, JSValue>, 16> stack;
+    MarkedArgumentBuffer gcBuffer;
+
+    bool isEqual = Bun__deepEquals<true, BunDeepEqualsMode_Node>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(isEqual));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -547,7 +571,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;
     MarkedArgumentBuffer gcBuffer;
-    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, false, false);
+    bool match = Bun__deepMatch<BunDeepEqualsMode_Bun>(object, &objVisited, subset, &subsetVisited, globalObject, &scope, &gcBuffer, false, false);
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
@@ -898,7 +922,6 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         exportValues.append(value);
     }
 }
-
 }
 
 namespace Zig {

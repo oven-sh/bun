@@ -21,8 +21,7 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-const deepEquals = Bun.deepEquals;
-const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+const isDeepStrictEqual = $newCppFunction("BunObject.cpp", "jsFunction_nodeIsDeepStrictEqual", 2);
 
 const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
 

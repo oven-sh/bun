@@ -544,6 +544,7 @@ const ProxyTunnel = struct {
                 socket.timeout(0);
                 socket.setTimeoutMinutes(minutes);
             },
+            .none => {},
         }
     }
     pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {

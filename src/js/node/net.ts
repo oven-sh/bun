@@ -1431,7 +1431,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   }
 
   if (typeof port === "number" && (port < 0 || port >= 65536)) {
-    throw $ERR_SOCKET_BAD_PORT("Port should be >= 0 and < 65536. Received: " + port);
+    const err = $ERR_SOCKET_BAD_PORT("Port should be >= 0 and < 65536. Received: " + port);
+    this.emit("error", err);
+    throw err;
   }
 
   if (this._handle) {

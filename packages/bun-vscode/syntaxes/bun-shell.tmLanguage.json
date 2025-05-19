@@ -1,0 +1,33 @@
+{
+  "scopeName": "bun.inline.shell",
+  "injectionSelector": "L:source -comment -string",
+  "patterns": [
+    {
+      "name": "string.template.shell.bun",
+      "begin": "(\\bBun\\.\\$|\\$)\\s*(?=`)",
+      "beginCaptures": {
+        "0": { "name": "entity.name.function.tagged-template.js" }
+      },
+      "end": "(?<=`)",
+      "patterns": [
+        { "include": "#embedded-shell" }
+      ]
+    }
+  ],
+  "repository": {
+    "embedded-shell": {
+      "name": "string.template.js",
+      "contentName": "meta.embedded.block.shell",
+      "begin": "`",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.template.begin.js" } },
+      "end": "`",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.template.end.js" } },
+      "patterns": [
+        { "include": "source.ts#template-substitution-element" },
+        { "include": "source.ts#string-character-escape" },
+        { "include": "source.shell" },
+        { "match": "." }
+      ]
+    }
+  }
+}

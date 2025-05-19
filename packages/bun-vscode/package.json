@@ -83,6 +83,12 @@
           "type": "string",
           "default": "",
           "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
+        },
+        "bun.shellTaggedTemplates.enabled": {
+          "type": "boolean",
+          "scope": "window",
+          "default": true,
+          "description": "Highlight `$` tagged template literals from Bun as shell scripts."
         }
       }
     },
@@ -338,6 +344,19 @@
             "description": "The script to execute"
           }
         }
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "bun.inline.shell",
+        "path": "./syntaxes/bun-shell.tmLanguage.json",
+        "language": "shellscript",
+        "injectTo": [
+          "source.ts",
+          "source.tsx",
+          "source.js",
+          "source.jsx"
+        ]
       }
     ]
   },

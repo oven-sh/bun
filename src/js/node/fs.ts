@@ -4,7 +4,7 @@ const EventEmitter = require("node:events");
 
 const types = require("node:util/types");
 const { validateFunction, validateInteger } = require("internal/validators");
-const { kEmptyObject, kFd } = require("internal/shared");
+const { kEmptyObject } = require("internal/shared");
 const fs = require("internal/fs/binding");
 
 const isDate = types.isDate;

@@ -280,9 +280,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-    const arguments = callframe.argumentsAsArray(2);
-    const encoding_value = arguments[0];
-    const options_value = arguments[1];
+    const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
 

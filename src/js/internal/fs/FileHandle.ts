@@ -73,7 +73,6 @@ class FileHandle extends EventEmitter {
   }
 
   [kCloseResolve];
-  [kFd];
   [kFlag];
   [kClosePromise];
   [kRefs];

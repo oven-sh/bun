@@ -14537,7 +14537,7 @@ pub const PackageManager = struct {
             const allocator = hostname_stack.get();
             const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
             defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname, manager.options.scope.url.getPortAuto());
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)

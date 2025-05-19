@@ -3491,7 +3491,6 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            
             uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
@@ -4648,3 +4647,59 @@ pub fn BodyReaderMixin(
         }
     };
 }
+
+pub const ChunkedDecoder = struct {
+    state: u64 = 0,
+    buffer: std.ArrayListUnmanaged(u8) = .{},
+
+    extern "C" fn Bun__nextChunkInChunkedEncoding(data: *[*]const u8, length: *usize, state: *u64, trailer: i32, out_offset: *usize, out_length: *usize) isize;
+
+    const ChunkResult = union(enum) {
+        chunk: []const u8,
+        eof: void,
+        need_more: void,
+        fail: void,
+    };
+
+    pub fn append(self: *ChunkedDecoder, allocator: std.mem.Allocator, data: []const u8) !void {
+        try self.buffer.appendSlice(allocator, data);
+    }
+
+    pub fn reset(self: *ChunkedDecoder, allocator: std.mem.Allocator) void {
+        self.buffer.clearAndFree(allocator);
+        self.state = 0;
+    }
+
+    pub fn next(self: *ChunkedDecoder, buffer: *[]const u8) ChunkResult {
+        var data_ptr: [*]const u8 = buffer.*.ptr;
+        var length: usize = buffer.*.len;
+        var offset: usize = 0;
+        var chunk_length: usize = 0;
+
+        const result = Bun__nextChunkInChunkedEncoding(&data_ptr, &length, &self.state, 0, // No trailer for now
+            &offset, &chunk_length);
+
+        const data = buffer.*[offset .. offset + chunk_length];
+        bun.debugAssert(buffer.*.len >= length);
+        buffer.*.ptr = data_ptr;
+        buffer.*.len = length;
+
+        if (result > 0) {
+            // Successfully got a chunk
+            return .{ .chunk = data };
+        } else if (result == -2) {
+            return .eof;
+        } else if (result == -1) {
+            // Error state
+            return .fail;
+        } else {
+            // Need more data
+            return .need_more;
+        }
+    }
+
+    pub fn deinit(self: *ChunkedDecoder, allocator: std.mem.Allocator) void {
+        self.buffer.deinit(allocator);
+        self.* = undefined;
+    }
+};

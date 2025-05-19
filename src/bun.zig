@@ -1986,6 +1986,69 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
+fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u8 {
+    var args = std.ArrayList([:0]const u8).init(allocator);
+    var i: usize = 0;
+    while (i < env.len) {
+        // skip whitespace
+        while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
+        if (i >= env.len) break;
+
+        var buf = std.ArrayList(u8).init(allocator);
+
+        var in_single = false;
+        var in_double = false;
+        var escape = false;
+        while (i < env.len) : (i += 1) {
+            const c = env[i];
+            if (escape) {
+                try buf.append(c);
+                escape = false;
+                continue;
+            }
+
+            if (c == '\\') {
+                escape = true;
+                continue;
+            }
+
+            if (in_single) {
+                if (c == '\'') {
+                    in_single = false;
+                } else {
+                    try buf.append(c);
+                }
+                continue;
+            }
+
+            if (in_double) {
+                if (c == '"') {
+                    in_double = false;
+                } else {
+                    try buf.append(c);
+                }
+                continue;
+            }
+
+            if (c == '\'') {
+                in_single = true;
+            } else if (c == '"') {
+                in_double = true;
+            } else if (std.ascii.isWhitespace(c)) {
+                break;
+            } else {
+                try buf.append(c);
+            }
+        }
+
+        try buf.append(0);
+        const owned = try buf.toOwnedSlice();
+        try args.append(owned[0 .. owned.len - 1 :0]);
+    }
+
+    return args.toOwnedSlice();
+}
+
 pub fn initArgv(allocator: std.mem.Allocator) !void {
     if (comptime Environment.isPosix) {
         argv = try allocator.alloc([:0]const u8, std.os.argv.len);
@@ -2044,6 +2107,17 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = out_argv;
     } else {
         argv = try std.process.argsAlloc(allocator);
+    }
+
+    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+        const extra = try parseOptionsEnv(opts, allocator);
+        if (extra.len > 0) {
+            const new_argv = try allocator.alloc([:0]const u8, argv.len + extra.len);
+            new_argv[0] = argv[0];
+            @memcpy(new_argv[1 .. 1 + extra.len], extra);
+            @memcpy(new_argv[1 + extra.len ..], argv[1..]);
+            argv = new_argv;
+        }
     }
 }
 

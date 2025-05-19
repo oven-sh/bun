@@ -652,16 +652,16 @@ nativeTests.test_get_value_string = () => {
 nativeTests.test_external_buffer_finalizer = async () => {
   const n = 50;
   for (let i = 0; i < n; i++) {
-    const arraybuffer = asyncFinalizeAddon.create_buffer();
-    const view = new Uint32Array(arraybuffer);
+    let arraybuffer = asyncFinalizeAddon.create_buffer();
+    let view = new Uint32Array(arraybuffer);
     for (const int of view) {
       // native module memsets to 5
       assert(int == 0x05050505);
     }
-    // give GC a chance to do some work on another thread
-    await new Promise(resolve => setTimeout(resolve, 10));
+    arraybuffer = undefined;
+    view = undefined;
+    await gcUntil(() => asyncFinalizeAddon.get_buffer_finalize_count() == i + 1);
   }
-  await gcUntil(() => asyncFinalizeAddon.get_buffer_finalize_count() == n);
 };
 
 module.exports = nativeTests;

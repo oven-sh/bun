@@ -481,6 +481,10 @@ const ProxyTunnel = struct {
 
     pub fn close(this: *ProxyTunnel, err: anyerror) void {
         this.shutdown_err = err;
+        this.shutdown();
+    }
+
+    pub fn shutdown(this: *ProxyTunnel) void {
         if (this.wrapper) |*wrapper| {
             // fast shutdown the connection
             _ = wrapper.shutdown(true);
@@ -3056,18 +3060,28 @@ pub fn doRedirect(
     assert(this.redirect_type == FetchRedirect.follow);
     this.unregisterAbortTracker();
 
-    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    if (this.isKeepAlivePossible()) {
-        log("Keep-Alive release", .{});
-        assert(this.connected_url.hostname.len > 0);
-        ctx.releaseSocket(
-            socket,
-            this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-            this.connected_url.hostname,
-            this.connected_url.getPortAuto(),
-        );
+    if (this.proxy_tunnel) |tunnel| {
+        log("close the tunnel in redirect", .{});
+        this.proxy_tunnel = null;
+        tunnel.detachAndDeref();
+        if (!socket.isClosed()) {
+            log("close socket in redirect", .{});
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        }
     } else {
-        NewHTTPContext(is_ssl).closeSocket(socket);
+        // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
+        if (this.isKeepAlivePossible()) {
+            log("Keep-Alive release in redirect", .{});
+            assert(this.connected_url.hostname.len > 0);
+            ctx.releaseSocket(
+                socket,
+                this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                this.connected_url.hostname,
+                this.connected_url.getPortAuto(),
+            );
+        } else {
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        }
     }
     this.connected_url = URL{};
 
@@ -3925,23 +3939,27 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 
         if (is_done) {
             this.unregisterAbortTracker();
-
-            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-                log("release socket", .{});
-                ctx.releaseSocket(
-                    socket,
-                    this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                    this.connected_url.hostname,
-                    this.connected_url.getPortAuto(),
-                );
-            } else if (!socket.isClosed()) {
-                log("close socket", .{});
-                NewHTTPContext(is_ssl).closeSocket(socket);
-            }
             if (this.proxy_tunnel) |tunnel| {
                 log("close the tunnel", .{});
                 this.proxy_tunnel = null;
                 tunnel.detachAndDeref();
+                if (!socket.isClosed()) {
+                    log("close socket", .{});
+                    NewHTTPContext(is_ssl).closeSocket(socket);
+                }
+            } else {
+                if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+                    log("release socket", .{});
+                    ctx.releaseSocket(
+                        socket,
+                        this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                        this.connected_url.hostname,
+                        this.connected_url.getPortAuto(),
+                    );
+                } else if (!socket.isClosed()) {
+                    log("close socket", .{});
+                    NewHTTPContext(is_ssl).closeSocket(socket);
+                }
             }
 
             this.state.reset(this.allocator);

@@ -53,7 +53,7 @@
     "lint:fix": "oxlint --config oxlint.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
-    "banned": "bun test test/internal/ban-words.test.ts",
+    "banned": "bun test test/internal/ban-words.ci-lint.ts",
     "glob-sources": "bun scripts/glob-sources.mjs",
     "zig": "vendor/zig/zig.exe",
     "zig:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",

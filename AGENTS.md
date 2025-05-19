@@ -5,7 +5,7 @@
 ✅ Good
 
 ```sh
-bun agent test internal/ban-words.test.ts
+bun agent test internal/ban-words.ci-lint.ts
 bun agent ./foo.ts
 ```
 
@@ -24,7 +24,7 @@ bun agent ./foo.ts
 To run a single test, you need to use the `bun agent test <test-name>` command.
 
 ```sh
-bun agent test internal/ban-words.test.ts
+bun agent test internal/ban-words.ci-lint.ts
 ```
 
 You must ALWAYS make sure to pass a file path to the `bun agent test <file-path>` command. DO NOT try to run ALL the tests at once unless you're in a specific subdirectory.

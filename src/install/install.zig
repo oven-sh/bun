@@ -4,7 +4,7 @@
 // https://pnpm.io/npmrc#network-concurrency (pnpm defaults to 16)
 // https://yarnpkg.com/configuration/yarnrc#networkConcurrency (defaults to 50)
 const default_max_simultaneous_requests_for_bun_install = 64;
-const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
+const default_max_simultaneous_requests_for_bun_install_for_proxies = 32;
 
 const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;

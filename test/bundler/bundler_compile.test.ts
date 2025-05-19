@@ -607,4 +607,13 @@ error: Hello World`,
       },
     },
   });
+
+  itBundled("compile/CompileArgv", {
+    compile: true,
+    compileArgv: ["--foo", "bar"],
+    files: {
+      "/entry.ts": `console.log(process.argv.slice(2).join(" "))`,
+    },
+    run: { args: ["baz"], stdout: "--foo bar baz" },
+  });
 });

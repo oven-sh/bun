@@ -1032,6 +1032,23 @@ pub const Arguments = struct {
                 }
                 ctx.bundler_options.windows_icon = path;
             }
+            if (args.option("--compile-argv")) |argstr| {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-argv requires --compile", .{});
+                    Global.crash();
+                }
+                var splitter = std.mem.splitScalar(u8, argstr, ' ');
+                var count: usize = 0;
+                while (splitter.next() != null) count += 1;
+                var arr = try allocator.alloc([:0]const u8, count);
+                splitter = std.mem.splitScalar(u8, argstr, ' ');
+                var i: usize = 0;
+                while (splitter.next()) |part| {
+                    arr[i] = try allocator.dupeZ(u8, part);
+                    i += 1;
+                }
+                ctx.bundler_options.compile_argv = arr;
+            }
 
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
@@ -1620,6 +1637,7 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+            compile_argv: []const [:0]const u8 = &.{},
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1824,6 +1842,17 @@ pub const Command = struct {
 
         // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            if (graph.argv.len > 0) {
+                var new_argv = try bun.default_allocator.alloc([:0]const u8, bun.argv.len + graph.argv.len);
+                new_argv[0] = bun.argv[0];
+                for (graph.argv, 0..) |a, i| {
+                    new_argv[1 + i] = a;
+                }
+                for (bun.argv[1..], 0..) |a, i| {
+                    new_argv[1 + graph.argv.len + i] = a;
+                }
+                bun.argv = new_argv;
+            }
             context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,

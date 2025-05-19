@@ -648,6 +648,21 @@ interface String {
   // add others as needed
 }
 
+interface Set {
+  $add: Set["add"];
+  $clear: Set["clear"];
+  $delete: Set["delete"];
+  $has: Set["has"];
+}
+
+interface Map {
+  $clear: Map["clear"];
+  $delete: Map["delete"];
+  $has: Map["has"];
+  $set: Map["set"];
+  $get: Map["get"];
+}
+
 declare var $Buffer: {
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;

@@ -463,34 +463,6 @@ describe("net.createServer events", () => {
       });
   });
 
-  // it("should call error", done => {
-  //   const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  //   let timeout: Timer;
-  //   const server: Server = createServer();
-
-  //   const closeAndFail = () => {
-  //     clearTimeout(timeout);
-  //     server.close();
-  //     mustNotCall("error not called")();
-  //   };
-
-  //   //should be faster than 100ms
-  //   timeout = setTimeout(closeAndFail, 100);
-
-  //   server
-  //     .on(
-  //       "error",
-  //       mustCall(err => {
-  //         server.close();
-  //         clearTimeout(timeout);
-  //         expect(err).toBeDefined();
-  //         done();
-  //       }),
-  //     )
-  //     .listen(123456);
-  // });
-
   it("should call abort with signal", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

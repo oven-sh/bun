@@ -241,6 +241,7 @@ const ProxyTunnel = struct {
     const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
     fn onOpen(this: *HTTPClient) void {
+        log("ProxyTunnel onOpen", .{});
         this.state.response_stage = .proxy_handshake;
         this.state.request_stage = .proxy_handshake;
         if (this.proxy_tunnel) |proxy| {
@@ -271,13 +272,14 @@ const ProxyTunnel = struct {
 
     fn onData(this: *HTTPClient, decoded_data: []const u8) void {
         if (decoded_data.len == 0) return;
-        log("onData decoded {}", .{decoded_data.len});
+        log("ProxyTunnel onData decoded {}", .{decoded_data.len});
 
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
             switch (this.state.response_stage) {
                 .body => {
+                    log("ProxyTunnel onData body", .{});
                     if (decoded_data.len == 0) return;
                     const report_progress = this.handleResponseBody(decoded_data, false) catch |err| {
                         proxy.close(err);
@@ -298,6 +300,7 @@ const ProxyTunnel = struct {
                     }
                 },
                 .body_chunk => {
+                    log("ProxyTunnel onData body_chunk", .{});
                     if (decoded_data.len == 0) return;
                     const report_progress = this.handleResponseBodyChunkedEncoding(decoded_data) catch |err| {
                         proxy.close(err);
@@ -318,6 +321,7 @@ const ProxyTunnel = struct {
                     }
                 },
                 .proxy_headers => {
+                    log("ProxyTunnel onData proxy_headers", .{});
                     switch (proxy.socket) {
                         .ssl => |socket| {
                             this.handleOnDataHeaders(true, decoded_data, &http_thread.https_context, socket);
@@ -329,6 +333,7 @@ const ProxyTunnel = struct {
                     }
                 },
                 else => {
+                    log("ProxyTunnel onData unexpected data", .{});
                     this.state.pending_response = null;
                     proxy.close(error.UnexpectedData);
                 },
@@ -338,6 +343,7 @@ const ProxyTunnel = struct {
 
     fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
         if (this.proxy_tunnel) |proxy| {
+            log("ProxyTunnel onHandshake", .{});
             proxy.ref();
             defer proxy.deref();
             this.state.response_stage = .proxy_headers;
@@ -349,6 +355,7 @@ const ProxyTunnel = struct {
                 .reason = if (ssl_error.code == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason) :0],
             };
             if (handshake_success) {
+                log("ProxyTunnel onHandshake success", .{});
                 // handshake completed but we may have ssl errors
                 this.flags.did_have_handshaking_error = handshake_error.error_no != 0;
                 if (this.flags.reject_unauthorized) {
@@ -365,13 +372,16 @@ const ProxyTunnel = struct {
                     switch (proxy.socket) {
                         .ssl => |socket| {
                             if (!this.checkServerIdentity(true, socket, handshake_error, ssl_ptr, false)) {
+                                log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
                                 this.flags.did_have_handshaking_error = true;
+
                                 this.unregisterAbortTracker();
                                 return;
                             }
                         },
                         .tcp => |socket| {
                             if (!this.checkServerIdentity(false, socket, handshake_error, ssl_ptr, false)) {
+                                log("ProxyTunnel onHandshake checkServerIdentity failed", .{});
                                 this.flags.did_have_handshaking_error = true;
                                 this.unregisterAbortTracker();
                                 return;
@@ -391,6 +401,7 @@ const ProxyTunnel = struct {
                     .none => {},
                 }
             } else {
+                log("ProxyTunnel onHandshake failed", .{});
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 if (this.flags.did_have_handshaking_error and handshake_error.error_no != 0) {
@@ -420,6 +431,7 @@ const ProxyTunnel = struct {
     }
 
     fn onClose(this: *HTTPClient) void {
+        log("ProxyTunnel onClose", .{});
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             // defer the proxy deref the proxy tunnel may still be in use after triggering the close callback
@@ -492,6 +504,7 @@ const ProxyTunnel = struct {
     }
 
     pub fn onWritable(this: *ProxyTunnel, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+        log("ProxyTunnel onWritable", .{});
         this.ref();
         defer this.deref();
         const encoded_data = this.write_buffer.slice();

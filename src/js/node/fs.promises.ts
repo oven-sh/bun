@@ -1,9 +1,8 @@
 // Hardcoded module "node:fs/promises"
-const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
+const fs = require("internal/fs/binding");
 const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
-const { FileHandle, kRef, kUnref, kFd } = require("internal/fs/FileHandle");
-
+const { kFd } = require("internal/shared");
 
 function watch(
   filename: string | Buffer | URL,
@@ -96,13 +95,7 @@ async function opendir(dir: string, options) {
   return new (require("node:fs").Dir)(1, dir, options);
 }
 
-const private_symbols = {
-  kRef,
-  kUnref,
-  kFd,
-  FileHandle,
-  fs,
-};
+let FileHandle: typeof import("internal/fs/FileHandle").default.FileHandle;
 
 const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
@@ -142,7 +135,11 @@ const exports = {
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
-    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags);
+    if (!FileHandle) {
+      lazyInitFileHandle();
+    }
+
+    return new FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -194,12 +191,8 @@ const exports = {
   constants,
   watch,
   opendir,
-
-  // "$data" is reuse of private symbol
-  // this is used to export the private symbols to 'fs.js' without making it public.
-  $data: private_symbols,
 };
-require("internal/fs/FileHandle").setFSExports(exports);
+
 export default exports;
 
 // TODO: remove this in favor of just returning js functions that don't check `this`
@@ -212,32 +205,10 @@ function asyncWrap(fn: any, name: string) {
   return wrapped;
 }
 
-{
-  const {
-    writeFile,
-    readFile,
-    fchmod,
-    fchown,
-    fdatasync,
-    fsync,
-    read,
-    readv,
-    fstat,
-    ftruncate,
-    futimes,
-    write,
-    writev,
-    close,
-  } = exports;
-  let isArrayBufferView;
-function throwEBADFIfNecessary(fn: string, fd) {
-  if (fd === -1) {
-    const err: any = new Error("Bad file descriptor");
-    err.code = "EBADF";
-    err.name = "SystemError";
-    err.syscall = fn;
-    throw err;
-  }
+function lazyInitFileHandle() {
+  const lazyInitFileHandle = require("internal/fs/FileHandle");
+  FileHandle = lazyInitFileHandle.FileHandle;
+  lazyInitFileHandle.setFSExports(exports);
 }
 
 async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {

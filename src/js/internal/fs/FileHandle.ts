@@ -82,11 +82,11 @@ class FileHandle extends EventEmitter {
   async appendFile(data, options) {
     const fd = this[kFd];
     throwEBADFIfNecessary("writeFile", fd);
-    let encoding = "utf8";
+    let encoding: BufferEncoding | null = "utf8";
     let flush = false;
     if (options == null || typeof options === "function") {
     } else if (typeof options === "string") {
-      encoding = options;
+      encoding = options as BufferEncoding;
     } else {
       encoding = options?.encoding ?? encoding;
       flush = options?.flush ?? flush;
@@ -297,12 +297,12 @@ class FileHandle extends EventEmitter {
   async writeFile(data: string, options: any = "utf8") {
     const fd = this[kFd];
     throwEBADFIfNecessary("writeFile", fd);
-    let encoding: string = "utf8";
+    let encoding: BufferEncoding | null = "utf8";
     let signal: AbortSignal | undefined = undefined;
 
     if (options == null || typeof options === "function") {
     } else if (typeof options === "string") {
-      encoding = options;
+      encoding = options as BufferEncoding;
     } else {
       encoding = options?.encoding ?? encoding;
       signal = options?.signal ?? undefined;
@@ -373,7 +373,7 @@ class FileHandle extends EventEmitter {
   createWriteStream(options = kEmptyObject) {
     const fd = this[kFd];
     throwEBADFIfNecessary("createWriteStream", fd);
-    return new (require("internal/fs/streams").WriteStream)(undefined, {
+    return new (require("internal/fs/streams").WriteStream)(undefined as any, {
       highWaterMark: 64 * 1024,
       ...options,
       fd: this,

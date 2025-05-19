@@ -1,17 +1,13 @@
 // Hardcoded module "node:fs"
 import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const EventEmitter = require("node:events");
-const promises = require("node:fs/promises");
+
 const types = require("node:util/types");
 const { validateFunction, validateInteger } = require("internal/validators");
-
-const kEmptyObject = Object.freeze(Object.create(null));
+const { kEmptyObject } = require("internal/shared");
+const fs = require("internal/fs/binding");
 
 const isDate = types.isDate;
-
-// Private exports
-// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
-const { fs } = promises.$data;
 
 const constants = $processBindingConstants.fs;
 var _lazyGlob;
@@ -19,7 +15,7 @@ function lazyGlob() {
   return (_lazyGlob ??= require("internal/fs/glob"));
 }
 
-function ensureCallback(callback) {
+function ensureCallback(callback: unknown): asserts callback is (...args: any[]) => void {
   if (!$isCallable(callback)) {
     throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
   }
@@ -789,7 +785,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           }
 
           let resolvedLink;
-          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          lastStat = fs.lstatSync(base, { throwIfNoEntry: true }) as StatsType;
           if (lastStat === undefined) return;
 
           if (!lastStat.isSymbolicLink()) {
@@ -797,7 +793,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
             continue;
           }
 
-          lastStat = fs.statSync(base, { throwIfNoEntry: true });
+          lastStat = fs.statSync(base, { throwIfNoEntry: true }) as StatsType;
           const linkTarget = fs.readlinkSync(base);
           resolvedLink = pathModule.resolve(previous, linkTarget);
 
@@ -810,7 +806,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
 
           // On windows, check that the root exists. On unix there is no need.
           if (!knownHard.$has(base)) {
-            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true }) as StatsType;
             if (lastStat === undefined) return;
             knownHard.$add(base);
           }
@@ -1001,7 +997,7 @@ function cp(src, dest, options, callback) {
 
   ensureCallback(callback);
 
-  promises.cp(src, dest, options).then(() => callback(), callback);
+  exports.promises.cp(src, dest, options).then(() => callback(), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -1054,7 +1050,7 @@ class Dir {
       withFileTypes: true,
       encoding: this.#options?.encoding,
       recursive: this.#options?.recursive,
-    }));
+    }) as DirentType[]);
     return entries.shift() ?? null;
   }
 
@@ -1075,8 +1071,8 @@ class Dir {
         recursive: this.#options?.recursive,
       })
       .then(entries => {
-        this.#entries = entries;
-        return entries.shift() ?? null;
+        this.#entries = entries as DirentType[];
+        return (entries as DirentType[]).shift() ?? null;
       });
   }
 
@@ -1271,7 +1267,22 @@ var exports = {
       configurable: true,
     });
   },
-  promises,
+  get promises() {
+    const promises = require("node:fs/promises");
+    Object.defineProperty(exports, "promises", {
+      value: promises,
+      writable: true,
+      configurable: true,
+    });
+    return promises;
+  },
+  set promises(value) {
+    Object.defineProperty(exports, "promises", {
+      value,
+      writable: true,
+      configurable: true,
+    });
+  },
 };
 export default exports;
 

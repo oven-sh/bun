@@ -110,4 +110,5 @@ export default {
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
-};
+  kFd: Symbol("kFd"),
+} as const;

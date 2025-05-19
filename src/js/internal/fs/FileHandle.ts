@@ -7,35 +7,36 @@ const PromisePrototypeFinally = Promise.prototype.finally;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectFreeze = Object.freeze;
 
-export const kFd = Symbol("kFd");
+const kFd = Symbol("kFd");
 const kRefs = Symbol("kRefs");
 const kClosePromise = Symbol("kClosePromise");
 const kCloseResolve = Symbol("kCloseResolve");
 const kCloseReject = Symbol("kCloseReject");
-export const kRef = Symbol("kRef");
-export const kUnref = Symbol("kUnref");
+const kRef = Symbol("kRef");
+const kUnref = Symbol("kUnref");
 const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 const kFlag = Symbol("kFlag");
 
-let writeFile,
-  readFile,
-  fchmod,
-  fchown,
-  fdatasync,
-  fsync,
-  read,
-  readv,
-  fstat,
-  ftruncate,
-  futimes,
-  write,
-  writev,
-  close;
+let writeFile: typeof import("fs/promises").writeFile,
+  readFile: typeof import("fs/promises").readFile,
+  fchmod: typeof import("fs").fchmod.__promisify__,
+  fchown: typeof import("fs").fchown.__promisify__,
+  fdatasync: typeof import("fs").fdatasync.__promisify__,
+  fsync: typeof import("fs").fsync.__promisify__,
+  read: typeof import("fs").read.__promisify__,
+  readv: typeof import("fs").readv.__promisify__,
+  fstat: typeof import("fs").fstat.__promisify__,
+  ftruncate: typeof import("fs").ftruncate.__promisify__,
+  futimes: typeof import("fs").futimes.__promisify__,
+  write: typeof import("fs").write.__promisify__,
+  writev: typeof import("fs").writev.__promisify__,
+  close: typeof import("fs").close.__promisify__;
 
-export function setFSExports(exports: any) {
+// Avoid circular dependency
+function setFSExports(exports: any) {
   ({
     writeFile,
     readFile,
@@ -167,8 +168,7 @@ class FileHandle extends EventEmitter {
     }
 
     if (offset !== null && typeof offset === "object") {
-      ({ offset = 0, length = buffer?.byteLength - offset, position = null } =
-        offset);
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
     }
 
     if (offset == null) {
@@ -256,15 +256,13 @@ class FileHandle extends EventEmitter {
     const fd = this[kFd];
     throwEBADFIfNecessary("write", fd);
 
-    if (buffer?.byteLength === 0)
-      return { __proto__: null, bytesWritten: 0, buffer };
+    if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
 
     let isArrayBufferView;
     isArrayBufferView ??= require("node:util/types").isArrayBufferView;
     if (isArrayBufferView(buffer)) {
       if (typeof offset === "object") {
-        ({ offset = 0, length = buffer.byteLength - offset, position = null } =
-          offset ?? kEmptyObject);
+        ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
       }
 
       if (offset == null) {
@@ -416,5 +414,10 @@ function throwEBADFIfNecessary(fn: string, fd) {
   }
 }
 
-export { FileHandle };
-
+export default {
+  FileHandle,
+  kFd,
+  kRef,
+  kUnref,
+  setFSExports,
+};

@@ -42,7 +42,7 @@ export default class RuntimeError {
   original: Error;
   stack: StackFrame[];
 
-  static from(error: Error) {
+  static from(error: Error): RuntimeError {
     const runtime = new RuntimeError();
     runtime.original = error;
     runtime.stack = this.parseStack(error);

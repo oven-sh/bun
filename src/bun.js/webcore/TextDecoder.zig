@@ -286,7 +286,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 
     if (encoding_value.isString()) {
         var str = try encoding_value.toSlice(globalThis, bun.default_allocator);
-        str.deinit();
+        defer str.deinit();
 
         if (EncodingLabel.which(str.slice())) |label| {
             decoder.encoding = label;

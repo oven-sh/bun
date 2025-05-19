@@ -277,6 +277,7 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+        clap.parseParam("--compile-argv <STR>             Arguments to embed in the compiled executable that will be prepended to process.argv") catch unreachable,
         clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,

@@ -247,7 +247,6 @@ const ProxyTunnel = struct {
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             if (proxy.wrapper) |*wrapper| {
                 var ssl_ptr = wrapper.ssl orelse return;
                 const _hostname = this.hostname orelse this.url.hostname;
@@ -346,7 +345,6 @@ const ProxyTunnel = struct {
             log("ProxyTunnel onHandshake", .{});
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             this.state.response_stage = .proxy_headers;
             this.state.request_stage = .proxy_headers;
             this.state.request_sent_len = 0;
@@ -533,19 +531,6 @@ const ProxyTunnel = struct {
         }
     }
 
-    pub fn setTimeout(this: *ProxyTunnel, minutes: c_uint) void {
-        switch (this.socket) {
-            .ssl => |socket| {
-                socket.timeout(0);
-                socket.setTimeoutMinutes(minutes);
-            },
-            .tcp => |socket| {
-                socket.timeout(0);
-                socket.setTimeoutMinutes(minutes);
-            },
-            .none => {},
-        }
-    }
     pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
         if (this.wrapper) |*wrapper| {
             return try wrapper.writeData(buf);
@@ -3510,6 +3495,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     .stream => {
                         var stream = &this.state.original_request_body.stream;
                         stream.has_backpressure = false;
+                        this.setTimeout(socket, 5);
 
                         // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                         if (stream.buffer.isNotEmpty()) {

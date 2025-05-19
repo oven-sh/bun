@@ -283,6 +283,7 @@ const ksecureContext = Symbol("ksecureContext");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
+const kIsServer = Symbol("kIsServer");
 
 const buntls = Symbol.for("::buntls::");
 
@@ -322,7 +323,10 @@ function TLSSocket(socket?, options?) {
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;
     }
+
+    this[kIsServer] = options.isServer;
   }
+
   this[ksecureContext] = options.secureContext || createSecureContext(options);
   this.authorized = false;
   this.secureConnecting = true;
@@ -433,12 +437,14 @@ TLSSocket.prototype.enableTrace = function enableTrace() {
 };
 
 TLSSocket.prototype.setServername = function setServername(name) {
-  if (this.isServer) {
-    throw $ERR_TLS_SNI_FROM_SERVER();
-  }
   if (typeof name !== "string") {
     throw $ERR_INVALID_ARG_TYPE("name", "string", name);
   }
+
+  if (this[kIsServer]) {
+    throw $ERR_TLS_SNI_FROM_SERVER();
+  }
+
   // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
   this.servername = name;
   this._handle?.setServername?.(name);

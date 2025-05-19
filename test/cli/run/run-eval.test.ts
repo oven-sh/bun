@@ -221,7 +221,7 @@ describe("echo | bun run -", () => {
 test("process._eval (undefined for normal run)", async () => {
   const cwd = tmpdirSync();
   const file = join(cwd, "test.js");
-  writeFileSync(file, "console.log(process._eval)");
+  writeFileSync(file, "console.log(typeof process._eval)");
 
   const { stdout } = Bun.spawnSync({
     cmd: [bunExe(), "run", file],

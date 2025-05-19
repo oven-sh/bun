@@ -173,7 +173,7 @@ pub const JSValkeyClient = struct {
         }
 
         const promise_ptr = JSC.JSPromise.create(globalObject);
-        const promise = promise_ptr.asValue(globalObject);
+        const promise = promise_ptr.toJS();
         js.connectionPromiseSetCached(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag

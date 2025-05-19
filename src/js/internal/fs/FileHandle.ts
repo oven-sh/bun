@@ -7,7 +7,7 @@ const PromisePrototypeFinally = Promise.prototype.finally;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectFreeze = Object.freeze;
 
-const kFd = Symbol("kFd");
+const { kFd } = require("internal/shared");
 const kRefs = Symbol("kRefs");
 const kClosePromise = Symbol("kClosePromise");
 const kCloseResolve = Symbol("kCloseResolve");

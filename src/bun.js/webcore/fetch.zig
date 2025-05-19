@@ -1931,7 +1931,7 @@ pub fn Bun__fetch_(
                             timeout_ms = 0;
                             break :extract_disable_timeout val == 0;
                         } else {
-                            timeout_ms = @intCast(u32, val);
+                            timeout_ms = @as(u32, @intCast(val));
                             break :extract_disable_timeout false;
                         }
                     }

@@ -6565,12 +6565,14 @@ pub const PackageManager = struct {
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (manager.options.enable.manifest_cache) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
 
                             if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                                 continue;

@@ -12,6 +12,7 @@ const api = bun.api;
 const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 const DNSResolver = @import("./bun/dns_resolver.zig").DNSResolver;
+const Fetch = JSC.WebCore.Fetch;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -1339,6 +1340,7 @@ pub const EventLoopTimer = struct {
         ValkeyConnectionTimeout,
         ValkeyConnectionReconnect,
         SubprocessTimeout,
+        FetchTimeout,
         DevServerSweepSourceMaps,
         DevServerMemoryVisualizerTick,
 
@@ -1356,6 +1358,7 @@ pub const EventLoopTimer = struct {
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
                 .SubprocessTimeout => JSC.Subprocess,
+                .FetchTimeout => Fetch.FetchTasklet,
                 .ValkeyConnectionReconnect => JSC.API.Valkey,
                 .ValkeyConnectionTimeout => JSC.API.Valkey,
                 .DevServerSweepSourceMaps,
@@ -1377,6 +1380,7 @@ pub const EventLoopTimer = struct {
         ValkeyConnectionTimeout,
         ValkeyConnectionReconnect,
         SubprocessTimeout,
+        FetchTimeout,
         DevServerSweepSourceMaps,
         DevServerMemoryVisualizerTick,
 
@@ -1395,6 +1399,7 @@ pub const EventLoopTimer = struct {
                 .ValkeyConnectionTimeout => JSC.API.Valkey,
                 .ValkeyConnectionReconnect => JSC.API.Valkey,
                 .SubprocessTimeout => JSC.Subprocess,
+                .FetchTimeout => Fetch.FetchTasklet,
                 .DevServerSweepSourceMaps,
                 .DevServerMemoryVisualizerTick,
                 => bun.bake.DevServer,
@@ -1457,6 +1462,7 @@ pub const EventLoopTimer = struct {
             .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
             .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", this))).onReconnectTimer(),
+            .FetchTimeout => return @as(*Fetch.FetchTasklet, @alignCast(@fieldParentPtr("timeout_timer", this))).onTimeout(),
             .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(this, now),
             .DevServerSweepSourceMaps => return bun.bake.DevServer.SourceMapStore.sweepWeakRefs(this, now),
             inline else => |t| {

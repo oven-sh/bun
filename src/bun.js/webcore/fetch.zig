@@ -90,6 +90,9 @@ pub const FetchTasklet = struct {
     promise: JSC.JSPromise.Strong,
     concurrent_task: JSC.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
+    timeout_ms: u32 = 0,
+    timeout_timer: bun.api.Timer.EventLoopTimer = bun.api.Timer.EventLoopTimer.initPaused(.FetchTimeout),
+    timeout_timer_refd: bool = false,
     memory_reporter: *bun.MemoryReportingAllocator,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -312,6 +315,7 @@ pub const FetchTasklet = struct {
 
         bun.assert(this.ref_count.load(.monotonic) == 0);
 
+        this.clearTimeoutTimer();
         this.clearData();
 
         var reporter = this.memory_reporter;
@@ -645,6 +649,7 @@ pub const FetchTasklet = struct {
                 var poll_ref = this.poll_ref;
                 this.poll_ref = .{};
                 poll_ref.unref(vm);
+                this.clearTimeoutTimer();
                 this.deref();
             }
         }
@@ -1084,6 +1089,7 @@ pub const FetchTasklet = struct {
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
         this.poll_ref.unref(vm);
+        this.clearTimeoutTimer();
         // clean any remaining refereces
         this.readable_stream_ref.deinit();
         this.response.deinit();
@@ -1173,6 +1179,9 @@ pub const FetchTasklet = struct {
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
+            .timeout_ms = fetch_options.timeout_ms,
+            .timeout_timer = bun.api.Timer.EventLoopTimer.initPaused(.FetchTimeout),
+            .timeout_timer_refd = false,
             .tracker = JSC.Debugger.AsyncTaskTracker.init(jsc_vm),
             .memory_reporter = fetch_options.memory_reporter,
             .check_server_identity = fetch_options.check_server_identity,
@@ -1283,13 +1292,31 @@ pub const FetchTasklet = struct {
         }
     }
 
+    fn clearTimeoutTimer(this: *FetchTasklet) void {
+        if (this.timeout_timer.state == .ACTIVE) {
+            this.javascript_vm.timer.remove(&this.timeout_timer);
+        }
+        if (this.timeout_timer_refd) {
+            this.javascript_vm.timer.incrementTimerRef(-1);
+            this.timeout_timer_refd = false;
+        }
+    }
+
     pub fn abortTask(this: *FetchTasklet) void {
         this.signal_store.aborted.store(true, .monotonic);
         this.tracker.didCancel(this.global_this);
+        this.clearTimeoutTimer();
 
         if (this.http) |http_| {
             http.http_thread.scheduleShutdown(http_);
         }
+    }
+
+    pub fn onTimeout(this: *FetchTasklet) bun.api.Timer.EventLoopTimer.Arm {
+        this.clearTimeoutTimer();
+        const reason = JSC.CommonAbortReason.Timeout.toJS(this.global_this);
+        this.abortListener(reason);
+        return .disarm;
     }
 
     const FetchOptions = struct {
@@ -1307,6 +1334,7 @@ pub const FetchTasklet = struct {
         url_proxy_buffer: []const u8 = "",
         signal: ?*JSC.WebCore.AbortSignal = null,
         globalThis: ?*JSGlobalObject,
+        timeout_ms: u32 = 0,
         // Custom Hostname
         hostname: ?[]u8 = null,
         memory_reporter: *bun.MemoryReportingAllocator,
@@ -1335,6 +1363,12 @@ pub const FetchTasklet = struct {
 
         // increment ref so we can keep it alive until the http client is done
         node.ref();
+        if (fetch_options.timeout_ms > 0) {
+            node.timeout_timer.next = bun.timespec.msFromNow(fetch_options.timeout_ms);
+            global.bunVM().timer.insert(&node.timeout_timer);
+            global.bunVM().timer.incrementTimerRef(1);
+            node.timeout_timer_refd = true;
+        }
         http.http_thread.schedule(batch);
 
         return node;
@@ -1567,6 +1601,7 @@ pub fn Bun__fetch_(
     var body: FetchTasklet.HTTPRequestBody = FetchTasklet.HTTPRequestBody.Empty;
 
     var disable_timeout = false;
+    var timeout_ms: u32 = 0;
     var disable_keepalive = false;
     var disable_decompression = false;
     var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
@@ -1888,9 +1923,17 @@ pub fn Bun__fetch_(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "timeout")) |timeout_value| {
                     if (timeout_value.isBoolean()) {
+                        timeout_ms = 0;
                         break :extract_disable_timeout !timeout_value.asBoolean();
                     } else if (timeout_value.isNumber()) {
-                        break :extract_disable_timeout timeout_value.to(i32) == 0;
+                        const val = timeout_value.to(i32);
+                        if (val <= 0) {
+                            timeout_ms = 0;
+                            break :extract_disable_timeout val == 0;
+                        } else {
+                            timeout_ms = @intCast(u32, val);
+                            break :extract_disable_timeout false;
+                        }
                     }
                 }
 
@@ -2684,6 +2727,7 @@ pub fn Bun__fetch_(
             .url_proxy_buffer = url_proxy_buffer,
             .signal = signal,
             .globalThis = globalThis,
+            .timeout_ms = timeout_ms,
             .ssl_config = ssl_config,
             .hostname = hostname,
             .memory_reporter = memory_reporter,

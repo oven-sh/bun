@@ -277,7 +277,6 @@ const ProxyTunnel = struct {
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             switch (this.state.response_stage) {
                 .body => {
                     log("ProxyTunnel onData body", .{});
@@ -3806,6 +3805,13 @@ pub fn onData(
         return;
     }
 
+    if (this.proxy_tunnel) |proxy| {
+        // if we have a tunnel we dont care about the other stages, we will just tunnel the data
+        this.setTimeout(socket, 5);
+        proxy.receiveData(incoming_data);
+        return;
+    }
+
     switch (this.state.response_stage) {
         .pending, .headers => {
             this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
@@ -3813,47 +3819,32 @@ pub fn onData(
         .body => {
             this.setTimeout(socket, 5);
 
-            if (this.proxy_tunnel) |proxy| {
-                proxy.receiveData(incoming_data);
-            } else {
-                const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
-                    this.closeAndFail(err, is_ssl, socket);
-                    return;
-                };
+            const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
 
-                if (report_progress) {
-                    this.progressUpdate(is_ssl, ctx, socket);
-                    return;
-                }
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
             }
         },
 
         .body_chunk => {
             this.setTimeout(socket, 5);
 
-            if (this.proxy_tunnel) |proxy| {
-                proxy.receiveData(incoming_data);
-            } else {
-                const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
-                    this.closeAndFail(err, is_ssl, socket);
-                    return;
-                };
+            const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
 
-                if (report_progress) {
-                    this.progressUpdate(is_ssl, ctx, socket);
-                    return;
-                }
+            if (report_progress) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
             }
         },
 
         .fail => {},
-        .proxy_headers, .proxy_handshake => {
-            this.setTimeout(socket, 5);
-            if (this.proxy_tunnel) |proxy| {
-                proxy.receiveData(incoming_data);
-            }
-            return;
-        },
         else => {
             this.state.pending_response = null;
             this.closeAndFail(error.UnexpectedData, is_ssl, socket);

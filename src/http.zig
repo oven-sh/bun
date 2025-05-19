@@ -1531,7 +1531,7 @@ pub const HTTPThread = struct {
 
 // const log = Output.scoped(.fetch, false);
 pub fn log(comptime fmt: string, args: anytype) void {
-    Output.print(fmt, args);
+    Output.println(fmt, args);
     Output.flush();
 }
 

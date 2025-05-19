@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import RuntimeError from "../../../packages/bun-error/runtime-error";
 
 test("RuntimeError.from returns instance", () => {

@@ -3489,7 +3489,7 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: options,
+      settings: { ...options, ...options?.settings },
       handlers: ClientHttp2Session.#Handlers,
     });
     socket.on("data", this.#onRead.bind(this));

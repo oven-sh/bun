@@ -1389,7 +1389,8 @@ pub const TestRunnerTask = struct {
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
         
         // For the first test in a describe block, run the beforeAll hook for that describe block
-        if (describe.current_test_id == test_id && describe.pending_tests.count() == describe.tests.items.len) {
+        const pending_count = describe.pending_tests.count();
+        if (describe.current_test_id == test_id && pending_count == describe.tests.items.len) {
             if (describe.shouldEvaluateScope()) {
                 if (describe.runCallback(globalThis, .beforeAll)) |err| {
                     _ = jsc_vm.uncaughtException(globalThis, err, true);

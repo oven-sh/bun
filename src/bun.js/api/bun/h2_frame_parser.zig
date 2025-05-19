@@ -1254,7 +1254,10 @@ pub const H2FrameParser = struct {
             }
         }
 
-        if (this.usedWindowSize == this.windowSize and total_increment > 0) {
+        if (this.usedWindowSize == this.windowSize) {
+            if (total_increment < 1) {
+                total_increment = 1;
+            }
             this.windowSize += WINDOW_INCREMENT_SIZE * total_increment; // we will need at least this many increments to send all the streams
             this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE * total_increment));
         }
@@ -2375,22 +2378,17 @@ pub const H2FrameParser = struct {
                 var unit: SettingsPayloadUnit = undefined;
                 SettingsPayloadUnit.from(&unit, payload[i .. i + settingByteSize], 0, true);
                 remoteSettings.updateWith(unit);
+                log("remoteSettings: {} {} isServer: {}", .{ @as(SettingsType, @enumFromInt(unit.type)), unit.value, this.isServer });
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
-            if (this.remoteWindowSize == 0) {
+            if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
                 defer _ = this.flushStreamQueue();
-
-                // TODO: handle increase/decrease in streams with usedWindowSize > 0
-                // we need to increase/decrease the initial window size for streams already created
-                // if becames negative should be a flow control error
-
-                // the window size is not set yet, so we use the initial window size
                 this.remoteWindowSize = remoteSettings.initialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |stream| {
-                    if (stream.remoteWindowSize == 0) {
-                        stream.remoteWindowSize = this.remoteWindowSize;
+                    if (remoteSettings.initialWindowSize >= stream.remoteUsedWindowSize) {
+                        stream.remoteWindowSize = remoteSettings.initialWindowSize;
                     }
                 }
             }
@@ -2607,6 +2605,7 @@ pub const H2FrameParser = struct {
                 if (initialWindowSizeValue > MAX_WINDOW_SIZE or initialWindowSizeValue < 0) {
                     return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
+                log("initialWindowSize: {d}", .{initialWindowSizeValue});
                 this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
                 return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number", .{}).throw();
@@ -4367,7 +4366,7 @@ pub const H2FrameParser = struct {
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
         this.windowSize = this.localSettings.initialWindowSize;
-
+        log("windowSize: {d} isServer: {}", .{ this.windowSize, is_server });
         if (is_server) {
             _ = this.setSettings(this.localSettings);
         } else {

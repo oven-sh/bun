@@ -436,6 +436,9 @@ TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER();
   }
+  if (typeof name !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("name", "string", name);
+  }
   // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
   this.servername = name;
   this._handle?.setServername?.(name);

@@ -247,7 +247,7 @@ const ProxyTunnel = struct {
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(5);
+            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             if (proxy.wrapper) |*wrapper| {
                 var ssl_ptr = wrapper.ssl orelse return;
                 const _hostname = this.hostname orelse this.url.hostname;
@@ -277,7 +277,7 @@ const ProxyTunnel = struct {
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(5);
+            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             switch (this.state.response_stage) {
                 .body => {
                     log("ProxyTunnel onData body", .{});
@@ -347,7 +347,7 @@ const ProxyTunnel = struct {
             log("ProxyTunnel onHandshake", .{});
             proxy.ref();
             defer proxy.deref();
-            defer proxy.setTimeout(5);
+            defer proxy.setTimeout(if (this.flags.disable_timeout) 0 else 5);
             this.state.response_stage = .proxy_headers;
             this.state.request_stage = .proxy_headers;
             this.state.request_sent_len = 0;

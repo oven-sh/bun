@@ -1,0 +1,69 @@
+name: Ban Words Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  pull-requests: write
+  contents: read
+
+env:
+  BUN_VERSION: "1.2.10"
+
+jobs:
+  ban-words:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Run ban words test
+        id: ban
+        shell: bash
+        run: |
+          set +e
+          bun test $(realpath test/internal/ban-words.ci-lint.ts) > ban-words.log 2>&1
+          echo $? > exitcode.txt
+          cat ban-words.log
+          echo "exitcode=$(cat exitcode.txt)" >> $GITHUB_OUTPUT
+          {
+            echo 'text<<EOF'
+            cat ban-words.log
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- generated-comment ban-words -->
+      - name: Write Comment
+        if: steps.ban.outputs.exitcode != '0'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            @${{ github.actor }}, banned words test failed:
+
+            ```
+            ${{ steps.ban.outputs.text }}
+            ```
+
+            Commit: ${{ github.sha }}
+
+            <!-- generated-comment ban-words -->
+      - name: Delete old comment
+        if: steps.ban.outputs.exitcode == '0' && steps.comment.outputs.comment-id != ''
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: delete-comment
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.comment.outputs.comment-id }}

@@ -1712,6 +1712,7 @@ pub fn onClose(
     if (client.proxy_tunnel) |tunnel| {
         client.proxy_tunnel = null;
         // always detach the socket from the tunnel onClose (timeout, connectError will call fail that will do the same)
+        tunnel.shutdown();
         tunnel.detachAndDeref();
     }
     const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
@@ -3856,6 +3857,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
 
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
+        tunnel.shutdown();
         // always detach the socket from the tunnel in case of fail
         tunnel.detachAndDeref();
     }
@@ -3942,6 +3944,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             if (this.proxy_tunnel) |tunnel| {
                 log("close the tunnel", .{});
                 this.proxy_tunnel = null;
+                tunnel.shutdown();
                 tunnel.detachAndDeref();
                 if (!socket.isClosed()) {
                     log("close socket", .{});

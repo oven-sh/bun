@@ -110,6 +110,12 @@ pub fn SSLWrapper(comptime T: type) type {
             // start the handshake
             this.handleTraffic();
         }
+        pub fn startWithPayload(this: *This, payload: []const u8) void {
+            this.handlers.onOpen(this.handlers.ctx);
+            this.receiveData(payload);
+            // start the handshake
+            this.handleTraffic();
+        }
 
         /// Shutdown the read direction of the SSL (fake it just for convenience)
         pub fn shutdownRead(this: *This) void {

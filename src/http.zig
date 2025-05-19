@@ -438,7 +438,7 @@ const ProxyTunnel = struct {
         }
     }
 
-    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
+    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig, start_payload: []const u8) void {
         const proxy_tunnel = bun.new(ProxyTunnel, .{
             .ref_count = .init(),
         });
@@ -470,7 +470,13 @@ const ProxyTunnel = struct {
         } else {
             proxy_tunnel.socket = .{ .tcp = socket };
         }
-        proxy_tunnel.wrapper.?.start();
+        if (start_payload.len > 0) {
+            log("proxy tunnel start with payload", .{});
+            proxy_tunnel.wrapper.?.startWithPayload(start_payload);
+        } else {
+            log("proxy tunnel start", .{});
+            proxy_tunnel.wrapper.?.start();
+        }
     }
 
     pub fn close(this: *ProxyTunnel, err: anyerror) void {
@@ -1523,7 +1529,11 @@ pub const HTTPThread = struct {
     }
 };
 
-const log = Output.scoped(.fetch, false);
+// const log = Output.scoped(.fetch, false);
+pub fn log(comptime fmt: string, args: anytype) void {
+    Output.print(fmt, args);
+    Output.flush();
+}
 
 var temp_hostname: [8192]u8 = undefined;
 
@@ -3218,10 +3228,12 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
 
     if (this.http_proxy) |_| {
         if (this.url.isHTTPS()) {
+            log("start proxy tunneling (https proxy)", .{});
             //DO the tunneling!
             this.flags.proxy_tunneling = true;
             try writeProxyConnect(@TypeOf(writer), writer, this);
         } else {
+            log("start proxy request (http proxy)", .{});
             // HTTP do not need tunneling with CONNECT just a slightly different version of the request
             try writeProxyRequest(
                 @TypeOf(writer),
@@ -3231,6 +3243,7 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
             );
         }
     } else {
+        log("normal request", .{});
         try writeRequest(
             @TypeOf(writer),
             writer,
@@ -3314,6 +3327,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
     switch (this.state.request_stage) {
         .pending, .headers => {
+            log("sendInitialRequestPayload", .{});
             this.setTimeout(socket, 5);
             const result = sendInitialRequestPayload(this, is_first_call, is_ssl, socket) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -3361,6 +3375,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .body => {
+            log("send body", .{});
             this.setTimeout(socket, 5);
 
             switch (this.state.original_request_body) {
@@ -3428,6 +3443,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .proxy_body => {
+            log("send proxy body", .{});
             if (this.proxy_tunnel) |proxy| {
                 switch (this.state.original_request_body) {
                     .bytes => {
@@ -3474,6 +3490,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .proxy_headers => {
+            log("send proxy headers", .{});
             if (this.proxy_tunnel) |proxy| {
                 this.setTimeout(socket, 5);
                 var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
@@ -3560,10 +3577,11 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     this.fail(err);
 }
 
-fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
+    log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
     const ssl_options = if (this.tls_props != null) this.tls_props.?.* else JSC.API.ServerConfig.SSLConfig.zero;
-    ProxyTunnel.start(this, is_ssl, socket, ssl_options);
+    ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 
 inline fn handleShortRead(
@@ -3592,6 +3610,7 @@ pub fn handleOnDataHeaders(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    log("handleOnDataHeaders", .{});
     var to_read = incoming_data;
     var amount_read: usize = 0;
     var needs_move = true;
@@ -3608,6 +3627,7 @@ pub fn handleOnDataHeaders(
     // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
     // if is less than 16 will always be a ShortRead
     if (to_read.len < 16) {
+        log("handleShortRead", .{});
         this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
         return;
     }
@@ -3633,9 +3653,11 @@ pub fn handleOnDataHeaders(
 
     const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
     // handle the case where we have a 100 Continue
-    if (response.status_code == 100) {
+    if (response.status_code >= 100 and response.status_code < 200) {
+        log("information headers", .{});
         // we still can have the 200 OK in the same buffer sometimes
         if (body_buf.len > 0) {
+            log("information headers with body", .{});
             this.onData(is_ssl, body_buf, ctx, socket);
         }
         return;
@@ -3675,7 +3697,7 @@ pub fn handleOnDataHeaders(
 
     if (this.flags.proxy_tunneling and this.proxy_tunnel == null) {
         // we are proxing we dont need to cloneMetadata yet
-        this.startProxyHandshake(is_ssl, socket);
+        this.startProxyHandshake(is_ssl, socket, body_buf);
         return;
     }
 

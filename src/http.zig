@@ -3480,7 +3480,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 switch (this.state.original_request_body) {
                     .bytes => {
                         this.setTimeout(socket, 5);
-                        while (true) {
+                        while (this.state.request_body.len > 0) {
                             const to_send = this.state.request_body;
                             const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
@@ -3565,6 +3565,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 if (comptime is_first_call) {
                     if (amount == 0) {
                         // don't worry about it
+                        log("is_first_call and amount == 0", .{});
                         return;
                     }
                 }

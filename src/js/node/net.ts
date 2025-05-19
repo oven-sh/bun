@@ -739,6 +739,8 @@ Socket.prototype.connect = function connect(...args) {
     // Client always request Cert
     this._requestCert = true;
     if (tls) {
+      console.log("TLS TLS TLS", tls);
+
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
         tls.rejectUnauthorized = rejectUnauthorized;

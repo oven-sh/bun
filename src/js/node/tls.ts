@@ -4,7 +4,7 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, DEFAULT_CIPHERS_SET, validateCiphers } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -313,6 +313,11 @@ function TLSSocket(socket?, options?) {
 
   NetSocket.$call(this, options);
 
+  this.ciphers = options.ciphers;
+  if (this.ciphers) {
+    validateCiphers(options.ciphers);
+  }
+
   if (typeof options === "object") {
     const { ALPNProtocols } = options;
     if (ALPNProtocols) {
@@ -483,6 +488,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
+    ciphers: this.ciphers,
     ...this[ksecureContext],
   };
 };
@@ -587,14 +593,9 @@ function Server(options, secureConnectionListener): void {
           throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
         }
 
-        const requested = options.ciphers.split(":");
-        for (const r of requested) {
-          if (!DEFAULT_CIPHERS_SET.has(r)) {
-            throw $ERR_SSL_NO_CIPHER_MATCH();
-          }
-        }
+        validateCiphers(options.ciphers);
 
-        // TODO: Use the ciphers?
+        // TODO: Pass the ciphers
       }
     }
   };
@@ -636,13 +637,8 @@ function createServer(options, connectionListener) {
 }
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
-  DEFAULT_CIPHERS =
-    "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
   DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
-
-const DEFAULT_CIPHERS_LIST = DEFAULT_CIPHERS.split(":");
-const DEFAULT_CIPHERS_SET = new Set([...DEFAULT_CIPHERS_LIST.map(c => c.toLowerCase()), ...DEFAULT_CIPHERS_LIST]);
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

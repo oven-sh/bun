@@ -3497,7 +3497,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         var stream = &this.state.original_request_body.stream;
                         stream.has_backpressure = false;
                         this.setTimeout(socket, 5);
-                        while (!stream.has_backpressure) {
+                        while (!stream.has_backpressure and stream.buffer.isNotEmpty()) {
                             // to simplify things here the buffer contains the raw data we just need to flush to the socket it
                             if (stream.buffer.isNotEmpty()) {
                                 const to_send = stream.buffer.slice();

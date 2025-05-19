@@ -21,6 +21,18 @@ import wt, {
   workerData,
 } from "worker_threads";
 
+// shorthand to set environment data while ensuring that it will not persist beyond the current test
+function setEnvironmentDataInScope(key: string, data: wt.Serializable): Disposable {
+  setEnvironmentData(key, data);
+  return {
+    [Symbol.dispose]() {
+      // delete the key. ignored because @types/node does not think you can pass undefined to setEnvironmentData
+      // @ts-ignore
+      setEnvironmentData(key);
+    },
+  };
+}
+
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
     eval: true,
@@ -351,7 +363,7 @@ describe("worker event", () => {
 
 describe("environmentData", () => {
   test("can pass a value to a child", async () => {
-    setEnvironmentData("foo", new Map([["hello", "world"]]));
+    using scope = setEnvironmentDataInScope("foo", new Map([["hello", "world"]]));
     const worker = new Worker(
       /* js */ `
       const { getEnvironmentData, parentPort } = require("worker_threads");
@@ -398,6 +410,43 @@ describe("environmentData", () => {
     const errors = await proc.stderr.text();
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
+  });
+
+  test("throws an error when the value cannot be serialized", () => {
+    const { port1 } = new MessageChannel();
+    using scope = setEnvironmentDataInScope("unserializable", port1);
+    expect(() => new Worker("", { eval: true })).toThrow(TypeError);
+  });
+
+  test("can use transferList to pass transferable objects in environmentData", async () => {
+    const array = new Uint8Array(100);
+    for (let i = 0; i < array.length; i++) {
+      array[i] = i;
+    }
+    using scope = setEnvironmentDataInScope("buf", array.buffer);
+    // should not be transferred yet
+    expect(array.length).toBe(100);
+    expect(array.buffer.detached).toBeFalse();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = new Worker(
+      /* js */ `
+        import { getEnvironmentData, Worker } from "node:worker_threads";
+        import assert from "node:assert";
+        const buf = getEnvironmentData("buf");
+        const view = new Uint8Array(buf);
+        for (let i = 0; i < view.length; i++) {
+          assert.strictEqual(view[i], i % 256);
+        }
+      `,
+      { eval: true, transferList: [array.buffer] },
+    );
+    // should have transferred to the worker thread
+    expect(array.length).toBe(0);
+    expect(array.buffer.detached).toBeTrue();
+    // worker should not throw an error
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    expect(await promise).toBe(0);
   });
 });
 

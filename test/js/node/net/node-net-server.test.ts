@@ -538,8 +538,8 @@ describe("net.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 500ms
-    timeout = setTimeout(closeAndFail, 500);
+    //should be faster than 100ms
+    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(async () => {
       const address = server.address() as AddressInfo;

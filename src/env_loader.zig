@@ -176,6 +176,10 @@ pub const Loader = struct {
         return this.getHttpProxy(url.isHTTP(), url.hostname);
     }
 
+    pub fn hasHTTPProxy(this: *const Loader) bool {
+        return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
+    }
+
     pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;

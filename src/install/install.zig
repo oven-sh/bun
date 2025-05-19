@@ -777,6 +777,7 @@ pub const Task = struct {
                 }
 
                 const result = this.request.extract.tarball.run(
+                    &this.log,
                     bytes,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -798,7 +799,7 @@ pub const Task = struct {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
                         this.request.git_clone.env,
-                        manager.log,
+                        &this.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
@@ -822,7 +823,7 @@ pub const Task = struct {
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
@@ -846,7 +847,7 @@ pub const Task = struct {
                 const data = Repository.checkout(
                     manager.allocator,
                     this.request.git_checkout.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
@@ -897,6 +898,7 @@ pub const Task = struct {
                     &this.request.local_tarball.tarball,
                     tarball_path,
                     normalize,
+                    &this.log,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -918,13 +920,14 @@ pub const Task = struct {
         tarball: *const ExtractTarball,
         tarball_path: string,
         normalize: bool,
+        log: *logger.Log,
     ) !ExtractData {
         const bytes = if (normalize)
             try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
         else
             try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
-        return tarball.run(bytes);
+        return tarball.run(log, bytes);
     }
 
     pub const Tag = enum(u3) {
@@ -2164,7 +2167,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             const basename = std.fs.path.basename(unintall_task.absolute_path);
 
                             var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
                                 }
                                 return;
@@ -2172,7 +2175,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             defer bun.FD.fromStdDir(dir).close();
 
                             dir.deleteTree(basename) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
                                 }
                             };
@@ -6565,12 +6568,14 @@ pub const PackageManager = struct {
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (manager.options.enable.manifest_cache) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
 
                             if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                                 continue;
@@ -6780,6 +6785,10 @@ pub const PackageManager = struct {
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
+                if (task.log.errors > 0) {
+                    manager.any_failed_to_install = true;
+                }
+                task.log.deinit();
             }
 
             switch (task.tag) {
@@ -14532,12 +14541,16 @@ pub const PackageManager = struct {
         const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
-        if (manager.options.scope.url.hostname.len > 0) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
-            const allocator = hostname_stack.get();
-            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
-            defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        // Unless you're behind a proxy.
+        if (!manager.env.hasHTTPProxy()) {
+            // And don't try to resolve DNS if it's an IP address.
+            if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
+                var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+                const allocator = hostname_stack.get();
+                const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+                defer allocator.free(hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            }
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)

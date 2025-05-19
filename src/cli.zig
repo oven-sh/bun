@@ -2457,10 +2457,15 @@ pub const Command = struct {
                         \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>              Accept all default options
                         \\  <cyan>-m, --minimal<r>          Only initialize type definitions
+                        \\  <cyan>-r, --react<r>            Initialize a React project
+                        \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+                        \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
                         \\  <b><green>bun init<r> <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--react<r>
+                        \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});

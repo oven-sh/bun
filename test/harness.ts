@@ -1,3 +1,10 @@
+/**
+ * This file is loaded in every test file in the repository.
+ *
+ * Avoid adding external dependencies here so that we can still run some tests
+ * without always needing to run `bun install` in development.
+ */
+
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { fork, ChildProcess } from "child_process";
@@ -6,7 +13,6 @@ import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -19,7 +25,14 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const libcFamily: "glibc" | "musl" =
+  process.platform !== "linux"
+    ? "glibc"
+    : // process.report.getReport() has incorrect type definitions.
+      (process.report.getReport() as any).header.glibcVersionRuntime
+      ? "glibc"
+      : "musl";
+
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";

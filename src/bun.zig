@@ -2000,44 +2000,44 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
         var in_double = false;
         var escape = false;
         while (i < env.len) : (i += 1) {
-            const c = env[i];
+            const ch = env[i];
             if (escape) {
-                try buf.append(c);
+                try buf.append(ch);
                 escape = false;
                 continue;
             }
 
-            if (c == '\\') {
+            if (ch == '\\') {
                 escape = true;
                 continue;
             }
 
             if (in_single) {
-                if (c == '\'') {
+                if (ch == '\'') {
                     in_single = false;
                 } else {
-                    try buf.append(c);
+                    try buf.append(ch);
                 }
                 continue;
             }
 
             if (in_double) {
-                if (c == '"') {
+                if (ch == '"') {
                     in_double = false;
                 } else {
-                    try buf.append(c);
+                    try buf.append(ch);
                 }
                 continue;
             }
 
-            if (c == '\'') {
+            if (ch == '\'') {
                 in_single = true;
-            } else if (c == '"') {
+            } else if (ch == '"') {
                 in_double = true;
-            } else if (std.ascii.isWhitespace(c)) {
+            } else if (std.ascii.isWhitespace(ch)) {
                 break;
             } else {
-                try buf.append(c);
+                try buf.append(ch);
             }
         }
 

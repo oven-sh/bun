@@ -6,7 +6,7 @@ const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Server, ServerResponse } = require("node:_http_server");
 
-const { METHODS, STATUS_CODES } = require("internal/http");
+const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 
@@ -37,9 +37,6 @@ function get(url, options, cb) {
   req.end();
   return req;
 }
-
-const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 
 const http_exports = {
   Agent,

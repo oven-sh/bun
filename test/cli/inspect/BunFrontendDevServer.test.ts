@@ -3,7 +3,7 @@ import { decodeSerializedError } from "bake/error-serialization.ts";
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv as env, bunExe, isPosix, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tmpdirSync } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";

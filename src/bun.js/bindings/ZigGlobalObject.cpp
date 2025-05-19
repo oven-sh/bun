@@ -143,7 +143,6 @@
 #include "Performance.h"
 #include "ProcessBindingConstants.h"
 #include "ProcessBindingTTYWrap.h"
-#include "ProcessIdentifier.h"
 #include "ReadableStream.h"
 #include "SerializedScriptValue.h"
 #include "StructuredClone.h"
@@ -232,8 +231,6 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 // #include <iostream>
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 
 #ifndef BUN_WEBKIT_VERSION
 #ifndef ASSERT_ENABLED
@@ -1300,11 +1297,6 @@ GlobalObject::~GlobalObject()
 void GlobalObject::destroy(JSCell* cell)
 {
     static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject();
-}
-
-WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
-{
-    return m_scriptExecutionContext;
 }
 
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
@@ -4381,6 +4373,8 @@ bool GlobalObject::hasNapiFinalizers() const
 
     return false;
 }
+
+void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {

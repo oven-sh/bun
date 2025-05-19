@@ -1432,12 +1432,13 @@ fn deferRequest(
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
+    const method = bun.http.Method.which(req.method()) orelse .POST;
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .handler = switch (kind) {
-            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = bun.http.Method.which(req.method()) orelse .POST } },
+            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
             .server_handler => .{
-                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global) orelse return,
+                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse return,
             },
         },
     };
@@ -7288,10 +7289,12 @@ pub const EntryPointList = struct {
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 const HTMLRouter = struct {
-    map: bun.StringHashMapUnmanaged(*HTMLBundle.HTMLBundleRoute),
+    map: Map,
+
     /// If a catch-all route exists, it is not stored in map, but here.
     fallback: ?*HTMLBundle.HTMLBundleRoute,
 
+    pub const Map = bun.StringHashMapUnmanaged(*HTMLBundle.HTMLBundleRoute);
     pub const empty: HTMLRouter = .{
         .map = .empty,
         .fallback = null,

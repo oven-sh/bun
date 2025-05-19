@@ -648,6 +648,21 @@ interface String {
   // add others as needed
 }
 
+interface Set {
+  $add: Set["add"];
+  $clear: Set["clear"];
+  $delete: Set["delete"];
+  $has: Set["has"];
+}
+
+interface Map {
+  $clear: Map["clear"];
+  $delete: Map["delete"];
+  $has: Map["has"];
+  $set: Map["set"];
+  $get: Map["get"];
+}
+
 declare var $Buffer: {
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
@@ -703,6 +718,9 @@ declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
 declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
 declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_INVALID_STATE(message: string): Error;
+declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
+declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;
 declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
 declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
 declare function $ERR_UNHANDLED_ERROR(err?): Error;

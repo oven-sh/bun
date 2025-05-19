@@ -1056,8 +1056,10 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     if (message == .data) handle_message: {
         const msg_data = message.data;
         if (msg_data.isObject()) {
-            const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
-                if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
+            const cmd = msg_data.fastGet(globalThis, .cmd) catch {
+                globalThis.clearException();
+                break :handle_message;
+            } orelse {
                 break :handle_message;
             };
             if (cmd.isString()) {

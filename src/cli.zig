@@ -246,6 +246,7 @@ pub const Arguments = struct {
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -713,6 +714,12 @@ pub const Arguments = struct {
 
             if (args.flag("--redis-preconnect")) {
                 ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -2423,10 +2430,15 @@ pub const Command = struct {
                         \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>              Accept all default options
                         \\  <cyan>-m, --minimal<r>          Only initialize type definitions
+                        \\  <cyan>-r, --react<r>            Initialize a React project
+                        \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+                        \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
                         \\  <b><green>bun init<r> <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--react<r>
+                        \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});

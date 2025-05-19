@@ -1,9 +1,9 @@
-import { describe, expect, it, test, mock } from "bun:test";
-import { clearInterval, clearTimeout, promises, setInterval, setTimeout, setImmediate } from "node:timers";
-import { promisify } from "util";
-import { bunEnv, bunExe, isWindows } from "harness";
 import jsc from "bun:jsc";
+import { describe, expect, it, mock, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
+import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
+import { promisify } from "util";
 
 for (const fn of [setTimeout, setInterval]) {
   describe(fn.name, () => {

@@ -1241,30 +1241,41 @@ pub const InternalSocket = union(enum) {
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
         const ssl_int: i32 = @intFromBool(is_ssl);
+
         socket: InternalSocket,
+
         const ThisSocket = @This();
+
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+
         pub fn setNoDelay(this: ThisSocket, enabled: bool) bool {
             return this.socket.setNoDelay(enabled);
         }
+
         pub fn setKeepAlive(this: ThisSocket, enabled: bool, delay: u32) bool {
             return this.socket.setKeepAlive(enabled, delay);
         }
+
         pub fn pauseStream(this: ThisSocket) bool {
             return this.socket.pauseResume(is_ssl, true);
         }
+
         pub fn resumeStream(this: ThisSocket) bool {
             return this.socket.pauseResume(is_ssl, false);
         }
+
         pub fn detach(this: *ThisSocket) void {
             this.socket.detach();
         }
+
         pub fn isDetached(this: ThisSocket) bool {
             return this.socket.isDetached();
         }
+
         pub fn isNamedPipe(this: ThisSocket) bool {
             return this.socket.isNamedPipe();
         }
+
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             switch (this.socket) {
                 .connected => |socket| return uws.us_socket_verify_error(comptime ssl_int, socket),
@@ -1562,6 +1573,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connecting, .detached => 0,
             };
         }
+
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.rawWrite(is_ssl, data, msg_more),
@@ -1570,6 +1582,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.rawWrite(data, msg_more) else 0,
             };
         }
+
         pub fn shutdown(this: ThisSocket) void {
             switch (this.socket) {
                 .connected => |socket| socket.shutdown(is_ssl),
@@ -1659,6 +1672,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn close(this: ThisSocket, code: Socket.CloseCode) void {
             return this.socket.close(comptime is_ssl, code);
         }
+
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.localPort(is_ssl),
@@ -3314,8 +3328,12 @@ pub fn NewApp(comptime ssl: bool) type {
             return uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
         }
 
-        pub fn setRequireHostHeader(this: *ThisApp, require_host_header: bool) void {
-            return uws_app_set_require_host_header(ssl_flag, @as(*uws_app_t, @ptrCast(this)), require_host_header);
+        pub fn setFlags(this: *ThisApp, require_host_header: bool, use_strict_method_validation: bool) void {
+            return uws_app_set_flags(ssl_flag, @as(*uws_app_t, @ptrCast(this)), require_host_header, use_strict_method_validation);
+        }
+
+        pub fn setMaxHTTPHeaderSize(this: *ThisApp, max_header_size: u64) void {
+            return uws_app_set_max_http_header_size(ssl_flag, @as(*uws_app_t, @ptrCast(this)), max_header_size);
         }
 
         pub fn clearRoutes(app: *ThisApp) void {
@@ -3366,57 +3384,57 @@ pub fn NewApp(comptime ssl: bool) type {
 
         pub fn get(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_get(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_get(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn post(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_post(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_post(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn options(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_options(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_options(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn delete(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_delete(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_delete(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn patch(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_patch(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_patch(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn put(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_put(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_put(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn head(
             app: *ThisApp,
@@ -3429,26 +3447,26 @@ pub fn NewApp(comptime ssl: bool) type {
         }
         pub fn connect(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_connect(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_connect(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn trace(
             app: *ThisApp,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+            uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn method(
             app: *ThisApp,
             method_: bun.http.Method,
-            pattern: [:0]const u8,
+            pattern: []const u8,
             comptime UserDataType: type,
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
@@ -3463,7 +3481,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 .HEAD => app.head(pattern, UserDataType, user_data, handler),
                 .CONNECT => app.connect(pattern, UserDataType, user_data, handler),
                 .TRACE => app.trace(pattern, UserDataType, user_data, handler),
-                else => @panic("TODO: implement other methods"),
+                else => {},
             }
         }
         pub fn any(
@@ -3473,6 +3491,7 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            
             uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {
@@ -3976,16 +3995,17 @@ extern fn uws_res_get_native_handle(ssl: i32, res: *uws_res) *Socket;
 extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *uws_res, dest: *[*]const u8) usize;
 extern fn uws_create_app(ssl: i32, options: us_bun_socket_context_options_t) ?*uws_app_t;
 extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
-extern fn uws_app_set_require_host_header(ssl: i32, app: *uws_app_t, require_host_header: bool) void;
-extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_post(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_delete(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_patch(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_put(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_set_flags(ssl: i32, app: *uws_app_t, require_host_header: bool, use_strict_method_validation: bool) void;
+extern fn uws_app_set_max_http_header_size(ssl: i32, app: *uws_app_t, max_header_size: u64) void;
+extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_post(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_delete(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_patch(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_put(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_head(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_connect(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
 extern fn uws_app_domain(ssl: i32, app: *uws_app_t, domain: [*c]const u8) void;

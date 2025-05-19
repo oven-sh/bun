@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 test("req.url doesn't leak memory", async () => {
   const { promise, resolve } = Promise.withResolvers();

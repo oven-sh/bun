@@ -9,9 +9,7 @@
         "0": { "name": "entity.name.function.tagged-template.js" }
       },
       "end": "(?<=`)",
-      "patterns": [
-        { "include": "#embedded-shell" }
-      ]
+      "patterns": [{ "include": "#embedded-shell" }]
     }
   ],
   "repository": {

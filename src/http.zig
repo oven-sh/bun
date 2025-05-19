@@ -247,6 +247,7 @@ const ProxyTunnel = struct {
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
+            defer proxy.setTimeout(5);
             if (proxy.wrapper) |*wrapper| {
                 var ssl_ptr = wrapper.ssl orelse return;
                 const _hostname = this.hostname orelse this.url.hostname;
@@ -273,10 +274,10 @@ const ProxyTunnel = struct {
     fn onData(this: *HTTPClient, decoded_data: []const u8) void {
         if (decoded_data.len == 0) return;
         log("ProxyTunnel onData decoded {}", .{decoded_data.len});
-
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             defer proxy.deref();
+            defer proxy.setTimeout(5);
             switch (this.state.response_stage) {
                 .body => {
                     log("ProxyTunnel onData body", .{});
@@ -346,6 +347,7 @@ const ProxyTunnel = struct {
             log("ProxyTunnel onHandshake", .{});
             proxy.ref();
             defer proxy.deref();
+            defer proxy.setTimeout(5);
             this.state.response_stage = .proxy_headers;
             this.state.request_stage = .proxy_headers;
             this.state.request_sent_len = 0;
@@ -532,6 +534,18 @@ const ProxyTunnel = struct {
         }
     }
 
+    pub fn setTimeout(this: *ProxyTunnel, minutes: c_uint) void {
+        switch (this.socket) {
+            .ssl => |socket| {
+                socket.timeout(0);
+                socket.setTimeoutMinutes(minutes);
+            },
+            .tcp => |socket| {
+                socket.timeout(0);
+                socket.setTimeoutMinutes(minutes);
+            },
+        }
+    }
     pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
         if (this.wrapper) |*wrapper| {
             return try wrapper.writeData(buf);

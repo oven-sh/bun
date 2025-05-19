@@ -46,7 +46,7 @@ export default class RuntimeError {
     const runtime = new RuntimeError();
     runtime.original = error;
     runtime.stack = this.parseStack(error);
-    return RuntimeError;
+    return runtime;
   }
 
   /**

@@ -947,9 +947,7 @@ describe("files", () => {
     ]);
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
-    expect(tarball.entries).toMatchObject([
-      { "pathname": "package/package.json" },
-    ]);
+    expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
   });
 
   test("'files' field cannot exclude LICENSE", async () => {

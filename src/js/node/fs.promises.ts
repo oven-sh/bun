@@ -200,8 +200,10 @@ function asyncWrap(fn: any, name: string) {
   const wrapped = async function (...args) {
     return fn.$apply(fs, args);
   };
-  Object.defineProperty(wrapped, "name", { value: name });
-  Object.defineProperty(wrapped, "length", { value: fn.length });
+  const descriptor = { value: name, enumerable: false, configurable: true };
+  Object.$defineProperty(wrapped, "name", descriptor);
+  Object.$defineProperty(wrapped, "displayName", descriptor);
+  Object.$defineProperty(wrapped, "length", { value: fn.length });
   return wrapped;
 }
 

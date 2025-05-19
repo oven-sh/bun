@@ -4,7 +4,7 @@ const EventEmitter = require("node:events");
 
 const types = require("node:util/types");
 const { validateFunction, validateInteger } = require("internal/validators");
-const { kEmptyObject } = require("internal/shared");
+const { kEmptyObject, kFd } = require("internal/shared");
 const fs = require("internal/fs/binding");
 
 const isDate = types.isDate;
@@ -1273,6 +1273,7 @@ var exports = {
       value: promises,
       writable: true,
       configurable: true,
+      enumerable: true,
     });
     return promises;
   },
@@ -1281,6 +1282,7 @@ var exports = {
       value,
       writable: true,
       configurable: true,
+      enumerable: true,
     });
   },
 };
@@ -1288,7 +1290,9 @@ export default exports;
 
 // Preserve the names
 function setName(fn, value) {
-  Object.$defineProperty(fn, "name", { value, enumerable: false, configurable: true });
+  const descriptor = { value, enumerable: false, configurable: true };
+  Object.$defineProperty(fn, "name", descriptor);
+  Object.$defineProperty(fn, "displayName", descriptor);
 }
 setName(Dirent, "Dirent");
 setName(FSWatcher, "FSWatcher");

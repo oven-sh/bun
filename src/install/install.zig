@@ -14532,12 +14532,16 @@ pub const PackageManager = struct {
         const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
-        if (manager.options.scope.url.hostname.len > 0) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
-            const allocator = hostname_stack.get();
-            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
-            defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        // Unless you're behind a proxy.
+        if (!manager.env.hasHTTPProxy()) {
+            // And don't try to resolve DNS if it's an IP address.
+            if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
+                var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+                const allocator = hostname_stack.get();
+                const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+                defer allocator.free(hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            }
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)

@@ -393,7 +393,7 @@ const ProxyTunnel = struct {
             } else {
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-                if (this.flags.did_have_handshaking_error) {
+                if (this.flags.did_have_handshaking_error and handshake_error.error_no != 0) {
                     proxy.close(BoringSSL.getCertErrorFromNo(handshake_error.error_no));
                     return;
                 }
@@ -740,11 +740,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
 
-                    // log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
+                    log("Keep-Alive release {s}:{d}", .{
+                        hostname,
+                        port,
+                    });
                     return;
                 }
             }
-
+            log("close socket", .{});
             closeSocket(socket);
         }
 
@@ -2303,7 +2306,8 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
         // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
-        if (this.http_proxy != null and this.url.isHTTPS()) {
+        if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
+            log("Keep-Alive release (proxy tunneling https)", .{});
             return false;
         }
 
@@ -3054,6 +3058,7 @@ pub fn doRedirect(
 
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
+        log("Keep-Alive release", .{});
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
             socket,
@@ -3922,6 +3927,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             this.unregisterAbortTracker();
 
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+                log("release socket", .{});
                 ctx.releaseSocket(
                     socket,
                     this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
@@ -3929,7 +3935,13 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
+                log("close socket", .{});
                 NewHTTPContext(is_ssl).closeSocket(socket);
+            }
+            if (this.proxy_tunnel) |tunnel| {
+                log("close the tunnel", .{});
+                this.proxy_tunnel = null;
+                tunnel.detachAndDeref();
             }
 
             this.state.reset(this.allocator);
@@ -3937,6 +3949,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             this.state.request_stage = .done;
             this.state.stage = .done;
             this.flags.proxy_tunneling = false;
+            log("done", .{});
         }
 
         result.body.?.* = body;

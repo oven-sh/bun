@@ -24,6 +24,10 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const SymbolToStringTag = Symbol.toStringTag;
+const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSome = Array.prototype.some;
+const ArrayPrototypeForEach = Array.prototype.forEach;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
 const kNative = Symbol("kNative");
@@ -395,9 +399,42 @@ class SourceTextModule extends Module {
   }
 }
 
-class SyntheticModule {
-  constructor() {
-    throwNotImplemented("node:vm.SyntheticModule");
+class SyntheticModule extends Module {
+  constructor(exportNames, evaluateCallback, options = kEmptyObject) {
+    if (!ArrayIsArray(exportNames) || ArrayPrototypeSome.$call(exportNames, e => typeof e !== "string")) {
+      throw $ERR_INVALID_ARG_TYPE("exportNames", "Array of unique strings", exportNames);
+    } else {
+      ArrayPrototypeForEach.$call(exportNames, (name, i) => {
+        if (ArrayPrototypeIndexOf.$call(exportNames, name, i + 1) !== -1) {
+          throw $ERR_INVALID_ARG_VALUE(`exportNames.${name}`, name, "is duplicated");
+        }
+      });
+    }
+    validateFunction(evaluateCallback, "evaluateCallback");
+
+    validateObject(options, "options");
+
+    const { context, identifier } = options;
+
+    super({
+      syntheticExportNames: exportNames,
+      syntheticEvaluationSteps: evaluateCallback,
+      context,
+      identifier,
+    });
+  }
+
+  [kLink]() {
+    /** nothing to do for synthetic modules */
+  }
+
+  setExport(name, value) {
+    validateModule(this, "SyntheticModule");
+    validateString(name, "name");
+    if (this[kNative].getStatusCode() < kLinked) {
+      throw $ERR_VM_MODULE_STATUS("must be linked");
+    }
+    this[kNative].setExport(name, value);
   }
 }
 

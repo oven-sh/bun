@@ -5,6 +5,8 @@
 #include "AbstractModuleRecord.h"
 #include "JSModuleNamespaceObject.h"
 
+#include "../vm/SigintReceiver.h"
+
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -25,7 +27,7 @@ private:
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;
 };
 
-class NodeVMModule : public JSC::JSDestructibleObject {
+class NodeVMModule : public JSC::JSDestructibleObject, public SigintReceiver {
 public:
     using Base = JSC::JSDestructibleObject;
 
@@ -65,6 +67,8 @@ public:
     // Purposely not virtual. Dispatches to the correct subclass.
     AbstractModuleRecord* moduleRecord(JSC::JSGlobalObject* globalObject);
 
+    JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
@@ -74,6 +78,8 @@ protected:
     mutable WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context);
+
+    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

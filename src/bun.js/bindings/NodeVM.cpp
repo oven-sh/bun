@@ -12,6 +12,7 @@
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
+#include "NodeVMSyntheticModule.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -1147,15 +1148,18 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
             init.setConstructor(constructor);
         });
 
-    // globalObject->m_NodeVMSyntheticModuleClassStructure.initLater(
-    //     [](LazyClassStructure::Initializer& init) {
-    //         auto prototype = NodeVMSyntheticModule::createPrototype(init.vm, init.global);
-    //         auto* structure = NodeVMSyntheticModule::createStructure(init.vm, init.global, prototype);
-    //         auto* constructorStructure = NodeVMModuleConstructor::createStructure(
-    //             init.vm, init.global, init.global->m_functionPrototype.get());
-    //         auto* constructor = NodeVMModuleConstructor::create(
-    //             init.vm, init.global, constructorStructure, prototype);
-    //     });
+    globalObject->m_NodeVMSyntheticModuleClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto prototype = NodeVMSyntheticModule::createPrototype(init.vm, init.global);
+            auto* structure = NodeVMSyntheticModule::createStructure(init.vm, init.global, prototype);
+            auto* constructorStructure = NodeVMModuleConstructor::createStructure(
+                init.vm, init.global, init.global->m_functionPrototype.get());
+            auto* constructor = NodeVMModuleConstructor::create(
+                init.vm, init.global, constructorStructure, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
 
     globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {

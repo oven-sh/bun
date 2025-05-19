@@ -1,4 +1,5 @@
 #include "NodeVMSourceTextModule.h"
+#include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
@@ -13,7 +14,6 @@
 #include "JavaScriptCore/ModuleProgramCodeBlock.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "JavaScriptCore/Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 
@@ -312,85 +312,6 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
     status(Status::Linked);
     return JSC::jsUndefined();
-}
-
-JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (m_status != Status::Linked && m_status != Status::Evaluated && m_status != Status::Errored) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be linked, evaluated or errored before evaluating"_s);
-        return {};
-    }
-
-    JSModuleRecord* record = m_moduleRecord.get();
-    JSValue result {};
-
-    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
-
-    if (nodeVmGlobalObject) {
-        globalObject = nodeVmGlobalObject;
-    }
-
-    auto run = [&] {
-        status(Status::Evaluating);
-
-        for (const auto& request : record->requestedModules()) {
-            if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
-                if (auto* dependency = jsDynamicCast<NodeVMSourceTextModule*>(iter->value.get())) {
-                    if (dependency->status() == Status::Linked) {
-                        JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
-                        RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm SourceTextModule dependencies");
-                    }
-                }
-            }
-        }
-
-        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-    };
-
-    setSigintReceived(false);
-
-    if (timeout != 0) {
-        JSC::JSLockHolder locker(vm);
-        JSC::Watchdog& dog = vm.ensureWatchdog();
-        dog.enteredVM();
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
-    }
-
-    if (breakOnSigint) {
-        auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
-        run();
-    } else {
-        run();
-    }
-
-    if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
-    }
-
-    if (vm.hasPendingTerminationException()) {
-        scope.clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        }
-    } else {
-        setSigintReceived(false);
-    }
-
-    if (JSC::Exception* exception = scope.exception()) {
-        status(Status::Errored);
-        m_evaluationException.set(vm, this, exception);
-        return {};
-    }
-
-    status(Status::Evaluated);
-    return result;
 }
 
 RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)

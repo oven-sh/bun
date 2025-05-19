@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv } from "../../harness";
 import { spawnSync } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "../../harness";
 
 describe("BUN_OPTIONS environment variable", () => {
   test("basic usage - passes options to bun command", () => {
@@ -8,8 +8,8 @@ describe("BUN_OPTIONS environment variable", () => {
       cmd: [bunExe()],
       env: {
         ...bunEnv,
-        BUN_OPTIONS: "--print='BUN_OPTIONS WAS A SUCCESS'"
-      }
+        BUN_OPTIONS: "--print='BUN_OPTIONS WAS A SUCCESS'",
+      },
     });
 
     expect(result.exitCode).toBe(0);
@@ -21,8 +21,8 @@ describe("BUN_OPTIONS environment variable", () => {
       cmd: [bunExe()],
       env: {
         ...bunEnv,
-        BUN_OPTIONS: "--print='MULTIPLE OPTIONS' --quiet"
-      }
+        BUN_OPTIONS: "--print='MULTIPLE OPTIONS' --quiet",
+      },
     });
 
     expect(result.exitCode).toBe(0);
@@ -34,8 +34,8 @@ describe("BUN_OPTIONS environment variable", () => {
       cmd: [bunExe()],
       env: {
         ...bunEnv,
-        BUN_OPTIONS: "--print=\"QUOTED OPTIONS\""
-      }
+        BUN_OPTIONS: '--print="QUOTED OPTIONS"',
+      },
     });
 
     expect(result.exitCode).toBe(0);
@@ -48,8 +48,8 @@ describe("BUN_OPTIONS environment variable", () => {
       cmd: [bunExe(), "--print='COMMAND LINE'"],
       env: {
         ...bunEnv,
-        BUN_OPTIONS: "--quiet"
-      }
+        BUN_OPTIONS: "--quiet",
+      },
     });
 
     expect(result.exitCode).toBe(0);
@@ -61,8 +61,8 @@ describe("BUN_OPTIONS environment variable", () => {
       cmd: [bunExe(), "--print='NORMAL'"],
       env: {
         ...bunEnv,
-        BUN_OPTIONS: ""
-      }
+        BUN_OPTIONS: "",
+      },
     });
 
     expect(result.exitCode).toBe(0);

@@ -1442,12 +1442,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     this.once("listening", onListen);
   }
 
-  const addr = this.address();
-  if (addr && typeof addr === "object") {
-    const familyLast = String(addr.family).slice(-1);
-    this._connectionKey = `${familyLast}:${addr.address}:${addr.port}`;
-  }
-
   try {
     var tls = undefined;
     var TLSSocketClass = undefined;
@@ -1541,7 +1535,6 @@ Server.prototype[kRealListen] = function (
   //make this instance available on handlers
   this._handle.data = this;
 
-  // Generate connection key once bound, based on actual address info
   const addr = this.address();
   if (addr && typeof addr === "object") {
     const familyLast = String(addr.family).slice(-1);

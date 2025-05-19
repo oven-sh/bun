@@ -1026,8 +1026,12 @@ pub const DescribeScope = struct {
 
     fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         if (this.parent) |scope| {
-            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
-                return err;
+            // For beforeAll, we should NOT run parent's beforeAll hooks when running a child's beforeAll
+            // This function is recursive, so we should only run parent's hooks when hook is beforeEach
+            if (comptime hook == .beforeEach) {
+                if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+                    return err;
+                }
             }
         }
         return this.execCallback(globalObject, hook);
@@ -1141,30 +1145,21 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |err| {
-                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
-                    i += 1;
-                }
-                this.deinit(globalObject);
-                return;
-            }
-            if (end == 0) {
-                var runner = allocator.create(TestRunnerTask) catch unreachable;
-                runner.* = .{
-                    .test_id = TestRunner.Test.null_id,
-                    .describe = this,
-                    .globalThis = globalObject,
-                    .source_file_path = source.path.text,
-                    .test_id_for_debugger = 0,
-                };
-                runner.ref.ref(globalObject.bunVM());
+        // Note: Do NOT execute beforeAll hooks here during test registration
+        // They will be executed at the right time in TestRunnerTask.run()
+        if (end == 0 && this.shouldEvaluateScope()) {
+            var runner = allocator.create(TestRunnerTask) catch unreachable;
+            runner.* = .{
+                .test_id = TestRunner.Test.null_id,
+                .describe = this,
+                .globalThis = globalObject,
+                .source_file_path = source.path.text,
+                .test_id_for_debugger = 0,
+            };
+            runner.ref.ref(globalObject.bunVM());
 
-                Jest.runner.?.enqueue(runner);
-                return;
-            }
+            Jest.runner.?.enqueue(runner);
+            return;
         }
 
         const maybe_report_debugger = max_test_id_for_debugger > 0;
@@ -1392,6 +1387,18 @@ pub const TestRunnerTask = struct {
 
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
+        
+        // For the first test in a describe block, run the beforeAll hook for that describe block
+        if (describe.current_test_id == test_id && describe.pending_tests.count() == describe.tests.items.len) {
+            if (describe.shouldEvaluateScope()) {
+                if (describe.runCallback(globalThis, .beforeAll)) |err| {
+                    _ = jsc_vm.uncaughtException(globalThis, err, true);
+                    const label = test_.label;
+                    Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, describe);
+                    return false;
+                }
+            }
+        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;

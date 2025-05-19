@@ -1066,7 +1066,7 @@ pub const PackCommand = struct {
         if (dir_depth == 1) {
             // first, check files that can never be ignored. project root
             // directory only
-            if (isUnconditionallyIncludedFile(entry_name) or isSpecialFileOrVariant(entry_name, "CHANGELOG")) {
+            if (isUnconditionallyIncludedFile(entry_name)) {
                 return null;
             }
 

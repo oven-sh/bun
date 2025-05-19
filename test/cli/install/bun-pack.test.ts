@@ -931,7 +931,7 @@ describe("files", () => {
     ]);
   });
 
-  test(".npmignore cannot exclude CHANGELOG", async () => {
+  test(".npmignore can exclude CHANGELOG", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -949,9 +949,6 @@ describe("files", () => {
     const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.2.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
-      { "pathname": "package/CHANGELOG" },
-      { "pathname": "package/CHANGELOG.md" },
-      { "pathname": "package/CHANGELOG.txt" },
     ]);
   });
 

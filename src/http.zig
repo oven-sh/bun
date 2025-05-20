@@ -417,8 +417,8 @@ const ProxyTunnel = struct {
     pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         if (this.proxy_tunnel) |proxy| {
             const written = switch (proxy.socket) {
-                .ssl => |socket| socket.write(encoded_data, true),
-                .tcp => |socket| socket.write(encoded_data, true),
+                .ssl => |socket| socket.write(encoded_data, false),
+                .tcp => |socket| socket.write(encoded_data, false),
                 .none => 0,
             };
             const pending = encoded_data[@intCast(written)..];
@@ -430,7 +430,7 @@ const ProxyTunnel = struct {
     }
 
     fn onClose(this: *HTTPClient) void {
-        log("ProxyTunnel onClose", .{});
+        log("ProxyTunnel onClose {s}", .{if (this.proxy_tunnel == null) "tunnel is detached" else "tunnel exists"});
         if (this.proxy_tunnel) |proxy| {
             proxy.ref();
             // defer the proxy deref the proxy tunnel may still be in use after triggering the close callback
@@ -1549,11 +1549,7 @@ pub const HTTPThread = struct {
     }
 };
 
-// const log = Output.scoped(.fetch, false);
-pub fn log(comptime fmt: string, args: anytype) void {
-    Output.println(fmt, args);
-    Output.flush();
-}
+const log = Output.scoped(.fetch, false);
 
 var temp_hostname: [8192]u8 = undefined;
 
@@ -2118,6 +2114,7 @@ pub const InternalState = struct {
             .request_body = "",
             .certificate_info = null,
             .flags = .{},
+            .total_body_received = 0,
         };
     }
 
@@ -4135,6 +4132,7 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_
 fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
     if (!this.state.isChunkedEncoding()) {
         this.state.total_body_received += incoming_data.len;
+        log("handleResponseBodyFromSinglePacket {d}", .{this.state.total_body_received});
     }
     defer {
         if (this.progress_node) |progress| {
@@ -4185,7 +4183,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     this.state.total_body_received += remainder.len;
-
+    log("handleResponseBodyFromMultiplePackets {d}", .{this.state.total_body_received});
     if (this.progress_node) |progress| {
         progress.activate();
         progress.setCompletedItems(this.state.total_body_received);
@@ -4245,6 +4243,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     );
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
+    log("handleResponseBodyChunkedEncodingFromMultiplePackets {d}", .{this.state.total_body_received});
 
     buffer_ptr.* = buffer;
 
@@ -4323,7 +4322,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
-
+    log("handleResponseBodyChunkedEncodingFromSinglePacket {d}", .{this.state.total_body_received});
     switch (pret) {
         // Invalid HTTP response body
         -1 => {

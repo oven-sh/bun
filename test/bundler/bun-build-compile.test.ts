@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDirWithFiles, bunExe } from "harness";
 import { join } from "path";
 import { existsSync, statSync } from "fs";
 import { spawnSync } from "child_process";

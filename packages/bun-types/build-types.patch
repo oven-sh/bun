@@ -1,34 +1,25 @@
-/**
- * Target platforms for compilation
- */
+// Define platform and architecture types
 type BuildPlatform = "darwin" | "linux" | "win32";
-
-/**
- * Target architectures for compilation
- */
 type BuildArchitecture = "x64" | "arm64";
 
-/**
- * Compilation target specification
- */
-type BuildTarget = 
+type BuildTarget =
   | BuildPlatform
   | BuildArchitecture
-  | `${BuildPlatform}-${BuildArchitecture}`
+  | `${BuildPlatform}-${BuildArchitecture}` 
   | `${BuildPlatform}-${BuildArchitecture}-baseline`;
 
 interface BuildConfig {
-  // ... (existing properties)
-
+  // Other existing properties...
+  
   /**
    * Generate a standalone executable
    * @default false
    */
   compile?: boolean;
-
+  
   /**
    * Specify target platform(s) for compilation
    * Currently, only one target can be specified
-   */
+   */ 
   targets?: BuildTarget | BuildTarget[];
 }

@@ -1805,14 +1805,20 @@ pub const JSZstd = struct {
             return globalThis.throwOutOfMemory();
         };
 
-        // Perform compression
-        const compressed_size = switch (bun.zstd.compress(output, input, level)) {
-            .success => |size| size,
-            .err => |err| {
-                allocator.free(output);
-                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
-            },
+        // Create a context for better control
+        const cctx = bun.zstd.ZSTD_createCCtx() orelse {
+            allocator.free(output);
+            return globalThis.ERR(.ZSTD, "Failed to create compression context", .{}).throw();
         };
+        defer _ = bun.zstd.ZSTD_freeCCtx(cctx);
+
+        // Perform compression with context
+        const compressed_size = bun.zstd.ZSTD_compressCCtx(cctx, output.ptr, output.len, input.ptr, input.len, level);
+
+        if (bun.zstd.ZSTD_isError(compressed_size) != 0) {
+            allocator.free(output);
+            return globalThis.ERR(.ZSTD, "{s}", .{bun.zstd.ZSTD_getErrorName(compressed_size)}).throw();
+        }
 
         // Resize to actual compressed size
         if (compressed_size < output.len) {

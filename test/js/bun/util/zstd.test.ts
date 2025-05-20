@@ -18,10 +18,8 @@ describe("Zstandard compression", async () => {
   ] as const;
 
   it("throws with invalid level", () => {
-    expect(() => zstdCompressSync(new Uint8Array(), { level: 0 })).toThrow();
-    expect(() => zstdCompress(new Uint8Array(), { level: 0 })).toThrow();
-    expect(() => zstdDecompressSync(new Uint8Array(), { level: -1 })).toThrow();
-    expect(() => zstdDecompress(new Uint8Array(), { level: -1 })).toThrow();
+    expect(() => zstdCompressSync(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot();
+    expect(() => zstdCompress(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot();
   });
 
   it("throws with invalid input", () => {

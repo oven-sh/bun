@@ -22,6 +22,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_BODY_ALREADY_USED", Error],
   ["ERR_BORINGSSL", Error],
+  ["ERR_ZSTD", Error],
   ["ERR_BROTLI_INVALID_PARAM", RangeError],
   ["ERR_BUFFER_CONTEXT_NOT_AVAILABLE", Error],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],

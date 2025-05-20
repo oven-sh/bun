@@ -218,8 +218,31 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
 }
 
 pub fn getDecompressedSize(src: []const u8) usize {
-    return ZSTD_getDecompressedSize(src.ptr, src.len);
+    return ZSTD_findDecompressedSize(src.ptr, src.len);
 }
+
+//ZSTD_findDecompressedSize() :
+//`src` should point to the start of a series of ZSTD encoded and/or skippable frames
+//`srcSize` must be the _exact_ size of this series
+//     (i.e. there should be a frame boundary at `src + srcSize`)
+//@return : - decompressed size of all data in all successive frames
+//          - if the decompressed size cannot be determined: ZSTD_CONTENTSIZE_UNKNOWN
+//          - if an error occurred: ZSTD_CONTENTSIZE_ERROR
+//
+// note 1 : decompressed size is an optional field, that may not be present, especially in streaming mode.
+//          When `return==ZSTD_CONTENTSIZE_UNKNOWN`, data to decompress could be any size.
+//          In which case, it's necessary to use streaming mode to decompress data.
+// note 2 : decompressed size is always present when compression is done with ZSTD_compress()
+// note 3 : decompressed size can be very large (64-bits value),
+//          potentially larger than what local system can handle as a single memory segment.
+//          In which case, it's necessary to use streaming mode to decompress data.
+// note 4 : If source is untrusted, decompressed size could be wrong or intentionally modified.
+//          Always ensure result fits within application's authorized limits.
+//          Each application can set its own limits.
+// note 5 : ZSTD_findDecompressedSize handles multiple frames, and so it must traverse the input to
+//          read each contained frame header.  This is fast as most of the data is skipped,
+//          however it does mean that all frame data must be present and valid. */
+pub extern fn ZSTD_findDecompressedSize(src: ?*const anyopaque, srcSize: usize) c_ulonglong;
 
 pub const Result = union(enum) {
     success: usize,
@@ -303,7 +326,7 @@ pub const ZstdReaderArrayList = struct {
                 unused = this.list.unusedCapacitySlice();
             }
 
-            var next_in = this.input[this.total_in..];
+            const next_in = this.input[this.total_in..];
             var in_buf = ZSTD_inBuffer{
                 .src = if (next_in.len > 0) next_in.ptr else null,
                 .size = next_in.len,

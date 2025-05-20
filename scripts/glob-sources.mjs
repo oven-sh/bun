@@ -23,7 +23,7 @@ async function globSources(output, patterns, excludes = []) {
     .sort((a, b) => a.localeCompare(b))
     .join("\n");
 
-  await write(join(root, "cmake", output), sources);
+  await write(join(root, "cmake", "sources", output), sources);
 }
 
 const input = await file(join(root, "cmake", "Sources.json")).json();

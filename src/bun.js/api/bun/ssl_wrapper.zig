@@ -186,8 +186,17 @@ pub fn SSLWrapper(comptime T: type) type {
         // Return if we have pending data to be read or write
         pub fn hasPendingData(this: *const This) bool {
             const ssl = this.ssl orelse return false;
-
             return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl)) > 0 or BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
+        }
+
+        pub fn hasPendingRead(this: *const This) bool {
+            const ssl = this.ssl orelse return false;
+            return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_rbio(ssl)) > 0;
+        }
+
+        pub fn hasPendingWrite(this: *const This) bool {
+            const ssl = this.ssl orelse return false;
+            return BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl)) > 0;
         }
 
         // We sent or received a shutdown (closing or closed)
@@ -478,14 +487,16 @@ pub fn SSLWrapper(comptime T: type) type {
         }
 
         fn handleTraffic(this: *This) void {
+
             // always handle the handshake first
             if (this.updateHandshakeState()) {
                 // shared stack buffer for reading and writing
                 var buffer: [BUFFER_SIZE]u8 = undefined;
                 // drain the input BIO first
                 this.handleWriting(&buffer);
-                // drain the output BIO
-                if (this.handleReading(&buffer)) {
+
+                // drain the output BIO in loop, because read can trigger writing and vice versa
+                while (this.hasPendingRead() and this.handleReading(&buffer)) {
                     // read data can trigger writing so we need to handle it
                     this.handleWriting(&buffer);
                 }

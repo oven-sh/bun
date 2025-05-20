@@ -73,6 +73,7 @@ static void buffer_finalizer(napi_env env, void *data, void *hint) {
   } else {
     printf("buffer_finalizer run from another thread\n");
   }
+  fflush(stdout);
   free(data);
   buffer_finalize_count++;
 }

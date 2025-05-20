@@ -5,7 +5,6 @@ import { basename, extname } from "path";
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
 const builtins = Module.builtinModules;
-fs.rmSync("out", { recursive: true, force: true });
 let commands = [];
 
 let moduleFiles = [];

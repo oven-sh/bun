@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build-gen": "bash -c 'esbuild --bundle *.js --outdir=bun --format=esm --platform=browser --external:buffer --external:stream --external:util --external:util/ --external:assert'",
-    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify-syntax --platform=browser --external:node:buffer --external:node:timers/promises'"
+    "build-gen": "bun build-fallbacks.ts",
+    "build": "bun run build-gen"
   },
   "author": "",
   "license": "ISC",
@@ -16,9 +16,9 @@
     "buffer": "^6.0.3",
     "console-browserify": "^1.2.0",
     "constants-browserify": "^1.0.0",
-    "crypto-browserify": "^3.12.0",
+    "crypto-browserify": "^3.12.1",
     "domain-browser": "^4.23.0",
-    "esbuild": "^0.14.54",
+    "esbuild": "^0.25.4",
     "events": "^3.3.0",
     "https-browserify": "^1.0.0",
     "os-browserify": "^0.3.0",

@@ -38,6 +38,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
 
   commands.push(
     buildCommand.then(async text => {
+      // This is very brittle. But that should be okay for our usecase
       let outfile = (await Bun.file(`${outdir}/${name}`).text())
         .replaceAll("__require(", "require(")
         .replace(/var __require.*$/gim, "")
@@ -45,11 +46,13 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         .trim();
 
       while (outfile.startsWith("import {")) {
-        outfile = outfile.slice(outfile.indexOf("\n") + 1).trim();
+        outfile = outfile.slice(outfile.indexOf(";\n") + 1);
       }
 
-      // console.log(outfile);
-      console.log(text);
+      if (text.includes("import ")) {
+        throw new Error("Unexpected import in " + name);
+      }
+
       await Bun.write(`${outdir}/${name}`, outfile);
     }),
   );

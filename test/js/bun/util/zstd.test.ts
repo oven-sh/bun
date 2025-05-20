@@ -15,7 +15,7 @@ describe("Zstandard compression", async () => {
         (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser.zig")).text()).repeat(50),
       ),
     },
-  ];
+  ] as const;
 
   // Test various input types
   const inputTypes = [

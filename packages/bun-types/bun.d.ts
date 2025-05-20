@@ -5403,6 +5403,36 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array;
 
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns The output buffer with the compressed data
+   */
+  function zstdCompressSync(data: Uint8Array | string | ArrayBuffer, options?: { level?: number }): Uint8Array;
+
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns A promise that resolves to the output buffer with the compressed data
+   */
+  function zstdCompress(data: Uint8Array | string | ArrayBuffer, options?: { level?: number }): Promise<Uint8Array>;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdDecompressSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns A promise that resolves to the output buffer with the decompressed data
+   */
+  function zstdDecompress(data: Uint8Array | string | ArrayBuffer): Promise<Uint8Array>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,

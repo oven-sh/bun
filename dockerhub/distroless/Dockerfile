@@ -2,7 +2,6 @@ FROM debian:bookworm-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
-
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
       ca-certificates \
@@ -21,23 +20,29 @@ RUN apt-get update -qq \
     esac \
     && version="$BUN_VERSION" \
     && case "$version" in \
-      latest | canary | bun-v*) tag="$version";; \
-      v*)                       tag="bun-$version";; \
-      *)                        tag="bun-v$version";; \
+      latest | canary | bun-v*) tag="$version"; ;; \
+      v*)                       tag="bun-$version"; ;; \
+      *)                        tag="bun-v$version"; ;; \
     esac \
     && case "$tag" in \
-      latest) release="latest/download";; \
-      *)      release="download/$tag";; \
+      latest) release="latest/download"; ;; \
+      *)      release="download/$tag"; ;; \
     esac \
-    && curl "https://github.com/oven-sh/bun/releases/$release/bun-linux-$build.zip" -fsSLO --compressed --retry 5 \
+    && curl "https://github.com/oven-sh/bun/releases/$release/bun-linux-$build.zip" \
+      -fsSLO \
+      --compressed \
+      --retry 5 \
       || (echo "error: failed to download: $tag" && exit 1) \
     && for key in \
       "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59" \
     ; do \
       gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
-      || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key"; \
+      || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
     done \
-    && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" -fsSLO --compressed --retry 5 \
+    && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
+      -fsSLO \
+      --compressed \
+      --retry 5 \
     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \

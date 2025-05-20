@@ -1994,6 +1994,51 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
         while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
         if (i >= env.len) break;
 
+        // For the --print option with quotes, we need to preserve them
+        if (i + 7 <= env.len and std.mem.eql(u8, env[i..i+7], "--print")) {
+            // Find the argument end
+            const start = i;
+            var j = i;
+            var found_equals = false;
+            
+            // Move past the --print part
+            j += 7;
+            
+            // Check for = or whitespace after --print
+            if (j < env.len) {
+                if (env[j] == '=') {
+                    found_equals = true;
+                    j += 1;
+                } else if (std.ascii.isWhitespace(env[j])) {
+                    j += 1;
+                    // Skip any whitespace between --print and the value
+                    while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
+                }
+            }
+            
+            // Handle the quoted value
+            if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
+                const quote_char = env[j];
+                j += 1; // Move past the quote
+                
+                // Find the closing quote
+                while (j < env.len and env[j] != quote_char) : (j += 1) {}
+                if (j < env.len) j += 1; // Move past the closing quote
+            } else if (found_equals) {
+                // If we had --print=value (no quotes), find next whitespace
+                while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            }
+            
+            // Copy the entire argument including quotes
+            const arg_len = j - start;
+            const arg = try allocator.allocSentinel(u8, arg_len, 0);
+            @memcpy(arg, env[start..j]);
+            try args.append(arg);
+            
+            i = j;
+            continue;
+        }
+
         var buf = std.ArrayList(u8).init(allocator);
 
         var in_single = false;

@@ -535,7 +535,7 @@ const ProxyTunnel = struct {
         if (this.wrapper) |*wrapper| {
             return try wrapper.writeData(buf);
         }
-        return 0;
+        return error.ConnectionClosed;
     }
 
     pub fn detachSocket(this: *ProxyTunnel) void {

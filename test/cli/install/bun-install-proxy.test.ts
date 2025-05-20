@@ -20,7 +20,7 @@ beforeAll(async () => {
       `${dockerCLI} run -d --name squid-container -e TZ=UTC -p 3128:3128 ubuntu/squid:5.2-22.04_beta`,
     ).catch(() => {});
 
-    async function waitForSquid(max_wait = 10000) {
+    async function waitForSquid(max_wait = 60_000) {
       const start = Date.now();
       while (true) {
         if (await isSquidRunning()) {
@@ -94,6 +94,6 @@ it("bun install with proxy with big packages", async () => {
       clearTimeout(timeout);
       resolve();
     }
-    expect().pass();
   }
-}, 30_000);
+  expect().pass();
+}, 60_000);

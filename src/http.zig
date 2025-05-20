@@ -22,6 +22,7 @@ const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
+const zstd = bun.zstd;
 const StringBuilder = bun.StringBuilder;
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -1906,11 +1907,12 @@ pub const CertificateInfo = struct {
 const Decompressor = union(enum) {
     zlib: *Zlib.ZlibReaderArrayList,
     brotli: *Brotli.BrotliReaderArrayList,
+    zstd: *zstd.ZstdReaderArrayList,
     none: void,
 
     pub fn deinit(this: *Decompressor) void {
         switch (this.*) {
-            inline .brotli, .zlib => |that| {
+            inline .brotli, .zlib, .zstd => |that| {
                 that.deinit();
                 this.* = .{ .none = {} };
             },
@@ -1954,6 +1956,17 @@ const Decompressor = union(enum) {
                     };
                     return;
                 },
+                .zstd => {
+                    this.* = .{
+                        .zstd = try zstd.ZstdReaderArrayList.initWithListAllocator(
+                            buffer,
+                            &body_out_str.list,
+                            body_out_str.allocator,
+                            default_allocator,
+                        ),
+                    };
+                    return;
+                },
                 else => @panic("Invalid encoding. This code should not be reachable"),
             }
         }
@@ -1984,6 +1997,14 @@ const Decompressor = union(enum) {
                 reader.list = body_out_str.list;
                 reader.total_out = @truncate(initial);
             },
+            .zstd => |reader| {
+                reader.input = buffer;
+                reader.total_in = 0;
+
+                const initial = body_out_str.list.items.len;
+                reader.list = body_out_str.list;
+                reader.total_out = @truncate(initial);
+            },
             else => @panic("Invalid encoding. This code should not be reachable"),
         }
     }
@@ -1992,6 +2013,7 @@ const Decompressor = union(enum) {
         switch (this.*) {
             .zlib => |zlib| try zlib.readAll(),
             .brotli => |brotli| try brotli.readAll(is_done),
+            .zstd => |reader| try reader.readAll(is_done),
             .none => {},
         }
     }
@@ -2196,7 +2218,7 @@ pub const InternalState = struct {
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
-            Encoding.brotli, Encoding.gzip, Encoding.deflate => {
+            Encoding.brotli, Encoding.gzip, Encoding.deflate, Encoding.zstd => {
                 try this.decompress(buffer, body_out_str, is_final_chunk);
             },
             else => {
@@ -2351,6 +2373,7 @@ pub const Encoding = enum {
     gzip,
     deflate,
     brotli,
+    zstd,
     chunked,
 
     pub fn canUseLibDeflate(this: Encoding) bool {
@@ -2362,7 +2385,7 @@ pub const Encoding = enum {
 
     pub fn isCompressed(this: Encoding) bool {
         return switch (this) {
-            .brotli, .gzip, .deflate => true,
+            .brotli, .gzip, .deflate, .zstd => true,
             else => false,
         };
     }
@@ -2376,7 +2399,7 @@ const connection_closing_header = picohttp.Header{ .name = "Connection", .value 
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
-const accept_encoding_compression = "gzip, deflate, br";
+const accept_encoding_compression = "gzip, deflate, br, zstd";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 
@@ -4341,6 +4364,9 @@ pub fn handleResponseMetadata(
                     } else if (strings.eqlComptime(header.value, "br")) {
                         this.state.encoding = Encoding.brotli;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
+                    } else if (strings.eqlComptime(header.value, "zstd")) {
+                        this.state.encoding = Encoding.zstd;
+                        this.state.content_encoding_i = @as(u8, @truncate(header_i));
                     }
                 }
             },
@@ -4356,6 +4382,10 @@ pub fn handleResponseMetadata(
                 } else if (strings.eqlComptime(header.value, "br")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .brotli;
+                    }
+                } else if (strings.eqlComptime(header.value, "zstd")) {
+                    if (!this.flags.disable_decompression) {
+                        this.state.transfer_encoding = .zstd;
                     }
                 } else if (strings.eqlComptime(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;

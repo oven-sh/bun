@@ -1499,6 +1499,15 @@ declare module "bun" {
 
   type ModuleFormat = "esm"; // later: "cjs", "iife"
 
+  /**
+   * Platform target for compiling executables
+   */
+  type BuildPlatform = "darwin" | "linux" | "win32";
+  /**
+   * Architecture target for compiling executables
+   */
+  type BuildArchitecture = "x64" | "arm64";
+
   type CompileTargetOperatingSystem = "windows" | "macos" | "linux";
   type CompileTargetArchitecture = "x64" | "arm64";
   type CompileTargetBaselineOrModern = "baseline" | "modern";
@@ -1567,14 +1576,21 @@ declare module "bun" {
     //     };
 
     /**
-     * Generate a single-file standalone executable
+     * Generate a standalone executable
+     * @default false
      */
-    compile?:
-      | true
-      | false
-      | `${CompileTargetOperatingSystem}-${CompileTargetArchitecture}`
-      | `${CompileTargetArchitecture}-${CompileTargetOperatingSystem}`
-      | `${CompileTargetBaselineOrModern}`;
+    compile?: boolean;
+
+    /**
+     * Specify target platform(s) for compilation
+     * Currently, only one target can be specified
+     */
+    targets?: 
+      | BuildPlatform
+      | BuildArchitecture
+      | `${BuildPlatform}-${BuildArchitecture}`
+      | `${BuildPlatform}-${BuildArchitecture}-baseline`
+      | Array<BuildPlatform | BuildArchitecture | `${BuildPlatform}-${BuildArchitecture}` | `${BuildPlatform}-${BuildArchitecture}-baseline`>;
   }
 
   namespace Password {

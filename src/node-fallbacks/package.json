@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "assert": "^2.1.0",
+    "react-refresh": "0.17.0",
     "browserify-zlib": "^0.2.0",
     "buffer": "^6.0.3",
     "console-browserify": "^1.2.0",
@@ -34,5 +35,8 @@
     "url": "^0.11.4",
     "util": "^0.12.5",
     "vm-browserify": "^1.1.2"
+  },
+  "overrides": {
+    "readable-stream": "^4.5.2"
   }
 }

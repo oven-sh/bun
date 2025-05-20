@@ -2023,5 +2023,13 @@ function notimpl(name) {
 
 export let resolveObjectURL = notimpl("resolveObjectURL");
 export let isUtf8 = notimpl("isUtf8");
-export let isAscii = notimpl("isAscii");
+export let isAscii = str => {
+  for (let char of str) {
+    if (char.charCodeAt(0) > 127) {
+      return false;
+    }
+  }
+  return true;
+};
 export let transcode = notimpl("transcode");
+export default Buffer;

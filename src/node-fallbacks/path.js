@@ -507,8 +507,8 @@ export function parse(path) {
   return ret;
 }
 
-export const sep = "/";
-export const delimiter = ":";
+const sep = "/";
+const delimiter = ":";
 
 // Use an IIFE to allow for tree-shaking
 export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
@@ -528,3 +528,5 @@ export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
   win32: null,
   posix: null,
 });
+
+export { sep, delimiter };

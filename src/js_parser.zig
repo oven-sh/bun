@@ -7018,7 +7018,7 @@ fn NewParser_(
                     }
 
                     if (p.scopes_in_order.items[last_i]) |prev_scope| {
-                        if (prev_scope.loc.start >= loc.start and p.lexer.token != .t_end_of_file) {
+                        if (prev_scope.loc.start >= loc.start) {
                             p.log.level = .verbose;
                             p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}) catch bun.outOfMemory();
                             p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}) catch bun.outOfMemory();
@@ -7682,7 +7682,15 @@ fn NewParser_(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            var scopeIndex: usize = 0;
+            var pushedScopeForFunctionArgs = false;
+            // Push scope if the current lexer token is an open parenthesis token.
+            // That is, the parser is about parsing function arguments
+            if (p.lexer.token == .t_open_paren) {
+                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+                pushedScopeForFunctionArgs = true;
+            }
+
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
@@ -7698,7 +7706,7 @@ fn NewParser_(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if (opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) {
+                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) and pushedScopeForFunctionArgs) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -12616,13 +12624,19 @@ fn NewParser_(
             p.allow_in = true;
 
             const loc = p.lexer.loc();
-            _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
-            defer p.popScope();
+            var scopeIndex: usize = 0;
+            var pushedScopeForFunctionBody = false;
+            if (p.lexer.token == .t_open_brace) {
+                scopeIndex = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+                pushedScopeForFunctionBody = true;
+            }
 
             try p.lexer.expect(.t_open_brace);
             var opts = ParseStatementOptions{};
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
             try p.lexer.next();
+
+            if (pushedScopeForFunctionBody) p.popAndDiscardScope(scopeIndex);
 
             p.allow_in = oldAllowIn;
             p.fn_or_arrow_data_parse = oldFnOrArrowData;

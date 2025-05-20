@@ -494,6 +494,16 @@ function Socket(options?) {
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
 
+  if (options?.fd !== undefined) {
+    if (options.fd < 0) {
+      throw $ERR_OUT_OF_RANGE("options.fd", options.fd, 0);
+    }
+
+    if (typeof options.fd !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("options.fd", options.fd, "number");
+    }
+  }
+
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,

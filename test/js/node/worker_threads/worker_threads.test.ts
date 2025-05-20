@@ -27,7 +27,7 @@ function setEnvironmentDataInScope(key: string, data: wt.Serializable): Disposab
   return {
     [Symbol.dispose]() {
       // delete the key. ignored because @types/node does not think you can pass undefined to setEnvironmentData
-      // @ts-ignore
+      // @ts-expect-error
       setEnvironmentData(key);
     },
   };

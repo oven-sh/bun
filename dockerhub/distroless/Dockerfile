@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim AS build
+FROM debian:bullseye-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -50,6 +50,9 @@ RUN apt-get update -qq \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx \          # ← added
+    && mkdir -p /usr/local/bun-node-fallback-bin \             # ← added
+    && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/nodebun \  # ← added
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun \
     && which bun \
@@ -58,7 +61,6 @@ RUN apt-get update -qq \
 FROM gcr.io/distroless/base-nossl-debian11
 
 # Disable the runtime transpiler cache by default inside Docker containers.
-# On ephemeral containers, the cache is not useful
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
@@ -66,19 +68,9 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
 
-COPY --from=build /usr/local/bin/bun /usr/local/bin/
-ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
+COPY --from=build /usr/local/bin/ /usr/local/bin/                 # ← changed
+COPY --from=build /usr/local/bun-node-fallback-bin /usr/local/bun-node-fallback-bin  # ← added
 
-# Temporarily use the `build`-stage image binaries to create a symlink:
-RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
-    --mount=type=bind,from=build,source=/bin,target=/bin \
-    --mount=type=bind,from=build,source=/usr/lib,target=/usr/lib \
-    --mount=type=bind,from=build,source=/lib,target=/lib \
-    <<EOF
-  ln -s /usr/local/bin/bun /usr/local/bin/bunx
-  which bunx
-  mkdir -p /usr/local/bun-node-fallback-bin
-  ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/nodebun
-EOF
+ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 
 ENTRYPOINT ["/usr/local/bin/bun"]

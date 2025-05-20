@@ -407,8 +407,8 @@ const ProxyTunnel = struct {
     pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         if (this.proxy_tunnel) |proxy| {
             const written = switch (proxy.socket) {
-                .ssl => |socket| socket.write(encoded_data, true),
-                .tcp => |socket| socket.write(encoded_data, true),
+                .ssl => |socket| socket.write(encoded_data, false),
+                .tcp => |socket| socket.write(encoded_data, false),
                 .none => 0,
             };
             const pending = encoded_data[@intCast(written)..];

@@ -8,7 +8,10 @@ const { throwOnInvalidTLSArray } = require("internal/tls");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
-const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+const { rootCertificates, canonicalizeIP } = $cpp<{
+  rootCertificates: readonly string[];
+  canonicalizeIP: (ip: string) => string;
+}>("NodeTLS.cpp", "createNodeTLSBinding");
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];

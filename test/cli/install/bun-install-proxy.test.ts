@@ -1,9 +1,9 @@
-import { beforeAll, describe, expect, it } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { beforeAll, expect, it } from "bun:test";
 import { exec } from "child_process";
-import { promisify } from "util";
 import { rm } from "fs/promises";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
+import { promisify } from "util";
 const execAsync = promisify(exec);
 const dockerCLI = Bun.which("docker") as string;
 const SQUID_URL = "http://127.0.0.1:3128";

@@ -506,23 +506,21 @@ const ProxyTunnel = struct {
         log("ProxyTunnel onWritable", .{});
         this.ref();
         defer this.deref();
-        while (true) {
-            const encoded_data = this.write_buffer.slice();
-            if (encoded_data.len == 0) {
-                return;
-            }
-            const written = socket.write(encoded_data, true);
-            if (written == encoded_data.len) {
-                this.write_buffer.reset();
-                _ = this.wrapper.?.flush();
-                continue;
-            }
-
-            this.write_buffer.cursor += @intCast(written);
+        defer {
             if (this.wrapper) |*wrapper| {
                 // Cycle to through the SSL state machine
                 _ = wrapper.flush();
             }
+        }
+        const encoded_data = this.write_buffer.slice();
+        if (encoded_data.len == 0) {
+            return;
+        }
+        const written = socket.write(encoded_data, true);
+        if (written == encoded_data.len) {
+            this.write_buffer.reset();
+        } else {
+            this.write_buffer.cursor += @intCast(written);
         }
     }
 

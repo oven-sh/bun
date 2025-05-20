@@ -46,7 +46,7 @@ pub fn SSLWrapper(comptime T: type) type {
         }
 
         inline fn getStackBuffer() StackBuffer {
-            // default initialize this.
+            // We do not need to initialize this memory.
             return undefined;
         }
 

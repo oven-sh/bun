@@ -222,16 +222,24 @@ const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
-const BunLoaderType BunLoaderTypeJSX = 0;
-const BunLoaderType BunLoaderTypeJS = 1;
-const BunLoaderType BunLoaderTypeTS = 2;
-const BunLoaderType BunLoaderTypeTSX = 3;
-const BunLoaderType BunLoaderTypeCSS = 4;
-const BunLoaderType BunLoaderTypeFILE = 5;
-const BunLoaderType BunLoaderTypeJSON = 6;
-const BunLoaderType BunLoaderTypeTOML = 7;
-const BunLoaderType BunLoaderTypeWASM = 8;
-const BunLoaderType BunLoaderTypeNAPI = 9;
+const BunLoaderType BunLoaderTypeJSX = 1;
+const BunLoaderType BunLoaderTypeJS = 2;
+const BunLoaderType BunLoaderTypeTS = 3;
+const BunLoaderType BunLoaderTypeTSX = 4;
+const BunLoaderType BunLoaderTypeCSS = 5;
+const BunLoaderType BunLoaderTypeFILE = 6;
+const BunLoaderType BunLoaderTypeJSON = 7;
+const BunLoaderType BunLoaderTypeJSONC = 8;
+const BunLoaderType BunLoaderTypeTOML = 9;
+const BunLoaderType BunLoaderTypeWASM = 10;
+const BunLoaderType BunLoaderTypeNAPI = 11;
+const BunLoaderType BunLoaderTypeBASE64 = 12;
+const BunLoaderType BunLoaderTypeDATAURL = 13;
+const BunLoaderType BunLoaderTypeTEXT = 14;
+const BunLoaderType BunLoaderTypeBUNSH = 15;
+const BunLoaderType BunLoaderTypeSQLITE = 16;
+const BunLoaderType BunLoaderTypeSQLITE_EMBEDDED = 17;
+const BunLoaderType BunLoaderTypeHTML = 18;
 
 #pragma mark - Stream
 

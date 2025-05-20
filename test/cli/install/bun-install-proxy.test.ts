@@ -1,7 +1,7 @@
 import { beforeAll, expect, it } from "bun:test";
 import { exec, execSync } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);

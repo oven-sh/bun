@@ -13,7 +13,7 @@ const server = Bun.serve({
   fetch(req, server) {
     const cookies = req.headers.get("cookie");
     const username = getUsernameFromCookies(cookies);
-    const success = server.upgrade(req, { data: { username } });
+    const success = server.upgrade<WebSocketData>(req, { data: { username } });
     if (success) return undefined;
 
     return new Response("Hello world");

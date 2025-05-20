@@ -11,9 +11,9 @@ type WebSocketData = { socketId: number };
 
 Bun.serve({
   fetch(req, server) {
-    const success = server.upgrade(req, {
+    const success = server.upgrade<WebSocketData>(req, {
       data: {
-        socketId: Math.random(),
+        socketId: Math.random(), // Do something better than this in a real app
       },
     });
 

@@ -7,7 +7,9 @@ Bun's server-side `WebSocket` API provides a native pub-sub API. Sockets can be 
 This code snippet implements a simple single-channel chat server.
 
 ```ts
-const server = Bun.serve<{ username: string }>({
+type WebSocketData = { username: string };
+
+const server = Bun.serve({
   fetch(req, server) {
     const cookies = req.headers.get("cookie");
     const username = getUsernameFromCookies(cookies);
@@ -22,7 +24,7 @@ const server = Bun.serve<{ username: string }>({
       ws.subscribe("the-group-chat");
       server.publish("the-group-chat", msg);
     },
-    message(ws, message) {
+    message(ws: Bun.ServerWebSocket<WebSocketData>, message) {
       // the server re-broadcasts incoming messages to everyone
       server.publish("the-group-chat", `${ws.data.username}: ${message}`);
     },

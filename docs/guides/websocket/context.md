@@ -7,21 +7,26 @@ When building a WebSocket server, it's typically necessary to store some identif
 With [Bun.serve()](https://bun.sh/docs/api/websockets#contextual-data), this "contextual data" is set when the connection is initially upgraded by passing a `data` parameter in the `server.upgrade()` call.
 
 ```ts
-Bun.serve<{ socketId: number }>({
+type WebSocketData = { socketId: number };
+
+Bun.serve({
   fetch(req, server) {
     const success = server.upgrade(req, {
       data: {
         socketId: Math.random(),
       },
     });
-    if (success) return undefined;
+
+    if (success) {
+      return;
+    }
 
     // handle HTTP request normally
     // ...
   },
   websocket: {
     // define websocket handlers
-    async message(ws, message) {
+    async message(ws: Bun.ServerWebSocket<WebSocketData>, message) {
       // the contextual data is available as the `data` property
       // on the WebSocket instance
       console.log(`Received ${message} from ${ws.data.socketId}}`);
@@ -42,7 +47,7 @@ type WebSocketData = {
 };
 
 // TypeScript: specify the type of `data`
-Bun.serve<WebSocketData>({
+Bun.serve({
   async fetch(req, server) {
     // use a library to parse cookies
     const cookies = parseCookies(req.headers.get("Cookie"));
@@ -60,7 +65,7 @@ Bun.serve<WebSocketData>({
     if (upgraded) return undefined;
   },
   websocket: {
-    async message(ws, message) {
+    async message(ws: Bun.ServerWebSocket<WebSocketData>, message) {
       // save the message to a database
       await saveMessageToDatabase({
         message: String(message),

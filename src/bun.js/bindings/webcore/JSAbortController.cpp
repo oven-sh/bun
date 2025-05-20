@@ -317,6 +317,7 @@ void JSAbortController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     addWebCoreOpaqueRoot(visitor, thisObject->wrapped().opaqueRoot());
+    thisObject->wrapped().signal().reason().visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortController);

@@ -161,14 +161,9 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} x
-      esbuild ${ESBUILD_ARGS}
+    ${BUN_EXECUTABLE} run build-fallbacks
+      ${BUN_NODE_FALLBACKS_OUTPUT}
       ${BUN_NODE_FALLBACKS_SOURCES}
-      --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
-      --format=esm
-      --minify
-      --bundle
-      --platform=browser
   SOURCES
     ${BUN_NODE_FALLBACKS_SOURCES}
     ${BUN_NODE_FALLBACKS_NODE_MODULES}

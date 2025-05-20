@@ -3,9 +3,10 @@ import * as fs from "fs";
 import { basename, extname } from "path";
 
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
-
+const outdir = process.argv[2];
 const builtins = Module.builtinModules;
 fs.rmSync("out", { recursive: true, force: true });
+let commands = [];
 for (const name of allFiles) {
   const mod = basename(name, extname(name)).replaceAll(".", "/");
   const file = allFiles.find(f => f.startsWith(mod));
@@ -19,6 +20,12 @@ for (const name of allFiles) {
   const externalModules = builtins.flatMap(b => [`--external:node:${b}`, `--external:${b}`]).join(" ");
   console.log(`bun build ${file} --minify-syntax ${externalModules}`);
   // Create the build command with all the specified options
-  const buildCommand = await Bun.$`bun build --outdir=out ${name} --minify --target=browser ${externalModules}`.text();
-  console.log(buildCommand);
+  const buildCommand = Bun.$`bun build --outdir=${outdir} ${name} --minify --target=browser ${externalModules}`.text();
+  commands.push(
+    buildCommand.then(text => {
+      console.log(text);
+    }),
+  );
 }
+
+await Promise.all(commands);

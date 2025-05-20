@@ -3478,42 +3478,37 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 switch (this.state.original_request_body) {
                     .bytes => {
                         this.setTimeout(socket, 5);
-                        while (this.state.request_body.len > 0) {
-                            const to_send = this.state.request_body;
-                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                            this.state.request_sent_len += @as(usize, @intCast(amount));
-                            this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+                        const to_send = this.state.request_body;
+                        const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
-                            if (this.state.request_body.len == 0) {
-                                this.state.request_stage = .done;
-                                return;
-                            }
+                        this.state.request_sent_len += @as(usize, @intCast(amount));
+                        this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
+
+                        if (this.state.request_body.len == 0) {
+                            this.state.request_stage = .done;
+                            return;
                         }
                     },
                     .stream => {
                         var stream = &this.state.original_request_body.stream;
                         stream.has_backpressure = false;
                         this.setTimeout(socket, 5);
-                        while (!stream.has_backpressure and stream.buffer.isNotEmpty()) {
-                            // to simplify things here the buffer contains the raw data we just need to flush to the socket it
-                            if (stream.buffer.isNotEmpty()) {
-                                const to_send = stream.buffer.slice();
-                                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                                this.state.request_sent_len += amount;
-                                stream.buffer.cursor += @truncate(amount);
-                                if (amount < to_send.len) {
-                                    stream.has_backpressure = true;
-                                }
-                                if (stream.buffer.isEmpty()) {
-                                    stream.buffer.reset();
-                                }
+
+                        // to simplify things here the buffer contains the raw data we just need to flush to the socket it
+                        if (stream.buffer.isNotEmpty()) {
+                            const to_send = stream.buffer.slice();
+                            const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                            this.state.request_sent_len += amount;
+                            stream.buffer.cursor += @truncate(amount);
+                            if (amount < to_send.len) {
+                                stream.has_backpressure = true;
                             }
-                            if (stream.hasEnded()) {
-                                this.state.request_stage = .done;
-                                stream.buffer.deinit();
-                                return;
-                            }
+                        }
+                        if (stream.hasEnded()) {
+                            this.state.request_stage = .done;
+                            stream.buffer.deinit();
+                            return;
                         }
                     },
                     .sendfile => {

@@ -57,11 +57,6 @@ extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject)
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
 
-export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
-    const worker = vm.worker orelse return null;
-    return worker.cpp_worker;
-}
-
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
     return this.requested_terminate.load(.monotonic);
 }

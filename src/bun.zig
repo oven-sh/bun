@@ -1995,15 +1995,15 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
         if (i >= env.len) break;
 
         // For the --print option with quotes, we need to preserve them
-        if (i + 7 <= env.len and std.mem.eql(u8, env[i..i+7], "--print")) {
+        if (i + 7 <= env.len and std.mem.eql(u8, env[i .. i + 7], "--print")) {
             // Find the argument end
             const start = i;
             var j = i;
             var found_equals = false;
-            
+
             // Move past the --print part
             j += 7;
-            
+
             // Check for = or whitespace after --print
             if (j < env.len) {
                 if (env[j] == '=') {
@@ -2015,12 +2015,12 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                     while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
                 }
             }
-            
+
             // Handle the quoted value
             if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
                 const quote_char = env[j];
                 j += 1; // Move past the quote
-                
+
                 // Find the closing quote
                 while (j < env.len and env[j] != quote_char) : (j += 1) {}
                 if (j < env.len) j += 1; // Move past the closing quote
@@ -2028,13 +2028,13 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 // If we had --print=value (no quotes), find next whitespace
                 while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
             }
-            
+
             // Copy the entire argument including quotes
             const arg_len = j - start;
             const arg = try allocator.allocSentinel(u8, arg_len, 0);
             @memcpy(arg, env[start..j]);
             try args.append(arg);
-            
+
             i = j;
             continue;
         }

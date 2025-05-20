@@ -44,6 +44,7 @@
 #include <JavaScriptCore/StructureCache.h>
 
 #include <webcore/SerializedScriptValue.h>
+#include <webcore/Worker.h>
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringToIntegerConversion.h"
@@ -664,7 +665,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     return JSValue::encode(resultValue);
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
@@ -672,10 +673,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         return JSValue::encode(jsNumber(currentMask));
     }
 
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto value = callFrame->argument(0);
 
+    if (globalObject->worker()) {
+        return Bun::ERR::WORKER_UNSUPPORTED_OPERATION(throwScope, globalObject, "Setting process.umask()"_s);
+    }
+
+    auto value = callFrame->argument(0);
     mode_t newUmask;
     if (value.isString()) {
         auto str = value.getString(globalObject);

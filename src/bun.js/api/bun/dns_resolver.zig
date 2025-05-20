@@ -1392,14 +1392,14 @@ pub const InternalDNS = struct {
         .addrlen = 0,
         .canonname = null,
         .family = std.c.AF.UNSPEC,
-        // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
         // https://bugzilla.mozilla.org/show_bug.cgi?id=467497
         // https://github.com/adobe/chromium/blob/cfe5bf0b51b1f6b9fe239c2a3c2f2364da9967d7/net/base/host_resolver_proc.cc#L122-L241
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        .flags = if (Environment.isPosix) .{ .ADDRCONFIG = true } else .{},
+        // observed .ADDRCONFIG=true causing issues in the wild once node:net was brought more in sync with tests
+        .flags = .{},
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,

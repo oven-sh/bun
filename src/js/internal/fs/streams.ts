@@ -3,13 +3,7 @@ import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
-  FileHandle: { new (): FileHandle };
-  readonly kRef: unique symbol;
-  readonly kUnref: unique symbol;
-  readonly kFd: unique symbol;
-  fs: typeof fs;
-};
+const { FileHandle, kRef, kUnref, kFd } = require("internal/fs/FileHandle");
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
 };

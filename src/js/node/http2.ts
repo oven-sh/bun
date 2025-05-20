@@ -4,8 +4,6 @@
  * originally developed by Node.js contributors and Joyent, Inc.
  *
  * Copyright Node.js contributors. All rights reserved.
- * Copyright Joyent, Inc. and other Node contributors. All rights reserved.
- *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -27,13 +25,11 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { hideFromStack, kFd } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-const { $data } = require("node:fs/promises");
-const FileHandle = $data.FileHandle;
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
@@ -2170,8 +2166,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
+    if (fd?.[kFd]) {
+      fs.fstat(fd?.[kFd], doSendFileFD.bind(this, options, fd, headers));
     } else {
       fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
     }

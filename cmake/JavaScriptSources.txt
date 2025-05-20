@@ -54,6 +54,7 @@ src/js/internal/fifo.ts
 src/js/internal/fixed_queue.ts
 src/js/internal/fs/cp-sync.ts
 src/js/internal/fs/cp.ts
+src/js/internal/fs/FileHandle.ts
 src/js/internal/fs/glob.ts
 src/js/internal/fs/streams.ts
 src/js/internal/html.ts

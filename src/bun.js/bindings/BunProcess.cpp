@@ -3582,8 +3582,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 
 /* Source for Process.lut.h
 @begin processObjectTable
-  _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
@@ -3591,8 +3589,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        Process_stubEmptyFunction                           Function 0
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
@@ -3676,7 +3672,93 @@ const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
 
-void Process::finishCreation(JSC::VM& vm)
+#if OS(WINDOWS)
+#define FOR_EACH_UNSUPPORTED_WORKER_POSIX_FUNCTION(V)
+#else
+#define FOR_EACH_UNSUPPORTED_WORKER_POSIX_FUNCTION(V) \
+    V(setuid)                                         \
+    V(seteuid)                                        \
+    V(setgid)                                         \
+    V(setegid)                                        \
+    V(setgroups)                                      \
+    V(initgroups)
+#endif
+
+#define FOR_EACH_UNSUPPORTED_WORKER_FUNCTION(V) \
+    V(abort)                                    \
+    V(chdir)                                    \
+    V(send)                                     \
+    V(disconnect)                               \
+    FOR_EACH_UNSUPPORTED_WORKER_POSIX_FUNCTION(V)
+
+#define DEFINE_DISABLED_FUNCTION(ident)                                                                                         \
+    JSC_DEFINE_HOST_FUNCTION(processDisabledFunction_##ident, (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame)) \
+    {                                                                                                                           \
+        static constexpr char msg[] = "process." #ident "()";                                                                   \
+        static constexpr ASCIILiteral msg_s { msg };                                                                            \
+        auto& vm = JSC::getVM(globalObject);                                                                                    \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                   \
+        return Bun::ERR::WORKER_UNSUPPORTED_OPERATION(scope, globalObject, msg_s);                                              \
+    }
+
+FOR_EACH_UNSUPPORTED_WORKER_FUNCTION(DEFINE_DISABLED_FUNCTION)
+
+#undef DEFINE_DISABLED_FUNCTION
+
+JSC_DEFINE_HOST_FUNCTION(processDisabledGetter_channel, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return Bun::ERR::WORKER_UNSUPPORTED_OPERATION(scope, globalObject, "process.channel"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(processDisabledGetter_connected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return Bun::ERR::WORKER_UNSUPPORTED_OPERATION(scope, globalObject, "process.connected"_s);
+}
+
+void Process::installDisabledFunctions(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+#define ASSIGN_DISABLED_FUNCTION(ident)                                                                                                                 \
+    {                                                                                                                                                   \
+        auto* fn = JSFunction::create(vm, globalObject, 0, "unavailableInWorker"_s, processDisabledFunction_##ident, ImplementationVisibility::Public); \
+        fn->putDirect(vm, Identifier::fromString(vm, "disabled"_s), jsBoolean(true));                                                                   \
+        putDirect(vm, Identifier::fromString(vm, #ident##_s), fn);                                                                                      \
+    }
+
+    // set up the functions that are supposed to throw and have `disabled` set to true
+    FOR_EACH_UNSUPPORTED_WORKER_FUNCTION(ASSIGN_DISABLED_FUNCTION)
+
+#undef ASSIGN_DISABLED_FUNCTION
+
+    // if we have IPC, set up getters for these properties that throw
+    auto fdValue = globalObject->processEnvObject()->get(globalObject, Identifier::fromString(vm, "NODE_CHANNEL_FD"_s));
+    if (fdValue.toBoolean(globalObject)) {
+        putDirectAccessor(
+            globalObject,
+            Identifier::fromString(vm, "channel"_s),
+            GetterSetter::create(
+                vm,
+                globalObject,
+                JSFunction::create(vm, globalObject, 0, "unavailableInWorker"_s, processDisabledGetter_channel, ImplementationVisibility::Public),
+                jsUndefined()),
+            PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor);
+
+        putDirectAccessor(
+            globalObject,
+            Identifier::fromString(vm, "connected"_s),
+            GetterSetter::create(
+                vm,
+                globalObject,
+                JSFunction::create(vm, globalObject, 0, "unavailableInWorker"_s, processDisabledGetter_connected, ImplementationVisibility::Public),
+                jsUndefined()),
+            PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor);
+    }
+}
+
+void Process::finishCreation(JSC::VM& vm, Zig::GlobalObject& globalObject)
 {
     Base::finishCreation(vm);
 
@@ -3706,6 +3788,18 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    if (globalObject.worker()) {
+        installDisabledFunctions(vm, &globalObject);
+    } else {
+        // these properties need to not even exist in workers, since node tests that `prop in process` is false
+        auto* fn = JSFunction::create(vm, &globalObject, 0, "(anonymous)"_s, Process_stubEmptyFunction, ImplementationVisibility::Public);
+        putDirect(vm, Identifier::fromString(vm, "_startProfilerIdleNotifier"_s), fn);
+        putDirect(vm, Identifier::fromString(vm, "_stopProfilerIdleNotifier"_s), fn);
+        putDirect(vm, Identifier::fromString(vm, "_debugProcess"_s), fn);
+        putDirect(vm, Identifier::fromString(vm, "_debugPause"_s), fn);
+        putDirect(vm, Identifier::fromString(vm, "_debugEnd"_s), fn);
+    }
 }
 
 } // namespace Bun

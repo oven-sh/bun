@@ -84,12 +84,12 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
+    static Process* create(Zig::GlobalObject& globalObject, JSC::Structure* structure)
     {
         auto emitter = WebCore::EventEmitter::create(*globalObject.scriptExecutionContext());
-        Process* accessor = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, WTFMove(emitter));
-        accessor->finishCreation(globalObject.vm());
-        return accessor;
+        Process* process = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, WTFMove(emitter));
+        process->finishCreation(globalObject.vm(), globalObject);
+        return process;
     }
 
     DECLARE_VISIT_CHILDREN;
@@ -107,8 +107,6 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
     }
 
-    void finishCreation(JSC::VM& vm);
-
     inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback)
     {
         m_uncaughtExceptionCaptureCallback.set(vm(), this, callback);
@@ -124,6 +122,12 @@ public:
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
+
+private:
+    void finishCreation(JSC::VM& vm, Zig::GlobalObject& globalObject);
+    // Replace functions that should be disabled in Workers with stubs that throw an error when
+    // called and have the `disabled` property set to true
+    void installDisabledFunctions(JSC::VM& vm, Zig::GlobalObject* globalObject);
 };
 
 bool isSignalName(WTF::String input);

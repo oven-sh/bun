@@ -70,6 +70,8 @@ var shared_request_headers_buf: [256]picohttp.Header = undefined;
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
+pub var ssl_wrapper_static_buffer: [1024*1024]u8 = undefined;
+
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const Signals = struct {

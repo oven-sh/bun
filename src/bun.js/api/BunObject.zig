@@ -1839,7 +1839,7 @@ pub const JSZstd = struct {
         // Try to get the decompressed size
         const decompressed_size = bun.zstd.getDecompressedSize(input);
 
-        if (decompressed_size == 0) {
+        if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
             // If size is unknown, we'll need to decompress in chunks
             return globalThis.ERR(.ZSTD, "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large. If you run into this error with a valid input, please file an issue at https://github.com/oven-sh/bun/issues", .{}).throw();
         }
@@ -1920,7 +1920,7 @@ pub const JSZstd = struct {
                 // Try to get the decompressed size
                 const decompressed_size = bun.zstd.getDecompressedSize(input);
 
-                if (decompressed_size == 0) {
+                if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
                     job.error_message = "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large";
                     return;
                 }

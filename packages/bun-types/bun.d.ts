@@ -5409,7 +5409,10 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function zstdCompressSync(data: NodeJS.TypedArray | string | ArrayBuffer, options?: { level?: number }): Buffer;
+  function zstdCompressSync(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Buffer;
 
   /**
    * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
@@ -5417,21 +5420,24 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns A promise that resolves to the output buffer with the compressed data
    */
-  function zstdCompress(data: NodeJS.TypedArray | string | ArrayBuffer, options?: { level?: number }): Promise<Buffer>;
+  function zstdCompress(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Promise<Buffer>;
 
   /**
    * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function zstdDecompressSync(data: NodeJS.TypedArray | string | ArrayBuffer): Buffer;
+  function zstdDecompressSync(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Buffer;
 
   /**
    * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
    * @param data The buffer of data to decompress
    * @returns A promise that resolves to the output buffer with the decompressed data
    */
-  function zstdDecompress(data: NodeJS.TypedArray | string | ArrayBuffer): Promise<Buffer>;
+  function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
 
   type Target =
     /**

@@ -17,6 +17,22 @@ describe("Zstandard compression", async () => {
     },
   ] as const;
 
+  it("throws with invalid level", () => {
+    expect(() => zstdCompressSync(new Uint8Array(), { level: 0 })).toThrow();
+    expect(() => zstdCompress(new Uint8Array(), { level: 0 })).toThrow();
+    expect(() => zstdDecompressSync(new Uint8Array(), { level: -1 })).toThrow();
+    expect(() => zstdDecompress(new Uint8Array(), { level: -1 })).toThrow();
+  });
+
+  it("throws with invalid input", () => {
+    expect(() => zstdDecompressSync("wow such compressed")).toThrow();
+    expect(() => zstdDecompress("veryyy such compressed")).toThrow();
+    const valid = zstdCompressSync(Buffer.from("wow such compressed"));
+    valid[0] = 0;
+    valid[valid.length - 1] = 0;
+    expect(() => zstdDecompressSync(valid)).toThrow();
+  });
+
   for (const { data: input, name } of testCases) {
     describe(name + " (" + input.length + " bytes)", () => {
       for (let level = 1; level <= 22; level++) {

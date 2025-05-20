@@ -1,5 +1,5 @@
-import * as Module from "module";
 import * as fs from "fs";
+import * as Module from "module";
 import { basename, extname } from "path";
 
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));

@@ -230,7 +230,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   }
 }
 
-export { setTimeoutPromise as setTimeout, setImmediatePromise as setImmediate, setIntervalPromise as setInterval };
+export { setImmediatePromise as setImmediate, setIntervalPromise as setInterval, setTimeoutPromise as setTimeout };
 
 export const scheduler = {
   wait: (delay, options) => setTimeoutPromise(delay, undefined, options),

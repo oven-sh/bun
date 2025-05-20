@@ -529,4 +529,4 @@ export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
   posix: null,
 });
 
-export { sep, delimiter };
+export { delimiter, sep };

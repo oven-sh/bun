@@ -535,12 +535,12 @@ Object.assign(EventEmitter, {
 export default EventEmitter;
 export {
   EventEmitter,
-  once,
-  getMaxListeners,
-  setMaxListeners,
-  getEventListeners,
-  listenerCount,
-  captureRejectionSymbol,
   addAbortListener,
+  captureRejectionSymbol,
+  getEventListeners,
+  getMaxListeners,
   EventEmitter as init,
+  listenerCount,
+  once,
+  setMaxListeners,
 };

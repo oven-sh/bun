@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -402,10 +402,12 @@ describe("environmentData", () => {
 
 describe("error event", () => {
   test("is fired with a copy of the error value", async () => {
-    const worker = new Worker("throw new TypeError('oh no')", { eval: true });
+    const worker = new Worker("const e = new TypeError('oh no'); e.code = 'ERR_OHNO'; throw e;", { eval: true });
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("oh no");
+    // TODO(@190n) find out why extra properties on errors are not propagated
+    // expect(err.code).toBe("ERR_OHNO");
   });
 
   test("falls back to string when the error cannot be serialized", async () => {
@@ -419,5 +421,108 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
+});
+
+describe("unsupported functions and properties", () => {
+  test("getting process.umask works", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = new Worker("process.exit(process.umask())", { eval: true });
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    expect(await promise).toBe(process.umask());
+  });
+
+  test("setting process.umask", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = new Worker(
+      /* js */ `
+        import assert from "node:assert";
+        assert.throws(() => process.umask(123), {
+          name: "TypeError",
+          code: "ERR_WORKER_UNSUPPORTED_OPERATION",
+          message: "Setting process.umask() is not supported in workers",
+        });
+      `,
+      {
+        eval: true,
+      },
+    );
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    expect(await promise).toBe(0);
+  });
+
+  test("functions that throw", async () => {
+    const stubs = ["abort", "chdir", "send", "disconnect"];
+    if (!isWindows) {
+      stubs.push("setuid", "seteuid", "setgid", "setegid", "setgroups", "initgroups");
+    }
+
+    let code = 'import assert from "node:assert"';
+    for (const fn of stubs) {
+      code += /* js */ `
+        assert.strictEqual(process.${fn}.disabled, true);
+        assert.strictEqual(process.${fn}.name, "unavailableInWorker");
+        assert.throws(process.${fn}, {
+          name: "TypeError",
+          code: "ERR_WORKER_UNSUPPORTED_OPERATION",
+          message: "process.${fn}() is not supported in workers",
+        });`;
+    }
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = new Worker(code, { eval: true });
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    expect(await promise).toBe(0);
+  });
+
+  test("getters that throw when IPC appears to be enabled", async () => {
+    const before = process.env.NODE_CHANNEL_FD;
+    try {
+      // make worker think we have IPC
+      process.env.NODE_CHANNEL_FD = "truthy";
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.throws(() => process.channel, {
+            name: "TypeError",
+            code: "ERR_WORKER_UNSUPPORTED_OPERATION",
+            message: "process.channel is not supported in workers",
+          });
+          assert.throws(() => process.connected, {
+            name: "TypeError",
+            code: "ERR_WORKER_UNSUPPORTED_OPERATION",
+            message: "process.connected is not supported in workers",
+          });
+        `,
+        { eval: true },
+      );
+      worker.on("error", reject);
+      worker.on("exit", resolve);
+      expect(await promise).toBe(0);
+    } finally {
+      process.env.NODE_CHANNEL_FD = before;
+    }
+  });
+
+  test("properties that are not defined", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const worker = new Worker(
+      /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual("_startProfilerIdleNotifier" in process, false);
+          assert.strictEqual("_stopProfilerIdleNotifier" in process, false);
+          assert.strictEqual("_debugProcess" in process, false);
+          assert.strictEqual("_debugPause" in process, false);
+          assert.strictEqual("_debugEnd" in process, false);
+        `,
+      { eval: true },
+    );
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    expect(await promise).toBe(0);
   });
 });

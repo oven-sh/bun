@@ -1997,16 +1997,16 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
         // Handle all command-line arguments with quotes preserved
         const start = i;
         var j = i;
-        
+
         // Check if this is an option (starts with --)
         const is_option = j + 2 <= env.len and env[j] == '-' and env[j + 1] == '-';
-        
+
         if (is_option) {
             // Find the end of the option flag (--flag)
             while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
-            
+
             var found_equals = false;
-            
+
             // Check for equals sign
             if (j < env.len and env[j] == '=') {
                 found_equals = true;
@@ -2016,12 +2016,12 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 // Skip any additional whitespace
                 while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
             }
-            
+
             // Handle quoted values
             if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
                 const quote_char = env[j];
                 j += 1; // Move past opening quote
-                
+
                 // Find the closing quote
                 while (j < env.len and env[j] != quote_char) : (j += 1) {}
                 if (j < env.len) j += 1; // Move past closing quote
@@ -2029,20 +2029,20 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 // If we had --flag=value (no quotes), find next whitespace
                 while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
             }
-            
+
             // Copy the entire argument including quotes
             const arg_len = j - start;
             const arg = try allocator.allocSentinel(u8, arg_len, 0);
             @memcpy(arg, env[start..j]);
             try args.append(arg);
-            
+
             i = j;
             continue;
         }
-        
+
         // Non-option arguments or standalone values
         var buf = std.ArrayList(u8).init(allocator);
-        
+
         var in_single = false;
         var in_double = false;
         var escape = false;
@@ -2053,12 +2053,12 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 escape = false;
                 continue;
             }
-            
+
             if (ch == '\\') {
                 escape = true;
                 continue;
             }
-            
+
             if (in_single) {
                 if (ch == '\'') {
                     in_single = false;
@@ -2067,7 +2067,7 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 }
                 continue;
             }
-            
+
             if (in_double) {
                 if (ch == '"') {
                     in_double = false;
@@ -2076,7 +2076,7 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 }
                 continue;
             }
-            
+
             if (ch == '\'') {
                 in_single = true;
             } else if (ch == '"') {
@@ -2087,12 +2087,12 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
                 try buf.append(ch);
             }
         }
-        
+
         try buf.append(0);
         const owned = try buf.toOwnedSlice();
         try args.append(owned[0 .. owned.len - 1 :0]);
     }
-    
+
     return args.toOwnedSlice();
 }
 

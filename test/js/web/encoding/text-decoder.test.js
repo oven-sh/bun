@@ -298,6 +298,12 @@ describe("TextDecoder", () => {
     const decoder = new TextDecoder(undefined);
     expect(decoder.encoding).toBe("utf-8");
   });
+
+  it("should support undefined options", () => {
+      expect(() => {
+          const decoder = new TextDecoder("utf-8", undefined);
+      }).not.toThrow();
+  });
 });
 
 describe("TextDecoder ignoreBOM", () => {

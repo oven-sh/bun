@@ -31,7 +31,6 @@ server.on('stream', common.mustCall((stream) => {
                        fs.readFileSync(loc).length);
   }));
 }));
-
 server.listen(common.PIPE, common.mustCall(() => {
   const client = http2.connect('http://localhost', {
     createConnection(url) {

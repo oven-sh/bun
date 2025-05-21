@@ -1,6 +1,5 @@
-import { describe, expect, it, afterAll, beforeAll } from "bun:test";
-import { randomBytes } from "crypto";
-import { zstdCompressSync, zstdDecompressSync, zstdCompress, zstdDecompress } from "bun";
+import { zstdCompress, zstdCompressSync, zstdDecompress, zstdDecompressSync } from "bun";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import path from "path";
 
 describe("Zstandard compression", async () => {

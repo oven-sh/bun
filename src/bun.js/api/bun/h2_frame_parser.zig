@@ -1244,23 +1244,27 @@ pub const H2FrameParser = struct {
     }
 
     fn incrementWindowSizeIfNeeded(this: *H2FrameParser) void {
+        // We wait until half of the window size is used before incrementing to speed up the window size updates
+        // each increment is 64KiB
         var total_increment: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
-            if (stream.usedWindowSize == stream.windowSize) {
+            if (stream.usedWindowSize >= stream.windowSize / 2) {
                 stream.windowSize += WINDOW_INCREMENT_SIZE;
                 this.sendWindowUpdate(stream.id, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
                 total_increment += 1;
             }
         }
-
-        if (this.usedWindowSize == this.windowSize) {
+        if (this.usedWindowSize >= this.windowSize / 2) {
             if (total_increment < 1) {
                 total_increment = 1;
             }
             this.windowSize += WINDOW_INCREMENT_SIZE * total_increment; // we will need at least this many increments to send all the streams
             this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE * total_increment));
         }
+
+        // incrementing the window size is a good time to flush
+        _ = this.flush();
     }
 
     pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) bool {
@@ -1660,6 +1664,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn flush(this: *H2FrameParser) usize {
+        log("flush", .{});
         this.ref();
         defer this.deref();
         var written = switch (this.native_socket) {

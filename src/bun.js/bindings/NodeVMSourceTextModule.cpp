@@ -79,7 +79,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return ptr;
     }
 
-    ModuleProgramExecutable* executable = ModuleProgramExecutable::create(globalObject, ptr->sourceCode());
+    ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
+    ASSERT(executable != nullptr);
     ptr->m_cachedExecutable.set(vm, ptr, executable);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
@@ -323,7 +324,9 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
 {
     if (!m_bytecode) {
         if (!m_cachedExecutable) {
-            m_cachedExecutable.set(globalObject->vm(), this, JSC::ModuleProgramExecutable::create(globalObject, m_sourceCode));
+            JSC::ModuleProgramExecutable* executable = JSC::ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
+            ASSERT(executable != nullptr);
+            m_cachedExecutable.set(globalObject->vm(), this, executable);
         }
         m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
     }

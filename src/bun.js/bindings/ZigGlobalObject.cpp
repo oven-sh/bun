@@ -292,7 +292,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
-        JSC::Options::useIteratorHelpers() = true;
         JSC::Options::heapGrowthSteepnessFactor() = 1.0;
         JSC::Options::heapGrowthMaxIncrease() = 2.0;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
@@ -1528,8 +1527,8 @@ JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     double cellPtr = callFrame->uncheckedArgument(0).asNumber();
     double callbackPtr = callFrame->uncheckedArgument(1).asNumber();
 
-    void* cell = reinterpret_cast<void*>(__bit_cast<uintptr_t>(cellPtr));
-    auto* callback = reinterpret_cast<MicrotaskCallback>(__bit_cast<uintptr_t>(callbackPtr));
+    void* cell = reinterpret_cast<void*>(std::bit_cast<uintptr_t>(cellPtr));
+    auto* callback = reinterpret_cast<MicrotaskCallback>(std::bit_cast<uintptr_t>(callbackPtr));
     callback(cell);
     return JSValue::encode(jsUndefined());
 }
@@ -3969,7 +3968,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
 
     // Do not use JSCell* here because the GC will try to visit it.
-    globalObject->queueMicrotask(function, JSValue(JSValue::EncodeAsDouble, __bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(JSValue::EncodeAsDouble, __bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+    globalObject->queueMicrotask(function, JSValue(JSValue::EncodeAsDouble, std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(JSValue::EncodeAsDouble, std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,

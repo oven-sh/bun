@@ -1060,7 +1060,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
-        FALLTHROUGH;
+        [[fallthrough]];
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
         if (sourceStartValue != jsUndefined()) {
@@ -1068,7 +1068,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
-        FALLTHROUGH;
+        [[fallthrough]];
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
         if (targetEndValue != jsUndefined()) {
@@ -1076,7 +1076,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         RETURN_IF_EXCEPTION(throwScope, {});
-        FALLTHROUGH;
+        [[fallthrough]];
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
         if (targetStartValue != jsUndefined()) {
@@ -1253,13 +1253,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     switch (callFrame->argumentCount()) {
     case 4:
         encodingValue = callFrame->uncheckedArgument(3);
-        FALLTHROUGH;
+        [[fallthrough]];
     case 3:
         endValue = callFrame->uncheckedArgument(2);
-        FALLTHROUGH;
+        [[fallthrough]];
     case 2:
         offsetValue = callFrame->uncheckedArgument(1);
-        FALLTHROUGH;
+        [[fallthrough]];
     default:
         break;
     }

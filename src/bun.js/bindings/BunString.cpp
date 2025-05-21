@@ -70,7 +70,7 @@ extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
     ASSERT(simdutf::validate_ascii(bytes, length));
     auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
     atom.impl()->ref();
-    return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().get() } };
 }
 
 extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
@@ -80,7 +80,7 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
         if (atom.isNull())
             return { BunStringTag::Dead, {} };
         atom.impl()->ref();
-        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().get() } };
     }
 
     return { BunStringTag::Dead, {} };

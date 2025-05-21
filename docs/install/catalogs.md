@@ -59,6 +59,7 @@ In your root-level `package.json`, add a `catalog` or `catalogs` field within th
 In your workspace packages, use the `catalog:` protocol to reference versions:
 
 **packages/app/package.json**
+
 ```json
 {
   "name": "app",
@@ -71,6 +72,7 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
 ```
 
 **packages/ui/package.json**
+
 ```json
 {
   "name": "ui",
@@ -94,14 +96,16 @@ Run `bun install` to install all dependencies according to the catalog versions.
 Bun supports two ways to define catalogs:
 
 1. **`catalog`** (singular): A single default catalog for commonly used dependencies
+
    ```json
    "catalog": {
      "react": "^19.0.0",
      "react-dom": "^19.0.0"
    }
    ```
-   
+
    Reference with simply `catalog:`:
+
    ```json
    "dependencies": {
      "react": "catalog:"
@@ -109,6 +113,7 @@ Bun supports two ways to define catalogs:
    ```
 
 2. **`catalogs`** (plural): Multiple named catalogs for grouping dependencies
+
    ```json
    "catalogs": {
      "testing": {
@@ -119,8 +124,9 @@ Bun supports two ways to define catalogs:
      }
    }
    ```
-   
+
    Reference with `catalog:<name>`:
+
    ```json
    "dependencies": {
      "jest": "catalog:testing",
@@ -140,6 +146,7 @@ Bun supports two ways to define catalogs:
 Here's a more comprehensive example for a React application:
 
 **Root package.json**
+
 ```json
 {
   "name": "react-monorepo",
@@ -168,6 +175,7 @@ Here's a more comprehensive example for a React application:
 ```
 
 **packages/app/package.json**
+
 ```json
 {
   "name": "app",
@@ -188,6 +196,7 @@ Here's a more comprehensive example for a React application:
 ```
 
 **packages/ui/package.json**
+
 ```json
 {
   "name": "@monorepo/ui",
@@ -203,6 +212,7 @@ Here's a more comprehensive example for a React application:
 ```
 
 **packages/utils/package.json**
+
 ```json
 {
   "name": "@monorepo/utils",
@@ -233,7 +243,7 @@ Then run `bun install` to update all packages.
 Bun's lockfile tracks catalog versions, making it easy to ensure consistent installations across different environments. The lockfile includes:
 
 - The catalog definitions from your package.json
-- The resolution of each cataloged dependency 
+- The resolution of each cataloged dependency
 
 ```
 // bun.lock (excerpt)

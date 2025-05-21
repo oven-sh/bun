@@ -19,11 +19,11 @@ value1,value2`);
     it("should parse unicode", () => {
       const parsed = CSV.parse(`col1,col2
 フィグマ,ボールズ
-🦔,🥟`);
+🦔,👨‍👩‍👦`);
 
       expect(parsed.data).toEqual([
         { col1: "フィグマ", col2: "ボールズ" },
-        { col1: "🦔", col2: "🥟" },
+        { col1: "🦔", col2: "👨‍👩‍👦" },
       ]);
     });
 
@@ -374,20 +374,6 @@ value1,"unclosed`);
 
   describe("Whitespace Handling", () => {
     it("should preserve whitespace by default", () => {
-      // TODO: currently thsis throws following
-      // 1 | import { CSV } from "bun";
-      // 2 |
-      // 3 | const parsed = CSV.parse(`col1,col2
-      //                        ^
-      // SyntaxError: Failed to parse JSON
-      //       at /Users/krzysztof/Developer/mastermakrela/bun/test.ts:3:20
-      //       at loadAndEvaluateModule (7:44)
-      //       at asyncFunctionResume (9:85)
-      //       at promiseReactionJobWithoutPromiseUnwrapAsyncContext (14:20)
-      //       at promiseReactionJob (31:60)
-      // And i have no clue what it has to do with json
-      // the cause is the tab at the end of the line
-
       const parsed = CSV.parse(`col1,col2
    value1   ,   value2   
 \tvalue3\t,\tvalue4\t`);

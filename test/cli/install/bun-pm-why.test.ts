@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { mkdir, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -10,8 +10,6 @@ import {
   dummyBeforeEach,
   dummyRegistry,
   package_dir,
-  requested,
-  root_url,
   setHandler,
 } from "./dummy.registry";
 
@@ -60,7 +58,7 @@ it("should explain direct dependency with bun pm why", async () => {
       stderr: "pipe",
       env,
     });
-    
+
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
     expect(output).toContain("bar@0.0.2");
@@ -72,7 +70,7 @@ it("should explain direct dependency with bun pm why", async () => {
 it("should explain transitive dependency with bun pm why", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  
+
   // Create a nested dependency structure
   await writeFile(
     join(package_dir, "package.json"),
@@ -84,7 +82,7 @@ it("should explain transitive dependency with bun pm why", async () => {
       },
     }),
   );
-  
+
   await mkdir(join(package_dir, "moo"));
   await writeFile(
     join(package_dir, "moo", "package.json"),
@@ -123,7 +121,7 @@ it("should explain transitive dependency with bun pm why", async () => {
       stderr: "pipe",
       env,
     });
-    
+
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
     expect(output).toContain("bar@0.0.2");
@@ -172,7 +170,7 @@ it("should return error for non-existent package", async () => {
       stderr: "pipe",
       env,
     });
-    
+
     const errOutput = await new Response(stderr).text();
     expect(errOutput).toContain("error");
     expect(errOutput).toContain("package 'non-existent-package' not found");
@@ -220,10 +218,10 @@ it("should output JSON format when --json flag is specified", async () => {
       stderr: "pipe",
       env,
     });
-    
+
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
-    
+
     // Parse the JSON to verify it's valid
     const json = JSON.parse(output);
     expect(json).toHaveProperty("dependencies");
@@ -233,7 +231,7 @@ it("should output JSON format when --json flag is specified", async () => {
     expect(json.dependencies[0]).toHaveProperty("dependencyChain");
     expect(json.dependencies[0].dependencyChain.length).toBe(1);
     expect(json.dependencies[0].dependencyChain[0].from).toBe("root");
-    
+
     expect(await exited).toBe(0);
   }
 
@@ -247,15 +245,15 @@ it("should output JSON format when --json flag is specified", async () => {
       stderr: "pipe",
       env,
     });
-    
+
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
-    
+
     // Parse the JSON to verify it's valid
     const json = JSON.parse(output);
     expect(json).toHaveProperty("error");
     expect(json.error).toBe("package not found");
-    
+
     expect(await exited).toBe(0);
   }
 });

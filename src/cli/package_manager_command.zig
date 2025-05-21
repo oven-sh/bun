@@ -125,6 +125,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>-g<r>                      print the <b>global<r> path to bin folder
             \\  <b><green>bun pm<r> <blue>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                   list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>why<r> <d>pkg<r>          explain why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>             print the current npm username
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
@@ -310,6 +311,18 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "trust")) {
             try TrustCommand.exec(ctx, pm, args);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "why")) {
+            if (pm.options.positionals.len <= 1) {
+                Output.prettyErrorln("<r><red>error<r>: missing package name", .{});
+                Global.exit(1);
+            }
+            const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
+            handleLoadLockfileErrors(load_lockfile, pm);
+            const lockfile = load_lockfile.ok.lockfile;
+
+            const name = pm.options.positionals[1];
+            try printWhy(lockfile, pm, name);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
@@ -560,5 +573,95 @@ fn printNodeModulesFolderStructure(
         var resolution_buf: [512]u8 = undefined;
         const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
+    }
+}
+
+fn behaviorPrefix(behavior: Dependency.Behavior) []const u8 {
+    if (behavior.isDev()) return "dev ";
+    if (behavior.isOptional()) return "optional ";
+    if (behavior.isPeer()) return "peer ";
+    return "";
+}
+
+fn printWhy(lockfile: *Lockfile, _pm: *PackageManager, query: []const u8) !void {
+    const string_bytes = lockfile.buffers.string_bytes.items;
+    const dependencies = lockfile.buffers.dependencies.items;
+    const trees = lockfile.buffers.trees.items;
+    const resolutions = lockfile.buffers.resolutions.items;
+    const pkgs = lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const pkg_resolutions = pkgs.items(.resolution);
+
+    var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+    var path_buf: bun.PathBuffer = undefined;
+    var depth_buf: Lockfile.Tree.DepthBuf = undefined;
+    var found = false;
+
+    while (iterator.next(null)) |node| {
+        const tree = trees[node.tree_id];
+        const dep_id = tree.dependency_id;
+        if (dep_id == Lockfile.Tree.root_dep_id) continue;
+        const dep = dependencies[dep_id];
+        const name = dep.name.slice(string_bytes);
+        if (!strings.eqlLong(name, query, true)) continue;
+
+        const pkg_id = resolutions[dep_id];
+        if (pkg_id >= lockfile.packages.len) continue;
+
+        found = true;
+
+        const res = Lockfile.Tree.relativePathAndDepth(lockfile, node.tree_id, &path_buf, &depth_buf, .node_modules);
+        const rel_path = res.\"0\";
+
+        Output.prettyln("{s}@{any}", .{ name, pkg_resolutions[pkg_id].fmt(string_bytes, .auto) });
+        Output.prettyln("{s}", .{ rel_path });
+
+        var chain: [Lockfile.Tree.max_depth]Lockfile.Tree.Id = undefined;
+        var len: usize = 0;
+        var tid = node.tree_id;
+        while (true) {
+            chain[len] = tid;
+            len += 1;
+            if (tid == 0) break;
+            tid = trees[tid].parent;
+        }
+
+        var indent: usize = 0;
+        var i: usize = 0;
+        while (i + 1 < len) : (i += 1) {
+            const child = chain[i];
+            const parent = chain[i + 1];
+            const child_dep = dependencies[trees[child].dependency_id];
+            const prefix = behaviorPrefix(child_dep.behavior);
+            const dep_literal = child_dep.version.literal.slice(string_bytes);
+            const parent_pkg_id = resolutions[trees[parent].dependency_id];
+            const parent_name = pkg_names[parent_pkg_id].slice(string_bytes);
+            const parent_version_fmt = pkg_resolutions[parent_pkg_id].fmt(string_bytes, .auto);
+
+            var j: usize = 0;
+            while (j < indent) : (j += 1) {
+                Output.writer().writeByte(' ') catch {};
+            }
+            if (parent == 0) {
+                Output.prettyln("{s}{s}@\"{s}\" from the root project", .{ prefix, child_dep.name.slice(string_bytes), dep_literal });
+            } else {
+                Output.prettyln("{s}{s}@\"{s}\" from {s}@{any}", .{ prefix, child_dep.name.slice(string_bytes), dep_literal, parent_name, parent_version_fmt });
+
+                const res_parent = Lockfile.Tree.relativePathAndDepth(lockfile, parent, &path_buf, &depth_buf, .node_modules);
+                const parent_path = res_parent.\"0\";
+                j = 0;
+                while (j < indent) : (j += 1) {
+                    Output.writer().writeByte(' ') catch {};
+                }
+                Output.prettyln("{s}", .{ parent_path });
+            }
+            indent += 2;
+        }
+
+        Output.prettyln("", .{});
+    }
+
+    if (!found) {
+        Output.prettyErrorln("<r><red>error<r>: package '{s}' not found", .{ query });
     }
 }

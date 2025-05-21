@@ -1820,7 +1820,7 @@ pub const JSZstd = struct {
 
         // Resize to actual compressed size
         if (compressed_size < output.len) {
-            output = allocator.realloc(output, compressed_size) catch output[0..compressed_size];
+            output = try allocator.realloc(output, compressed_size)
         }
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(output, .Uint8Array);

@@ -1,4 +1,4 @@
-import { beforeAll, expect, it } from "bun:test";
+import { beforeAll, it } from "bun:test";
 import { exec, execSync } from "child_process";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";

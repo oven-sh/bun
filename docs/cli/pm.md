@@ -67,6 +67,16 @@ $ bun pm ls --all
 ├── ...
 ```
 
+To output the list in JSON format, use `--json`. This can be combined with `--all`.
+
+```bash
+$ bun pm ls --json
+["eslint@8.38.0", "react@18.2.0", ...]
+
+$ bun pm ls --all --json
+["@eslint-community/eslint-utils@4.4.0", ...]
+```
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

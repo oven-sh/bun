@@ -317,6 +317,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
+            const json_output = strings.leftHasAnyInRight(args, &.{ "--json" }) or pm.options.json_output;
             const lockfile = load_lockfile.ok.lockfile;
             var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
 
@@ -349,8 +350,50 @@ pub const PackageManagerCommand = struct {
             @memset(more_packages, false);
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
 
-            if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
-                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+            if (!json_output) {
+                if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
+                    try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+                } else {
+                    var cwd_buf: bun.PathBuffer = undefined;
+                    const path = bun.getcwd(&cwd_buf) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
+                        Global.exit(1);
+                    };
+                    const dependencies = lockfile.buffers.dependencies.items;
+                    const slice = lockfile.packages.slice();
+                    const resolutions = slice.items(.resolution);
+                    const root_deps = slice.items(.dependencies)[0];
+
+                    Output.println("{s} node_modules ({d})", .{ path, lockfile.buffers.hoisted_dependencies.items.len });
+                    const string_bytes = lockfile.buffers.string_bytes.items;
+                    const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
+                    defer ctx.allocator.free(sorted_dependencies);
+                    for (sorted_dependencies, 0..) |*dep, i| {
+                        dep.* = @as(DependencyID, @truncate(root_deps.off + i));
+                    }
+                    std.sort.pdq(DependencyID, sorted_dependencies, ByName{
+                        .dependencies = dependencies,
+                        .buf = string_bytes,
+                    }, ByName.isLessThan);
+
+                    for (sorted_dependencies, 0..) |dependency_id, index| {
+                        const package_id = lockfile.buffers.resolutions.items[dependency_id];
+                        if (package_id >= lockfile.packages.len) continue;
+                        const name = dependencies[dependency_id].name.slice(string_bytes);
+                        const resolution = resolutions[package_id].fmt(string_bytes, .auto);
+
+                        if (index < sorted_dependencies.len - 1) {
+                            Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        } else {
+                            Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        }
+                    }
+                }
+            } else if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
+                try Output.writer().writeByte('[');
+                var first: bool = true;
+                try printNodeModulesFolderStructureJSON(&first_directory, &directories, lockfile, &first);
+                try Output.writer().writeAll("]\n");
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
                 const path = bun.getcwd(&cwd_buf) catch {
@@ -362,32 +405,30 @@ pub const PackageManagerCommand = struct {
                 const resolutions = slice.items(.resolution);
                 const root_deps = slice.items(.dependencies)[0];
 
-                Output.println("{s} node_modules ({d})", .{ path, lockfile.buffers.hoisted_dependencies.items.len });
+                try Output.writer().writeByte('[');
+                var first: bool = true;
                 const string_bytes = lockfile.buffers.string_bytes.items;
                 const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
                 defer ctx.allocator.free(sorted_dependencies);
                 for (sorted_dependencies, 0..) |*dep, i| {
                     dep.* = @as(DependencyID, @truncate(root_deps.off + i));
                 }
-                std.sort.pdq(DependencyID, sorted_dependencies, ByName{
-                    .dependencies = dependencies,
-                    .buf = string_bytes,
-                }, ByName.isLessThan);
+                std.sort.pdq(DependencyID, sorted_dependencies, ByName{ .dependencies = dependencies, .buf = string_bytes }, ByName.isLessThan);
 
-                for (sorted_dependencies, 0..) |dependency_id, index| {
+                for (sorted_dependencies) |dependency_id| {
                     const package_id = lockfile.buffers.resolutions.items[dependency_id];
                     if (package_id >= lockfile.packages.len) continue;
                     const name = dependencies[dependency_id].name.slice(string_bytes);
-                    const resolution = resolutions[package_id].fmt(string_bytes, .auto);
-
-                    if (index < sorted_dependencies.len - 1) {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
-                    } else {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
-                    }
+                    var res_buf: [512]u8 = undefined;
+                    const ver = try std.fmt.bufPrint(&res_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
+                    const entry = try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{ name, ver });
+                    defer ctx.allocator.free(entry);
+                    if (!first) try Output.writer().writeByte(',');
+                    first = false;
+                    try Output.writer().print("{}", .{bun.fmt.formatJSONStringUTF8(entry, .{})});
                 }
+                try Output.writer().writeAll("]\n");
             }
-
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "migrate")) {
             if (!pm.options.enable.force_save_lockfile) {
@@ -560,5 +601,49 @@ fn printNodeModulesFolderStructure(
         var resolution_buf: [512]u8 = undefined;
         const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
+    }
+}
+
+fn printNodeModulesFolderStructureJSON(
+    directory: *const NodeModulesFolder,
+    directories: *std.ArrayList(NodeModulesFolder),
+    lockfile: *Lockfile,
+    first: *bool,
+) !void {
+    const allocator = lockfile.allocator;
+    const resolutions = lockfile.packages.items(.resolution);
+    const string_bytes = lockfile.buffers.string_bytes.items;
+    const dependencies = lockfile.buffers.dependencies.items;
+
+    const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
+    defer allocator.free(sorted_dependencies);
+    bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
+    std.sort.pdq(DependencyID, sorted_dependencies, ByName{ .dependencies = dependencies, .buf = string_bytes }, ByName.isLessThan);
+
+    for (sorted_dependencies) |dependency_id| {
+        const package_id = lockfile.buffers.resolutions.items[dependency_id];
+        if (package_id >= lockfile.packages.len) continue;
+        const name = dependencies[dependency_id].name.slice(string_bytes);
+        var res_buf: [512]u8 = undefined;
+        const version = try std.fmt.bufPrint(&res_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
+        const entry = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ name, version });
+        defer allocator.free(entry);
+
+        if (!first.*) try Output.writer().writeByte(',');
+        first.* = false;
+        try Output.writer().print("{}", .{bun.fmt.formatJSONStringUTF8(entry, .{})});
+
+        const fmt = "{s}" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str ++ "node_modules";
+        const possible_path = try std.fmt.allocPrint(allocator, fmt, .{ directory.relative_path, name });
+        defer allocator.free(possible_path);
+
+        var dir_index: usize = 0;
+        while (dir_index < directories.items.len) : (dir_index += 1) {
+            if (strings.eqlLong(possible_path, directories.items[dir_index].relative_path, true)) {
+                const next = directories.orderedRemove(dir_index);
+                try printNodeModulesFolderStructureJSON(&next, directories, lockfile, first);
+                break;
+            }
+        }
     }
 }

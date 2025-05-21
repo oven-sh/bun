@@ -7213,7 +7213,7 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_filename: string = "",
         pack_gzip_level: ?string = null,
-        // json_output: bool = false,
+        json_output: bool = false,
 
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
@@ -7627,7 +7627,7 @@ pub const PackageManager = struct {
                 this.pack_destination = cli.pack_destination;
                 this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
+                this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -9698,6 +9698,7 @@ pub const PackageManager = struct {
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+        clap.parseParam("--json") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -9785,7 +9786,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        // json_output: bool = false,
+        json_output: bool = false,
         filters: []const string = &.{},
 
         pack_destination: string = "",
@@ -10154,6 +10155,9 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            if (comptime subcommand == .pm or subcommand == .outdated) {
+                cli.json_output = args.flag("--json");
+            }
             cli.ca = args.options("--ca");
             cli.lockfile_only = args.flag("--lockfile-only");
 

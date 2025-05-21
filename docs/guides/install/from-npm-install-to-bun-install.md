@@ -166,6 +166,13 @@ my-pkg node_modules
 ...
 ```
 
+You can output the list in JSON format with `--json`:
+
+```sh
+$ bun pm ls --json
+["@types/node@20.16.5", "@types/react@18.3.8", ...]
+```
+
 ---
 
 ## Create a package tarball

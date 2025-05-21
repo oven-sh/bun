@@ -79,6 +79,98 @@ it("should list top-level dependency", async () => {
   expect(requested).toBe(2);
 });
 
+it("should list all dependencies as json", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: { bar: "latest" },
+    }),
+  );
+  {
+    const { stderr, stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await new Response(stderr).text();
+    await exited;
+  }
+  urls.length = 0;
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).toBe("");
+  expect(await new Response(stdout).text()).toBe('["bar@0.0.2","moo@moo"]\n');
+  expect(await exited).toBe(0);
+});
+
+it("should list top-level dependency as json", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({ name: "moo", version: "0.1.0" }),
+  );
+  {
+    const { stderr, stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await new Response(stderr).text();
+    await exited;
+  }
+  urls.length = 0;
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).toBe("");
+  expect(await new Response(stdout).text()).toBe('["moo@moo"]\n');
+  expect(await exited).toBe(0);
+});
+
 it("should list all dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

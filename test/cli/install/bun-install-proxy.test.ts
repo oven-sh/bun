@@ -97,15 +97,23 @@ if (isDockerEnabled()) {
       }, 6_000); // should not take more than 6 seconds per install
       try {
         await Promise.race([
-          Bun.$`${bunExe()} i --no-cache --ignore-scripts`
-            // @ts-ignore
-            .env({
-              ...bunEnv,
-              HTTPS_PROXY: SQUID_URL,
-              HTTP_PROXY: SQUID_URL,
-            })
-            .cwd(package_dir)
-            .quiet(),
+          (async () => {
+            const { exited, stdout } = Bun.spawn([bunExe(), "install", "--ignore-scripts"], {
+              cwd: package_dir,
+              // @ts-ignore
+              env: {
+                ...bunEnv,
+                HTTPS_PROXY: SQUID_URL,
+                HTTP_PROXY: SQUID_URL,
+              },
+              stdio: ["ignore", "pipe", "inherit"],
+            });
+            const text = await Bun.readableStreamToText(stdout);
+            if ((await exited) !== 0) {
+              throw new Error("failed to install");
+            }
+            expect(text).toInclude("36 packages installed");
+          })(),
           promise,
         ]);
       } finally {

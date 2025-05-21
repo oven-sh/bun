@@ -1801,9 +1801,7 @@ pub const JSZstd = struct {
 
         // Calculate max compressed size
         const max_size = bun.zstd.compressBound(input.len);
-        var output = allocator.alloc(u8, max_size) catch {
-            return globalThis.throwOutOfMemory();
-        };
+        var output = try allocator.alloc(u8, max_size)
 
         // Create a context for better control
         const cctx = bun.zstd.ZSTD_createCCtx() orelse {

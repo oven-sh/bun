@@ -385,7 +385,7 @@ jobs:
           add-paths: |
             ./LATEST
             ./package.json
-          branch: bump-version-${{ env.BUN_VERSION }}
+          branch: bump-version-${{ steps.version.outputs.BUN_VERSION }}
           delete-branch: true
           labels: "automation"
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -398,4 +398,3 @@ jobs:
             https://bun.sh/blog/bun-v${{ steps.version.outputs.BUN_VERSION }}
 
             Auto-bumped by [this workflow](https://github.com/oven-sh/bun/actions/workflows/release.yml)
-        

@@ -3017,13 +3017,11 @@ pub const CatalogMap = struct {
                 return null;
             }
             return this.default.getContext(dep_name, String.arrayHashContext(lockfile, null)) orelse {
-                // error or warn?
                 return null;
             };
         }
 
         const group = this.groups.getContext(catalog_name, String.arrayHashContext(lockfile, null)) orelse {
-            // error or warn?
             return null;
         };
 
@@ -3032,7 +3030,6 @@ pub const CatalogMap = struct {
         }
 
         return group.getContext(dep_name, String.arrayHashContext(lockfile, null)) orelse {
-            // error or warn?
             return null;
         };
     }
@@ -3112,7 +3109,15 @@ pub const CatalogMap = struct {
         }
     }
 
-    pub fn parseAppend(this: *CatalogMap, pm: *PackageManager, lockfile: *Lockfile, log: *logger.Log, expr: Expr, builder: *Lockfile.StringBuilder) OOM!void {
+    pub fn parseAppend(
+        this: *CatalogMap,
+        pm: *PackageManager,
+        lockfile: *Lockfile,
+        log: *logger.Log,
+        source: *const logger.Source,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) OOM!void {
         if (expr.get("catalog")) |default_catalog| {
             const group = try this.getOrPutGroup(lockfile, .empty);
             switch (default_catalog.data) {
@@ -3138,7 +3143,7 @@ pub const CatalogMap = struct {
                                     log,
                                     pm,
                                 ) orelse {
-                                    // error?
+                                    try log.addError(source, item.value.?.loc, "Invalid dependency version");
                                     continue;
                                 };
 
@@ -3149,7 +3154,7 @@ pub const CatalogMap = struct {
                                 );
 
                                 if (entry.found_existing) {
-                                    // error or warn?
+                                    try log.addError(source, item.key.?.loc, "Duplicate catalog");
                                     continue;
                                 }
 
@@ -3198,7 +3203,7 @@ pub const CatalogMap = struct {
                                                 log,
                                                 pm,
                                             ) orelse {
-                                                // error or warning?
+                                                try log.addError(source, item.value.?.loc, "Invalid dependency version");
                                                 continue;
                                             };
 
@@ -3210,7 +3215,7 @@ pub const CatalogMap = struct {
                                             );
 
                                             if (entry.found_existing) {
-                                                // error or warning?
+                                                try log.addError(source, item.key.?.loc, "Duplicate catalog");
                                                 continue;
                                             }
 
@@ -5960,29 +5965,31 @@ pub const Package = extern struct {
                             //    }
                             //
                             if (obj.get("packages")) |packages_query| {
-                                if (packages_query.data == .e_array) {
-                                    total_dependencies_count += try processWorkspaceNamesArray(
-                                        &workspace_names,
-                                        allocator,
-                                        &pm.workspace_package_json_cache,
-                                        log,
-                                        packages_query.data.e_array,
-                                        &source,
-                                        packages_query.loc,
-                                        &string_builder,
-                                    );
-                                    break :brk;
+                                if (packages_query.data != .e_array) {
+                                    log.addErrorFmt(&source, packages_query.loc, allocator,
+                                        // TODO: what if we could comptime call the syntax highlighter
+                                        \\"workspaces.packages" expects an array of strings, e.g.
+                                        \\  "workspaces": {{
+                                        \\    "packages": [
+                                        \\      "path/to/package"
+                                        \\    ]
+                                        \\  }}
+                                    , .{}) catch {};
+                                    return error.InvalidPackageJSON;
                                 }
+                                total_dependencies_count += try processWorkspaceNamesArray(
+                                    &workspace_names,
+                                    allocator,
+                                    &pm.workspace_package_json_cache,
+                                    log,
+                                    packages_query.data.e_array,
+                                    &source,
+                                    packages_query.loc,
+                                    &string_builder,
+                                );
                             }
 
-                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
-                                // TODO: what if we could comptime call the syntax highlighter
-                                \\Workspaces expects an array of strings, e.g.
-                                \\  <r><green>"workspaces"<r>: [
-                                \\    <green>"path/to/package"<r>
-                                \\  ]
-                            , .{}) catch {};
-                            return error.InvalidPackageJSON;
+                            break :brk;
                         }
                         for (obj.properties.slice()) |item| {
                             const key = item.key.?.asString(allocator).?;
@@ -6012,7 +6019,7 @@ pub const Package = extern struct {
                         if (group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 // TODO: what if we could comptime call the syntax highlighter
-                                \\Workspaces expects an array of strings, e.g.
+                                \\"workspaces" expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
                                 \\    <green>"path/to/package"<r>
                                 \\  ]
@@ -6432,7 +6439,7 @@ pub const Package = extern struct {
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
             if (json.get("workspaces")) |workspaces_expr| {
-                try lockfile.catalogs.parseAppend(pm, lockfile, log, workspaces_expr, &string_builder);
+                try lockfile.catalogs.parseAppend(pm, lockfile, log, &source, workspaces_expr, &string_builder);
             }
         }
 
@@ -7306,6 +7313,7 @@ pub const Serializer = struct {
                 );
 
                 try external_deps_buf.ensureTotalCapacity(z_allocator, catalog_deps.count());
+                external_deps_buf.items.len = catalog_deps.count();
                 defer external_deps_buf.clearRetainingCapacity();
 
                 for (external_deps_buf.items, catalog_deps.values()) |*dest, src| {

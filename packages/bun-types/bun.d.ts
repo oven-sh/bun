@@ -7479,10 +7479,15 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
+    /** @see https://bun.sh/docs/install/overrides */
     overrides?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/patch */
     patchedDependencies?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/lifecycle#trusteddependencies */
     trustedDependencies?: string[];
+    /** @see https://bun.sh/docs/install/catalogs */
     catalog?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
 
     /**

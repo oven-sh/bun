@@ -29,7 +29,7 @@ jobs:
         working-directory: packages/bun-vscode
 
       - name: Build (inspector protocol)
-        run: bun run build
+        run: bun install && bun run build
         working-directory: packages/bun-inspector-protocol
 
       - name: Build (vscode extension)

@@ -261,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexica
 
     memcpy(buffer->vector(), parser->currentBufferData(), parser->currentBufferLen());
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(buffer);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, CallFrame* callFrame))

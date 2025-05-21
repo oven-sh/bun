@@ -214,44 +214,44 @@ pub const String = extern struct {
     }
 
     pub const HashContext = struct {
-        a_buf: []const u8,
-        b_buf: []const u8,
+        arg_buf: []const u8,
+        existing_buf: []const u8,
 
-        pub fn eql(ctx: HashContext, a: String, b: String) bool {
-            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        pub fn eql(ctx: HashContext, arg: String, existing: String) bool {
+            return arg.eql(existing, ctx.arg_buf, ctx.existing_buf);
         }
 
-        pub fn hash(ctx: HashContext, a: String) u64 {
-            const str = a.slice(ctx.a_buf);
+        pub fn hash(ctx: HashContext, arg: String) u64 {
+            const str = arg.slice(ctx.arg_buf);
             return bun.hash(str);
         }
     };
 
     pub fn hashContext(l_lockfile: *Lockfile, r_lockfile: ?*Lockfile) HashContext {
         return .{
-            .a_buf = l_lockfile.buffers.string_bytes.items,
-            .b_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+            .arg_buf = l_lockfile.buffers.string_bytes.items,
+            .existing_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
         };
     }
 
     pub const ArrayHashContext = struct {
-        a_buf: []const u8,
-        b_buf: []const u8,
+        arg_buf: []const u8,
+        existing_buf: []const u8,
 
-        pub fn eql(ctx: ArrayHashContext, a: String, b: String, _: usize) bool {
-            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        pub fn eql(ctx: ArrayHashContext, arg: String, existing: String, _: usize) bool {
+            return arg.eql(existing, ctx.arg_buf, ctx.existing_buf);
         }
 
-        pub fn hash(ctx: ArrayHashContext, a: String) u32 {
-            const str = a.slice(ctx.a_buf);
+        pub fn hash(ctx: ArrayHashContext, arg: String) u32 {
+            const str = arg.slice(ctx.arg_buf);
             return @as(u32, @truncate(bun.hash(str)));
         }
     };
 
     pub fn arrayHashContext(l_lockfile: *const Lockfile, r_lockfile: ?*const Lockfile) ArrayHashContext {
         return .{
-            .a_buf = l_lockfile.buffers.string_bytes.items,
-            .b_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+            .arg_buf = l_lockfile.buffers.string_bytes.items,
+            .existing_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
         };
     }
 

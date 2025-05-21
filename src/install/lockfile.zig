@@ -3037,7 +3037,7 @@ pub const CatalogMap = struct {
         };
     }
 
-    pub fn getGroup(this: *CatalogMap, lockfile: *Lockfile, catalog_name: String) OOM!*Map {
+    pub fn getOrPutGroup(this: *CatalogMap, lockfile: *Lockfile, catalog_name: String) OOM!*Map {
         if (catalog_name.isEmpty()) {
             return &this.default;
         }
@@ -3052,6 +3052,17 @@ pub const CatalogMap = struct {
         }
 
         return entry.value_ptr;
+    }
+
+    pub fn getGroup(this: *CatalogMap, map_buf: string, catalog_name: String, catalog_name_buf: string) ?*Map {
+        if (catalog_name.isEmpty()) {
+            return &this.default;
+        }
+
+        return this.groups.getPtrContext(catalog_name, String.ArrayHashContext{
+            .arg_buf = catalog_name_buf,
+            .existing_buf = map_buf,
+        });
     }
 
     pub fn parseCount(_: *CatalogMap, lockfile: *Lockfile, expr: Expr, builder: *Lockfile.StringBuilder) void {
@@ -3103,7 +3114,7 @@ pub const CatalogMap = struct {
 
     pub fn parseAppend(this: *CatalogMap, pm: *PackageManager, lockfile: *Lockfile, log: *logger.Log, expr: Expr, builder: *Lockfile.StringBuilder) OOM!void {
         if (expr.get("catalog")) |default_catalog| {
-            const group = try this.getGroup(lockfile, .empty);
+            const group = try this.getOrPutGroup(lockfile, .empty);
             switch (default_catalog.data) {
                 .e_object => |obj| {
                     for (obj.properties.slice()) |item| {
@@ -3165,7 +3176,7 @@ pub const CatalogMap = struct {
                         const catalog_name_str = catalog.key.?.asString(lockfile.allocator).?;
                         const catalog_name = builder.append(String, catalog_name_str);
 
-                        const group = try this.getGroup(lockfile, catalog_name);
+                        const group = try this.getOrPutGroup(lockfile, catalog_name);
 
                         switch (catalog.value.?.data) {
                             .e_object => |obj| {
@@ -7574,7 +7585,7 @@ pub const Serializer = struct {
                         var catalog_deps = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
                         defer catalog_deps.deinit(allocator);
 
-                        const group = try lockfile.catalogs.getGroup(lockfile, catalog_name);
+                        const group = try lockfile.catalogs.getOrPutGroup(lockfile, catalog_name);
 
                         try group.ensureTotalCapacity(allocator, catalog_deps.items.len);
 

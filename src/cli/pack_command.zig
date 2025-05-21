@@ -2035,7 +2035,7 @@ pub const PackCommand = struct {
         return entry.clear();
     }
 
-    /// Strip workspace protocols from dependency versions then
+    /// Strips workspace and catalog protocols from dependency versions then
     /// returns the printed json
     fn editRootPackageJSON(
         allocator: std.mem.Allocator,
@@ -2126,22 +2126,48 @@ pub const PackCommand = struct {
                                     },
                                     .{},
                                 );
-                            } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog| {
-                                _ = catalog;
-                                // const dependency_name_str = dependency.key.?.asString(allocator).?;
+                            } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog_name_str| {
+                                const dep_name_str = dependency.key.?.asString(allocator).?;
 
-                                // const lockfile = maybe_lockfile orelse {
-                                //     Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (catalogs require a lockfile).", .{
-                                //         dependency_name,
-                                //         dependency_group,
-                                //     });
-                                //     Global.crash();
-                                // };
+                                const lockfile = maybe_lockfile orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (catalogs require a lockfile).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
 
-                                // const catalog_name = Semver.String.init(catalog, catalog);
-                                // const dependency_name = Semver.String.init(dependency_name_str, dependency_name_str);
+                                const catalog_name = Semver.String.init(catalog_name_str, catalog_name_str);
 
-                                // const catalog_version = lockfile.catalogs.get(lockfile, catalog_name, dependency_name_str);
+                                const catalog = lockfile.catalogs.getGroup(lockfile.buffers.string_bytes.items, catalog_name, catalog_name_str) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                const dep_name = Semver.String.init(dep_name_str, dep_name_str);
+
+                                const dep = catalog.getContext(dep_name, Semver.String.ArrayHashContext{
+                                    .arg_buf = dep_name_str,
+                                    .existing_buf = lockfile.buffers.string_bytes.items,
+                                }) orelse {
+                                    Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (no matching catalog dependency).", .{
+                                        dep_name_str,
+                                        dependency_group,
+                                    });
+                                    Global.crash();
+                                };
+
+                                dependency.value = Expr.allocate(
+                                    allocator,
+                                    E.String,
+                                    .{
+                                        .data = try allocator.dupe(u8, dep.version.literal.slice(lockfile.buffers.string_bytes.items)),
+                                    },
+                                    .{},
+                                );
                             }
                         }
                     },

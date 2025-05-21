@@ -1379,7 +1379,7 @@ pub fn parseIntoBinaryLockfile(
             const catalog_name_str = catalog_key.asString(allocator).?;
             const catalog_name = try string_buf.append(catalog_name_str);
 
-            const group = try lockfile.catalogs.getGroup(lockfile, catalog_name);
+            const group = try lockfile.catalogs.getOrPutGroup(lockfile, catalog_name);
 
             for (catalog_value.data.e_object.properties.slice()) |prop| {
                 const key = prop.key.?;

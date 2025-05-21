@@ -1,8 +1,8 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { VerdaccioRegistry, bunExe, bunEnv, runBunInstall, stderrForInstall } from "harness";
-import { write, spawn, file } from "bun";
-import { join } from "path";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
+import { join } from "path";
 
 var registry = new VerdaccioRegistry();
 

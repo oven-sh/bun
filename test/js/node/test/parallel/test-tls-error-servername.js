@@ -46,3 +46,5 @@ assert.throws(() => {
   code: 'ERR_TLS_SNI_FROM_SERVER',
   message: 'Cannot issue SNI from a TLS server-side socket'
 });
+
+process.exit(0); // TODO: Bun hangs - something not being unref'd?

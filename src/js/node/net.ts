@@ -232,8 +232,6 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     const options = self[bunTLSConnectOptions];
 
-    socket.unref();
-
     if (options) {
       const { session } = options;
       if (session) {

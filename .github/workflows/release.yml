@@ -22,7 +22,7 @@ on:
         default: false
       tag:
         type: string
-        description: What is the release tag? (e.g. "1.0.2", "canary")
+        description: What is the release tag? (e.g. "bun-v1.0.2", "canary")
         required: true
       use-docker:
         description: Should Docker images be released?
@@ -109,7 +109,6 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
-    needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
@@ -347,22 +346,56 @@ jobs:
   bump:
     name: "Bump version"
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'schedule' }}
+    if: ${{ github.event_name != 'schedule' && env.BUN_LATEST == 'true' }}
     permissions:
       pull-requests: write
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ env.BUN_LATEST == 'true' }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        if: ${{ env.BUN_LATEST == 'true' }}
         with:
           bun-version: "1.2.0"
+      - id: version
+        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Bump version
-        uses: ./.github/actions/bump
-        if: ${{ env.BUN_LATEST == 'true' }}
+        env:
+          BUN_VERSION: ${{ steps.version.outputs.BUN_VERSION }}
+        run: |
+          bun -e '
+          const file = Bun.file("./LATEST");
+          const version = "${{ steps.version.outputs.BUN_VERSION }}";
+          await file.write(version);
+
+          // plus 1 patch version
+          const [major, minor, patch] = version.split(".").map(Number);
+          const versionNext = [major, minor, patch + 1].join(".");
+  
+          const packageJson = Bun.file("./package.json");
+          const json = await packageJson.json();
+          json.version = versionNext;
+          await packageJson.write(JSON.stringify(json, null, 2) + "\n");
+          '
+  
+        uses: peter-evans/create-pull-request@v7
+        token: ${{ secrets.GITHUB_TOKEN }}
         with:
-          version: ${{ env.BUN_VERSION }}
-          token: ${{ github.token }}
+          title: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"
+          add-paths: |
+            ./LATEST
+            ./package.json
+          branch: bump-version-${{ env.BUN_VERSION }}
+          delete-branch: true
+          labels: "automation"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"
+          body: |
+            ## What does this PR do?
+
+            Bump version to ${{ steps.version.outputs.BUN_VERSION }}
+
+            https://bun.sh/blog/bun-v${{ steps.version.outputs.BUN_VERSION }}
+
+            Auto-bumped by [this workflow](https://github.com/oven-sh/bun/actions/workflows/release.yml)
+        

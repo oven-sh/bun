@@ -100,7 +100,8 @@ jobs:
           commit-message: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
           title: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
           delete-branch: true
-          branch: deps/update-sqlite-${{ steps.check-version.outputs.latest }}
+          branch: deps/update-sqlite
+          lables: "automation"
           body: |
             ## What does this PR do?
 

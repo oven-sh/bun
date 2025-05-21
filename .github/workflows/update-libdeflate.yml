@@ -88,7 +88,8 @@ jobs:
           commit-message: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update libdeflate to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-libdeflate-${{ github.run_number }}
+          branch: deps/update-libdeflate
+          labels: "automation"
           body: |
             ## What does this PR do?
 

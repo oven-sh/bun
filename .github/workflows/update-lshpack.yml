@@ -88,7 +88,8 @@ jobs:
           commit-message: "deps: update lshpack to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update lshpack to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-lshpack-${{ github.run_number }}
+          branch: deps/update-lshpack
+          labels: "automation"
           body: |
             ## What does this PR do?
 

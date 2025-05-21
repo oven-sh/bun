@@ -881,6 +881,29 @@ Socket.prototype.connect = function connect(...args) {
       });
     } else {
       // default start
+      if (typeof options.lookup === "function" && host) {
+        options.lookup(host, { all: false, family: options.family || 0 }, (err, address) => {
+          if (err) {
+            this.emit("error", err);
+            this.emit("close");
+            return;
+          }
+          bunConnect({
+            data: this,
+            hostname: address,
+            port: port,
+            socket: this[khandlers],
+            tls,
+            allowHalfOpen: this.allowHalfOpen,
+          }).catch(error => {
+            if (!this.destroyed) {
+              this.emit("error", error);
+              this.emit("close");
+            }
+          });
+        });
+        return this;
+      }
       bunConnect({
         data: this,
         hostname: host || "localhost",

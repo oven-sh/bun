@@ -889,6 +889,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 };
 
 Socket.prototype.connect = function connect(...args) {
+<<<<<<< HEAD
   $debug("Socket.prototype.connect");
   {
     const [options, connectListener] =
@@ -899,6 +900,96 @@ Socket.prototype.connect = function connect(...args) {
     this.servername = options.servername;
     if (socket) {
       connection = socket;
+=======
+  const [options, connectListener] =
+    $isArray(args[0]) && args[0][normalizedArgsSymbol]
+      ? // args have already been normalized.
+        // Normalized array is passed as the first and only argument.
+        ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
+      : normalizeArgs(args);
+  let connection = this[ksocket];
+  let upgradeDuplex = false;
+  let {
+    fd,
+    port,
+    host,
+    path,
+    socket,
+    localAddress,
+    localPort,
+    rejectUnauthorized,
+    pauseOnConnect,
+    servername,
+    checkServerIdentity,
+    session,
+  } = options;
+  if (localAddress && !isIP(localAddress)) {
+    throw $ERR_INVALID_IP_ADDRESS(localAddress);
+  }
+  if (localPort) {
+    validateNumber(localPort, "options.localPort");
+  }
+  this.servername = servername;
+  if (socket) {
+    connection = socket;
+  }
+  this.connecting = true;
+
+  if (fd) {
+    bunConnect({
+      data: this,
+      fd: fd,
+      socket: this[khandlers],
+      allowHalfOpen: this.allowHalfOpen,
+    }).catch(error => {
+      this.connecting = false;
+      if (!this.destroyed) {
+        this.emit("error", error);
+        this.emit("close");
+      }
+    });
+  }
+  this.pauseOnConnect = pauseOnConnect;
+  if (!pauseOnConnect) {
+    process.nextTick(() => {
+      this.resume();
+    });
+  }
+  if (fd) {
+    return this;
+  }
+  if (
+    // TLSSocket already created a socket and is forwarding it here. This is a private API.
+    !(socket && $isObject(socket) && socket instanceof Duplex) &&
+    // public api for net.Socket.connect
+    port === undefined &&
+    path == null
+  ) {
+    throw $ERR_MISSING_ARGS(["options", "port", "path"]);
+  }
+  this.remotePort = port;
+  const bunTLS = this[bunTlsSymbol];
+  var tls = undefined;
+  if (typeof bunTLS === "function") {
+    tls = bunTLS.$call(this, port, host, true);
+    // Client always request Cert
+    this._requestCert = true;
+    if (tls) {
+      if (typeof rejectUnauthorized !== "undefined") {
+        this._rejectUnauthorized = rejectUnauthorized;
+        tls.rejectUnauthorized = rejectUnauthorized;
+      } else {
+        this._rejectUnauthorized = tls.rejectUnauthorized;
+      }
+      tls.requestCert = true;
+      tls.session = session || tls.session;
+      this.servername = tls.servername;
+      tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
+      this[bunTLSConnectOptions] = tls;
+      if (!connection && tls.socket) {
+        connection = tls.socket;
+      }
+>>>>>>> 7e28dcb9e5 (more)
     }
     if (fd) {
       doConnect(this._handle, {

@@ -35,6 +35,7 @@ public:
     bool hasModuleRecord() const { return !!m_moduleRecord; }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
+    JSValue instantiate(JSGlobalObject* globalObject);
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
     Exception* evaluationException() const { return m_evaluationException.get(); }

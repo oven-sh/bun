@@ -143,7 +143,7 @@ class Module {
       });
     }
 
-    let registry = { __proto__: null };
+    let registry: any = { __proto__: null };
     if (sourceText !== undefined) {
       this[kNative] = new ModuleNative(
         identifier,
@@ -246,7 +246,7 @@ class Module {
     if (typeof depth === "number" && depth < 0) return this;
 
     const constructor = getConstructorOf(this) || Module;
-    const o = { __proto__: { constructor } };
+    const o: any = { __proto__: { constructor } };
     o.status = this.status;
     o.identifier = this.identifier;
     o.context = this.context;

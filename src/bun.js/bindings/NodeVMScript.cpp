@@ -9,6 +9,9 @@
 
 #include "../vm/SigintWatcher.h"
 
+#include <bit>
+#include <print>
+
 namespace Bun {
 using namespace NodeVM;
 
@@ -51,6 +54,15 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
 
         if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
             RETURN_IF_EXCEPTION(scope, false);
+            any = true;
+        }
+
+        // Handle importModuleDynamically option
+        JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (importModuleDynamicallyValue && importModuleDynamicallyValue.isCallable()) {
+            this->importer = importModuleDynamicallyValue;
             any = true;
         }
     }

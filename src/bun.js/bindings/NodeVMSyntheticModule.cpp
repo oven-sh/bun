@@ -7,6 +7,7 @@
 #include "wtf/Scope.h"
 
 #include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
@@ -46,13 +47,13 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
         return nullptr;
     }
 
-    WTF::Vector<WTF::String> exportNames;
+    WTF::Vector<Identifier, 4> exportNames;
     for (unsigned i = 0; i < exportNamesArray->getArrayLength(); i++) {
         JSValue exportNameValue = exportNamesArray->getDirectIndex(globalObject, i);
         if (!exportNameValue.isString()) {
             throwArgumentTypeError(*globalObject, scope, 2, "exportNames"_s, "Module"_s, "Module"_s, "string[]"_s);
         }
-        exportNames.append(exportNameValue.toWTFString(globalObject));
+        exportNames.append(Identifier::fromString(vm, exportNameValue.toWTFString(globalObject)));
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -72,9 +73,23 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    SyntheticModuleRecord* moduleRecord = nullptr;
+    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
 
     m_moduleRecord.set(vm, this, moduleRecord);
+
+    SymbolTable* exportSymbolTable = SymbolTable::create(vm);
+
+    ScopeOffset offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+    exportSymbolTable->set(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
+
+    for (const Identifier& exportName : m_exportNames) {
+        auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+        exportSymbolTable->set(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(offset)));
+        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportName, exportName));
+    }
+
+    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
+    moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
 }
 
 void NodeVMSyntheticModule::ensureModuleRecord(JSGlobalObject* globalObject)
@@ -92,10 +107,6 @@ AbstractModuleRecord* NodeVMSyntheticModule::moduleRecord(JSGlobalObject* global
 
 JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher)
 {
-    const unsigned length = specifiers->getArrayLength();
-
-    ASSERT(length == moduleNatives->getArrayLength());
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -106,23 +117,6 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
 
     SyntheticModuleRecord* record = m_moduleRecord.get();
 
-    if (length != 0) {
-        for (unsigned i = 0; i < length; i++) {
-            JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
-            JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
-
-            ASSERT(specifierValue.isString());
-            ASSERT(moduleNativeValue.isObject());
-
-            WTF::String specifier = specifierValue.toWTFString(globalObject);
-            JSObject* moduleNative = moduleNativeValue.getObject();
-            AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
-
-            record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
-            m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
-        }
-    }
-
     if (NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false)) {
         globalObject = nodeVmGlobalObject;
     }
@@ -132,7 +126,26 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SyntheticModule linking");
+    }
+
+    status(Status::Linked);
+    return JSC::jsUndefined();
+}
+
+JSValue NodeVMSyntheticModule::instantiate(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_status >= Status::Linked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Cannot reinstantiate a SyntheticModule"_s);
+        return {};
+    }
+
+    if (m_status != Status::Unlinked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be unlinked before instantiating"_s);
+        return {};
     }
 
     status(Status::Linked);

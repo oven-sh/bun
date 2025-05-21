@@ -39,6 +39,7 @@ public:
     bool hasModuleRecord() const { return !!m_moduleRecord; }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
+    JSValue instantiate(JSGlobalObject* globalObject);
     void setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value);
 
     DECLARE_EXPORT_INFO;
@@ -46,9 +47,9 @@ public:
 
 private:
     WriteBarrier<SyntheticModuleRecord> m_moduleRecord;
-    WTF::Vector<WTF::String> m_exportNames;
+    WTF::Vector<Identifier> m_exportNames;
 
-    NodeVMSyntheticModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, WTF::Vector<WTF::String> exportNames)
+    NodeVMSyntheticModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, WTF::Vector<Identifier, 4> exportNames)
         : Base(vm, structure, WTFMove(identifier), context)
         , m_exportNames(WTFMove(exportNames))
     {

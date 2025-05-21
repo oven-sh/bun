@@ -307,11 +307,16 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async module linking");
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SourceTextModule linking");
     }
 
     status(Status::Linked);
-    return JSC::jsUndefined();
+    return jsUndefined();
+}
+
+JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
+{
+    return jsUndefined();
 }
 
 RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)

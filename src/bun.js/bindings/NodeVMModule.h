@@ -59,9 +59,6 @@ public:
     void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
 
     // Purposely not virtual. Dispatches to the correct subclass.
-    bool finishInstantiate(JSC::JSGlobalObject* globalObject, WTF::Deque<NodeVMSourceTextModule*>& stack, unsigned* dfsIndex);
-
-    // Purposely not virtual. Dispatches to the correct subclass.
     JSValue createModuleRecord(JSC::JSGlobalObject* globalObject);
 
     // Purposely not virtual. Dispatches to the correct subclass.

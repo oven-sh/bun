@@ -8,9 +8,10 @@ namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
 public:
-    std::optional<int64_t> timeout = std::nullopt;
-    bool produceCachedData = false;
     WTF::Vector<uint8_t> cachedData;
+    std::optional<int64_t> timeout = std::nullopt;
+    JSValue importer {};
+    bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
 

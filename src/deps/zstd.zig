@@ -1,3 +1,5 @@
+const std = @import("std");
+const bun = @import("bun");
 pub extern fn ZSTD_versionNumber() c_uint;
 pub extern fn ZSTD_versionString() [*c]const u8;
 pub extern fn ZSTD_compress(dst: ?*anyopaque, dstCapacity: usize, src: ?*const anyopaque, srcSize: usize, compressionLevel: c_int) usize;
@@ -216,12 +218,150 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
 }
 
 pub fn getDecompressedSize(src: []const u8) usize {
-    return ZSTD_getDecompressedSize(src.ptr, src.len);
+    return ZSTD_findDecompressedSize(src.ptr, src.len);
 }
+
+//ZSTD_findDecompressedSize() :
+//`src` should point to the start of a series of ZSTD encoded and/or skippable frames
+//`srcSize` must be the _exact_ size of this series
+//     (i.e. there should be a frame boundary at `src + srcSize`)
+//@return : - decompressed size of all data in all successive frames
+//          - if the decompressed size cannot be determined: ZSTD_CONTENTSIZE_UNKNOWN
+//          - if an error occurred: ZSTD_CONTENTSIZE_ERROR
+//
+// note 1 : decompressed size is an optional field, that may not be present, especially in streaming mode.
+//          When `return==ZSTD_CONTENTSIZE_UNKNOWN`, data to decompress could be any size.
+//          In which case, it's necessary to use streaming mode to decompress data.
+// note 2 : decompressed size is always present when compression is done with ZSTD_compress()
+// note 3 : decompressed size can be very large (64-bits value),
+//          potentially larger than what local system can handle as a single memory segment.
+//          In which case, it's necessary to use streaming mode to decompress data.
+// note 4 : If source is untrusted, decompressed size could be wrong or intentionally modified.
+//          Always ensure result fits within application's authorized limits.
+//          Each application can set its own limits.
+// note 5 : ZSTD_findDecompressedSize handles multiple frames, and so it must traverse the input to
+//          read each contained frame header.  This is fast as most of the data is skipped,
+//          however it does mean that all frame data must be present and valid. */
+pub extern fn ZSTD_findDecompressedSize(src: ?*const anyopaque, srcSize: usize) c_ulonglong;
 
 pub const Result = union(enum) {
     success: usize,
     err: [:0]const u8,
 };
 
-const bun = @import("bun");
+pub const ZstdReaderArrayList = struct {
+    const State = enum {
+        Uninitialized,
+        Inflating,
+        End,
+        Error,
+    };
+
+    input: []const u8,
+    list: std.ArrayListUnmanaged(u8),
+    list_allocator: std.mem.Allocator,
+    list_ptr: *std.ArrayListUnmanaged(u8),
+    allocator: std.mem.Allocator,
+    zstd: *ZSTD_DStream,
+    state: State = State.Uninitialized,
+    total_out: usize = 0,
+    total_in: usize = 0,
+
+    pub const new = bun.TrivialNew(ZstdReaderArrayList);
+
+    pub fn init(
+        input: []const u8,
+        list: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+    ) !*ZstdReaderArrayList {
+        return initWithListAllocator(input, list, allocator, allocator);
+    }
+
+    pub fn initWithListAllocator(
+        input: []const u8,
+        list: *std.ArrayListUnmanaged(u8),
+        list_allocator: std.mem.Allocator,
+        allocator: std.mem.Allocator,
+    ) !*ZstdReaderArrayList {
+        var reader = try allocator.create(ZstdReaderArrayList);
+        reader.* = .{
+            .input = input,
+            .list = list.*,
+            .list_allocator = list_allocator,
+            .list_ptr = list,
+            .allocator = allocator,
+            .zstd = undefined,
+        };
+
+        reader.zstd = ZSTD_createDStream() orelse {
+            allocator.destroy(reader);
+            return error.ZstdFailedToCreateInstance;
+        };
+        _ = ZSTD_initDStream(reader.zstd);
+        return reader;
+    }
+
+    pub fn end(this: *ZstdReaderArrayList) void {
+        if (this.state != .End) {
+            _ = ZSTD_freeDStream(this.zstd);
+            this.state = .End;
+        }
+    }
+
+    pub fn deinit(this: *ZstdReaderArrayList) void {
+        var alloc = this.allocator;
+        this.end();
+        alloc.destroy(this);
+    }
+
+    pub fn readAll(this: *ZstdReaderArrayList, is_done: bool) !void {
+        defer this.list_ptr.* = this.list;
+
+        if (this.state == .End or this.state == .Error) return;
+
+        while (this.state == .Uninitialized or this.state == .Inflating) {
+            var unused = this.list.unusedCapacitySlice();
+            if (unused.len < 4096) {
+                try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
+                unused = this.list.unusedCapacitySlice();
+            }
+
+            const next_in = this.input[this.total_in..];
+            var in_buf = ZSTD_inBuffer{
+                .src = if (next_in.len > 0) next_in.ptr else null,
+                .size = next_in.len,
+                .pos = 0,
+            };
+            var out_buf = ZSTD_outBuffer{
+                .dst = if (unused.len > 0) unused.ptr else null,
+                .size = unused.len,
+                .pos = 0,
+            };
+
+            const rc = ZSTD_decompressStream(this.zstd, &out_buf, &in_buf);
+            if (ZSTD_isError(rc) != 0) {
+                this.state = .Error;
+                return error.ZstdDecompressionError;
+            }
+
+            const bytes_written = out_buf.pos;
+            const bytes_read = in_buf.pos;
+            this.list.items.len += bytes_written;
+            this.total_in += bytes_read;
+            this.total_out += bytes_written;
+
+            if (rc == 0) {
+                this.end();
+                return;
+            }
+
+            if (bytes_read == next_in.len) {
+                this.state = .Inflating;
+                if (is_done) {
+                    this.state = .Error;
+                }
+                return error.ShortRead;
+            }
+        }
+    }
+};

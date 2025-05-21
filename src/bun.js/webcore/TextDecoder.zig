@@ -280,46 +280,40 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-    var args_ = callframe.arguments_old(2);
-    var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
+    const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
 
-    if (arguments.len > 0) {
-        // encoding
-        if (arguments[0].isString()) {
-            var str = try arguments[0].toSlice(globalThis, bun.default_allocator);
-            defer if (str.isAllocated()) str.deinit();
+    if (encoding_value.isString()) {
+        var str = try encoding_value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-            if (EncodingLabel.which(str.slice())) |label| {
-                decoder.encoding = label;
-            } else {
-                return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
-            }
-        } else if (arguments[0].isUndefined()) {
-            // default to utf-8
-            decoder.encoding = EncodingLabel.@"UTF-8";
+        if (EncodingLabel.which(str.slice())) |label| {
+            decoder.encoding = label;
         } else {
-            return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+            return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
+        }
+    } else if (encoding_value.isUndefined()) {
+        // default to utf-8
+        decoder.encoding = EncodingLabel.@"UTF-8";
+    } else {
+        return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+    }
+
+    if (!options_value.isUndefined()) {
+        if (!options_value.isObject()) {
+            return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
         }
 
-        if (arguments.len >= 2) {
-            const options = arguments[1];
+        if (try options_value.get(globalThis, "fatal")) |fatal| {
+            decoder.fatal = fatal.toBoolean();
+        }
 
-            if (!options.isObject()) {
-                return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
-            }
-
-            if (try options.get(globalThis, "fatal")) |fatal| {
-                decoder.fatal = fatal.toBoolean();
-            }
-
-            if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
-                if (ignoreBOM.isBoolean()) {
-                    decoder.ignore_bom = ignoreBOM.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
-                }
+        if (try options_value.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+            if (ignoreBOM.isBoolean()) {
+                decoder.ignore_bom = ignoreBOM.asBoolean();
+            } else {
+                return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
             }
         }
     }

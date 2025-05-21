@@ -777,6 +777,7 @@ pub const Task = struct {
                 }
 
                 const result = this.request.extract.tarball.run(
+                    &this.log,
                     bytes,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -798,7 +799,7 @@ pub const Task = struct {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
                         this.request.git_clone.env,
-                        manager.log,
+                        &this.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
@@ -822,7 +823,7 @@ pub const Task = struct {
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
@@ -846,7 +847,7 @@ pub const Task = struct {
                 const data = Repository.checkout(
                     manager.allocator,
                     this.request.git_checkout.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
@@ -897,6 +898,7 @@ pub const Task = struct {
                     &this.request.local_tarball.tarball,
                     tarball_path,
                     normalize,
+                    &this.log,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -918,13 +920,14 @@ pub const Task = struct {
         tarball: *const ExtractTarball,
         tarball_path: string,
         normalize: bool,
+        log: *logger.Log,
     ) !ExtractData {
         const bytes = if (normalize)
             try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
         else
             try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
-        return tarball.run(bytes);
+        return tarball.run(log, bytes);
     }
 
     pub const Tag = enum(u3) {
@@ -2164,7 +2167,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             const basename = std.fs.path.basename(unintall_task.absolute_path);
 
                             var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
                                 }
                                 return;
@@ -2172,7 +2175,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             defer bun.FD.fromStdDir(dir).close();
 
                             dir.deleteTree(basename) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
                                 }
                             };
@@ -5172,6 +5175,23 @@ pub const PackageManager = struct {
 
     const debug = Output.scoped(.PackageManager, true);
 
+    fn updateNameAndNameHashFromVersionReplacement(
+        lockfile: *const Lockfile,
+        original_name: String,
+        original_name_hash: PackageNameHash,
+        new_version: Dependency.Version,
+    ) struct { String, PackageNameHash } {
+        return switch (new_version.tag) {
+            // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+            .dist_tag => .{ new_version.value.dist_tag.name, String.Builder.stringHash(lockfile.str(&new_version.value.dist_tag.name)) },
+            .npm => .{ new_version.value.npm.name, String.Builder.stringHash(lockfile.str(&new_version.value.npm.name)) },
+            .git => .{ new_version.value.git.package_name, original_name_hash },
+            .github => .{ new_version.value.github.package_name, original_name_hash },
+            .tarball => .{ new_version.value.tarball.package_name, original_name_hash },
+            else => .{ original_name, original_name_hash },
+        };
+    }
+
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -5219,21 +5239,29 @@ pub const PackageManager = struct {
 
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
             // if it's a workspaceOnly dependency
-            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                    name, name_hash = switch (new.tag) {
-                        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-                        .dist_tag => .{ new.value.dist_tag.name, String.Builder.stringHash(this.lockfile.str(&new.value.dist_tag.name)) },
-                        .npm => .{ new.value.npm.name, String.Builder.stringHash(this.lockfile.str(&new.value.npm.name)) },
-                        .git => .{ new.value.git.package_name, name_hash },
-                        .github => .{ new.value.github.package_name, name_hash },
-                        .tarball => .{ new.value.tarball.package_name, name_hash },
-                        else => .{ name, name_hash },
-                    };
+
+                    name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
+
+                    if (new.tag == .catalog) {
+                        if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
+                            name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+                            break :version catalog_dep.version;
+                        }
+                    }
 
                     // `name_hash` stays the same
                     break :version new;
+                }
+
+                if (dependency.version.tag == .catalog) {
+                    if (this.lockfile.catalogs.get(this.lockfile, dependency.version.value.catalog, name)) |catalog_dep| {
+                        name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+
+                        break :version catalog_dep.version;
+                    }
                 }
             }
 
@@ -6565,12 +6593,14 @@ pub const PackageManager = struct {
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (manager.options.enable.manifest_cache) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
 
                             if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                                 continue;
@@ -6780,6 +6810,10 @@ pub const PackageManager = struct {
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
+                if (task.log.errors > 0) {
+                    manager.any_failed_to_install = true;
+                }
+                task.log.deinit();
             }
 
             switch (task.tag) {
@@ -14532,12 +14566,16 @@ pub const PackageManager = struct {
         const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
-        if (manager.options.scope.url.hostname.len > 0) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
-            const allocator = hostname_stack.get();
-            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
-            defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        // Unless you're behind a proxy.
+        if (!manager.env.hasHTTPProxy()) {
+            // And don't try to resolve DNS if it's an IP address.
+            if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
+                var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+                const allocator = hostname_stack.get();
+                const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+                defer allocator.free(hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            }
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)
@@ -14717,6 +14755,7 @@ pub const PackageManager = struct {
                         for (lockfile.patched_dependencies.values()) |patch_dep| builder.count(patch_dep.path.slice(lockfile.buffers.string_bytes.items));
 
                         lockfile.overrides.count(&lockfile, builder);
+                        lockfile.catalogs.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -14749,6 +14788,7 @@ pub const PackageManager = struct {
                         };
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
+                        manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -14860,10 +14900,25 @@ pub const PackageManager = struct {
                                     try manager.enqueueDependencyWithMain(
                                         @truncate(dependency_i),
                                         dependency,
-                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        invalid_package_id,
                                         false,
                                     );
                                 }
+                            }
+                        }
+
+                        if (manager.summary.catalogs_changed) {
+                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dep, _dep_id| {
+                                const dep_id: DependencyID = @intCast(_dep_id);
+                                if (dep.version.tag != .catalog) continue;
+
+                                manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
+                                try manager.enqueueDependencyWithMain(
+                                    dep_id,
+                                    dep,
+                                    invalid_package_id,
+                                    false,
+                                );
                             }
                         }
 

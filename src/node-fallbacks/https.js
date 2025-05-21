@@ -1,7 +1,19 @@
-/**
- * Browser polyfill for the `"https"` module.
- *
- * Imported on usage in `bun build --target=browser`
- */
-export * from "https-browserify";
-export * as default from "https-browserify";
+import * as https from "https-browserify";
+export var {
+  Agent,
+  ClientRequest,
+  IncomingMessage,
+  METHODS,
+  OutgoingMessage,
+  STATUS_CODES,
+  Server,
+  ServerResponse,
+  createServer,
+  get,
+  globalAgent,
+  maxHeaderSize,
+  request,
+  setMaxIdleHTTPParsers,
+  validateHeaderName,
+  validateHeaderValue,
+} = https;

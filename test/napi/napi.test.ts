@@ -372,7 +372,7 @@ describe("napi", () => {
   describe("finalizers", () => {
     it("runs asynchronously on the JS thread", () => {
       const out = checkSameOutput("test_external_buffer_finalizer", []);
-      expect(out).toMatch(/^(buffer_finalizer run from js thread\n)+resolved to undefined$/);
+      expect(out).toMatch(/^(buffer_finalizer run from js thread\r?\n)+resolved to undefined$/);
     });
   });
 

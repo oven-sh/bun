@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { once } from "events";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
-
-const todoIfWindows = isWindows ? test.todo : test;
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -18,6 +17,59 @@ describe("web worker", () => {
       worker.terminate();
     }
   }
+
+  describe("preload", () => {
+    test("invalid file URL", async () => {
+      expect(() => new Worker("file://:!:!:!!!!", {})).toThrow(/Invalid file URL/);
+      expect(
+        () =>
+          new Worker(import.meta.url, {
+            preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"],
+          }),
+      ).toThrow(/Invalid file URL/);
+    });
+
+    test("string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: new URL("worker-fixture-preload.js", import.meta.url).href,
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("array of 2 strings", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [
+          new URL("worker-fixture-preload.js", import.meta.url).href,
+          new URL("worker-fixture-preload-2.js", import.meta.url).href,
+        ],
+      });
+      const result = await waitForWorkerResult(worker, "hello world world");
+      expect(result).toEqual("hello world world");
+    });
+
+    test("array of string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload.js", import.meta.url).href],
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("error in preload doesn't crash parent", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload-bad.js", import.meta.url).href],
+      });
+      const { resolve, promise } = Promise.withResolvers();
+      worker.onerror = e => {
+        resolve(e.message);
+      };
+      const result = await promise;
+      expect(result).toMatch(
+        /THIS IS AN ERROR AND THIS PARTICULAR STRING DOESNT APPEAR IN THE SOURCE CODE SO WE KNOW FOR SURE IT SENT THE ACTUAL MESSAGE AND NOT JUST A DUMP OF THE SOURCE CODE AS IT ORIGINALLY WAS/,
+      );
+    });
+  });
 
   test("worker", done => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
@@ -45,6 +97,10 @@ describe("web worker", () => {
   test("worker-env", done => {
     const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
       env: {
+        // Verify that we use putDirectMayBeIndex instead of putDirect
+        [0]: "123",
+        [1]: "234",
+
         hello: "world",
         another_key: 123 as any,
       },
@@ -57,6 +113,8 @@ describe("web worker", () => {
       try {
         expect(e.data).toEqual({
           env: {
+            [0]: "123",
+            [1]: "234",
             hello: "world",
             another_key: "123",
           },
@@ -212,6 +270,32 @@ describe("web worker", () => {
       done();
     });
   });
+
+  describe("worker event", () => {
+    test("is fired with the right object", () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let worker: Worker | undefined = undefined;
+      let called = false;
+      process.once("worker", eventWorker => {
+        called = true;
+        expect(eventWorker as any).toBe(worker);
+        resolve();
+      });
+      worker = new Worker(new URL("data:text/javascript,"));
+      expect(called).toBeFalse();
+      return promise;
+    });
+  });
+
+  describe("error event", () => {
+    test("is fired with a string of the error", async () => {
+      const worker = new Worker("data:text/javascript,throw 5");
+      const [err] = await once(worker, "error");
+      expect(err.type).toBe("error");
+      expect(err.message).toBe("5");
+      expect(err.error).toBe(null);
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory
@@ -231,15 +315,30 @@ describe("worker_threads", () => {
     });
   });
 
-  todoIfWindows("worker terminate", async () => {
-    const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
-      smol: true,
-    });
-    const code = await worker.terminate();
-    expect(code).toBe(0);
+  test("worker terminate while setting up thread", async () => {
+    // this test is inherently somewhat flaky: if we call terminate() before the worker starts
+    // running any JavaScript the code will be 0 like we expect, but if we terminate while it is
+    // running code the exit code is 1 instead (this happens in Node.js too). this means we can
+    // randomly see an exit code of 1 if the main thread happens to run slower than usual and allows
+    // the worker to run some code.
+    //
+    // to prevent it from polluting the flaky test list, we try 10 times and expect:
+    // - at least 1 time the exit code was 0
+    // - the exit code is never something other than 0 or 1
+    const codes: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
+        smol: true,
+      });
+      worker.on("error", expect.unreachable);
+      const code = await worker.terminate();
+      expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
+      codes.push(code);
+    }
+    expect(codes.includes(0)).toBeTrue();
   });
 
-  todoIfWindows("worker with process.exit (delay) and terminate", async () => {
+  test("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
@@ -254,7 +353,7 @@ describe("worker_threads", () => {
       worker.on("message", () => done());
     });
     const code = await worker.terminate();
-    expect(code).toBe(0);
+    expect(code).toBe(1);
   });
 
   test("worker without argv/execArgv", async () => {
@@ -288,5 +387,27 @@ describe("worker_threads", () => {
     // ensure they didn't change for the main thread
     expect(process.argv).toEqual(original_argv);
     expect(process.execArgv).toEqual(original_execArgv);
+  });
+
+  test("worker with eval = false fails with code", async () => {
+    let has_error = false;
+    const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
+    const [err] = await once(worker, "error");
+    expect(err.constructor.name).toEqual("Error");
+    expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
+  });
+
+  test("worker with eval = true succeeds with valid code", async () => {
+    let message;
+    const worker = new wt.Worker("postMessage('hello')", { eval: true });
+    worker.on("message", e => {
+      message = e;
+    });
+    const p = new Promise((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("exit", resolve);
+    });
+    await p;
+    expect(message).toEqual("hello");
   });
 });

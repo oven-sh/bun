@@ -8,6 +8,7 @@ const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -59,6 +60,7 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  static [Symbol.toStringTag] = "WebSocket";
 
   // Bitset to track whether event handlers are set.
   #eventId = 0;
@@ -69,9 +71,104 @@ class BunWebSocket extends EventEmitter {
     if (!WebSocket) {
       WebSocket = $cpp("JSWebSocket.cpp", "getWebSocketConstructor");
     }
-    let ws = (this.#ws = new WebSocket(url, protocols));
+
+    if (protocols === undefined) {
+      protocols = [];
+    } else if (!Array.isArray(protocols)) {
+      if (typeof protocols === "object" && protocols !== null) {
+        options = protocols;
+        protocols = [];
+      } else {
+        protocols = [protocols];
+      }
+    }
+
+    let headers;
+    let method = "GET";
+    // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
+    if ($isObject(options)) {
+      headers = options?.headers;
+    }
+
+    const finishRequest = options?.finishRequest;
+    if ($isCallable(finishRequest)) {
+      if (headers) {
+        headers = {
+          __proto__: null,
+          ...headers,
+        };
+      }
+      let lazyRawHeaders;
+      let didCallEnd = false;
+      const nodeHttpClientRequestSimulated = {
+        __proto__: Object.create(EventEmitter.prototype),
+        setHeader: function (name, value) {
+          if (!headers) headers = Object.create(null);
+          headers[name.toLowerCase()] = value;
+        },
+        getHeader: function (name) {
+          return headers ? headers[name.toLowerCase()] : undefined;
+        },
+        removeHeader: function (name) {
+          if (headers) delete headers[name.toLowerCase()];
+        },
+        getHeaders: function () {
+          return { ...headers };
+        },
+        hasHeader: function (name) {
+          return headers ? name.toLowerCase() in headers : false;
+        },
+        headersSent: false,
+        method: method,
+        path: url,
+        abort: function () {
+          // No-op for now, as we don't have a real request to abort
+        },
+        end: () => {
+          if (!didCallEnd) {
+            didCallEnd = true;
+            this.#createWebSocket(url, protocols, headers, method);
+          }
+        },
+        write() {},
+        writeHead() {},
+        [Symbol.toStringTag]: "ClientRequest",
+        get rawHeaders() {
+          if (lazyRawHeaders === undefined) {
+            lazyRawHeaders = [];
+            for (const key in headers) {
+              lazyRawHeaders.push(key, headers[key]);
+            }
+          }
+          return lazyRawHeaders;
+        },
+        set rawHeaders(value) {
+          lazyRawHeaders = value;
+        },
+        rawTrailers: [],
+        trailers: null,
+        finished: false,
+        socket: undefined,
+        _header: null,
+        _headerSent: false,
+        _last: null,
+      };
+      EventEmitter.$call(nodeHttpClientRequestSimulated);
+      finishRequest(nodeHttpClientRequestSimulated);
+      if (!didCallEnd) {
+        this.#createWebSocket(url, protocols, headers, method);
+      }
+      return;
+    }
+
+    this.#createWebSocket(url, protocols, headers, method);
+  }
+
+  #createWebSocket(url, protocols, headers, method) {
+    let ws = (this.#ws = new WebSocket(url, headers ? { headers, method, protocols } : protocols));
     ws.binaryType = "nodebuffer";
-    // TODO: options
+
+    return ws;
   }
 
   #onOrOnce(event, listener, once) {
@@ -170,11 +267,17 @@ class BunWebSocket extends EventEmitter {
   }
 
   close(code, reason) {
-    this.#ws.close(code, reason);
+    const ws = this.#ws;
+    if (ws) {
+      ws.close(code, reason);
+    }
   }
 
   terminate() {
-    this.#ws.terminate();
+    const ws = this.#ws;
+    if (ws) {
+      ws.terminate();
+    }
   }
 
   get url() {
@@ -747,10 +850,14 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#state === 1) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
+      // send returns:
+      // 1+ - The number of bytes sent is always the byte length of the data never less
+      // 0 - dropped due to backpressure (not sent)
+      // -1 - enqueue the data internaly
+      // we dont need to do anything with the return value here
       const written = this.#ws.send(data, compress);
-
-      if (written == -1) {
-        // backpressure
+      if (written === 0) {
+        // dropped
         this.#enquedMessages.push([data, compress, cb]);
         this.#bufferedAmount += data.length;
         return;
@@ -772,6 +879,14 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   terminate() {
+    // Temporary workaround for CTRL + C error appearing in next dev with turobpack
+    //
+    // > ⨯ unhandledRejection:  TypeError: undefined is not an object (evaluating 'this.#state')
+    // > at terminate (ws:611:30)
+    // > at Promise (null)
+    //
+    if (!this) return;
+
     let state = this.#state;
     if (state === 3) return;
     if (state === 0) {
@@ -830,7 +945,7 @@ class BunWebSocketMocked extends EventEmitter {
    *     not to skip UTF-8 validation for text and close messages
    * @private
    */
-  setSocket(socket, head, options) {
+  setSocket(_socket, _head, _options) {
     throw new Error("Not implemented");
   }
 
@@ -884,7 +999,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   // TODO: implement this more proper
-  addEventListener(type, listener, options) {
+  addEventListener(type, listener, _options) {
     if (type === "message") {
       const l = data => listener({ data });
       l.listener = listener;
@@ -1116,7 +1231,10 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [server, response, req] = socket[kBunInternals];
+    const response = socket._httpMessage;
+    const server = socket.server[kBunInternals];
+    const req = socket[kBunInternals];
+
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";
@@ -1138,7 +1256,6 @@ class WebSocketServer extends EventEmitter {
         data: ws[kBunInternals],
       })
     ) {
-      response._reply(undefined);
       if (this.clients) {
         this.clients.add(ws);
         ws.on("close", () => {
@@ -1166,7 +1283,7 @@ class WebSocketServer extends EventEmitter {
    */
   handleUpgrade(req, socket, head, cb) {
     // socket is actually fake so we use internal http_res
-    const [_, response] = socket[kBunInternals];
+    const response = socket._httpMessage;
 
     // socket.on("error", socketOnError);
 
@@ -1208,7 +1325,7 @@ class WebSocketServer extends EventEmitter {
     if (secWebSocketProtocol !== undefined) {
       try {
         protocols = subprotocolParse(secWebSocketProtocol);
-      } catch (err) {
+      } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
         abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
         return;
@@ -1338,7 +1455,7 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = ws => {
+var createWebSocketStream = _ws => {
   throw new Error("Not supported yet in Bun");
 };
 

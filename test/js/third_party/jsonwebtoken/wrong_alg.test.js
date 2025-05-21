@@ -1,8 +1,8 @@
 var PS_SUPPORTED = true;
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
-import path from "path";
+import { describe, expect, it } from "bun:test";
 import fs from "fs";
+import jwt from "jsonwebtoken";
+import path from "path";
 
 var pub = fs.readFileSync(path.join(__dirname, "pub.pem"), "utf8");
 // priv is never used

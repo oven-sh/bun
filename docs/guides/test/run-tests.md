@@ -2,7 +2,7 @@
 name: Run your tests with the Bun test runner
 ---
 
-Bun has a built-in [test runner](/docs/cli/test) with a Jest-like `expect` API.
+Bun has a built-in [test runner](https://bun.sh/docs/cli/test) with a Jest-like `expect` API.
 
 ---
 
@@ -21,7 +21,7 @@ Here's what the output of a typical test run looks like. In this case, there are
 
 ```sh
 $ bun test
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test.test.js:
 ✓ add [0.87ms]
@@ -47,7 +47,7 @@ To only run certain test files, pass a positional argument to `bun test`. The ru
 
 ```sh
 $ bun test test3
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test3.test.js:
 ✓ add [1.40ms]
@@ -85,7 +85,7 @@ Adding `-t add` will only run tests with "add" in the name. This works with test
 
 ```sh
 $ bun test -t add
-bun test v1.x (9c68abdb)
+bun test v$BUN_LATEST_VERSION (9c68abdb)
 
 test.test.js:
 ✓ add [1.79ms]
@@ -108,4 +108,4 @@ Ran 6 tests across 3 files. [59.00ms]
 
 ---
 
-See [Docs > Test Runner](/docs/cli/test) for complete documentation on the test runner.
+See [Docs > Test Runner](https://bun.sh/docs/cli/test) for complete documentation on the test runner.

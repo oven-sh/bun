@@ -1,4 +1,4 @@
-import { run, bench } from "../node_modules/mitata/src/cli.mjs";
+import { bench, run } from "../runner.mjs";
 
 const encoder = new TextEncoder();
 

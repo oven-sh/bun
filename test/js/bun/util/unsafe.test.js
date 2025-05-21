@@ -1,4 +1,4 @@
-import { test, expect, it, describe } from "bun:test";
+import { expect, it } from "bun:test";
 import { gc } from "harness";
 
 it("arrayBufferToString u8", async () => {

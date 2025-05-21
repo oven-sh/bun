@@ -37,6 +37,7 @@ class CryptoAlgorithmRsaOaepParams final : public CryptoAlgorithmParameters {
 public:
     // Use labelVector() instead of label. The label will be gone once labelVector() is called.
     mutable std::optional<BufferSource::VariantType> label;
+    size_t padding = 0; // 0 represents the default value of the API
 
     Class parametersClass() const final { return Class::RsaOaepParams; }
 

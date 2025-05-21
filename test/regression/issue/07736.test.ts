@@ -1,4 +1,4 @@
-import { test, describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 const MAP_SIZE = 918 * 4;
 
 describe("toEqual on a large Map", () => {

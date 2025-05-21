@@ -1,6 +1,6 @@
-import EventEmitter, { EventEmitterAsyncResource } from "events";
 import { AsyncLocalStorage } from "async_hooks";
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import EventEmitter, { EventEmitterAsyncResource } from "events";
 
 describe("EventEmitterAsyncResource", () => {
   test("is an EventEmitter", () => {

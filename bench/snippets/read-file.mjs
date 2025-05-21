@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 var short = (function () {
   const text = "Hello World!";

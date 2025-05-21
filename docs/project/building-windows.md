@@ -60,54 +60,46 @@ Visual Studio can be installed graphically using the wizard or through WinGet:
 
 After Visual Studio, you need the following:
 
-- LLVM 18.1.8
+- LLVM 19.1.7
 - Go
 - Rust
 - NASM
 - Perl
 - Ruby
 - Node.js
+- Ccache
 
 {% callout %}
 **Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
 {% /callout %}
 
-[WinGet](https://learn.microsoft.com/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
+[Scoop](https://scoop.sh) can be used to install these remaining tools easily.
 
 {% codetabs group="a" %}
 
-```ps1#WinGet
-## Select "Add LLVM to the system PATH for all users" in the LLVM installer
-> winget install -i LLVM.LLVM -v 18.1.8 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
-```
-
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
-> scoop install nodejs-lts go rust nasm ruby perl
+> scoop install nodejs-lts go rust nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
-> scoop install llvm@18.1.8
+> scoop install llvm@19.1.7
 ```
 
 {% /codetabs %}
 
+{% callout %}
+Please do not use WinGet/other package manager for these, as you will likely install Strawberry Perl instead of a more minimal installation of Perl. Strawberry Perl includes many other utilities that get installed into `$Env:PATH` that will conflict with MSVC and break the build.
+{% /callout %}
+
 If you intend on building WebKit locally (optional), you should install these packages:
-
-{% codetabs group="a" %}
-
-```ps1#WinGet
-> winget install ezwinports.make Cygwin.Cygwin Python.Python.3.12
-```
 
 ```ps1#Scoop
 > scoop install make cygwin python
 ```
 
-{% /codetabs %}
-
-From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\env.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
+From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\vs-shell.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
 
 ```ps1
-> .\scripts\env.ps1
+> .\scripts\vs-shell.ps1
 ```
 
 To verify, you can check for an MSVC-only command line such as `mt.exe`
@@ -117,49 +109,41 @@ To verify, you can check for an MSVC-only command line such as `mt.exe`
 ```
 
 {% callout %}
-It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where you try to build bun without .\scripts\env.ps1 sourced.
+It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where you try to build bun without .\scripts\vs-shell.ps1 sourced.
 {% /callout %}
 
 ## Building
 
 ```ps1
-> bun install
+> bun run build
 
-> .\scripts\env.ps1
-> .\scripts\update-submodules.ps1 # this syncs git submodule state
-> .\scripts\all-dependencies.ps1 # this builds all dependencies
-> .\scripts\make-old-js.ps1 # runs some old code generators
-
-# Configure build environment
-> cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
-
-# Build bun
-> ninja -Cbuild
+# after the initial `bun run build` you can use the following to build
+> ninja -Cbuild/debug
 ```
 
-If this was successful, you should have a `bun-debug.exe` in the `build` folder.
+If this was successful, you should have a `bun-debug.exe` in the `build/debug` folder.
 
 ```ps1
-> .\build\bun-debug.exe --revision
+> .\build\debug\bun-debug.exe --revision
 ```
 
-You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
+You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build\debug` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
 
 ## Extra paths
 
-- WebKit is extracted to `build/bun-webkit`
-- Zig is extracted to `.cache/zig/zig.exe`
+- WebKit is extracted to `build/debug/cache/webkit/`
+- Zig is extracted to `build/debug/cache/zig/bin/zig.exe`
 
 ## Tests
 
-You can run the test suite either using `bun test`, or by using the wrapper script `packages\bun-internal-test`. The internal test package is a wrapper cli to run every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
+You can run the test suite either using `bun test <path>`, or by using the wrapper script `packages\bun-internal-test`. The internal test package is a wrapper cli to run every test file in a separate instance of bun.exe, to prevent a crash in the test runner from stopping the entire suite.
 
 ```ps1
 # Setup
 > bun i --cwd packages\bun-internal-test
 
 # Run the entire test suite with reporter
-# the package.json script "test" uses "build/bun-debug.exe" by default
+# the package.json script "test" uses "build/debug/bun-debug.exe" by default
 > bun run test
 
 # Run an individual test file:

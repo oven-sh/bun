@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { heapStats } from "bun:jsc";
 import { gc } from "bun";
+import { heapStats } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
 
 async function expectMaxObjectTypeCount(
   expect: typeof import("bun:test").expect,

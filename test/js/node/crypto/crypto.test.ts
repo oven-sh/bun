@@ -1,9 +1,9 @@
-import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
-import { it, expect, describe } from "bun:test";
+import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
+import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
@@ -286,12 +286,12 @@ it("should send cipher events in the right order", async () => {
   // TODO: prefinish and readable (on both cipher and decipher) should be flipped
   // This seems like a bug in our crypto code, which
   expect(out.split("\n")).toEqual([
-    `[ "cipher", "prefinish" ]`,
     `[ "cipher", "readable" ]`,
+    `[ "cipher", "prefinish" ]`,
     `[ "cipher", "data" ]`,
     `[ 1, "dfb6b7e029be3ad6b090349ed75931f28f991b52ca9a89f5bf6f82fa1c87aa2d624bd77701dcddfcceaf3add7d66ce06ced17aebca4cb35feffc4b8b9008b3c4" ]`,
-    `[ "decipher", "prefinish" ]`,
     `[ "decipher", "readable" ]`,
+    `[ "decipher", "prefinish" ]`,
     `[ "decipher", "data" ]`,
     `[ 2, "4f7574206f6620746865206d6f756e7461696e206f6620646573706169722c20612073746f6e65206f6620686f70652e" ]`,
     `[ 3, "Out of the mountain of despair, a stone of hope." ]`,

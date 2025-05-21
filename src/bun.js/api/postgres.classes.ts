@@ -5,8 +5,8 @@ export default [
     name: "PostgresSQLConnection",
     construct: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
+    hasPendingActivity: true,
     klass: {
       //   escapeString: {
       //     fn: "escapeString",
@@ -20,9 +20,6 @@ export default [
       close: {
         fn: "doClose",
       },
-      flush: {
-        fn: "doFlush",
-      },
       connected: {
         getter: "getConnected",
       },
@@ -32,17 +29,33 @@ export default [
       unref: {
         fn: "doUnref",
       },
-      query: {
-        fn: "createQuery",
+      flush: {
+        fn: "doFlush",
+      },
+
+      queries: {
+        getter: "getQueries",
+        this: true,
+      },
+      onconnect: {
+        getter: "getOnConnect",
+        setter: "setOnConnect",
+        this: true,
+      },
+      onclose: {
+        getter: "getOnClose",
+        setter: "setOnClose",
+        this: true,
       },
     },
+    values: ["onconnect", "onclose", "queries"],
   }),
   define({
     name: "PostgresSQLQuery",
     construct: true,
     finalize: true,
     configurable: false,
-    hasPendingActivity: true,
+
     JSType: "0b11101110",
     klass: {},
     proto: {
@@ -58,8 +71,16 @@ export default [
         fn: "doDone",
         length: 0,
       },
+      setMode: {
+        fn: "setMode",
+        length: 1,
+      },
+      setPendingValue: {
+        fn: "setPendingValue",
+        length: 1,
+      },
     },
-    values: ["pendingValue", "binding"],
+    values: ["pendingValue", "target", "columns", "binding"],
     estimatedSize: true,
   }),
 ];

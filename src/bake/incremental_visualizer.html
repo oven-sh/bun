@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IncrementalGraph Visualization</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+      html,
+      body {
+        background-color: #1e1e2e;
+        color: #cdd6f4;
+        font-family: sans-serif;
+      }
+
+      #network {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      .legend {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        background-color: #1e1e2e99;
+        padding: 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+      }
+
+      .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      h1 {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        pointer-events: none;
+        font-size: 1rem;
+        margin: 0;
+        z-index: 100;
+      }
+
+      #stat {
+        font-weight: normal;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>IncrementalGraph Visualization <span id="stat"></span></h1>
+    <div id="network"></div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f38ba8"></div>
+        <span>Stale</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #cba6f7"></div>
+        <span>Client</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #bb56f5"></div>
+        <span>HTML</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89b4fa"></div>
+        <span>Route</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #a6e3a1"></div>
+        <span>SSR</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89dceb"></div>
+        <span>Server</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f9e2af"></div>
+        <span>SSR + Server</span>
+      </div>
+    </div>
+
+    <script>
+      // Connect to HMR WebSocket and enable visualization packets. This
+      // serializes the both `IncrementalGraph`s in full and sends them
+      // over the wire. A visualization is provided by `vis.js`. Support
+      //
+      // Script written partially by ChatGPT
+      let isFirst = false;
+
+      const c = {
+        // Derived from mocha theme on https://catppuccin.com/palette
+        red: "#f38ba8",
+        green: "#a6e3a1",
+        mauve: "#cba6f7",
+        gray: "#7f849c",
+        orange: "#fab387",
+        sky: "#89dceb",
+        blue: "#89b4fa",
+        yellow: "#f9e2af",
+        purple: "#bb56f5",
+      };
+
+      // Store nodes and edges
+      let clientFiles = [];
+      let serverFiles = [];
+      let clientEdges = [];
+      let serverEdges = [];
+      let currentEdgeIds = new Set();
+      let currentNodeIds = new Set();
+      let = true;
+
+      // Initialize Vis.js network
+      const nodes = new vis.DataSet();
+      const edges = new vis.DataSet();
+
+      const container = document.getElementById("network");
+      const data = { nodes, edges };
+      const options = {};
+      const network = new vis.Network(container, data, options);
+
+      // Crash handler injects `inlinedData` to produce an offline-compatible version of IncrementalVisualizer
+      if (typeof inlinedData !== "undefined") {
+        decodeAndUpdate(inlinedData);
+      } else {
+        const ws = new WebSocket(location.origin + "/_bun/hmr");
+        ws.binaryType = "arraybuffer"; // We are expecting binary data
+        ws.onopen = function () {
+          ws.send("sv"); // Subscribe to visualizer events
+        };
+        ws.onmessage = function (event) {
+          decodeAndUpdate(new Uint8Array(event.data));
+        };
+      }
+
+      function decodeAndUpdate(buffer) {
+        // Only process messages starting with 'v' (ASCII code 118)
+        if (buffer[0] !== 118) return;
+
+        let offset = 1; // Skip the 'v' byte
+
+        // Parse client files
+        const clientFileCount = readUint32(buffer, offset);
+        offset += 4;
+
+        clientFiles = parseFiles(buffer, clientFileCount, offset);
+        offset = clientFiles.offset;
+        clientFiles = clientFiles.files;
+
+        // Parse server files
+        const serverFileCount = readUint32(buffer, offset);
+        offset += 4;
+
+        serverFiles = parseFiles(buffer, serverFileCount, offset);
+        offset = serverFiles.offset;
+        serverFiles = serverFiles.files;
+
+        // Parse client edges
+        const clientEdgeCount = readUint32(buffer, offset);
+        offset += 4;
+        clientEdges = parseEdges(buffer, clientEdgeCount, offset);
+        offset = clientEdges.offset;
+        clientEdges = clientEdges.edges;
+
+        // Parse server edges
+        const serverEdgeCount = readUint32(buffer, offset);
+        offset += 4;
+        serverEdges = parseEdges(buffer, serverEdgeCount, offset);
+        offset = serverEdges.offset;
+        serverEdges = serverEdges.edges;
+
+        // Update the graph visualization
+        updateGraph();
+      }
+
+      // Helper to read 4-byte unsigned int
+      function readUint32(buffer, offset) {
+        return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16) | (buffer[offset + 3] << 24);
+      }
+
+      function basename(path) {
+        const match = /node_modules\/(.*?)\//.exec(path);
+        return match ? match[1] : path;
+      }
+
+      // Parse the files from the buffer
+      function parseFiles(buffer, count, offset) {
+        const files = [];
+
+        for (let i = 0; i < count; i++) {
+          const nameLength = readUint32(buffer, offset);
+          offset += 4;
+
+          // If the name length is 0, it's a deleted file
+          if (nameLength === 0) {
+            files.push({ id: i, deleted: true });
+            continue;
+          }
+
+          const nameBytes = buffer.slice(offset, offset + nameLength);
+          const name = new TextDecoder().decode(nameBytes);
+          offset += nameLength;
+
+          const isStale = buffer[offset++] === 1;
+          const isServer = buffer[offset++] === 1;
+          const isSSR = buffer[offset++] === 1;
+          const isRoute = buffer[offset++] === 1;
+          const isFramework = buffer[offset++] === 1;
+          const isBoundary = buffer[offset++] === 1;
+
+          files.push({
+            id: i,
+            name,
+            isStale,
+            isServer,
+            isSSR,
+            isRoute,
+            isFramework,
+            isBoundary,
+          });
+        }
+
+        return { files, offset };
+      }
+
+      // Parse the edges from the buffer
+      function parseEdges(buffer, count, offset) {
+        const edges = [];
+        for (let i = 0; i < count; i++) {
+          const from = readUint32(buffer, offset);
+          offset += 4;
+          const to = readUint32(buffer, offset);
+          offset += 4;
+          edges.push({ from, to });
+        }
+        return { edges, offset };
+      }
+
+      // Helper function to add or update nodes in the graph
+      function updateNode(id, file, group) {
+        const label = basename(file.name);
+        const color = file.isStale
+          ? c.red
+          : file.name.startsWith("node_modules/")
+            ? c.gray
+            : file.isBoundary
+              ? c.orange
+              : group === "client"
+                ? file.isRoute
+                  ? c.purple
+                  : c.mauve
+                : file.isRoute
+                  ? c.blue
+                  : file.isSSR
+                    ? file.isServer
+                      ? c.yellow
+                      : c.green
+                    : c.sky;
+        const props = {
+          id,
+          label,
+          shape: "dot",
+          color: color,
+          borderWidth: file.isRoute ? 3 : 1,
+          group,
+          font: file.name.startsWith("node_modules/") ? "10px sans-serif #cdd6f488" : "20px sans-serif #cdd6f4",
+        };
+        if (nodes.get(id)) {
+          nodes.update(props);
+        } else {
+          nodes.add(props);
+        }
+      }
+
+      // Helper function to remove a node by ID
+      function removeNode(id) {
+        nodes.remove({ id });
+      }
+
+      // Helper function to add or update edges in the graph
+      const edgeProps = { arrows: "to" };
+      function updateEdge(id, from, to, variant) {
+        const prop =
+          variant === "normal"
+            ? { id, from, to, arrows: "to" }
+            : variant === "client"
+              ? { id, from, to, arrows: "to,from", color: "#ffffff99", width: 2, label: "[use client]" }
+              : { id, from, to };
+        if (edges.get(id)) {
+          edges.update(prop);
+        } else {
+          edges.add(prop);
+        }
+      }
+
+      // Helper to remove all edges of a node
+      function removeEdges(nodeId) {
+        const edgesToRemove = edges.get({
+          filter: edge => edge.from === nodeId || edge.to === nodeId,
+        });
+        edges.remove(edgesToRemove.map(e => e.id));
+      }
+
+      // Function to update the entire graph when new data is received
+      function updateGraph() {
+        const newEdgeIds = new Set(); // Track new edges
+        const newNodeIds = new Set(); // Track new nodes
+
+        const boundaries = new Map();
+
+        // Update server files
+        serverFiles.forEach((file, index) => {
+          const id = `S_${file.name}`;
+          if (file.deleted) {
+            removeNode(id);
+            removeEdges(id);
+          } else {
+            updateNode(id, file, "server");
+          }
+
+          if (file.isBoundary) {
+            boundaries.set(file.name, { server: index, client: -1 });
+          }
+          newNodeIds.add(id); // Track this node
+        });
+
+        // Update client files
+        clientFiles.forEach((file, index) => {
+          const id = `C_${file.name}`;
+          if (file.deleted) {
+            removeNode(id);
+            removeEdges(id);
+            return;
+          }
+          updateNode(id, file, "client");
+          const b = boundaries.get(file.name);
+          if (b) {
+            b.client = index;
+          }
+          newNodeIds.add(id); // Track this node
+        });
+
+        // Update client edges
+        clientEdges.forEach((edge, index) => {
+          const id = `C_edge_${index}`;
+          updateEdge(id, `C_${clientFiles[edge.from].name}`, `C_${clientFiles[edge.to].name}`, "normal");
+          newEdgeIds.add(id); // Track this edge
+        });
+
+        // Update server edges
+        serverEdges.forEach((edge, index) => {
+          const id = `S_edge_${index}`;
+          updateEdge(id, `S_${serverFiles[edge.from].name}`, `S_${serverFiles[edge.to].name}`, "normal");
+          newEdgeIds.add(id); // Track this edge
+        });
+
+        boundaries.forEach(({ server, client }) => {
+          if (client === -1) return;
+          const id = `S_edge_bound_${server}_${client}`;
+          updateEdge(id, `S_${serverFiles[server].name}`, `C_${clientFiles[client].name}`, "client");
+          newEdgeIds.add(id); // Track this edge
+        });
+
+        // Remove edges that are no longer present
+        currentEdgeIds.forEach(id => {
+          if (!newEdgeIds.has(id)) {
+            edges.remove(id);
+          }
+        });
+
+        // Remove nodes that are no longer present
+        currentNodeIds.forEach(id => {
+          if (!newNodeIds.has(id)) {
+            nodes.remove(id);
+          }
+        });
+
+        // Update the currentEdgeIds set to the new one
+        currentEdgeIds = newEdgeIds;
+        currentNodeIds = newNodeIds;
+
+        if (isFirst) {
+          network.stabilize();
+          isFirst = false;
+        }
+
+        document.getElementById("stat").innerText =
+          `(server: ${serverFiles.length} files, ${serverEdges.length} edges; client: ${clientFiles.length} files, ${clientEdges.length} edges; ${boundaries.size} boundaries)`;
+      }
+    </script>
+  </body>
+</html>

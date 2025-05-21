@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "Event.h"
+#include "EventPath.h"
 
 #include "EventTarget.h"
 
@@ -48,18 +49,19 @@
 // #include "ScriptController.h"
 // #include "ScriptDisallowedScope.h"
 // #include "Settings.h"
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTarget);
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTargetWithInlineData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTarget);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTargetWithInlineData);
 
 Ref<EventTarget> EventTarget::create(ScriptExecutionContext& context)
 {
@@ -101,9 +103,9 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
         return false;
 
     if (options.signal) {
-        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue value) {
+        options.signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
-                weakThis->removeEventListener(eventType, *listener, capture);
+                Ref { *weakThis } -> removeEventListener(eventType, *listener, capture);
         });
     }
 
@@ -230,8 +232,12 @@ bool EventTarget::hasActiveEventListeners(const AtomString& eventType) const
 
 ExceptionOr<bool> EventTarget::dispatchEventForBindings(Event& event)
 {
-    if (!event.isInitialized() || event.isBeingDispatched())
+    if (!event.isInitialized())
         return Exception { InvalidStateError };
+
+    if (event.isBeingDispatched()) {
+        return Exception { EVENT_RECURSION, makeString("The event \""_s, event.type(), "\" is already being dispatched"_s) };
+    }
 
     if (!scriptExecutionContext())
         return false;
@@ -248,10 +254,12 @@ void EventTarget::dispatchEvent(Event& event)
     ASSERT(event.isInitialized());
     ASSERT(!event.isBeingDispatched());
 
+    EventPath eventPath(*this);
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
     event.resetBeforeDispatch();
+    event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
     event.resetAfterDispatch();

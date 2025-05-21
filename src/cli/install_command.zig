@@ -1,5 +1,5 @@
 const Command = @import("../cli.zig").Command;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const PackageManager = @import("../install/install.zig").PackageManager;
 
 pub const InstallCommand = struct {
@@ -9,7 +9,7 @@ pub const InstallCommand = struct {
             error.InvalidPackageJSON,
             => {
                 const log = &bun.CLI.Cli.log_;
-                log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                log.print(bun.Output.errorWriter()) catch {};
                 bun.Global.exit(1);
             },
             else => |e| return e,

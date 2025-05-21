@@ -1,0 +1,21 @@
+register_repository(
+  NAME
+    boringssl
+  REPOSITORY
+    oven-sh/boringssl
+  COMMIT
+    7a5d984c69b0c34c4cbb56c6812eaa5b9bef485c
+)
+
+register_cmake_command(
+  TARGET
+    boringssl
+  LIBRARIES
+    crypto
+    ssl
+    decrepit
+  ARGS
+    -DBUILD_SHARED_LIBS=OFF
+  INCLUDES
+    include
+)

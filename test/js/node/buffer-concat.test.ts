@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Buffer.concat throws OutOfMemoryError", () => {
   const bufferToUse = Buffer.allocUnsafe(1024 * 1024 * 64);

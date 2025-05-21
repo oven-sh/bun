@@ -1,10 +1,13 @@
 #include "root.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
+#include "wtf/DebugHeap.h"
 #include "Strong.h"
 namespace Bun {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(StrongRef);
+#if ENABLE(MALLOC_BREAKDOWN)
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StrongRef);
+#endif
 
 }
 

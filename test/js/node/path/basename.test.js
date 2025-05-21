@@ -1,4 +1,4 @@
-import { test, describe } from "bun:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert";
 import path from "node:path";
 
@@ -45,6 +45,7 @@ describe("path.dirname", () => {
     assert.strictEqual(path.win32.basename("basename.ext\\"), "basename.ext");
     assert.strictEqual(path.win32.basename("basename.ext\\\\"), "basename.ext");
     assert.strictEqual(path.win32.basename("foo"), "foo");
+    assert.strictEqual(path.win32.basename("foo", undefined), "foo");
     assert.strictEqual(path.win32.basename("aaa\\bbb", "\\bbb"), "bbb");
     assert.strictEqual(path.win32.basename("aaa\\bbb", "a\\bbb"), "bbb");
     assert.strictEqual(path.win32.basename("aaa\\bbb", "bbb"), "bbb");
@@ -72,6 +73,7 @@ describe("path.dirname", () => {
     assert.strictEqual(path.posix.basename("basename.ext\\"), "basename.ext\\");
     assert.strictEqual(path.posix.basename("basename.ext\\\\"), "basename.ext\\\\");
     assert.strictEqual(path.posix.basename("foo"), "foo");
+    assert.strictEqual(path.posix.basename("foo", undefined), "foo");
   });
 
   test("posix with control characters", () => {

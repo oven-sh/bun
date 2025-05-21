@@ -1,6 +1,8 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const unicode = std.unicode;
+
+const js_ast = bun.JSAst;
 
 pub const NodeIndex = u32;
 pub const NodeIndexNone = 4294967293;
@@ -29,7 +31,6 @@ pub const RefCtx = struct {
 
 /// In some parts of Bun, we have many different IDs pointing to different things.
 /// It's easy for them to get mixed up, so we use this type to make sure we don't.
-///
 pub const Index = packed struct(u32) {
     value: Int,
 
@@ -46,6 +47,9 @@ pub const Index = packed struct(u32) {
     pub const invalid = Index{ .value = std.math.maxInt(Int) };
     pub const runtime = Index{ .value = 0 };
 
+    pub const bake_server_data = Index{ .value = 1 };
+    pub const bake_client_data = Index{ .value = 2 };
+
     pub const Int = u32;
 
     pub inline fn source(num: anytype) Index {
@@ -58,7 +62,7 @@ pub const Index = packed struct(u32) {
 
     pub fn init(num: anytype) Index {
         const NumType = @TypeOf(num);
-        if (comptime @typeInfo(NumType) == .Pointer) {
+        if (comptime @typeInfo(NumType) == .pointer) {
             return init(num.*);
         }
 
@@ -100,6 +104,8 @@ pub const Index = packed struct(u32) {
 /// The maps can be merged quickly by creating a single outer array containing
 /// all inner arrays from all parsed files.
 pub const Ref = packed struct(u64) {
+    pub const Int = u31;
+
     inner_index: Int = 0,
 
     tag: enum(u2) {
@@ -107,12 +113,16 @@ pub const Ref = packed struct(u64) {
         allocated_name,
         source_contents_slice,
         symbol,
-    } = .invalid,
+    },
 
     source_index: Int = 0,
 
     /// Represents a null state without using an extra bit
     pub const None = Ref{ .inner_index = 0, .source_index = 0, .tag = .invalid };
+
+    comptime {
+        bun.assert(None.isEmpty());
+    }
 
     pub inline fn isEmpty(this: Ref) bool {
         return this.asU64() == 0;
@@ -120,12 +130,6 @@ pub const Ref = packed struct(u64) {
 
     pub const ArrayHashCtx = RefHashCtx;
     pub const HashCtx = RefCtx;
-
-    pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
-
-    pub fn toInt(value: anytype) Int {
-        return @as(Int, @intCast(value));
-    }
 
     pub fn isSourceIndexNull(this: anytype) bool {
         return this == std.math.maxInt(Int);
@@ -140,9 +144,30 @@ pub const Ref = packed struct(u64) {
             writer,
             "Ref[inner={d}, src={d}, .{s}]",
             .{
-                ref.sourceIndex(),
                 ref.innerIndex(),
+                ref.sourceIndex(),
                 @tagName(ref.tag),
+            },
+        );
+    }
+
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+        return .{ .data = .{
+            .ref = ref,
+            .symbol = ref.getSymbol(symbol_table),
+        } };
+    }
+
+    fn dumpImpl(data: struct { ref: Ref, symbol: *js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try std.fmt.format(
+            writer,
+            "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
+            .{
+                data.ref.inner_index,
+                data.ref.source_index,
+                @tagName(data.ref.tag),
+                data.symbol.original_name,
+                data.symbol.use_count_estimate,
             },
         );
     }
@@ -163,7 +188,7 @@ pub const Ref = packed struct(u64) {
         return this.tag == .source_contents_slice;
     }
 
-    pub fn init(inner_index: Int, source_index: usize, is_source_contents_slice: bool) Ref {
+    pub fn init(inner_index: Int, source_index: u32, is_source_contents_slice: bool) Ref {
         return .{
             .inner_index = inner_index,
             .source_index = @intCast(source_index),
@@ -177,11 +202,11 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn hash(key: Ref) u32 {
-        return @as(u32, @truncate(key.hash64()));
+        return @truncate(key.hash64());
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        return @as(u64, @bitCast(key));
+        return @bitCast(key);
     }
 
     pub inline fn hash64(key: Ref) u64 {
@@ -192,11 +217,24 @@ pub const Ref = packed struct(u64) {
         return ref.asU64() == other.asU64();
     }
 
-    pub inline fn isNull(self: Ref) bool {
-        return self.tag == .invalid;
-    }
+    pub const isNull = isEmpty; // deprecated
 
     pub fn jsonStringify(self: *const Ref, writer: anytype) !void {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
+    }
+
+    pub fn getSymbol(ref: Ref, symbol_table: anytype) *js_ast.Symbol {
+        // Different parts of the bundler use different formats of the symbol table
+        // In the parser you only have one array, and .sourceIndex() is ignored.
+        // In the bundler, you have a 2D array where both parts of the ref are used.
+        const resolved_symbol_table = switch (@TypeOf(symbol_table)) {
+            *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            *std.ArrayList(js_ast.Symbol) => symbol_table.items,
+            []js_ast.Symbol => symbol_table,
+            *js_ast.Symbol.Map => return symbol_table.get(ref) orelse
+                unreachable, // ref must exist within symbol table
+            else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
+        };
+        return &resolved_symbol_table[ref.innerIndex()];
     }
 };

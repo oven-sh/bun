@@ -1,9 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 import fs from "fs";
 import { join } from "path";
-import { createClient, createPartialDone, getPort, success, fail } from "./support/util.ts";
 import { Server } from "socket.io";
+import { createClient, createPartialDone, fail, getPort, success } from "./support/util.ts";
 
 // skipped due to a macOS bug
 describe.skip("socket.io", () => {

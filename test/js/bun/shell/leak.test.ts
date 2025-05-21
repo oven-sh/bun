@@ -3,10 +3,10 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDirWithFiles } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
-import { tmpdir, devNull } from "os";
+import { devNull, tmpdir } from "os";
 import { join } from "path";
-import { createTestBuilder } from "./util";
 import { bunExe } from "./test_builder";
+import { createTestBuilder } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 type TestBuilder = InstanceType<typeof TestBuilder>;
 

@@ -1,10 +1,10 @@
-import { describe, it, expect } from "bun:test";
-import { io as ioc } from "socket.io-client";
-import { join } from "path";
+import { describe, expect, it } from "bun:test";
+import { ChildProcess, exec } from "child_process";
 import { createServer } from "http";
-import { createClient, getPort, success, fail, eioHandshake, eioPoll, eioPush } from "./support/util.ts";
+import { join } from "path";
 import { Server } from "socket.io";
-import { exec, ChildProcess } from "child_process";
+import { io as ioc } from "socket.io-client";
+import { createClient, eioHandshake, eioPoll, eioPush, fail, getPort, success } from "./support/util.ts";
 
 // Hanging tests are disabled because they cause the test suite to hang
 describe("close", () => {
@@ -117,17 +117,18 @@ describe("close", () => {
   });
 
   describe("protocol violations", () => {
-    it("should close the connection when receiving several CONNECT packets", done => {
+    it("should close the connection when receiving several CONNECT packets", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
       const httpServer = createServer();
       const io = new Server(httpServer);
 
       httpServer.listen(0);
 
       let timeout = setTimeout(() => {
-        fail(done, io, new Error("timeout"));
+        fail(reject, io, new Error("timeout"));
       }, 1500);
 
-      (async () => {
+      await (async () => {
         const sid = await eioHandshake(httpServer);
         // send a first CONNECT packet
         await eioPush(httpServer, sid, "40");
@@ -144,20 +145,22 @@ describe("close", () => {
           expect(body).toBe("6\u001e1");
 
           io.close();
-          success(done, io);
+          success(resolve, io);
         } catch (err) {
-          fail(done, io, err);
+          fail(reject, io, err);
         }
+        return promise;
       });
     });
 
-    it("should close the connection when receiving an EVENT packet while not connected", done => {
+    it("should close the connection when receiving an EVENT packet while not connected", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers();
       const httpServer = createServer();
       const io = new Server(httpServer);
 
       httpServer.listen(0);
       let timeout = setTimeout(() => {
-        fail(done, io, new Error("timeout"));
+        fail(reject, io, new Error("timeout"));
       }, 1500);
 
       (async () => {
@@ -172,10 +175,11 @@ describe("close", () => {
           expect(body).toBe("6\u001e1");
 
           io.close();
-          success(done, io);
+          success(resolve, io);
         } catch (err) {
-          fail(done, io, err);
+          fail(reject, io, err);
         }
+        return promise;
       });
     });
 

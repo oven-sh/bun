@@ -1,6 +1,6 @@
-import { describe, expect, test, afterAll, mock } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Streaming body via", () => {
   test("async generator function", async () => {
@@ -28,24 +28,18 @@ describe("Streaming body via", () => {
   });
 
   test("async generator function throws an error but continues to send the headers", async () => {
-    let subprocess;
-
-    afterAll(() => {
-      subprocess?.kill();
-    });
-
     const onMessage = mock(async url => {
       const response = await fetch(url);
       expect(response.headers.get("X-Hey")).toBe("123");
       subprocess?.kill();
     });
 
-    subprocess = spawn({
+    await using subprocess = spawn({
       cwd: import.meta.dirname,
       cmd: [bunExe(), "async-iterator-throws.fixture.js"],
       env: bunEnv,
       ipc: onMessage,
-      stdout: "ignore",
+      stdout: "inherit",
       stderr: "pipe",
     });
 

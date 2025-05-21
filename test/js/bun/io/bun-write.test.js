@@ -1,8 +1,8 @@
+import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { it, expect, describe, test } from "bun:test";
-import path, { join } from "path";
-import { gcTick, withoutAggressiveGC, bunExe, bunEnv, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
+import path, { join } from "path";
 const tmpbase = tmpdir() + path.sep;
 
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -463,7 +463,7 @@ describe("ENOENT", () => {
         await Bun.write(file, "contents", ...opts);
         expect(fs.existsSync(file)).toBe(true);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
   };
@@ -479,11 +479,11 @@ describe("ENOENT", () => {
       const file = join(dir, "file");
       try {
         expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
-          "No such file or directory",
+          "no such file or directory",
         );
         expect(fs.existsSync(file)).toBe(false);
       } finally {
-        fs.rmSync(dir, { force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 

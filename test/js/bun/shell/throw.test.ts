@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { beforeAll, describe, test, expect } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 
 beforeAll(() => {
   $.nothrow();

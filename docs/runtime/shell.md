@@ -20,7 +20,7 @@ await $`cat < ${response} | wc -c`; // 1256
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
 - **Shell scripting**: Bun Shell can be used to run shell scripts (`.bun.sh` files).
-- **Custom interpreter**: Bun Shell is written in Zig, along with it's lexer, parser, and interpreter. Bun Shell is a small programming language.
+- **Custom interpreter**: Bun Shell is written in Zig, along with its lexer, parser, and interpreter. Bun Shell is a small programming language.
 
 ## Getting started
 
@@ -56,9 +56,9 @@ By default, `await`ing will return stdout and stderr as `Buffer`s.
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
-console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
+console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 
@@ -102,7 +102,7 @@ The default handling of non-zero exit codes can be configured by calling `.nothr
 import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
-$.nothrow(); // equivilent to $.throws(false)
+$.nothrow(); // equivalent to $.throws(false)
 
 // default behavior, non-zero exit codes will throw an error
 $.throws(true);
@@ -234,6 +234,55 @@ const result = await $`cat < ${response} | wc -w`.text();
 
 console.log(result); // 6\n
 ```
+
+## Command substitution (`$(...)`)
+
+Command substitution allows you to substitute the output of another script into the current script:
+
+```js
+import { $ } from "bun";
+
+// Prints out the hash of the current commit
+await $`echo Hash of current commit: $(git rev-parse HEAD)`;
+```
+
+This is a textual insertion of the command's output and can be used to, for example, declare a shell variable:
+
+```js
+import { $ } from "bun";
+
+await $`
+  REV=$(git rev-parse HEAD)
+  docker built -t myapp:$REV
+  echo Done building docker image "myapp:$REV"
+`;
+```
+
+{% callout %}
+
+**NOTE**: Because Bun internally uses the special [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) property on the input template literal, using the backtick syntax for command substitution won't work:
+
+```js
+import { $ } from "bun";
+
+await $`echo \`echo hi\``;
+```
+
+Instead of printing:
+
+```
+hi
+```
+
+The above will print out:
+
+```
+echo hi
+```
+
+We instead recommend sticking to the `$(...)` syntax.
+
+{% /callout %}
 
 ## Environment variables
 

@@ -1,61 +1,31 @@
 const env = @import("env.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-pub const strong_etags_for_built_files = true;
-pub const keep_alive = false;
-
-// Debug helpers
-pub const print_ast = false;
-pub const disable_printing_null = false;
+/// Enable breaking changes for the next major release of Bun
+// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
+pub const breaking_changes_1_3 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
 pub const store_file_descriptors = !env.isBrowser;
 
-pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
-
-pub const only_output_esm = true;
-
 pub const jsx_runtime_is_cjs = true;
 
-pub const bundle_node_modules = true;
-
 pub const tracing = true;
-
-pub const minify_javascript_string_length = false;
-
-pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
 
 pub const enable_entry_cache = true;
-pub const enable_bytecode_caching = false;
 
-pub const dev_only = true;
-
+// TODO: remove this flag, it should use bun.Output.scoped
 pub const verbose_fs = false;
 
 pub const watch_directories = true;
-
-pub const tailwind_css_at_keyword = true;
-
-pub const bundle_dynamic_import = true;
 
 // This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
 pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
-
-pub const CSSInJSImportBehavior = enum {
-    // When you import a .css file and you reference the import in JavaScript
-    // Just return whatever the property key they referenced was
-    facade,
-    facade_onimportcss,
-};
-
-// having issues compiling WebKit with this enabled
-pub const remote_inspector = false;
-pub const auto_import_buffer = false;
 
 pub const is_macro_enabled = !env.isWasm and !env.isWasi;
 
@@ -65,16 +35,11 @@ pub const force_macro = false;
 
 pub const include_filename_in_jsx = false;
 
-pub const verbose_analytics = false;
-
 pub const disable_compression_in_http_client = false;
 
 pub const enable_keepalive = true;
 
 pub const atomic_file_watcher = env.isLinux;
-
-pub const node_streams = false;
-pub const simd = true;
 
 // This change didn't seem to make a meaningful difference in microbenchmarks
 pub const latin1_is_now_ascii = false;
@@ -94,13 +59,11 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative;
 
 pub const inline_properties_in_transpiler = true;
 
 pub const same_target_becomes_destructuring = true;
-
-pub const react_server_components = true;
 
 pub const help_catch_memory_issues = bun.Environment.allow_assert;
 
@@ -142,21 +105,16 @@ pub const help_catch_memory_issues = bun.Environment.allow_assert;
 /// In that case, we wrap it again in the printer.
 pub const unwrap_commonjs_to_esm = true;
 
-pub const boundary_based_chunking = true;
-
 /// https://sentry.engineering/blog/the-case-for-debug-ids
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const source_map_debug_id = true;
 
-pub const alignment_tweak = false;
-
 pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
 
-// TODO: fix concurrent transpiler on Windows
-pub const concurrent_transpiler = !env.isWindows;
+pub const concurrent_transpiler = true;
 
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;
@@ -171,13 +129,34 @@ pub const runtime_transpiler_cache = true;
 /// order to isolate your bug.
 pub const windows_bunx_fast_path = true;
 
-/// Enable breaking changes for the next major release of Bun
-// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
-
 // This causes strange bugs where writing via console.log (sync) has a different
 // order than via Bun.file.writer() so we turn it off until there's a unified,
 // buffered writer abstraction shared throughout Bun
 pub const nonblocking_stdout_and_stderr_on_posix = false;
 
 pub const postgresql = env.is_canary or env.isDebug;
+
+// TODO: fix Windows-only test failures in fetch-preconnect.test.ts
+pub const is_fetch_preconnect_supported = env.isPosix;
+
+pub const libdeflate_supported = env.isNative;
+
+// Mostly exists as a way to turn it off later, if necessary.
+pub fn isLibdeflateEnabled() bool {
+    if (!libdeflate_supported) {
+        return false;
+    }
+
+    return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
+}
+
+/// Enable the "app" option in Bun.serve. This option will likely be removed
+/// in favor of HTML loaders and configuring framework options in bunfig.toml
+pub fn bake() bool {
+    // In canary or if an environment variable is specified.
+    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE");
+}
+
+/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
+/// To use them, extra flags are passed in addition to this one.
+pub const bake_debugging_features = env.is_canary or env.isDebug;

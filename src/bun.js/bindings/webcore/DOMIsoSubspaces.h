@@ -36,7 +36,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
-    std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSExtensions;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
@@ -44,11 +45,26 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
+    std::unique_ptr<IsoSubspace> m_subspaceForErrorCodeCache;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
-
+    std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
+    std::unique_ptr<IsoSubspace> m_subspaceForNapiTypeTag;
+    std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
+    std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEType;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
+    std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -468,10 +484,10 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForStaticRange;
     // std::unique_ptr<IsoSubspace> m_subspaceForText;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
-    // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStreamDecoder;
     std::unique_ptr<IsoSubspace> m_subspaceForTextEncoder;
-    // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForTransitionEvent;
@@ -682,8 +698,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformancePaintTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
     std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForRemoteDOMWindow;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserver;
@@ -891,6 +907,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathResult;
     // std::unique_ptr<IsoSubspace> m_subspaceForXSLTProcessor;
 
+    std::unique_ptr<IsoSubspace> m_subspaceForBakeGlobalScope;
+
     std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
     std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;
     std::unique_ptr<IsoSubspace> m_subspaceForErrorEvent;
@@ -905,10 +923,28 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
 
+    std::unique_ptr<IsoSubspace> m_subspaceForCookie;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
+
     std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSign;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSVerify;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHmac;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHash;
+    std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;
 };
 } // namespace WebCore
 

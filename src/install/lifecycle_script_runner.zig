@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Lockfile = @import("./lockfile.zig");
 const std = @import("std");
 const Async = bun.Async;
@@ -10,11 +10,13 @@ const Global = bun.Global;
 const JSC = bun.JSC;
 const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
+const String = bun.Semver.String;
+const string = bun.string;
 
 const Process = bun.spawn.Process;
 const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
-    package_name: []const u8,
+    package_name: string,
 
     scripts: Lockfile.Package.Scripts.List,
     current_script_index: u8 = 0,
@@ -25,15 +27,25 @@ pub const LifecycleScriptSubprocess = struct {
     stderr: OutputReader = OutputReader.init(@This()),
     has_called_process_exit: bool = false,
     manager: *PackageManager,
-    envp: [:null]?[*:0]u8,
+    envp: [:null]?[*:0]const u8,
 
     timer: ?Timer = null,
 
     has_incremented_alive_count: bool = false,
 
     foreground: bool = false,
+    optional: bool = false,
+    started_at: u64 = 0,
 
-    pub usingnamespace bun.New(@This());
+    heap: bun.io.heap.IntrusiveField(LifecycleScriptSubprocess) = .{},
+
+    pub const List = bun.io.heap.Intrusive(LifecycleScriptSubprocess, *PackageManager, sortByStartedAt);
+
+    fn sortByStartedAt(_: *PackageManager, a: *LifecycleScriptSubprocess, b: *LifecycleScriptSubprocess) bool {
+        return a.started_at < b.started_at;
+    }
+
+    pub const new = bun.TrivialNew(@This());
 
     pub const min_milliseconds_to_log = 500;
 
@@ -89,6 +101,12 @@ pub const LifecycleScriptSubprocess = struct {
     // This is only used on the main thread.
     var cwd_z_buf: bun.PathBuffer = undefined;
 
+    fn ensureNotInHeap(this: *LifecycleScriptSubprocess) void {
+        if (this.heap.child != null or this.heap.next != null or this.heap.prev != null or this.manager.active_lifecycle_scripts.root == this) {
+            this.manager.active_lifecycle_scripts.remove(this);
+        }
+    }
+
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
         bun.Analytics.Features.lifecycle_scripts += 1;
 
@@ -102,6 +120,8 @@ pub const LifecycleScriptSubprocess = struct {
                 this.has_incremented_alive_count = false;
                 _ = alive_count.fetchSub(1, .monotonic);
             }
+
+            this.ensureNotInHeap();
         }
 
         const manager = this.manager;
@@ -110,6 +130,8 @@ pub const LifecycleScriptSubprocess = struct {
         const env = manager.env;
         this.stdout.setParent(this);
         this.stderr.setParent(this);
+
+        this.ensureNotInHeap();
 
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
@@ -124,8 +146,7 @@ pub const LifecycleScriptSubprocess = struct {
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
         if (this.foreground and this.manager.options.log_level != .silent) {
-            Output.prettyError("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{combined_script});
-            Output.flush();
+            Output.command(combined_script);
         } else if (manager.scripts_node) |scripts_node| {
             manager.setNodeName(
                 scripts_node,
@@ -184,16 +205,16 @@ pub const LifecycleScriptSubprocess = struct {
                 },
             .cwd = cwd,
 
-            .windows = if (Environment.isWindows)
-                .{
-                    .loop = JSC.EventLoopHandle.init(&manager.event_loop),
-                }
-            else {},
+            .windows = if (Environment.isWindows) .{
+                .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+            },
 
             .stream = false,
         };
 
         this.remaining_fds = 0;
+        this.started_at = bun.timespec.now().ns();
+        this.manager.active_lifecycle_scripts.insert(this);
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
         if (comptime Environment.isPosix) {
@@ -296,11 +317,18 @@ pub const LifecycleScriptSubprocess = struct {
             _ = alive_count.fetchSub(1, .monotonic);
         }
 
+        this.ensureNotInHeap();
+
         switch (status) {
             .exited => |exit| {
                 const maybe_duration = if (this.timer) |*t| t.read() else null;
 
                 if (exit.code > 0) {
+                    if (this.optional) {
+                        _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                        this.deinitAndDeletePackage();
+                        return;
+                    }
                     this.printOutput();
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {d}<r>", .{
                         this.scriptName(),
@@ -347,23 +375,36 @@ pub const LifecycleScriptSubprocess = struct {
                     }
                 }
 
+                if (PackageManager.verbose_install) {
+                    Output.prettyErrorln("<r><d>[Scripts]<r> Finished scripts for <b>{}<r>", .{
+                        bun.fmt.quote(this.package_name),
+                    });
+                }
+
                 // the last script finished
                 _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+
                 this.deinit();
             },
             .signaled => |signal| {
                 this.printOutput();
+                const signal_code = bun.SignalCode.from(signal);
+
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                     this.scriptName(),
                     this.package_name,
-
-                    bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
+                    signal_code.fmt(Output.enable_ansi_colors_stderr),
                 });
-                Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
 
-                return;
+                Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
+                if (this.optional) {
+                    _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                    this.deinitAndDeletePackage();
+                    return;
+                }
+
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
                     this.scriptName(),
                     this.package_name,
@@ -372,7 +413,6 @@ pub const LifecycleScriptSubprocess = struct {
                 this.deinit();
                 Output.flush();
                 Global.exit(1);
-                return;
             },
             else => {
                 Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{
@@ -413,21 +453,40 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn deinit(this: *LifecycleScriptSubprocess) void {
         this.resetPolls();
+        this.ensureNotInHeap();
 
         if (!this.manager.options.log_level.isVerbose()) {
             this.stdout.deinit();
             this.stderr.deinit();
         }
 
-        this.destroy();
+        bun.destroy(this);
+    }
+
+    pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {
+        if (this.manager.options.log_level.isVerbose()) {
+            Output.warn("deleting optional dependency '{s}' due to failed '{s}' script", .{
+                this.package_name,
+                this.scriptName(),
+            });
+        }
+        try_delete_dir: {
+            const dirname = std.fs.path.dirname(this.scripts.cwd) orelse break :try_delete_dir;
+            const basename = std.fs.path.basename(this.scripts.cwd);
+            const dir = bun.openDirAbsolute(dirname) catch break :try_delete_dir;
+            dir.deleteTree(basename) catch break :try_delete_dir;
+        }
+
+        this.deinit();
     }
 
     pub fn spawnPackageScripts(
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
-        envp: [:null]?[*:0]u8,
-        comptime log_level: PackageManager.Options.LogLevel,
-        comptime foreground: bool,
+        envp: [:null]?[*:0]const u8,
+        optional: bool,
+        log_level: PackageManager.Options.LogLevel,
+        foreground: bool,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
@@ -435,9 +494,10 @@ pub const LifecycleScriptSubprocess = struct {
             .scripts = list,
             .package_name = list.package_name,
             .foreground = foreground,
+            .optional = optional,
         });
 
-        if (comptime log_level.isVerbose()) {
+        if (log_level.isVerbose()) {
             Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });

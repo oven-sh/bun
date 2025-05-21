@@ -32,15 +32,17 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "JSDOMException.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreOpaqueRoot.h"
+#include "wtf/DebugHeap.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCast.h>
-#include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(AbortSignal);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -62,15 +64,11 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     auto signal = adoptRef(*new AbortSignal(&context));
     signal->setHasActiveTimeoutTimer(true);
     auto action = [signal](ScriptExecutionContext& context) mutable {
-        signal->setHasActiveTimeoutTimer(false);
-
-        auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.jsGlobalObject());
-        if (!globalObject)
-            return;
-
-        auto& vm = globalObject->vm();
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto& vm = JSC::getVM(globalObject);
         Locker locker { vm.apiLock() };
         signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
+        signal->setHasActiveTimeoutTimer(false);
     };
 
     if (milliseconds == 0) {
@@ -109,6 +107,20 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 }
 
 AbortSignal::~AbortSignal() = default;
+
+JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
+{
+    JSValue existingValue = m_reason.getValue(jsUndefined());
+    if (existingValue.isUndefined()) {
+        if (m_commonReason != CommonAbortReason::None) {
+            existingValue = toJS(&globalObject, m_commonReason);
+            m_commonReason = CommonAbortReason::None;
+            m_reason.setWeakly(existingValue);
+        }
+    }
+
+    return existingValue;
+}
 
 void AbortSignal::addSourceSignal(AbortSignal& signal)
 {
@@ -162,6 +174,16 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
         dependentSignal->signalAbort(reason);
 }
 
+void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
+{
+    // 1. If signal's aborted flag is set, then return.
+    if (m_aborted)
+        return;
+
+    m_commonReason = reason;
+    signalAbort(toJS(globalObject, reason));
+}
+
 void AbortSignal::cleanNativeBindings(void* ref)
 {
     auto callbacks = std::exchange(m_native_callbacks, {});
@@ -172,6 +194,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
     });
 
     std::exchange(m_native_callbacks, WTFMove(callbacks));
+    this->eventListenersDidChange();
 }
 
 // https://dom.spec.whatwg.org/#abortsignal-follow
@@ -181,7 +204,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
         return;
 
     if (signal.aborted()) {
-        signalAbort(signal.reason().getValue());
+        signalAbort(signal.jsReason(*scriptExecutionContext()->jsGlobalObject()));
         return;
     }
 
@@ -195,13 +218,14 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent);
+    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
-        algorithm->handleEvent(signal.m_reason.getValue());
+        // TODO: Null check.
+        algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
     return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
@@ -240,6 +264,11 @@ void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
 WebCoreOpaqueRoot root(AbortSignal* signal)
 {
     return WebCoreOpaqueRoot { signal };
+}
+
+size_t AbortSignal::memoryCost() const
+{
+    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
 }
 
 } // namespace WebCore

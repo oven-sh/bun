@@ -1,7 +1,7 @@
 import type { Endpoints, RequestParameters, Route } from "@octokit/types";
 import { Octokit } from "octokit";
+import { debug, error, log, warn } from "./console";
 import { fetch } from "./fetch";
-import { debug, log, warn, error } from "./console";
 
 const [owner, repo] = process.env["GITHUB_REPOSITORY"]?.split("/") ?? ["oven-sh", "bun"];
 
@@ -97,6 +97,8 @@ export async function getBuild(): Promise<number> {
 }
 
 export async function getSemver(tag?: string, build?: number): Promise<string> {
+  const { tag_name: latest_tag_name } = await getRelease();
+  const version = latest_tag_name.replace("bun-v", "");
   const { tag_name } = await getRelease(tag);
   if (tag_name !== "canary") {
     return tag_name.replace("bun-v", "");
@@ -106,7 +108,7 @@ export async function getSemver(tag?: string, build?: number): Promise<string> {
   }
   const sha = await getSha(tag_name, "short");
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  return `${Bun.version}-canary.${date}.${build}+${sha}`;
+  return `${version}-canary.${date}.${build}+${sha}`;
 }
 
 export function formatTag(tag: string): string {

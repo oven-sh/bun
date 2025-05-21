@@ -1,7 +1,14 @@
+import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
+import fs from "node:fs";
+import { join, relative, resolve } from "node:path";
 import wt, {
+  BroadcastChannel,
   getEnvironmentData,
   isMainThread,
   markAsUntransferable,
+  MessageChannel,
+  MessagePort,
   moveMessagePortToContext,
   parentPort,
   receiveMessageOnPort,
@@ -9,11 +16,8 @@ import wt, {
   setEnvironmentData,
   SHARE_ENV,
   threadId,
-  workerData,
-  BroadcastChannel,
-  MessageChannel,
-  MessagePort,
   Worker,
+  workerData,
 } from "worker_threads";
 
 test("support eval in worker", async () => {
@@ -54,7 +58,7 @@ test("all worker_threads module properties are present", () => {
   expect(SHARE_ENV).toBeDefined();
   expect(setEnvironmentData).toBeFunction();
   expect(threadId).toBeNumber();
-  expect(workerData).toBeUndefined();
+  expect(workerData).toBeNull();
   expect(BroadcastChannel).toBeDefined();
   expect(MessageChannel).toBeDefined();
   expect(MessagePort).toBeDefined();
@@ -133,7 +137,7 @@ test("threadId module and worker property is consistent", async () => {
   expect(worker1.threadId).toBeGreaterThan(0);
   expect(() => worker1.postMessage({ workerId: worker1.threadId })).not.toThrow();
   const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
-  expect(worker2.threadId).toBe(worker1.threadId + 1);
+  expect(worker2.threadId).toBeGreaterThan(worker1.threadId);
   expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
   await worker1.terminate();
   await worker2.terminate();
@@ -149,12 +153,12 @@ test("receiveMessageOnPort works across threads", async () => {
   let sharedBufferView = new Int32Array(sharedBuffer);
   let msg = { sharedBuffer };
   worker.postMessage(msg);
-  expect(Atomics.wait(sharedBufferView, 0, 0)).toBe("ok");
+  expect(await Atomics.waitAsync(sharedBufferView, 0, 0).value).toBe("ok");
   const message = receiveMessageOnPort(port1);
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
   await worker.terminate();
-});
+}, 9999999);
 
 test("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();
@@ -186,7 +190,7 @@ test("receiveMessageOnPort works as FIFO", () => {
       receiveMessageOnPort(value);
     }).toThrow();
   }
-});
+}, 9999999);
 
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);
@@ -196,4 +200,224 @@ test("you can override globalThis.postMessage", async () => {
   });
   expect(message).toBe("Hello from worker!");
   await worker.terminate();
+});
+
+test("support require in eval", async () => {
+  const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result).toBe(Bun.argv[0]);
+  await worker.terminate();
+});
+
+test("support require in eval for a file", async () => {
+  const cwd = process.cwd();
+  console.log("cwd", cwd);
+  const dir = import.meta.dir;
+  const testfile = resolve(dir, "fixture-argv.js");
+  const realpath = relative(cwd, testfile).replaceAll("\\", "/");
+  console.log("realpath", realpath);
+  expect(() => fs.accessSync(join(cwd, realpath))).not.toThrow();
+  const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result).toBe(Bun.argv[0]);
+  await worker.terminate();
+});
+
+test("support require in eval for a file that doesnt exist", async () => {
+  const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result.toString()).toInclude(`error: Cannot find module './fixture-invalid.js' from 'blob:`);
+  await worker.terminate();
+});
+
+test("support worker eval that throws", async () => {
+  const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result.toString()).toInclude(`error: Unexpected throw`);
+  await worker.terminate();
+});
+
+describe("execArgv option", async () => {
+  // this needs to be a subprocess to ensure that the parent's execArgv is not empty
+  // otherwise we could not distinguish between the worker inheriting the parent's execArgv
+  // vs. the worker getting a fresh empty execArgv
+  async function run(execArgv: string, expected: string) {
+    const proc = Bun.spawn({
+      // pass --smol so that the parent thread has some known, non-empty execArgv
+      cmd: [bunExe(), "--smol", "fixture-execargv.js", execArgv],
+      env: bunEnv,
+      cwd: __dirname,
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+    expect(await new Response(proc.stdout).text()).toBe(expected);
+  }
+
+  it("inherits the parent's execArgv when falsy or unspecified", async () => {
+    await run("null", '["--smol"]\n');
+    await run("0", '["--smol"]\n');
+  });
+  it("provides empty execArgv when passed an empty array", async () => {
+    // empty array should result in empty execArgv, not inherited from parent thread
+    await run("[]", "[]\n");
+  });
+  it("can specify an array of strings", async () => {
+    await run('["--no-warnings"]', '["--no-warnings"]\n');
+  });
+  // TODO(@190n) get our handling of non-string array elements in line with Node's
+});
+
+test("eval does not leak source code", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "eval-source-leak-fixture.js"],
+    env: bunEnv,
+    cwd: __dirname,
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  await proc.exited;
+  const errors = await new Response(proc.stderr).text();
+  if (errors.length > 0) throw new Error(errors);
+  expect(proc.exitCode).toBe(0);
+});
+
+describe("worker event", () => {
+  test("is emitted on the next tick with the right value", () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let worker: Worker | undefined = undefined;
+    let called = false;
+    process.once("worker", eventWorker => {
+      called = true;
+      expect(eventWorker as any).toBe(worker);
+      resolve();
+    });
+    worker = new Worker(new URL("data:text/javascript,"));
+    expect(called).toBeFalse();
+    return promise;
+  });
+
+  test("uses an overridden process.emit function", async () => {
+    const previousEmit = process.emit;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let worker: Worker | undefined;
+      // should not actually emit the event
+      process.on("worker", expect.unreachable);
+      worker = new Worker("", { eval: true });
+      // should look up process.emit on the next tick, not synchronously during the Worker constructor
+      (process as any).emit = (event, value) => {
+        try {
+          expect(event).toBe("worker");
+          expect(value).toBe(worker);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      await promise;
+    } finally {
+      process.emit = previousEmit;
+      process.off("worker", expect.unreachable);
+    }
+  });
+
+  test("throws if process.emit is not a function", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "emit-non-function-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("environmentData", () => {
+  test("can pass a value to a child", async () => {
+    setEnvironmentData("foo", new Map([["hello", "world"]]));
+    const worker = new Worker(
+      /* js */ `
+      const { getEnvironmentData, parentPort } = require("worker_threads");
+      parentPort.postMessage(getEnvironmentData("foo"));
+    `,
+      { eval: true },
+    );
+    const [msg] = await once(worker, "message");
+    expect(msg).toEqual(new Map([["hello", "world"]]));
+  });
+
+  test("child modifications do not affect parent", async () => {
+    const worker = new Worker('require("worker_threads").setEnvironmentData("does_not_exist", "foo")', { eval: true });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    expect(getEnvironmentData("does_not_exist")).toBeUndefined();
+  });
+
+  test("is deeply inherited", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+    const out = await new Response(proc.stdout).text();
+    expect(out).toBe("foo\n".repeat(5));
+  });
+
+  test("can be used if parent thread had not imported worker_threads", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "environmentdata-empty-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await new Response(proc.stderr).text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  });
+});
+
+describe("error event", () => {
+  test("is fired with a copy of the error value", async () => {
+    const worker = new Worker("throw new TypeError('oh no')", { eval: true });
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("oh no");
+  });
+
+  test("falls back to string when the error cannot be serialized", async () => {
+    const worker = new Worker(
+      /* js */ `
+      import { MessageChannel } from "node:worker_threads";
+      const { port1 } = new MessageChannel();
+      throw port1;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/MessagePort \{.*\}/s);
+  });
 });

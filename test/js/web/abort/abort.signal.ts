@@ -4,7 +4,7 @@ using server = Bun.serve({
   port: 0,
   async fetch() {
     const signal = AbortSignal.timeout(1);
-    return await fetch("https://bun.sh", { signal });
+    return await fetch("https://example.com", { signal });
   },
 });
 

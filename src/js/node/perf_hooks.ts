@@ -1,6 +1,12 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
+const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
+  "ZigGlobalObject.cpp",
+  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
+  2,
+);
+
 var {
   Performance,
   PerformanceEntry,
@@ -11,17 +17,30 @@ var {
 } = globalThis;
 
 var constants = {
-  NODE_PERFORMANCE_GC_MAJOR: 4,
-  NODE_PERFORMANCE_GC_MINOR: 1,
-  NODE_PERFORMANCE_GC_INCREMENTAL: 8,
-  NODE_PERFORMANCE_GC_WEAKCB: 16,
-  NODE_PERFORMANCE_GC_FLAGS_NO: 0,
-  NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: 2,
-  NODE_PERFORMANCE_GC_FLAGS_FORCED: 4,
-  NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: 8,
+  NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
+  NODE_PERFORMANCE_ENTRY_TYPE_GC: 0,
+  NODE_PERFORMANCE_ENTRY_TYPE_HTTP: 1,
+  NODE_PERFORMANCE_ENTRY_TYPE_HTTP2: 2,
+  NODE_PERFORMANCE_ENTRY_TYPE_NET: 3,
   NODE_PERFORMANCE_GC_FLAGS_ALL_AVAILABLE_GARBAGE: 16,
   NODE_PERFORMANCE_GC_FLAGS_ALL_EXTERNAL_MEMORY: 32,
+  NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: 2,
+  NODE_PERFORMANCE_GC_FLAGS_FORCED: 4,
+  NODE_PERFORMANCE_GC_FLAGS_NO: 0,
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
+  NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: 8,
+  NODE_PERFORMANCE_GC_INCREMENTAL: 8,
+  NODE_PERFORMANCE_GC_MAJOR: 4,
+  NODE_PERFORMANCE_GC_MINOR: 1,
+  NODE_PERFORMANCE_GC_WEAKCB: 16,
+  NODE_PERFORMANCE_MILESTONE_BOOTSTRAP_COMPLETE: 7,
+  NODE_PERFORMANCE_MILESTONE_ENVIRONMENT: 2,
+  NODE_PERFORMANCE_MILESTONE_LOOP_EXIT: 6,
+  NODE_PERFORMANCE_MILESTONE_LOOP_START: 5,
+  NODE_PERFORMANCE_MILESTONE_NODE_START: 3,
+  NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 0,
+  NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 1,
+  NODE_PERFORMANCE_MILESTONE_V8_START: 4,
 };
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
@@ -79,7 +98,7 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(utilization1, utilization2) {
+function eventLoopUtilization(_utilization1, _utilization2) {
   return {
     idle: 0,
     active: 0,
@@ -98,32 +117,32 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
   performance: {
-    mark(f) {
+    mark(_) {
       return performance.mark(...arguments);
     },
-    measure(f) {
+    measure(_) {
       return performance.measure(...arguments);
     },
-    clearMarks(f) {
+    clearMarks(_) {
       return performance.clearMarks(...arguments);
     },
-    clearMeasures(f) {
+    clearMeasures(_) {
       return performance.clearMeasures(...arguments);
     },
-    getEntries(f) {
+    getEntries(_) {
       return performance.getEntries(...arguments);
     },
-    getEntriesByName(f) {
+    getEntriesByName(_) {
       return performance.getEntriesByName(...arguments);
     },
-    getEntriesByType(f) {
+    getEntriesByType(_) {
       return performance.getEntriesByType(...arguments);
     },
-    setResourceTimingBufferSize(f) {
+    setResourceTimingBufferSize(_) {
       return performance.setResourceTimingBufferSize(...arguments);
     },
     timeOrigin: performance.timeOrigin,
-    toJSON(f) {
+    toJSON(_) {
       return performance.toJSON(...arguments);
     },
     onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
@@ -155,11 +174,9 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  monitorEventLoopDelay() {
-    throwNotImplemented("perf_hooks.monitorEventLoopDelay");
-  },
-  createHistogram() {
-    throwNotImplemented("perf_hooks.createHistogram");
-  },
+  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
+  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
+  // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
+  createHistogram: createFunctionThatMasqueradesAsUndefined("", 0),
   PerformanceResourceTiming,
 };

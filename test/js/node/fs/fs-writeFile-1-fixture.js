@@ -1,4 +1,4 @@
-import { writeFileSync, writeFile } from "node:fs";
+import { writeFile, writeFileSync } from "node:fs";
 
 process.exitCode = 1;
 let input = process.argv[2];

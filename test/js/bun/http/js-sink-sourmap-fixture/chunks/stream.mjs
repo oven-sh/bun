@@ -1,9 +1,9 @@
-import { e as eventHandler } from "../index.mjs";
 import "fs";
-import "path";
 import "node:async_hooks";
 import "node:fs";
 import "node:url";
+import "path";
+import { e as eventHandler } from "../index.mjs";
 
 const stream = eventHandler(() => {
   const encoder = new TextEncoder();

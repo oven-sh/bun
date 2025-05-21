@@ -7,6 +7,7 @@
 *.cpp text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.cc text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.yml text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.toml text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.zig text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.rs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.h text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
@@ -14,6 +15,7 @@
 *.lock text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.map text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.md text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.mdc text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 
@@ -43,5 +45,13 @@ test/**/* linguist-documentation
 bench/**/* linguist-documentation
 examples/**/* linguist-documentation
 
-src/deps/*.c linguist-vendored
-src/deps/brotli/** linguist-vendored
+vendor/*.c linguist-vendored
+vendor/brotli/** linguist-vendored
+
+test/js/node/test/fixtures linguist-vendored
+test/js/node/test/common linguist-vendored
+
+test/js/bun/css/files linguist-vendored
+
+.vscode/*.json linguist-language=JSON-with-Comments
+src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments

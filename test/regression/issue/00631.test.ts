@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync } from "../../harness.js";
-import { mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { bunEnv, bunExe, tmpdirSync } from "../../harness.js";
 
 it("JSON strings escaped properly", async () => {
   const testDir = tmpdirSync();

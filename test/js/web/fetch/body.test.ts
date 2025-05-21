@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { file, spawn, version, readableStreamToText } from "bun";
+import { file, readableStreamToText, spawn, version } from "bun";
+import { describe, expect, test } from "bun:test";
 
 const bodyTypes = [
   {
@@ -28,6 +28,7 @@ const bufferTypes = [
   Int8Array,
   Int16Array,
   Int32Array,
+  Float16Array,
   Float32Array,
   Float64Array,
 ];
@@ -659,8 +660,11 @@ for (const { body, fn } of bodyTypes) {
 }
 
 function arrayBuffer(buffer: BufferSource) {
-  if (buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer) {
+  if (buffer instanceof ArrayBuffer) {
     return buffer;
+  }
+  if (buffer instanceof SharedArrayBuffer) {
+    return new Uint8Array(new Uint8Array(buffer)).buffer;
   }
   return buffer.buffer;
 }

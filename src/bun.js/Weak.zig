@@ -1,9 +1,10 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const WeakRefType = enum(u32) {
     None = 0,
     FetchResponse = 1,
+    PostgreSQLQueryClient = 2,
 };
 const WeakImpl = opaque {
     pub fn init(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl {

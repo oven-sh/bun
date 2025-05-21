@@ -1,42 +1,294 @@
-import { describe, test, expect } from "bun:test";
-import { createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
+import { describe, expect, test } from "bun:test";
+import { compileFunction, createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
 
 function capture(_: any, _1?: any) {}
-describe("runInContext()", () => {
-  testRunInContext(runInContext, { isIsolated: true });
-});
 
-describe("runInNewContext()", () => {
-  testRunInContext(runInNewContext, { isIsolated: true, isNew: true });
-});
+describe("vm", () => {
+  describe("runInContext()", () => {
+    testRunInContext({ fn: runInContext, isIsolated: true });
+    test("options can be a string", () => {
+      const context = createContext();
+      const result = runInContext("new Error().stack;", context, "test-filename.js");
+      expect(result).toContain("test-filename.js");
+    });
+    test("options properties can be undefined", () => {
+      const context = createContext();
+      const result = runInContext("1 + 1;", context, {
+        filename: undefined,
+        lineOffset: undefined,
+        columnOffset: undefined,
+        displayErrors: undefined,
+        timeout: undefined,
+        breakOnSigint: undefined,
+        cachedData: undefined,
+        importModuleDynamically: undefined,
+      });
+      expect(result).toBe(2);
+    });
+  });
 
-describe("runInThisContext()", () => {
-  testRunInContext(runInThisContext);
+  describe("runInNewContext()", () => {
+    testRunInContext({ fn: runInNewContext, isIsolated: true, isNew: true });
+    // this line intentionally left blank (for snapshots)
+    // this line intentionally left blank (for snapshots)
+    test("options can be a string", () => {
+      const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
+      expect(result).toContain("test-filename.js");
+    });
+    test("options properties can be undefined", () => {
+      const result = runInNewContext(
+        "1 + 1;",
+        {},
+        {
+          filename: undefined,
+          lineOffset: undefined,
+          columnOffset: undefined,
+          displayErrors: undefined,
+          timeout: undefined,
+          breakOnSigint: undefined,
+          contextName: undefined,
+          contextOrigin: undefined,
+          contextCodeGeneration: undefined,
+          cachedData: undefined,
+          importModuleDynamically: undefined,
+          microtaskMode: undefined,
+        },
+      );
+      expect(result).toBe(2);
+    });
+  });
+
+  describe("runInThisContext()", () => {
+    testRunInContext({ fn: runInThisContext });
+    test("options can be a string", () => {
+      const result = runInThisContext("new Error().stack;", "test-filename.js");
+      expect(result).toContain("test-filename.js");
+    });
+    test("options properties can be undefined", () => {
+      const result = runInThisContext("1 + 1;", {
+        filename: undefined,
+        lineOffset: undefined,
+        columnOffset: undefined,
+        displayErrors: undefined,
+        timeout: undefined,
+        breakOnSigint: undefined,
+        cachedData: undefined,
+        importModuleDynamically: undefined,
+      });
+      expect(result).toBe(2);
+    });
+  });
+
+  describe("compileFunction()", () => {
+    test("options properties can be undefined", () => {
+      const result = compileFunction("return 1 + 1;", [], {
+        filename: undefined,
+        lineOffset: undefined,
+        columnOffset: undefined,
+        cachedData: undefined,
+        produceCachedData: undefined,
+        parsingContext: undefined,
+        contextExtensions: undefined,
+      })();
+      expect(result).toBe(2);
+    });
+
+    // Security tests
+    test("Template literal attack should not break out of sandbox", () => {
+      const before = globalThis.hacked;
+      try {
+        const result = compileFunction("return `\n`; globalThis.hacked = true; //")();
+        expect(result).toBe("\n");
+        expect(globalThis.hacked).toBe(before);
+      } catch (e) {
+        // If it throws, that's also acceptable as long as it didn't modify globalThis
+        expect(globalThis.hacked).toBe(before);
+      }
+    });
+
+    test("Comment-based attack should not break out of sandbox", () => {
+      const before = globalThis.commentHacked;
+      try {
+        const result = compileFunction("return 1; /* \n */ globalThis.commentHacked = true; //")();
+        expect(result).toBe(1);
+        expect(globalThis.commentHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.commentHacked).toBe(before);
+      }
+    });
+
+    test("Function constructor abuse should be contained", () => {
+      try {
+        const result = compileFunction("return (function(){}).constructor('return process')();")();
+        // If it doesn't throw, it should at least not return the actual process object
+        expect(result).not.toBe(process);
+      } catch (e) {
+        // Throwing is also acceptable
+        expect(e).toBeTruthy();
+      }
+    });
+
+    test("Regex literal attack should not break out of sandbox", () => {
+      const before = globalThis.regexHacked;
+      try {
+        const result = compileFunction("return /\n/; globalThis.regexHacked = true; //")();
+        expect(result instanceof RegExp).toBe(true);
+        expect(result.toString()).toBe("/\n/");
+        expect(globalThis.regexHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.regexHacked).toBe(before);
+      }
+    });
+
+    test("String escape sequence attack should not break out of sandbox", () => {
+      const before = globalThis.stringHacked;
+      try {
+        const result = compileFunction("return '\\\n'; globalThis.stringHacked = true; //")();
+        expect(result).toBe("\n");
+        expect(globalThis.stringHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.stringHacked).toBe(before);
+      }
+    });
+
+    test("Arguments access attack should be contained", () => {
+      try {
+        const result = compileFunction("return (function(){return arguments.callee.caller})();")();
+        // If it doesn't throw, it should at least not return a function
+        expect(typeof result !== "function").toBe(true);
+      } catch (e) {
+        // Throwing is also acceptable
+        expect(e).toBeTruthy();
+      }
+    });
+
+    test("With statement attack should not modify Object.prototype", () => {
+      const originalToString = Object.prototype.toString;
+      const before = globalThis.withHacked;
+
+      const parsingContext = createContext({});
+
+      try {
+        compileFunction(
+          "with(Object.prototype) { toString = function() { globalThis.withHacked = true; }; } return 'test';",
+          [],
+          {
+            parsingContext,
+          },
+        )();
+
+        // Check that Object.prototype.toString wasn't modified
+        expect(Object.prototype.toString).toBe(originalToString);
+        expect(globalThis.withHacked).toBe(before);
+      } catch (e) {
+        // If it throws, also check that nothing was modified
+        expect(Object.prototype.toString).toBe(originalToString);
+        expect(globalThis.withHacked).toBe(before);
+      } finally {
+        // Restore just in case
+        Object.prototype.toString = originalToString;
+      }
+    });
+
+    test("Eval attack should be contained", () => {
+      const before = globalThis.evalHacked;
+
+      const parsingContext = createContext({});
+
+      try {
+        compileFunction("return eval('globalThis.evalHacked = true;');", [], { parsingContext })();
+        expect(globalThis.evalHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.evalHacked).toBe(before);
+      }
+    });
+
+    // Additional tests for other potential vulnerabilities
+
+    test("Octal escape sequence attack should not break out", () => {
+      const before = globalThis.octalHacked;
+
+      try {
+        const result = compileFunction("return '\\012'; globalThis.octalHacked = true; //")();
+        expect(result).toBe("\n");
+        expect(globalThis.octalHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.octalHacked).toBe(before);
+      }
+    });
+
+    test("Unicode escape sequence attack should not break out", () => {
+      const before = globalThis.unicodeHacked;
+
+      try {
+        const result = compileFunction("return '\\u000A'; globalThis.unicodeHacked = true; //")();
+        expect(result).toBe("\n");
+        expect(globalThis.unicodeHacked).toBe(before);
+      } catch (e) {
+        expect(globalThis.unicodeHacked).toBe(before);
+      }
+    });
+
+    test("Attempted syntax error injection should be caught", () => {
+      expect(() => {
+        compileFunction("});\n\n(function() {\nconsole.log(1);\n})();\n\n(function() {");
+      }).toThrow();
+    });
+
+    test("Attempted prototype pollution should be contained", () => {
+      const originalHasOwnProperty = Object.prototype.hasOwnProperty;
+
+      try {
+        compileFunction("Object.prototype.polluted = true; return 'done';")();
+        expect(Object.prototype.polluted).toBeUndefined();
+      } catch (e) {
+        // Throwing is acceptable
+      } finally {
+        // Clean up just in case
+        delete Object.prototype.polluted;
+        Object.prototype.hasOwnProperty = originalHasOwnProperty;
+      }
+    });
+
+    test("Attempted global object access should be contained", () => {
+      try {
+        const result = compileFunction("return this;")();
+        // The "this" inside the function should not be the global object
+        expect(result).not.toBe(globalThis);
+      } catch (e) {
+        // Throwing is also acceptable
+        expect(e).toBeTruthy();
+      }
+    });
+  });
 });
 
 describe("Script", () => {
   describe("runInContext()", () => {
-    testRunInContext(
-      (code, context, options) => {
+    testRunInContext({
+      fn: (code, context, options) => {
         const script = new Script(code, options);
         return script.runInContext(context);
       },
-      { isIsolated: true },
-    );
+      isIsolated: true,
+    });
   });
   describe("runInNewContext()", () => {
-    testRunInContext(
-      (code, context, options) => {
+    testRunInContext({
+      fn: (code, context, options) => {
         const script = new Script(code, options);
         return script.runInNewContext(context);
       },
-      { isIsolated: true, isNew: true },
-    );
+      isIsolated: true,
+      isNew: true,
+    });
   });
   describe("runInThisContext()", () => {
-    testRunInContext((code, context, options) => {
-      const script = new Script(code, options);
-      return script.runInThisContext(context);
+    testRunInContext({
+      fn: (code: string, options: any) => {
+        const script = new Script(code, options);
+        return script.runInThisContext();
+      },
     });
   });
   test("can throw without new", () => {
@@ -49,16 +301,11 @@ describe("Script", () => {
   });
 });
 
-function testRunInContext(
-  fn: typeof runInContext,
-  {
-    isIsolated,
-    isNew,
-  }: {
-    isIsolated?: boolean;
-    isNew?: boolean;
-  } = {},
-) {
+type TestRunInContextArg =
+  | { fn: typeof runInContext; isIsolated: true; isNew?: boolean }
+  | { fn: typeof runInThisContext; isIsolated?: false; isNew?: boolean };
+
+function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test("can do nothing", () => {
     const context = createContext({});
     const result = fn("", context);
@@ -134,24 +381,6 @@ function testRunInContext(
       message: "Oops!",
     });
   });
-  test("can access the context", () => {
-    const context = createContext({
-      foo: "bar",
-      fizz: (n: number) => "buzz".repeat(n),
-    });
-    const result = fn("foo + fizz(2);", context);
-    expect(result).toBe("barbuzzbuzz");
-  });
-  test("can modify the context", () => {
-    const context = createContext({
-      foo: "bar",
-      baz: ["a", "b", "c"],
-    });
-    const result = fn("foo = 'baz'; delete baz[0];", context);
-    expect(context.foo).toBe("baz");
-    expect(context.baz).toEqual([undefined, "b", "c"]);
-    expect(result).toBe(true);
-  });
   test("can access `globalThis`", () => {
     const context = createContext({});
     const result = fn("typeof globalThis;", context);
@@ -165,12 +394,29 @@ function testRunInContext(
     expect(result).toBe("undefined");
   });
   if (isIsolated) {
+    test("can access context", () => {
+      const context = createContext({
+        foo: "bar",
+        fizz: (n: number) => "buzz".repeat(n),
+      });
+      const result = fn("foo + fizz(2);", context);
+      expect(result).toBe("barbuzzbuzz");
+    });
+    test("can modify context", () => {
+      const context = createContext({
+        baz: ["a", "b", "c"],
+      });
+      const result = fn("foo = 'baz'; delete baz[0];", context);
+      expect(context.foo).toBe("baz");
+      expect(context.baz).toEqual([undefined, "b", "c"]);
+      expect(result).toBe(true);
+    });
     test("cannot access `process`", () => {
       const context = createContext({});
       const result = fn("typeof process;", context);
       expect(result).toBe("undefined");
     });
-    test("cannot access this context", () => {
+    test("cannot access global scope", () => {
       const prop = randomProp();
       // @ts-expect-error
       globalThis[prop] = "fizz";
@@ -183,10 +429,54 @@ function testRunInContext(
         delete globalThis[prop];
       }
     });
-  } else {
-    test("can access `process`", () => {
+    test("can specify a filename", () => {
       const context = createContext({});
-      const result = fn("typeof process;", context);
+      const result = fn("new Error().stack;", context, {
+        filename: "foo.js",
+      });
+      expect(result).toContain("foo.js");
+    });
+  } else {
+    test("can access global context", () => {
+      const props = randomProps(2);
+      // @ts-expect-error
+      globalThis[props[0]] = "bar";
+      // @ts-expect-error
+      globalThis[props[1]] = (n: number) => "buzz".repeat(n);
+      try {
+        const result = fn(`${props[0]} + ${props[1]}(2);`);
+        expect(result).toBe("barbuzzbuzz");
+      } finally {
+        for (const prop of props) {
+          // @ts-expect-error
+          delete globalThis[prop];
+        }
+      }
+    });
+    test("can modify global context", () => {
+      const props = randomProps(3);
+      // @ts-expect-error
+      globalThis[props[0]] = ["a", "b", "c"];
+      // @ts-expect-error
+      globalThis[props[1]] = "initial value";
+      try {
+        const result = fn(`${props[1]} = 'baz'; ${props[2]} = 'bunny'; delete ${props[0]}[0];`);
+        // @ts-expect-error
+        expect(globalThis[props[1]]).toBe("baz");
+        // @ts-expect-error
+        expect(globalThis[props[2]]).toBe("bunny");
+        // @ts-expect-error
+        expect(globalThis[props[0]]).toEqual([undefined, "b", "c"]);
+        expect(result).toBe(true);
+      } finally {
+        for (const prop of props) {
+          // @ts-expect-error
+          delete globalThis[prop];
+        }
+      }
+    });
+    test("can access `process`", () => {
+      const result = fn("typeof process;");
       expect(result).toBe("object");
     });
     test("can access this context", () => {
@@ -194,8 +484,7 @@ function testRunInContext(
       // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
-        const context = createContext({});
-        const result = fn(`${prop};`, context);
+        const result = fn(`${prop};`);
         expect(result).toBe("fizz");
       } finally {
         // @ts-expect-error
@@ -203,38 +492,246 @@ function testRunInContext(
       }
     });
     test.skip("can specify an error on SIGINT", () => {
-      const context = createContext({});
       const result = () =>
-        fn("process.kill(process.pid, 'SIGINT');", context, {
+        fn("process.kill(process.pid, 'SIGINT');", {
           breakOnSigint: true,
         });
       // TODO: process.kill() is not implemented
       expect(result).toThrow();
     });
-  }
-  test("can specify a filename", () => {
-    const context = createContext({});
-    const result = fn("new Error().stack;", context, {
-      filename: "foo.js",
-    });
-    expect(result).toContain("foo.js");
-  });
-  test.skip("can specify a line offset", () => {
-    // TODO: use test.todo
-  });
-  test.skip("can specify a column offset", () => {
-    // TODO: use test.todo
-  });
-  test.skip("can specify a timeout", () => {
-    const context = createContext({});
-    const result = () =>
-      fn("while (true) {};", context, {
-        timeout: 1,
+    test("can specify a filename", () => {
+      const result = fn("new Error().stack;", {
+        filename: "foo.js",
       });
-    expect(result).toThrow(); // TODO: does not timeout
+      expect(result).toContain("foo.js");
+    });
+  }
+  test.todo("can specify filename", () => {
+    //
+  });
+  test.todo("can specify lineOffset", () => {
+    //
+  });
+  test.todo("can specify columnOffset", () => {
+    //
+  });
+  test.todo("can specify displayErrors", () => {
+    //
+  });
+  test.todo("can specify timeout", () => {
+    //
+  });
+  test.todo("can specify breakOnSigint", () => {
+    //
+  });
+  test.todo("can specify cachedData", () => {
+    //
+  });
+  test.todo("can specify importModuleDynamically", () => {
+    //
+  });
+
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextName", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextOrigin", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify microtaskMode", () => {
+    //
   });
 }
 
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+function randomProps(propsNumber = 0) {
+  const props = [];
+  for (let i = 0; i < propsNumber; i++) {
+    props.push(randomProp());
+  }
+  return props;
+}
+
+// https://github.com/oven-sh/bun/issues/13629
+test("can extend generated globals & WebCore globals", async () => {
+  const vm = require("vm");
+
+  for (let j = 0; j < 100; j++) {
+    const context = createContext({
+      URL,
+      urlProto: URL.prototype,
+      console,
+      Response,
+    });
+
+    const code = /*js*/ `
+class ExtendedDOMGlobal extends URL {
+  constructor(url) {
+    super(url);
+  }
+
+  get searchParams() {
+    return super.searchParams;
+  }
+}
+
+class ExtendedExtendedDOMGlobal extends ExtendedDOMGlobal {
+  constructor(url) {
+    super(url);
+  }
+
+  get wowSuchGetter() {
+    return "wow such getter";
+  }
+}
+
+const response = new Response();
+class ExtendedZigGeneratedClass extends Response {
+  constructor(body) {
+    super(body);
+  }
+
+  get ok() {
+    return super.ok;
+  }
+
+  get custom() {
+    return true;
+  }
+}
+
+class ExtendedExtendedZigGeneratedClass extends ExtendedZigGeneratedClass {
+  constructor(body) {
+    super(body);
+  }
+
+  get custom() {
+    return 42;
+  }
+}
+
+const resp = new ExtendedZigGeneratedClass("empty");
+const resp2 = new ExtendedExtendedZigGeneratedClass("empty");
+
+const url = new ExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
+const url2 = new ExtendedExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
+if (url.ok !== true) {
+  throw new Error("bad");
+}
+
+if (url2.wowSuchGetter !== "wow such getter") {
+  throw new Error("bad");
+}
+
+if (!response.ok) {
+  throw new Error("bad");
+}
+
+URL.prototype.ok = false;
+
+if (url.ok !== false) {
+  throw new Error("bad");
+}
+
+url.searchParams.get("foo");
+
+if (!resp.custom) {
+  throw new Error("expected getter");
+}
+
+if (resp2.custom !== 42) {
+  throw new Error("expected getter");
+}
+
+if (!resp2.ok) {
+  throw new Error("expected ok");
+}
+
+if (!(resp instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp instanceof Response)) {
+  throw new Error("expected Response");
+}
+
+if (!(resp2 instanceof ExtendedExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof ExtendedZigGeneratedClass)) {
+  throw new Error("expected ExtendedZigGeneratedClass");
+}
+
+if (!(resp2 instanceof Response)) {
+  throw new Error("expected Response");
+}
+
+if (!resp.ok) {
+  throw new Error("expected ok");
+}
+
+resp.text().then((a) => {
+  if (a !== "empty") {
+    throw new Error("expected empty");
+  }
+});
+
+  `;
+    URL.prototype.ok = true;
+    await runInContext(code, context);
+    delete URL.prototype.ok;
+  }
+});
+
+test("can't use export syntax in vm.Script", () => {
+  expect(() => {
+    const script = new Script("export default {};");
+    script.runInThisContext();
+  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
+
+  expect(() => {
+    const script = new Script("export default {};");
+    script.createCachedData();
+  }).toThrow({ message: "createCachedData failed" });
+});
+
+test("rejects invalid bytecode", () => {
+  const cachedData = Buffer.from("fhqwhgads");
+  const script = new Script("1 + 1;", {
+    cachedData,
+  });
+  expect(script.cachedDataRejected).toBeTrue();
+  expect(script.runInThisContext()).toBe(2);
+});
+
+test("accepts valid bytecode", () => {
+  const source = "1 + 1;";
+  const firstScript = new Script(source, {
+    produceCachedData: false,
+  });
+  const cachedData = firstScript.createCachedData();
+  expect(cachedData).toBeDefined();
+  expect(cachedData).toBeInstanceOf(Buffer);
+  const secondScript = new Script(source, {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeFalse();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(2);
+});
+
+test("can't use bytecode from a different script", () => {
+  const firstScript = new Script("1 + 1;");
+  const cachedData = firstScript.createCachedData();
+  const secondScript = new Script("2 + 2;", {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeTrue();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(4);
+});

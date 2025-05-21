@@ -1,0 +1,18 @@
+{
+  "name": "bun-mdx-rs-win32-x64-msvc",
+  "version": "0.0.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "bun-mdx-rs.win32-x64-msvc.node",
+  "files": [
+    "bun-mdx-rs.win32-x64-msvc.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  }
+}

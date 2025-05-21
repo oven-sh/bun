@@ -1,8 +1,9 @@
+import { describe, expect, test } from "bun:test";
 import { createSocket } from "dgram";
-import { describe, test, expect, it } from "bun:test";
 
-import { nodeDataCases } from "./testdata";
 import { disableAggressiveGCScope } from "harness";
+import path from "path";
+import { nodeDataCases } from "./testdata";
 
 describe("createSocket()", () => {
   test("connect", done => {
@@ -68,6 +69,17 @@ describe("createSocket()", () => {
     });
 
     socket.bind(0, localhost);
+  });
+
+  test("address before/after connecting", done => {
+    const socket = createSocket("udp4");
+    socket.bind(0, () => {
+      expect(socket.address().address).toBe("0.0.0.0");
+      socket.connect(socket.address().port, "127.0.0.1", () => {
+        expect(socket.address().address).toBe("127.0.0.1");
+        socket.close(done);
+      });
+    });
   });
 
   const validateRecv = (server, data, rinfo, bytes) => {
@@ -187,4 +199,10 @@ describe("createSocket()", () => {
       server.bind();
     });
   }
+});
+
+describe("unref()", () => {
+  test("call before bind() does not hang", async () => {
+    expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
+  });
 });

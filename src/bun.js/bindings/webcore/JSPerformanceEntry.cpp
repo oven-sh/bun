@@ -166,7 +166,7 @@ void JSPerformanceEntry::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntryConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformanceEntryPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -235,7 +235,7 @@ static inline EncodedJSValue jsPerformanceEntryPrototypeFunction_toJSONBody(JSGl
     auto* result = constructEmptyObject(lexicalGlobalObject);
     auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "name"_s), nameValue);
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "entryType"_s), entryTypeValue);

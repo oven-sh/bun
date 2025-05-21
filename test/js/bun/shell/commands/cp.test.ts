@@ -1,10 +1,9 @@
 import { $ } from "bun";
-import { bunExe, createTestBuilder } from "../test_builder";
-import { beforeAll, describe, test, expect, beforeEach } from "bun:test";
-import { sortedShellOutput } from "../util";
-import { tempDirWithFiles } from "harness";
-import fs from "fs";
 import { shellInternals } from "bun:internal-for-testing";
+import { describe, expect } from "bun:test";
+import { tempDirWithFiles } from "harness";
+import { bunExe, createTestBuilder } from "../test_builder";
+import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
 
 const TestBuilder = createTestBuilder(import.meta.path);

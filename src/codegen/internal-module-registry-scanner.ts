@@ -29,19 +29,14 @@ export function createInternalModuleRegistry(basedir: string) {
   moduleList.push("internal-for-testing.ts");
   internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
 
-  // Native Module registry
-  const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
-  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
-  if (!nativeModuleDefine) {
-    throw new Error(
-      "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
-    );
-  }
   let nextNativeModuleId = 0;
   const nativeModuleIds: Record<string, number> = {};
   const nativeModuleEnums: Record<string, string> = {};
   const nativeModuleEnumToId: Record<string, number> = {};
-  for (const [_, idString, enumValue] of nativeModuleDefine[0].matchAll(/macro\((.*?),(.*?)\)/g)) {
+
+  // Native Module registry
+  const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
+  for (const [_, idString, enumValue] of nativeModuleH.matchAll(/macro\((.*?),(.*?)\)/g)) {
     const processedIdString = JSON.parse(idString.trim().replace(/_s$/, ""));
     const processedEnumValue = enumValue.trim();
     const processedNumericId = nextNativeModuleId++;
@@ -50,36 +45,44 @@ export function createInternalModuleRegistry(basedir: string) {
     nativeModuleEnumToId[processedEnumValue] = processedNumericId;
   }
 
-  function codegenRequireId(id: string) {
-    return `(__intrinsic__getInternalField(__intrinsic__internalModuleRegistry, ${id}) || __intrinsic__createInternalModuleById(${id}))`;
+  const nativeStartIndex = moduleList.length;
+
+  for (const [id] of Object.entries(nativeModuleIds)) {
+    moduleList.push(id);
+    internalRegistry.set(id, moduleList.length - 1);
   }
 
-  function codegenRequireNativeModule(id: string) {
-    return `(__intrinsic__requireNativeModule(${id.replace(/node:/, "")}))`;
+  if (nextNativeModuleId === 0) {
+    throw new Error(
+      "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
+    );
+  }
+
+  function codegenRequireId(id: string) {
+    return `(__intrinsic__getInternalField(__intrinsic__internalModuleRegistry, ${id}) || __intrinsic__createInternalModuleById(${id}))`;
   }
 
   const requireTransformer = (specifier: string, from: string) => {
     const directMatch = internalRegistry.get(specifier);
     if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
 
-    if (specifier in nativeModuleIds) {
-      return codegenRequireNativeModule(JSON.stringify(specifier));
-    }
-
     const relativeMatch =
       resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);
+
+    const suffix =
+      'Only files in "src/js" besides "src/js/builtins" can be imported here. Note that the "node:" or "bun:" prefix is required here.';
 
     if (relativeMatch) {
       const found = moduleList.indexOf(path.relative(basedir, relativeMatch).replaceAll("\\", "/"));
       if (found === -1) {
         throw new Error(
-          `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,
+          `Builtin Bundler: "${specifier}" cannot be imported from "${from}" because it doesn't get a module ID. ${suffix}`,
         );
       }
       return codegenRequireId(`${found}/*${path.relative(basedir, relativeMatch)}*/`);
     }
 
-    throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}.`);
+    throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in "${from}". ${suffix}`);
   };
 
   return {
@@ -89,5 +92,6 @@ export function createInternalModuleRegistry(basedir: string) {
     nativeModuleEnumToId,
     internalRegistry,
     moduleList,
+    nativeStartIndex,
   } as const;
 }

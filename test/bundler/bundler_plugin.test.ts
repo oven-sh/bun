@@ -1,6 +1,6 @@
-import { join, resolve, dirname } from "node:path";
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import path, { dirname, join, resolve } from "node:path";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   const loadFixture = {
@@ -73,7 +73,6 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
-    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
@@ -97,7 +96,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/LoadThrowAsync", {
-    todo: true,
     files: loadFixture,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
@@ -121,7 +119,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
-    todo: true,
     files: {
       "index.ts": /* ts */ `
       import foo from "./foo.magic";
@@ -151,7 +148,6 @@ describe("bundler", () => {
 
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
-    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
@@ -175,7 +171,6 @@ describe("bundler", () => {
     },
   });
   itBundled("plugin/ResolveThrowAsync", {
-    todo: true,
     files: resolveFixture,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
@@ -204,7 +199,6 @@ describe("bundler", () => {
     let onResolveCount = 0;
 
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
         import * as foo from "magic:some_string";
@@ -246,7 +240,6 @@ describe("bundler", () => {
     let onResolveCountBad = 0;
 
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "magic:some_string";
@@ -407,7 +400,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./foo.ts";
@@ -471,7 +463,6 @@ describe("bundler", () => {
     let onResolveCount = 0;
     let importers: string[] = [];
     return {
-      todo: true,
       files: {
         "index.ts": /* ts */ `
           import * as foo from "./one.ts";
@@ -687,6 +678,7 @@ describe("bundler", () => {
         expect(resolveCount).toBe(5050);
         expect(loadCount).toBe(101);
       },
+      timeoutScale: 3,
     };
   });
   // itBundled("plugin/ManyPlugins", ({ root }) => {

@@ -55,6 +55,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
+#include "NodeValidator.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -148,7 +150,7 @@ static_assert(Event::BUBBLING_PHASE == 3, "BUBBLING_PHASE in Event does not matc
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSEventDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -156,10 +158,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefinedOrNull() && !argument1.value().isObject() && !argument1.value().isCallable()) {
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "options"_s, "object"_s, argument1.value());
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = Event::create(WTFMove(type), WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -278,7 +284,7 @@ void JSEvent::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -565,13 +571,13 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto bubbles = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto cancelable = convert<IDLBoolean>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable)); })));
 }
 

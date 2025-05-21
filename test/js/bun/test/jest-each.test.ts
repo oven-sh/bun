@@ -53,3 +53,7 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
     done();
   });
 });
+
+describe("does not return zero", () => {
+  expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
+});

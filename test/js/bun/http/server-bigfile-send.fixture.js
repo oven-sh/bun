@@ -1,4 +1,4 @@
-import { serve, file } from "bun";
+import { file, serve } from "bun";
 import { join } from "node:path";
 const bigfile = join(import.meta.dir, "../../web/encoding/utf8-encoding-fixture.bin");
 const server = serve({

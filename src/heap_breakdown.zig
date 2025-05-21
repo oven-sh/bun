@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Environment = bun.Environment;
 const Allocator = std.mem.Allocator;
@@ -6,52 +6,54 @@ const vm_size_t = usize;
 
 pub const enabled = Environment.allow_assert and Environment.isMac;
 
-pub fn allocator(comptime T: type) std.mem.Allocator {
-    return getZone(T).allocator();
+fn heapLabel(comptime T: type) [:0]const u8 {
+    const base_name = if (@hasDecl(T, "heap_label"))
+        T.heap_label
+    else
+        bun.meta.typeBaseName(@typeName(T));
+    return base_name;
 }
 
-pub fn getZone(comptime T: type) *Zone {
+pub fn allocator(comptime T: type) std.mem.Allocator {
+    return namedAllocator(comptime heapLabel(T));
+}
+pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    return getZone("Bun__" ++ name).allocator();
+}
+
+pub fn getZoneT(comptime T: type) *Zone {
+    return getZone(comptime heapLabel(T));
+}
+
+pub fn getZone(comptime name: [:0]const u8) *Zone {
     comptime bun.assert(enabled);
 
     const static = struct {
-        pub var zone: std.atomic.Value(?*Zone) = .{ .raw = null };
-        pub var lock: bun.Lock = bun.Lock.init();
-    };
-
-    return static.zone.load(.monotonic) orelse brk: {
-        static.lock.lock();
-        defer static.lock.unlock();
-
-        if (static.zone.load(.monotonic)) |z| {
-            break :brk z;
+        pub var zone: *Zone = undefined;
+        pub fn initOnce() void {
+            zone = Zone.init(name);
         }
 
-        const z = Zone.init(T);
-        static.zone.store(z, .monotonic);
-        break :brk z;
+        pub var once = std.once(initOnce);
     };
+
+    static.once.call();
+    return static.zone;
 }
 
 pub const Zone = opaque {
-    pub fn init(comptime T: type) *Zone {
+    pub fn init(comptime name: [:0]const u8) *Zone {
         const zone = malloc_create_zone(0, 0);
 
-        const title: [:0]const u8 = comptime title: {
-            const base_name = if (@hasDecl(T, "heap_label"))
-                T.heap_label
-            else
-                bun.meta.typeBaseName(@typeName(T));
-            break :title "Bun__" ++ base_name;
-        };
-        malloc_set_zone_name(zone, title.ptr);
+        malloc_set_zone_name(zone, name.ptr);
 
         return zone;
     }
 
-    fn alignedAlloc(zone: *Zone, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(zone: *Zone, len: usize, alignment: std.mem.Alignment) ?[*]u8 {
         // The posix_memalign only accepts alignment values that are a
         // multiple of the pointer size
-        const eff_alignment = @max(alignment, @sizeOf(usize));
+        const eff_alignment = @max(alignment.toByteUnits(), @sizeOf(usize));
         const ptr = malloc_zone_memalign(zone, eff_alignment, len);
         return @as(?[*]u8, @ptrCast(ptr));
     }
@@ -60,12 +62,11 @@ pub const Zone = opaque {
         return std.c.malloc_size(ptr);
     }
 
-    fn rawAlloc(zone: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
-        const alignment = @as(usize, 1) << @intCast(log2_align);
+    fn rawAlloc(zone: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(@ptrCast(zone), len, alignment);
     }
 
-    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+    fn resize(_: *anyopaque, buf: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -78,13 +79,14 @@ pub const Zone = opaque {
         return false;
     }
 
-    fn rawFree(zone: *anyopaque, buf: [*]u8, _: u8, _: usize) void {
-        malloc_zone_free(@ptrCast(zone), @ptrCast(buf));
+    fn rawFree(zone: *anyopaque, buf: []u8, _: std.mem.Alignment, _: usize) void {
+        malloc_zone_free(@ptrCast(zone), @ptrCast(buf.ptr));
     }
 
     pub const vtable = std.mem.Allocator.VTable{
         .alloc = &rawAlloc,
         .resize = &resize,
+        .remap = &std.mem.Allocator.noRemap,
         .free = &rawFree,
     };
 
@@ -97,8 +99,9 @@ pub const Zone = opaque {
 
     /// Create a single-item pointer with initialized data.
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
+        const alignment: std.mem.Alignment = .fromByteUnits(@alignOf(T));
         const ptr: *T = @alignCast(@ptrCast(
-            rawAlloc(zone, @sizeOf(T), @alignOf(T), @returnAddress()) orelse bun.outOfMemory(),
+            rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
         ));
         ptr.* = data;
         return ptr;

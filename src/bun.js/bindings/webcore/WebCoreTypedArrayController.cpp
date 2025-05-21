@@ -35,14 +35,9 @@
 
 #include <JavaScriptCore/JSArrayBuffer.h>
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (auto* global = jsDynamicCast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject)) {
-        return global;
-    }
-
-    return Bun__getDefaultGlobal();
+    return defaultGlobalObject(lexicalGlobalObject);
 }
 
 namespace WebCore {
@@ -61,11 +56,7 @@ JSC::JSArrayBuffer* WebCoreTypedArrayController::toJS(JSC::JSGlobalObject* lexic
 
 void WebCoreTypedArrayController::registerWrapper(JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* native, JSC::JSArrayBuffer* wrapper)
 {
-    // require("vm") can be used to create an ArrayBuffer
-    if (UNLIKELY(!globalObject->inherits<JSDOMGlobalObject>()))
-        return;
-
-    cacheWrapper(JSC::jsCast<JSDOMGlobalObject*>(globalObject)->world(), native, wrapper);
+    cacheWrapper(static_cast<JSVMClientData*>(JSC::getVM(globalObject).clientData)->normalWorld(), native, wrapper);
 }
 
 bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()

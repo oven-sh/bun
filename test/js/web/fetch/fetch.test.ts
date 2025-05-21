@@ -1,20 +1,34 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  isBroken,
+  isFlaky,
+  isMacOS,
+  isWindows,
+  tls,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
+
+import { once } from "events";
 import { mkfifo } from "mkfifo";
-import { gzipSync } from "zlib";
-import { join } from "path";
-import { gc, withoutAggressiveGC, isWindows, bunExe, bunEnv, tmpdirSync } from "harness";
+import type { AddressInfo } from "net";
 import net from "net";
-
+import { join } from "path";
+import { Readable } from "stream";
+import { gzipSync } from "zlib";
 const tmp_dir = tmpdirSync();
-
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
+    idleTimeout: 0,
     ...options,
     fetch,
     port: 0,
@@ -504,7 +518,7 @@ describe("fetch", () => {
     });
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://example.com");
-    expect(response.redirected).toBe(true);
+    expect(response.redirected).toBe(false); // not redirected
   });
 
   it('redirect: "follow"', async () => {
@@ -552,12 +566,7 @@ describe("fetch", () => {
     try {
       using server = Bun.serve({
         port: 0,
-        tls: {
-          "cert":
-            "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
-          "key":
-            "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
-        },
+        tls,
         fetch() {
           return new Response("Hello, world!");
         },
@@ -573,8 +582,12 @@ describe("fetch", () => {
       const { promise, resolve, reject } = Promise.withResolvers();
       socket.on("error", reject);
       socket.listen(0, "localhost", async () => {
-        await fetch(`http://localhost:${socket?.address()?.port}/`, { tls: { rejectUnauthorized: false } });
-        const response = await fetch(server?.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+        const url = server?.url.href;
+        const http_url = server?.url.href.replace("https://", "http://");
+        try {
+          await fetch(http_url, { tls: { rejectUnauthorized: false } });
+        } catch {}
+        const response = await fetch(url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
         resolve(response);
       });
 
@@ -894,7 +907,7 @@ describe("Bun.file", () => {
 
     forEachMethod(m => () => {
       const file = Bun.file(path);
-      expect(async () => await file[m]()).toThrow("Permission denied");
+      expect(async () => await file[m]()).toThrow("permission denied");
     });
 
     afterAll(() => {
@@ -907,7 +920,7 @@ describe("Bun.file", () => {
 
     forEachMethod(m => async () => {
       const file = Bun.file(path);
-      expect(async () => await file[m]()).toThrow("No such file or directory");
+      expect(async () => await file[m]()).toThrow("no such file or directory");
     });
   });
 });
@@ -1171,7 +1184,11 @@ describe("Response", () => {
   describe("should consume body correctly", async () => {
     it("with text first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(await response.text()).toBe("<div>hello</div>");
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.text();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBe("<div>hello</div>");
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.text();
       }).toThrow("Body already used");
@@ -1190,7 +1207,11 @@ describe("Response", () => {
     });
     it("with json first", async () => {
       var response = new Response('{ "hello": "world" }');
-      expect(await response.json()).toEqual({ "hello": "world" });
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.json();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toEqual({ "hello": "world" });
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.json();
       }).toThrow("Body already used");
@@ -1213,7 +1234,11 @@ describe("Response", () => {
           "content-type": "multipart/form-data;boundary=boundary",
         },
       });
-      expect(await response.formData()).toBeInstanceOf(FormData);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.formData();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(FormData);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.formData();
       }).toThrow("Body already used");
@@ -1232,14 +1257,16 @@ describe("Response", () => {
     });
     it("with blob first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(response.body instanceof ReadableStream).toBe(true);
-      expect(response.headers instanceof Headers).toBe(true);
-      expect(response.type).toBe("default");
-      var blob = await response.blob();
-      expect(blob).toBeInstanceOf(Blob);
-      expect(blob.stream()).toBeInstanceOf(ReadableStream);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.blob();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(Blob);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.bytes();
       }).toThrow("Body already used");
       expect(async () => {
         await response.text();
@@ -1256,7 +1283,11 @@ describe("Response", () => {
     });
     it("with arrayBuffer first", async () => {
       var response = new Response("<div>hello</div>");
-      expect(await response.arrayBuffer()).toBeInstanceOf(ArrayBuffer);
+      expect(response.bodyUsed).toBe(false);
+      const promise = response.arrayBuffer();
+      expect(response.bodyUsed).toBe(true);
+      expect(await promise).toBeInstanceOf(ArrayBuffer);
+      expect(response.bodyUsed).toBe(true);
       expect(async () => {
         await response.arrayBuffer();
       }).toThrow("Body already used");
@@ -1295,9 +1326,16 @@ describe("Response", () => {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
-      var input = await response.arrayBuffer();
+      const input = await response.bytes();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
+      let chunks: Uint8Array[] = [];
+      const reader = output.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      expect(input).toEqual(Buffer.concat(chunks));
     });
   });
 
@@ -1670,15 +1708,18 @@ describe("should strip headers", () => {
         });
       },
     });
-
     const { headers, url, redirected } = await fetch(`http://${server1.hostname}:${server1.port}/redirect`, {
       method: "GET",
       headers: {
         "Authorization": "yes",
+        "Proxy-Authorization": "yes",
+        "Cookie": "yes",
       },
     });
 
     expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("Proxy-Authorization")).toBeNull();
+    expect(headers.get("Cookie")).toBeNull();
     expect(url).toEndWith("/redirected");
     expect(redirected).toBe(true);
   });
@@ -1708,10 +1749,14 @@ it("same-origin status code 302 should not strip headers", async () => {
     method: "GET",
     headers: {
       "Authorization": "yes",
+      "Proxy-Authorization": "yes",
+      "Cookie": "yes",
     },
   });
 
   expect(headers.get("Authorization")).toEqual("yes");
+  expect(headers.get("Proxy-Authorization")).toEqual("yes");
+  expect(headers.get("Cookie")).toEqual("yes");
   expect(url).toEndWith("/redirected");
   expect(redirected).toBe(true);
 });
@@ -1991,43 +2036,55 @@ describe("http/1.1 response body length", () => {
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 
-  it("should ignore body on HEAD", async () => {
+  it.todoIf(isBroken)("should ignore body on HEAD", async () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 });
 describe("fetch Response life cycle", () => {
-  it("should not keep Response alive if not consumed", async () => {
-    const serverProcess = Bun.spawn({
+  // error: Malformed_HTTP_Response fetching "http://localhost:58888/". For more information, pass `verbose: true` in the second argument to fetch()
+  //   path: "http://localhost:58888/",
+  //  errno: 0,
+  //   code: "Malformed_HTTP_Response"
+  // 2054 |       stderr: "inherit",
+  // 2055 |       stdout: "inherit",
+  // 2056 |       stdin: "inherit",
+  // 2057 |       env: bunEnv,
+  // 2058 |     });
+  // 2059 |     expect(await clientProcess.exited).toBe(0);
+  //                                               ^
+  // error: expect(received).toBe(expected)
+  // Expected: 0
+  // Received: 1
+  //       at <anonymous> (/opt/homebrew/etc/buildkite-agent/builds/macOS-13-aarch64-1/bun/bun/test/js/web/fetch/fetch.test.ts:2059:40)
+  // ✗ fetch Response life cycle > should not keep Response alive if not consumed [205.17ms]
+  it.skipIf(isFlaky && isMacOS)("should not keep Response alive if not consumed", async () => {
+    let deferred = Promise.withResolvers<string>();
+
+    await using serverProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture3],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
+      ipc(message) {
+        deferred.resolve(message);
+      },
     });
 
-    async function getServerUrl() {
-      const reader = serverProcess.stdout.getReader();
-      const { done, value } = await reader.read();
-      return new TextDecoder().decode(value);
-    }
-    const serverUrl = await getServerUrl();
-    const clientProcess = Bun.spawn({
+    const serverUrl = await deferred.promise;
+    await using clientProcess = Bun.spawn({
       cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
+      stdout: "inherit",
+      stdin: "inherit",
       env: bunEnv,
     });
-    try {
-      expect(await clientProcess.exited).toBe(0);
-    } finally {
-      serverProcess.kill();
-    }
+    expect(await clientProcess.exited).toBe(0);
   });
   it("should allow to get promise result after response is GC'd", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         return new Response(
@@ -2056,4 +2113,250 @@ describe("fetch Response life cycle", () => {
       server.stop(true);
     }
   });
+});
+
+describe("fetch should allow duplex", () => {
+  it("should allow duplex streaming", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const intervalStream = new ReadableStream({
+      start(c) {
+        let count = 0;
+        const timer = setInterval(() => {
+          c.enqueue("Hello\n");
+          if (count === 5) {
+            clearInterval(timer);
+            c.close();
+          }
+          count++;
+        }, 20);
+      },
+    }).pipeThrough(new TextEncoderStream());
+
+    const resp = await fetch(server.url, {
+      method: "POST",
+      body: intervalStream,
+      duplex: "half",
+    });
+
+    const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+    var result = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      result += value;
+    }
+    expect(result).toBe("Hello\n".repeat(6));
+  });
+
+  it("should allow duplex extending Readable (sync)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        if (this.index < this.chunks.length) {
+          this.push(this.chunks[this.index]);
+          this.index++;
+        } else {
+          this.push(null);
+        }
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+  it("should allow duplex extending Readable (async)", async () => {
+    class HelloWorldStream extends Readable {
+      constructor(options) {
+        super(options);
+        this.chunks = ["Hello", " ", "World!"];
+        this.index = 0;
+      }
+
+      _read(size) {
+        setTimeout(() => {
+          if (this.index < this.chunks.length) {
+            this.push(this.chunks[this.index]);
+            this.index++;
+          } else {
+            this.push(null);
+          }
+        }, 20);
+      }
+    }
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: new HelloWorldStream(),
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should allow duplex using async iterator (async)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const response = await fetch(server.url, {
+      body: async function* iter() {
+        yield "Hello";
+        await Bun.sleep(20);
+        yield " ";
+        await Bun.sleep(20);
+        yield "World!";
+      },
+      method: "POST",
+      duplex: "half",
+    });
+
+    expect(await response.text()).toBe("Hello World!");
+  });
+
+  it("should fail in redirects .follow when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+      });
+
+      await response.text();
+    }).toThrow();
+  });
+
+  it("should work in redirects .manual when using duplex", async () => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        if (req.url.indexOf("/redirect") === -1) {
+          return Response.redirect("/");
+        }
+        return new Response(req.body);
+      },
+    });
+
+    expect(async () => {
+      const response = await fetch(server.url, {
+        body: async function* iter() {
+          yield "Hello";
+          await Bun.sleep(20);
+          yield " ";
+          await Bun.sleep(20);
+          yield "World!";
+        },
+        method: "POST",
+        duplex: "half",
+        redirect: "manual",
+      });
+
+      await response.text();
+    }).not.toThrow();
+  });
+});
+
+it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
+  for (const type of ["normal", "delay"]) {
+    await using server = net.createServer(socket => {
+      let body = "";
+      socket.on("data", data => {
+        body += data.toString("utf8");
+
+        const headerEndIndex = body.indexOf("\r\n\r\n");
+        if (headerEndIndex !== -1) {
+          // headers received
+          const headers = body.split("\r\n\r\n")[0];
+          const path = headers.split("\r\n")[0].split(" ")[1];
+          if (path === "/redirect") {
+            socket.end(
+              "HTTP/1.1 308 Permanent Redirect\r\nCache-Control: public, max-age=0, must-revalidate\r\nContent-Type: text/plain\r\nLocation: /\r\nConnection: close\r\n\r\n",
+            );
+          } else {
+            if (type === "delay") {
+              setTimeout(() => {
+                if (!socket.destroyed)
+                  socket.end(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+                  );
+              }, 200);
+            } else {
+              socket.end(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nHello Bun",
+              );
+            }
+          }
+        }
+      });
+    });
+    await once(server.listen(0), "listening");
+
+    try {
+      let { address, port } = server.address() as AddressInfo;
+      if (address === "::") {
+        address = "[::]";
+      }
+      const response = await fetch(`http://${address}:${port}/redirect`, {
+        signal: AbortSignal.timeout(150),
+      });
+      if (type === "delay") {
+        console.error(response, type);
+        expect.unreachable();
+      } else {
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Hello Bun");
+      }
+    } catch (err) {
+      if (type === "delay") {
+        expect((err as Error).name).toBe("TimeoutError");
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
 });

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, tmpdirSync, isDebug } from "harness";
-import { cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -15,6 +15,21 @@ beforeEach(() => {
   rmSync(hotPath, { recursive: true, force: true });
   cpSync(import.meta.dir, hotPath, { recursive: true, force: true });
   cwd = hotPath;
+});
+
+it("preload not found should exit with code 1 and not time out", async () => {
+  const root = hotRunnerRoot;
+  const runner = spawn({
+    cmd: [bunExe(), "--preload=/dev/foobarbarbar", "--hot", root],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  await runner.exited;
+  expect(runner.signalCode).toBe(null);
+  expect(runner.exitCode).toBe(1);
+  expect(await new Response(runner.stderr).text()).toContain("preload not found");
 });
 
 it(
@@ -35,6 +50,62 @@ it(
 
       async function onReload() {
         writeFileSync(root, readFileSync(root, "utf-8"));
+      }
+
+      var str = "";
+      for await (const line of runner.stdout) {
+        str += new TextDecoder().decode(line);
+        var any = false;
+        if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!root]")) continue;
+          reloadCounter++;
+          str = "";
+
+          if (reloadCounter === 3) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+
+          expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(3);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  timeout,
+);
+
+it.each(["hot-file-loader.file", "hot-file-loader.css"])(
+  "should hot reload when `%s` is overwritten",
+  async (targetFilename: string) => {
+    const root = hotRunnerRoot;
+    const target = join(cwd, targetFilename);
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+
+      async function onReload() {
+        writeFileSync(target, readFileSync(target, "utf-8"));
       }
 
       var str = "";
@@ -379,7 +450,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -424,13 +495,14 @@ it(
 throw new Error('0');`,
     );
     await using bundler = spawn({
-      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap", "--outfile", hotRunnerRoot],
+      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap=inline", "--outfile", hotRunnerRoot],
       env: bunEnv,
       cwd,
       stdout: "inherit",
       stderr: "inherit",
       stdin: "ignore",
     });
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
       env: bunEnv,
@@ -451,14 +523,15 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     }
     let str = "";
     outer: for await (const chunk of runner.stderr) {
-      str += new TextDecoder().decode(chunk);
+      const s = new TextDecoder().decode(chunk);
+      str += s;
       var any = false;
       if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
       let it = str.split("\n");
       let line;
       while ((line = it.shift())) {
-        if (!line.includes("error")) continue;
+        if (!line.includes("error:")) continue;
         str = "";
 
         if (reloadCounter === 50) {
@@ -510,7 +583,7 @@ throw new Error('0');`,
         "--watch",
         bundleIn,
         "--target=bun",
-        "--sourcemap",
+        "--sourcemap=inline",
         "--outfile",
         hotRunnerRoot,
       ],
@@ -520,6 +593,7 @@ throw new Error('0');`,
       stderr: "ignore",
       stdin: "ignore",
     });
+    waitForFileToExist(hotRunnerRoot, 20);
     await using runner = spawn({
       cmd: [
         //

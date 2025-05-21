@@ -2,20 +2,21 @@
 
 #include "BunWorkerGlobalScope.h"
 #include "MessagePortChannelProviderImpl.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(GlobalScope);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerGlobalScope);
 
-MessagePortChannelProvider& GlobalScope::messagePortChannelProvider()
+MessagePortChannelProvider& WorkerGlobalScope::messagePortChannelProvider()
 {
     return *reinterpret_cast<MessagePortChannelProvider*>(&MessagePortChannelProviderImpl::singleton());
 }
 
-void GlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType == eventNames().messageEvent) {
-        auto& global = static_cast<GlobalScope&>(self);
+        auto& global = static_cast<WorkerGlobalScope&>(self);
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {

@@ -39,6 +39,7 @@ struct BackPressure {
         /* Always erase a minimum of 1/32th the current backpressure */
         if (pendingRemoval > (buffer.length() >> 5)) {
             buffer.erase(0, pendingRemoval);
+            buffer.shrink_to_fit();
             pendingRemoval = 0;
         }
     }
@@ -48,6 +49,7 @@ struct BackPressure {
     void clear() {
         pendingRemoval = 0;
         buffer.clear();
+        buffer.shrink_to_fit();
     }
     void reserve(size_t length) {
         buffer.reserve(length + pendingRemoval);
@@ -79,7 +81,7 @@ struct AsyncSocketData {
 
     }
 
-    /* Or emppty */
+    /* Or empty */
     AsyncSocketData() = default;
 };
 

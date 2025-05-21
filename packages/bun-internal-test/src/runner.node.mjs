@@ -1,12 +1,12 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { readdirSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import PQueue from "p-queue";
 import { join, normalize, posix, relative } from "path";
 import { fileURLToPath } from "url";
-import PQueue from "p-queue";
 
 const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
@@ -239,7 +239,7 @@ Starting "${testFileName}"
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
           BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
-          BUN_ENABLE_CRASH_REPORTING: "1",
+          BUN_ENABLE_CRASH_REPORTING: "0",
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });

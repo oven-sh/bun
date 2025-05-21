@@ -16,4 +16,4 @@ This will restart the running Bun process whenever a file change is detected. It
 
 ---
 
-See [Docs > Test Runner](/docs/cli/test) for complete documentation on the test runner.
+See [Docs > Test Runner](https://bun.sh/docs/cli/test) for complete documentation on the test runner.

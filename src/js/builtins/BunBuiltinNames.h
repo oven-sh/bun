@@ -14,16 +14,33 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/BuiltinUtils.h>
+#include "BunBuiltinNames+extras.h"
 
 namespace WebCore {
 
 using namespace JSC;
 
+// Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(__esModule) \
+    macro(AbortSignal) \
+    macro(Buffer) \
+    macro(Bun) \
+    macro(Loader) \
+    macro(ReadableByteStreamController) \
+    macro(ReadableStream) \
+    macro(ReadableStreamBYOBReader) \
+    macro(ReadableStreamBYOBRequest) \
+    macro(ReadableStreamDefaultController) \
+    macro(ReadableStreamDefaultReader) \
+    macro(SQL) \
+    macro(TextEncoderStreamEncoder) \
+    macro(TransformStream) \
+    macro(TransformStreamDefaultController) \
+    macro(WritableStream) \
+    macro(WritableStreamDefaultController) \
+    macro(WritableStreamDefaultWriter) \
     macro(_events) \
     macro(abortAlgorithm) \
-    macro(AbortSignal) \
     macro(abortSteps) \
     macro(addAbortAlgorithmToSignal) \
     macro(addEventListener) \
@@ -31,27 +48,30 @@ using namespace JSC;
     macro(argv) \
     macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
+    macro(atimeMs) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
     macro(basename) \
+    macro(birthtimeMs) \
     macro(body) \
-    macro(Buffer) \
-    macro(Bun) \
     macro(bunNativePtr) \
     macro(bunNativeType) \
     macro(byobRequest) \
     macro(cancel) \
     macro(cancelAlgorithm) \
     macro(chdir) \
+    macro(checks) \
+    macro(checkBufferRead) \
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
+    macro(closeRequest) \
+    macro(closeRequested) \
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
-    macro(closeRequest) \
-    macro(closeRequested) \
+    macro(cmd) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \
@@ -66,17 +86,20 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(createUsedReadableStream) \
     macro(createWritableStreamFromInternal) \
+    macro(ctimeMs) \
     macro(cwd) \
     macro(data) \
     macro(dataView) \
     macro(decode) \
     macro(delimiter) \
+    macro(dest) \
     macro(destroy) \
     macro(dir) \
     macro(direct) \
     macro(dirname) \
     macro(disturbed) \
     macro(document) \
+    macro(domain) \
     macro(encode) \
     macro(encoding) \
     macro(end) \
@@ -85,15 +108,17 @@ using namespace JSC;
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
     macro(execArgv) \
+    macro(expires) \
     macro(exports) \
     macro(extname) \
     macro(failureKind) \
+    macro(fastPath) \
     macro(fatal) \
     macro(fd) \
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \
-    macro(filePath) \
+    macro(filename) \
     macro(fillFromJS) \
     macro(finishConsumingStream) \
     macro(flush) \
@@ -109,10 +134,12 @@ using namespace JSC;
     macro(host) \
     macro(hostname) \
     macro(href) \
+    macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
+    macro(inherits) \
     macro(initializeWith) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
@@ -128,15 +155,20 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(lineText) \
-    macro(loadCJS2ESM) \
-    macro(Loader) \
+    macro(loadEsmIntoCjs) \
     macro(localStreams) \
     macro(main) \
+    macro(makeAbortError) \
     macro(makeDOMException) \
+    macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
-    macro(makeThisTypeError) \
+    macro(maxAge) \
     macro(method) \
     macro(mockedFunction) \
+    macro(mode) \
+    macro(mtimeMs) \
+    macro(napiDlopenHandle) \
+    macro(napiWrappedContents) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
@@ -148,10 +180,12 @@ using namespace JSC;
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
+    macro(partitioned) \
     macro(password) \
     macro(patch) \
     macro(path) \
     macro(pathname) \
+    macro(paths) \
     macro(pause) \
     macro(pendingAbortRequest) \
     macro(pendingPullIntos) \
@@ -171,18 +205,12 @@ using namespace JSC;
     macro(put) \
     macro(queue) \
     macro(read) \
-    macro(readable) \
-    macro(ReadableByteStreamController) \
-    macro(ReadableStream) \
-    macro(ReadableStreamBYOBReader) \
-    macro(ReadableStreamBYOBRequest) \
-    macro(readableStreamController) \
-    macro(ReadableStreamDefaultController) \
-    macro(ReadableStreamDefaultReader) \
-    macro(readableStreamToArray) \
-    macro(reader) \
     macro(readIntoRequests) \
     macro(readRequests) \
+    macro(readable) \
+    macro(readableStreamController) \
+    macro(readableStreamToArray) \
+    macro(reader) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
     macro(redirect) \
@@ -194,14 +222,16 @@ using namespace JSC;
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
-    macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
+    macro(sameSite) \
+    macro(secure) \
     macro(self) \
     macro(sep) \
     macro(setBody) \
     macro(setStatus) \
     macro(setup) \
+    macro(signal) \
     macro(sink) \
     macro(size) \
     macro(start) \
@@ -220,15 +250,15 @@ using namespace JSC;
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
+    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \
-    macro(TransformStream) \
-    macro(TransformStreamDefaultController) \
     macro(uncork) \
     macro(underlyingByteSource) \
     macro(underlyingSink) \
@@ -240,16 +270,16 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
+    macro(warning) \
     macro(writable) \
-    macro(WritableStream) \
-    macro(WritableStreamDefaultController) \
-    macro(WritableStreamDefaultWriter) \
     macro(write) \
     macro(writeAlgorithm) \
-    macro(writer) \
     macro(writeRequests) \
+    macro(writer) \
     macro(writing) \
     macro(written) \
+    BUN_ADDITIONAL_BUILTIN_NAMES(macro)
+// --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 
 class BunBuiltinNames {
 public:
@@ -268,8 +298,17 @@ public:
 
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
+    const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
+    const JSC::Identifier& inspectCustomPublicName() {
+        if (UNLIKELY(m_inspectCustomPublicName.isEmpty())) {
+            m_inspectCustomPublicName = Identifier::fromUid(m_vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+        }
+        return m_inspectCustomPublicName;
+    }
+
 private:
     JSC::VM& m_vm;
+    JSC::Identifier m_inspectCustomPublicName {};
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
 };
 

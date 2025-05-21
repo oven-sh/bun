@@ -1,5 +1,5 @@
-import { BundlerTestInput, itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `
@@ -158,8 +158,8 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"className":"container","children":{"$$typeof":"Symbol(jsxdev)","type":"hello","props":{"prop":2,"children":{"$$typeof":"Symbol(jsxdev)","type":"h1","props":{"onClick":"Function:onClick","children":"hello"},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}
     `,
     prodStdout: `
-      {"$$typeof":"Symbol(react.element)","type":"div","key":"null","ref":"null","props":{"children":"Hello World"},"_owner":"null"}
-      {"$$typeof":"Symbol(react.element)","type":"div","key":"null","ref":"null","props":{"className":"container","children":{"$$typeof":"Symbol(react.element)","type":"hello","key":"null","ref":"null","props":{"prop":2,"children":{"$$typeof":"Symbol(react.element)","type":"h1","key":"null","ref":"null","props":{"onClick":"Function:onClick","children":"hello"},"_owner":"null"}},"_owner":"null"}},"_owner":"null"}
+      {"$$typeof":"Symbol(jsx)","type":"div","props":{"children":"Hello World"},"key":"undefined"}
+      {"$$typeof":"Symbol(jsx)","type":"div","props":{"className":"container","children":{"$$typeof":"Symbol(jsx)","type":"hello","props":{"prop":2,"children":{"$$typeof":"Symbol(jsx)","type":"h1","props":{"onClick":"Function:onClick","children":"hello"},"key":"undefined"}},"key":"undefined"}},"key":"undefined"}
     `,
   });
   // bun does not do the production transform for fragments as good as it could be right now.
@@ -180,7 +180,7 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":"Fragment"},"key":"undefined","source":false,"self":"undefined"}
     `,
     prodStdout: `
-      {"$$typeof":"Symbol(react.element)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
+      {"$$typeof":"Symbol(jsx)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
     `,
   });
   itBundledDevAndProd("jsx/ImportSource", {
@@ -204,7 +204,6 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Classic", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'
@@ -226,7 +225,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/ClassicPragma", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         // @jsx fn
@@ -298,7 +296,6 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Factory", {
-    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         const h = () => 'hello'
@@ -322,7 +319,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImport", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { h, fragment } from './jsx.ts';
@@ -353,7 +349,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImportExplicitReactDefault", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { print } from 'bun-test-helpers'
@@ -374,7 +369,6 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/FactoryImportExplicitReactDefaultExternal", {
-    todo: false,
     files: {
       "/index.jsx": /* js*/ `
       import { print } from 'bun-test-helpers'
@@ -395,6 +389,26 @@ describe("bundler", () => {
       expect(file).toContain("React.createElement");
       expect(file).toContain("React.Fragment");
       expect(file).toContain('import * as React from "react"');
+    },
+  });
+  itBundled("jsx/jsxImportSource pragma works", {
+    files: {
+      "/index.jsx": /* jsx */ `
+      // @jsxImportSource hello
+      console.log(<div>Hello World</div>);
+      `,
+      "/node_modules/hello/jsx-dev-runtime.js": /* js */ `
+        export function jsxDEV(type, props, key) {
+          return {
+            $$typeof: Symbol("hello_jsxDEV"), type, props, key
+          }
+        }
+      `,
+    },
+    outdir: "/out",
+    target: "browser",
+    run: {
+      stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
   });
 });

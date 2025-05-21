@@ -1,18 +1,20 @@
-import { it, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, it } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 let dir: string;
 
 beforeAll(() => {
   dir = tempDirWithFiles("customcondition", {
     "./node_modules/custom/index.js": "export const foo = 1;",
+    "./node_modules/custom/browser.js": "export const foo = 2;",
     "./node_modules/custom/not_allow.js": "throw new Error('should not be imported')",
     "./node_modules/custom/package.json": JSON.stringify({
       name: "custom",
       exports: {
         "./test": {
           first: "./index.js",
+          browser: "./browser.js",
           default: "./not_allow.js",
         },
       },
@@ -54,6 +56,7 @@ beforeAll(() => {
   });
 
   writeFileSync(`${dir}/test.js`, `import {foo} from 'custom/test';\nconsole.log(foo);`);
+  writeFileSync(`${dir}/test.test.js`, `import {foo} from 'custom/test';\nconsole.log(foo);`);
   writeFileSync(`${dir}/test.cjs`, `const {foo} = require("custom2/test");\nconsole.log(foo);`);
   writeFileSync(
     `${dir}/multiple-conditions.js`,
@@ -85,6 +88,39 @@ it("custom condition 'import' in package.json resolves", async () => {
 
   expect(exitCode).toBe(0);
   expect(stdout.toString("utf8")).toBe("1\n");
+});
+
+it("custom condition 'import' in package.json resolves with browser condition", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "--conditions=browser", `${dir}/test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe("2\n");
+});
+
+it("custom condition 'import' in package.json resolves in bun test", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "--conditions=first", `${dir}/test.test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe(`bun test ${Bun.version_with_sha}\n1\n`);
+});
+
+it("custom condition 'import' in package.json resolves in bun test with browser condition", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "--conditions=browser", `${dir}/test.test.js`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(0);
+  expect(stdout.toString("utf8")).toBe(`bun test ${Bun.version_with_sha}\n2\n`);
 });
 
 it("custom condition 'require' in package.json resolves", async () => {

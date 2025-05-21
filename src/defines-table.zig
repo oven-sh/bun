@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const defines = @import("./defines.zig");
 
@@ -234,6 +234,7 @@ pub const pure_global_identifiers = .{
     .{ "EvalError", pure_global_identifier_define },
     .{ "Event", pure_global_identifier_define },
     .{ "EventTarget", pure_global_identifier_define },
+    .{ "Float16Array", pure_global_identifier_define },
     .{ "Float32Array", pure_global_identifier_define },
     .{ "Float64Array", pure_global_identifier_define },
     .{ "Int16Array", pure_global_identifier_define },

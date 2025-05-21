@@ -1,5 +1,8 @@
 // Hardcoded module "node:diagnostics_channel"
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+
+const { validateFunction } = require("internal/validators");
+
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
@@ -9,8 +12,8 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const PromiseResolve = Promise.resolve;
-const PromiseReject = Promise.reject;
+const PromiseResolve = Promise.resolve.bind(Promise);
+const PromiseReject = Promise.reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
 // TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
@@ -89,6 +92,10 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
 }
 
 class ActiveChannel {
+  _subscribers;
+  name;
+  _stores;
+
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
@@ -159,6 +166,10 @@ class ActiveChannel {
 }
 
 class Channel {
+  _subscribers;
+  _stores;
+  name;
+
   constructor(name) {
     this._subscribers = undefined;
     this._stores = undefined;
@@ -208,7 +219,7 @@ function channel(name) {
   if (channel) return channel;
 
   if (typeof name !== "string" && typeof name !== "symbol") {
-    throw new ERR_INVALID_ARG_TYPE("channel", ["string", "symbol"], name);
+    throw $ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
   }
 
   return new Channel(name);
@@ -233,11 +244,17 @@ const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 function assertChannel(value, name) {
   if (!(value instanceof Channel)) {
-    throw new ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
+    throw $ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
   }
 }
 
 class TracingChannel {
+  start;
+  end;
+  asyncStart;
+  asyncEnd;
+  error;
+
   constructor(nameOrChannels) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);
@@ -260,7 +277,7 @@ class TracingChannel {
       this.asyncEnd = asyncEnd;
       this.error = error;
     } else {
-      throw new ERR_INVALID_ARG_TYPE("nameOrChannels", ["string", "object", "Channel"], nameOrChannels);
+      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
     }
   }
 
@@ -366,9 +383,7 @@ class TracingChannel {
     }
 
     const callback = ArrayPrototypeAt.$call(args, position);
-    if (typeof callback !== "function") {
-      throw new ERR_INVALID_ARG_TYPE("callback", ["function"], callback);
-    }
+    validateFunction(callback, "callback");
     ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
     return start.runStores(context, () => {
@@ -387,21 +402,6 @@ class TracingChannel {
 
 function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
-}
-
-class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor(name, expected, actual) {
-    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
-function validateFunction(callable, field) {
-  if (typeof callable !== "function") {
-    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 export default {

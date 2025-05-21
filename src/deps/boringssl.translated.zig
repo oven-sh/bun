@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const C = @import("std").zig.c_builtins;
 const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
 const time_t = C.time_t;
@@ -30,6 +30,17 @@ const timercmp = C.timercmp;
 const doesnt_exist = C.doesnt_exist;
 const struct_tm = C.struct_tm;
 const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+/// `isize` alias. Kept for clarity.
+///
+/// Docs from OpenSSL:
+/// > ossl_ssize_t is a signed type which is large enough to fit the size of any
+/// > valid memory allocation. We prefer using |size_t|, but sometimes we need a
+/// > signed type for OpenSSL API compatibility. This type can be used in such
+/// > cases to avoid overflow.
+/// >
+/// > Not all |size_t| values fit in |ossl_ssize_t|, but all |size_t| values that
+/// > are sizes of or indices into C objects, can be converted without overflow.
+const ossl_ssize_t = isize;
 
 pub const CRYPTO_THREADID = c_int;
 pub const struct_asn1_null_st = opaque {};
@@ -143,7 +154,20 @@ pub const struct_X509_crl_st = opaque {};
 pub const X509_CRL = struct_X509_crl_st;
 pub const struct_X509_extension_st = opaque {};
 pub const X509_EXTENSION = struct_X509_extension_st;
-pub const struct_x509_st = opaque {};
+pub const struct_x509_st = opaque {
+    pub fn dup(this: *X509) ?*X509 {
+        return X509_dup(this);
+    }
+
+    pub fn ref(this: *X509) *X509 {
+        _ = X509_up_ref(this);
+        return this;
+    }
+
+    pub fn free(this: *X509) void {
+        X509_free(this);
+    }
+};
 pub const X509 = struct_x509_st;
 pub const CRYPTO_refcount_t = u32;
 pub const struct_openssl_method_common_st = extern struct {
@@ -176,7 +200,7 @@ pub const struct_bn_mont_ctx_st = extern struct {
 };
 pub const BN_MONT_CTX = struct_bn_mont_ctx_st;
 pub const struct_bn_blinding_st = opaque {};
-pub const BN_BLINDING = struct_bn_blinding_st; // src/deps/boringssl/include/openssl/rsa.h:788:12: warning: struct demoted to opaque type - has bitfield
+pub const BN_BLINDING = struct_bn_blinding_st; // boringssl/include/openssl/rsa.h:788:12: warning: struct demoted to opaque type - has bitfield
 pub const struct_rsa_st = opaque {};
 pub const RSA = struct_rsa_st;
 pub const struct_dsa_st = extern struct {
@@ -292,8 +316,8 @@ pub const struct_buf_mem_st = extern struct {
     max: usize,
 };
 pub const BUF_MEM = struct_buf_mem_st;
-pub const CBB = struct_cbb_st; // src/deps/boringssl/include/openssl/bytestring.h:403:12: warning: struct demoted to opaque type - has bitfield
-pub const struct_cbb_buffer_st = opaque {}; // src/deps/boringssl/include/openssl/bytestring.h:418:12: warning: struct demoted to opaque type - has bitfield
+pub const CBB = struct_cbb_st; // boringssl/include/openssl/bytestring.h:403:12: warning: struct demoted to opaque type - has bitfield
+pub const struct_cbb_buffer_st = opaque {}; // boringssl/include/openssl/bytestring.h:418:12: warning: struct demoted to opaque type - has bitfield
 pub const struct_cbb_child_st = opaque {};
 const union_unnamed_3 = extern union {
     base: struct_cbb_buffer_st,
@@ -648,7 +672,7 @@ pub extern fn ERR_remove_thread_state(tid: [*c]const CRYPTO_THREADID) void;
 pub extern fn ERR_func_error_string(packed_error: u32) [*c]const u8;
 pub extern fn ERR_error_string(packed_error: u32, buf: [*c]u8) [*c]u8;
 pub extern fn ERR_clear_system_error() void;
-// pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: c_uint) void;
+pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: u32) void;
 pub extern fn ERR_add_error_data(count: c_uint, ...) void;
 pub extern fn ERR_add_error_dataf(format: [*c]const u8, ...) void;
 pub extern fn ERR_set_error_data(data: [*c]u8, flags: c_int) void;
@@ -1105,7 +1129,15 @@ pub extern fn BIO_hexdump(bio: [*c]BIO, data: [*c]const u8, len: usize, indent: 
 pub extern fn ERR_print_errors(bio: [*c]BIO) void;
 pub extern fn BIO_read_asn1(bio: [*c]BIO, out: [*c][*c]u8, out_len: [*c]usize, max_len: usize) c_int;
 pub extern fn BIO_s_mem() ?*const BIO_METHOD;
-// pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
+
+/// BIO_new_mem_buf creates read-only BIO that reads from |len| bytes at |buf|.
+/// It returns the BIO or NULL on error. This function does not copy or take
+/// ownership of |buf|. The caller must ensure the memory pointed to by |buf|
+/// outlives the |BIO|.
+///
+/// If |len| is negative, then |buf| is treated as a NUL-terminated string, but
+/// don't depend on this in new code.
+pub extern fn BIO_new_mem_buf(buf: ?*const anyopaque, len: ossl_ssize_t) [*c]BIO;
 // pub extern fn BIO_mem_contents(bio: [*c]const BIO, out_contents: [*c][*c]const u8, out_len: [*c]usize) c_int;
 pub extern fn BIO_get_mem_data(bio: [*c]BIO, contents: [*c][*c]u8) c_long;
 pub extern fn BIO_get_mem_ptr(bio: [*c]BIO, out: [*c][*c]BUF_MEM) c_int;
@@ -1394,6 +1426,7 @@ pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, ind
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC(password: ?[*]const u8, password_len: usize, salt: ?[*]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: ?[*]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
+pub extern fn EVP_PBE_validate_scrypt_params(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_new_id(id: c_int, e: ?*ENGINE) ?*EVP_PKEY_CTX;
@@ -1439,7 +1472,7 @@ pub extern fn OpenSSL_add_all_ciphers() void;
 pub extern fn OpenSSL_add_all_digests() void;
 pub extern fn EVP_cleanup() void;
 pub extern fn EVP_CIPHER_do_all_sorted(callback: ?*const fn (?*const EVP_CIPHER, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn EVP_MD_do_all_sorted(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_MD_do_all_sorted(callback: *const fn (*const EVP_MD, ?[*:0]const u8, ?[*:0]const u8, *anyopaque) callconv(.C) void, arg: *anyopaque) void;
 pub extern fn EVP_MD_do_all(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
 pub extern fn i2d_PrivateKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
 pub extern fn i2d_PublicKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
@@ -18737,7 +18770,7 @@ pub extern fn RAND_bytes(buf: [*]u8, len: usize) c_int;
 /// Hence, this function should never be called by libraries.
 pub extern fn RAND_enable_fork_unsafe_buffering(c_int) void;
 
-pub extern fn SSL_new(ctx: ?*SSL_CTX) *SSL;
+pub extern fn SSL_new(ctx: ?*SSL_CTX) ?*SSL;
 
 pub extern fn EVP_md4() *const EVP_MD;
 pub extern fn EVP_md5() *const EVP_MD;
@@ -18759,7 +18792,7 @@ pub extern fn ERR_get_next_error_library() c_int;
 
 pub const struct_bio_st = extern struct {
     method: [*c]const BIO_METHOD,
-    init: c_int,
+    _init: c_int,
     shutdown: c_int,
     flags: c_int,
     retry_reason: c_int,
@@ -18776,6 +18809,22 @@ pub const struct_bio_st = extern struct {
 
     pub fn init() !*struct_bio_st {
         return BIO_new(BIO_s_mem()) orelse error.OutOfMemory;
+    }
+
+    /// Create a read-only `BIO` using an existing buffer. `buffer` is not
+    /// copied, and ownership is not transfered.
+    ///
+    /// `buffer` must outlive the returned `BIO`.
+    ///
+    /// Returns an error if
+    /// - the buffer is empty
+    /// - BIO initialization fails (same as `.init()`).
+    pub fn initReadonlyView(buffer: []const u8) !*struct_bio_st {
+        // NOTE: not exposing len parameter. If we want to ignore their
+        // suggestion and pass a negative value to make it treat `buffer` as a
+        // null-terminated string, create a separate `initReadonlyViewZ`
+        // constructor.
+        return BIO_new_mem_buf(buffer.ptr, buffer.len);
     }
 
     pub fn deinit(this: *struct_bio_st) void {
@@ -18883,7 +18932,7 @@ pub const CertError = error{
     INVALID_CALL,
     STORE_LOOKUP,
     NAME_CONSTRAINTS_WITHOUT_SANS,
-    UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+    UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
 };
 
 pub fn getCertErrorFromNo(error_no: i32) CertError {
@@ -18954,7 +19003,7 @@ pub fn getCertErrorFromNo(error_no: i32) CertError {
         X509_V_ERR_INVALID_CALL => error.INVALID_CALL,
         X509_V_ERR_STORE_LOOKUP => error.STORE_LOOKUP,
         X509_V_ERR_NAME_CONSTRAINTS_WITHOUT_SANS => error.NAME_CONSTRAINTS_WITHOUT_SANS,
-        else => error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR,
+        else => error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     };
 }
 

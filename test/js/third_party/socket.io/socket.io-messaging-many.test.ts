@@ -1,6 +1,6 @@
+import { describe, expect, it } from "bun:test";
 import { Server } from "socket.io";
-import { describe, it, expect } from "bun:test";
-import { createClient, createPartialDone, success, fail, waitFor } from "./support/util";
+import { createClient, createPartialDone, fail, success, waitFor } from "./support/util";
 
 // Hanging tests are disabled because they cause the test suite to hang
 describe.skip("messaging many", () => {

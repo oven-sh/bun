@@ -46,7 +46,7 @@ class EventTarget;
 class ScriptExecutionContext;
 
 class Event : public ScriptWrappable, public RefCounted<Event> {
-    WTF_MAKE_ISO_ALLOCATED(Event);
+    WTF_MAKE_TZONE_ALLOCATED(Event);
 
 public:
     using IsTrusted = EventIsTrusted;
@@ -91,8 +91,8 @@ public:
     DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
     MonotonicTime timeStamp() const { return m_createTime; }
 
-    void setEventPath(const EventPath& path) { UNUSED_PARAM(path); }
-    Vector<EventTarget*> composedPath() const;
+    void setEventPath(const EventPath&);
+    Vector<Ref<EventTarget>> composedPath() const;
 
     void stopPropagation() { m_propagationStopped = true; }
     void stopImmediatePropagation() { m_immediatePropagationStopped = true; }

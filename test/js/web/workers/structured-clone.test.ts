@@ -1,5 +1,5 @@
-import { join } from "path";
 import { openSync } from "fs";
+import { join } from "path";
 
 describe("structured clone", () => {
   let primitives_tests = [
@@ -202,6 +202,20 @@ describe("structured clone", () => {
       const blob = createBlob(encode_cesu8([0xd800, 0xdc00]));
       const cloned = structuredClone(blob);
       await compareBlobs(blob, cloned);
+    });
+  });
+
+  describe("net.BlockList works", () => {
+    test("simple", () => {
+      const net = require("node:net");
+      const blocklist = new net.BlockList();
+      blocklist.addAddress("123.123.123.123");
+      const newlist = structuredClone(blocklist);
+      expect(newlist.check("123.123.123.123")).toBeTrue();
+      expect(!newlist.check("123.123.123.124")).toBeTrue();
+      newlist.addAddress("123.123.123.124");
+      expect(blocklist.check("123.123.123.124")).toBeTrue();
+      expect(newlist.check("123.123.123.124")).toBeTrue();
     });
   });
 

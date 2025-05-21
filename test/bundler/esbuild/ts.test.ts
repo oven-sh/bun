@@ -1,6 +1,6 @@
 import assert from "assert";
-import { itBundled } from "../expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_ts_test.go
@@ -1733,7 +1733,6 @@ describe("bundler", () => {
     useDefineForClassFields: true,
   });
   itBundled("ts/ImportMTS", {
-    todo: true,
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,

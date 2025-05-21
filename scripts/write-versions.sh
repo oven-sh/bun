@@ -12,6 +12,7 @@ TINYCC=$(git rev-parse HEAD:./src/deps/tinycc)
 C_ARES=$(git rev-parse HEAD:./src/deps/c-ares)
 ZSTD=$(git rev-parse HEAD:./src/deps/zstd)
 LSHPACK=$(git rev-parse HEAD:./src/deps/ls-hpack)
+LIBDEFLATE=$(git rev-parse HEAD:./src/deps/libdeflate)
 
 rm -rf src/generated_versions_list.zig
 echo "// AUTO-GENERATED FILE. Created via .scripts/write-versions.sh" >src/generated_versions_list.zig
@@ -26,6 +27,7 @@ echo "pub const zlib = \"$ZLIB_VERSION\";" >>src/generated_versions_list.zig
 echo "pub const tinycc = \"$TINYCC\";" >>src/generated_versions_list.zig
 echo "pub const lolhtml = \"$LOLHTML\";" >>src/generated_versions_list.zig
 echo "pub const c_ares = \"$C_ARES\";" >>src/generated_versions_list.zig
+echo "pub const libdeflate = \"$LIBDEFLATE\";" >>src/generated_versions_list.zig
 echo "pub const zstd = \"$ZSTD\";" >>src/generated_versions_list.zig
 echo "pub const lshpack = \"$LSHPACK\";" >>src/generated_versions_list.zig
 echo "" >>src/generated_versions_list.zig

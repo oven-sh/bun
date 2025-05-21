@@ -1,8 +1,7 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { realpathSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
-import { tmpdir } from "os";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -155,19 +154,24 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0);
 
     chmodSync(join(cache_dir), "0");
-    const c = bunRun(join(temp_dir, "a.js"), env);
-    expect(c.stdout == "b");
+    try {
+      const c = bunRun(join(temp_dir, "a.js"), env);
+      expect(c.stdout == "b");
+    } finally {
+      chmodSync(join(cache_dir), "777");
+    }
   });
   test("works if the cache is not user-writable", () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));
 
-    chmodSync(join(cache_dir), "0");
-
-    const a = bunRun(join(temp_dir, "a.js"), env);
-    expect(a.stdout == "b");
-
-    chmodSync(join(cache_dir), "777");
+    try {
+      chmodSync(join(cache_dir), "0");
+      const a = bunRun(join(temp_dir, "a.js"), env);
+      expect(a.stdout == "b");
+    } finally {
+      chmodSync(join(cache_dir), "777");
+    }
   });
   test("does not inline process.env", () => {
     writeFileSync(

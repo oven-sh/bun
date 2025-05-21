@@ -1,6 +1,10 @@
+{% callout %}
+**⚠️ Warning** — `bun:ffi` is **experimental**, with known bugs and limitations, and should not be relied on in production. The most stable way to interact with native code from Bun is to write a [Node-API module](/docs/api/node-api).
+{% /callout %}
+
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
 
-## Usage (`bun:ffi`)
+## dlopen usage (`bun:ffi`)
 
 To print the version number of `sqlite3`:
 
@@ -108,25 +112,30 @@ $ zig build-lib add.cpp -dynamic -lc -lc++
 
 The following `FFIType` values are supported.
 
-| `FFIType` | C Type         | Aliases                     |
-| --------- | -------------- | --------------------------- |
-| cstring   | `char*`        |                             |
-| function  | `(void*)(*)()` | `fn`, `callback`            |
-| ptr       | `void*`        | `pointer`, `void*`, `char*` |
-| i8        | `int8_t`       | `int8_t`                    |
-| i16       | `int16_t`      | `int16_t`                   |
-| i32       | `int32_t`      | `int32_t`, `int`            |
-| i64       | `int64_t`      | `int64_t`                   |
-| i64_fast  | `int64_t`      |                             |
-| u8        | `uint8_t`      | `uint8_t`                   |
-| u16       | `uint16_t`     | `uint16_t`                  |
-| u32       | `uint32_t`     | `uint32_t`                  |
-| u64       | `uint64_t`     | `uint64_t`                  |
-| u64_fast  | `uint64_t`     |                             |
-| f32       | `float`        | `float`                     |
-| f64       | `double`       | `double`                    |
-| bool      | `bool`         |                             |
-| char      | `char`         |                             |
+| `FFIType`  | C Type         | Aliases                     |
+| ---------- | -------------- | --------------------------- |
+| buffer     | `char*`        |                             |
+| cstring    | `char*`        |                             |
+| function   | `(void*)(*)()` | `fn`, `callback`            |
+| ptr        | `void*`        | `pointer`, `void*`, `char*` |
+| i8         | `int8_t`       | `int8_t`                    |
+| i16        | `int16_t`      | `int16_t`                   |
+| i32        | `int32_t`      | `int32_t`, `int`            |
+| i64        | `int64_t`      | `int64_t`                   |
+| i64_fast   | `int64_t`      |                             |
+| u8         | `uint8_t`      | `uint8_t`                   |
+| u16        | `uint16_t`     | `uint16_t`                  |
+| u32        | `uint32_t`     | `uint32_t`                  |
+| u64        | `uint64_t`     | `uint64_t`                  |
+| u64_fast   | `uint64_t`     |                             |
+| f32        | `float`        | `float`                     |
+| f64        | `double`       | `double`                    |
+| bool       | `bool`         |                             |
+| char       | `char`         |                             |
+| napi_env   | `napi_env`     |                             |
+| napi_value | `napi_value`   |                             |
+
+Note: `buffer` arguments must be a `TypedArray` or `DataView`.
 
 ## Strings
 
@@ -291,6 +300,23 @@ setTimeout(() => {
 ```
 
 When you're done with a JSCallback, you should call `close()` to free the memory.
+
+### Experimental thread-safe callbacks
+
+`JSCallback` has experimental support for thread-safe callbacks. This will be needed if you pass a callback function into a different thread from its instantiation context. You can enable it with the optional `threadsafe` parameter.
+
+Currently, thread-safe callbacks work best when run from another thread that is running JavaScript code, i.e. a [`Worker`](/docs/api/workers). A future version of Bun will enable them to be called from any thread (such as new threads spawned by your native library that Bun is not aware of).
+
+```ts
+const searchIterator = new JSCallback(
+  (ptr, length) => /hello/.test(new CString(ptr, length)),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+    threadsafe: true, // Optional. Defaults to `false`
+  },
+);
+```
 
 {% callout %}
 

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("req.body.locked is true after body is consumed", async () => {
   const req = new Request("https://example.com/", {

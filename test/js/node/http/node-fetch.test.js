@@ -1,9 +1,19 @@
-import fetch2, { fetch, Response, Request, Headers } from "node-fetch";
-import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";
+import * as iso from "isomorphic-fetch";
+import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
 import * as stream from "stream";
 
-import { test, expect } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+
+const originalResponse = globalThis.Response;
+const originalRequest = globalThis.Request;
+const originalHeaders = globalThis.Headers;
+afterEach(() => {
+  globalThis.Response = originalResponse;
+  globalThis.Request = originalRequest;
+  globalThis.Headers = originalHeaders;
+  globalThis.fetch = Bun.fetch;
+});
 
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);

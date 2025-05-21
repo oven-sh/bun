@@ -1,0 +1,341 @@
+/*
+ * This file is mounted within Shadow DOM so interference with
+ * the user's application causes no issue. This sheet is used to
+ * style error popups and other elements provided by DevServer.
+ */
+
+/* Reset and base styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.root {
+  all: initial;
+
+  /* TODO: revive light theme error modal */
+  /* color-scheme: light dark;
+  --modal-bg: light-dark(#efefef, #202020);
+  --modal-text: light-dark(#0a0a0a, #fafafa);
+  --modal-text-faded: light-dark(#0a0a0a88, #fafafa88);
+  --item-bg: light-dark(#d4d4d4, #0f0f0f);
+  --item-bg-main: light-dark(#d4d4d4, #262626);
+  --log-error: light-dark(#dc0000, #ff5858);
+  --log-warn: light-dark(#eab308, #fbbf24);
+  --log-note: light-dark(#008ae6, #22d3ee);
+  --log-colon: light-dark(#888, #888); */
+
+  --modal-bg: #202020;
+  --modal-text: #fafafa;
+  --modal-text-faded: #fafafa88;
+  --item-bg: #0f0f0f;
+  --item-bg-main: #262626;
+  --log-error: #ff5858;
+  --log-warn: #fbbf24;
+  --log-note: #22d3ee;
+  --log-colon: #888;
+
+  --red: #ff5858;
+  --red-faded: #ff58582f;
+  --error-bg: #ff58582f;
+  --warn-bg: #eab3082f;
+
+  --syntax-comment: #6272a4;
+  --syntax-cyan: #8be9fd;
+  --syntax-green: #50fa7b;
+  --syntax-orange: #ffb86c;
+  --syntax-pink: #ff79c6;
+  --syntax-purple: #bd93f9;
+  --syntax-red: #ff5555;
+  --syntax-yellow: #f1fa8c;
+
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    "Open Sans",
+    "Helvetica Neue",
+    sans-serif;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+code,
+.message,
+.function-name,
+.file-name,
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+pre,
+code {
+  font: unset;
+}
+
+button {
+  appearance: none;
+  background-color: transparent;
+  border: none;
+  font-size: unset;
+  cursor: pointer;
+}
+
+/* Helper classes */
+.flex {
+  flex: 1;
+}
+.muted {
+  color: var(--modal-text-faded);
+}
+
+/* Modal */
+.modal {
+  color: var(--modal-text);
+  background-color: var(--modal-bg);
+  border-top: 8px solid var(--red);
+  border-radius: 8px;
+  margin: 4rem 2rem 2rem 2rem;
+  max-width: 940px;
+  width: 100%;
+  box-shadow:
+    0 2px 6px #0004,
+    0 2px 32px #0003;
+}
+
+footer {
+  display: flex;
+  color: var(--modal-text-faded);
+  margin: 1rem;
+}
+
+/* Navigation bar */
+nav {
+  display: flex;
+  margin: 1rem;
+  align-items: center;
+  color: var(--modal-text-faded);
+}
+
+.tab-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background-color: var(--red-faded);
+}
+.tab-button[disabled] {
+  opacity: 0.5;
+}
+.tab-button.left {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-right: 2px;
+}
+.tab-button.right {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-right: 0.5rem;
+}
+.dismiss-all {
+  width: 24px;
+  height: 24px;
+}
+
+/* Header / Title */
+header {
+  margin: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.title {
+  color: var(--red);
+  font-size: 2rem;
+  font-weight: bold;
+}
+
+/* Runtime Error */
+.r-error {
+  background-color: var(--item-bg);
+}
+.message-desc {
+  padding: 0rem 1.5rem;
+}
+.message-desc.error {
+  padding: 1rem 1.5rem;
+  background-color: var(--error-bg);
+}
+.message-desc.warn {
+  padding: 1rem 1.5rem;
+  background-color: var(--warn-bg);
+}
+.r-error .name {
+  color: var(--red);
+  font-weight: bold;
+}
+
+.file-name {
+  color: var(--modal-text);
+  font-weight: bold;
+}
+.r-code-wrap {
+  background-color: var(--item-bg-main);
+  --color: var(--log-error);
+}
+
+/* Bundler messages */
+.b-group {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--item-bg);
+}
+.b-group + .b-group {
+  border-top: 1px solid var(--modal-text-faded);
+}
+.b-group .code {
+  padding-bottom: 1rem;
+}
+.log-error {
+  --color: var(--log-error);
+  font-weight: bold;
+}
+.log-warn {
+  --color: var(--log-warn);
+}
+.log-note {
+  --color: var(--log-note);
+}
+.log-colon {
+  --color: var(--log-colon);
+}
+.log-label {
+  color: var(--color);
+}
+
+.message-desc.note + .code {
+  padding-top: 0.75rem;
+}
+
+/* Trace Frames */
+.trace-frame {
+  padding: 0.7rem 1.5rem;
+}
+.trace-frame + .trace-frame {
+  margin-top: -0.5rem;
+}
+.function-name {
+  color: var(--syntax-cyan);
+  font-style: italic;
+}
+
+/* Code View + Message Highlighting (Underline) */
+.code {
+  display: flex;
+  padding-top: 1rem;
+}
+.code .gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 0.3rem 0;
+  padding-left: 0.5rem;
+  text-align: right;
+  margin-right: 1rem;
+  padding-right: 0.5rem;
+  user-select: none;
+  pointer-events: none;
+  color: var(--modal-text-faded);
+  border-right: 1px solid var(--modal-text-faded);
+  border-width: 1.5px;
+}
+.code .gutter div {
+  white-space: pre;
+}
+.code .gutter .highlight-gap {
+  font-size: 8px;
+}
+.code .view {
+  padding: 0.3rem 0;
+}
+.highlight-wrap {
+  color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+  transform: translateY(-16px);
+  margin-bottom: -10px;
+}
+.highlight-wrap:last-child {
+  margin-bottom: 0;
+  position: absolute;
+}
+.highlight-gap {
+  height: 10px;
+}
+
+.highlight-wrap .line {
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color);
+}
+
+@media (prefers-color-scheme: light) {
+  .log-warn,
+  .log-note {
+    font-weight: bold;
+  }
+}
+
+/* Syntax Highlighting */
+.syntax-pink {
+  color: var(--syntax-pink);
+}
+.syntax-cyan {
+  color: var(--syntax-cyan);
+}
+.syntax-orange {
+  color: var(--syntax-orange);
+}
+.syntax-red {
+  color: var(--syntax-red);
+}
+.syntax-green {
+  color: var(--syntax-green);
+}
+.syntax-yellow {
+  color: var(--syntax-yellow);
+}
+.syntax-gray {
+  color: var(--syntax-comment);
+}
+.syntax-purple {
+  color: var(--syntax-purple);
+}
+
+/* Icons */
+.tab-button.left {
+  background-image: url(./icons/prev.svg);
+}
+.tab-button.right {
+  background-image: url(./icons/next.svg);
+}
+.dismiss-all {
+  background-image: url(./icons/dismiss.svg);
+  opacity: 0.5;
+}
+@media (prefers-color-scheme: light) {
+  .dismiss-all {
+    filter: invert(1);
+  }
+}

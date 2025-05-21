@@ -27,10 +27,21 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { promisify } = require("internal/promisify");
+
+const {
+  validateFunction,
+  validateAbortSignal,
+  validateArray,
+  validateString,
+  validateBoolean,
+  validateInteger,
+  validateUint32,
+  validateNumber,
+} = require("internal/validators");
+
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const ObjectValues = Object.values;
+
 const PromiseReject = Promise.reject;
 
 var isWritable;
@@ -73,25 +84,17 @@ const StringPrototypeTrim = String.prototype.trim;
 const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
-const NumberIsInteger = Number.isInteger;
-const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-const NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const FunctionPrototype = Function.prototype;
 const StringPrototype = String.prototype;
 const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
 const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const ObjectAssign = Object.assign;
 const ObjectCreate = Object.create;
-const ObjectKeys = Object.keys;
-const ObjectSeal = Object.seal;
 
 var createSafeIterator = (factory, next) => {
   class SafeIterator {
@@ -146,288 +149,11 @@ function stripVTControlCharacters(str) {
   return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
 }
 
-// Promisify
-
-var kCustomPromisifiedSymbol = SymbolFor("nodejs.util.promisify.custom");
-var kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-function promisify(original) {
-  validateFunction(original, "original");
-
-  if (original[kCustomPromisifiedSymbol]) {
-    let fn = original[kCustomPromisifiedSymbol];
-
-    validateFunction(fn, "util.promisify.custom");
-
-    return ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-      __proto__: null,
-      value: fn,
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
-  }
-
-  // Names to create an object from in case the callback receives multiple
-  // arguments, e.g. ['bytesRead', 'buffer'] for fs.read.
-  var argumentNames = original[kCustomPromisifyArgsSymbol];
-
-  function fn(...args) {
-    return new Promise((resolve, reject) => {
-      ArrayPrototypePush.$call(args, (err, ...values) => {
-        if (err) {
-          return reject(err);
-        }
-        if (argumentNames !== undefined && values.length > 1) {
-          var obj = {};
-          for (var i = 0; i < argumentNames.length; i++) obj[argumentNames[i]] = values[i];
-          resolve(obj);
-        } else {
-          resolve(values[0]);
-        }
-      });
-      original.$apply(this, args);
-    });
-  }
-
-  ObjectSetPrototypeOf(fn, ObjectGetPrototypeOf(original));
-
-  ObjectDefineProperty(fn, kCustomPromisifiedSymbol, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    writable: false,
-    configurable: true,
-  });
-
-  var descriptors = ObjectGetOwnPropertyDescriptors(original);
-  var propertiesValues = ObjectValues(descriptors);
-  for (var i = 0; i < propertiesValues.length; i++) {
-    // We want to use null-prototype objects to not rely on globally mutable
-    // %Object.prototype%.
-    ObjectSetPrototypeOf(propertiesValues[i], null);
-  }
-  return ObjectDefineProperties(fn, descriptors);
-}
-
-promisify.custom = kCustomPromisifiedSymbol;
-
 // Constants
 
 const kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
 const kEscape = "\x1b";
 const kSubstringSearch = Symbol("kSubstringSearch");
-const kIsNodeError = Symbol("kIsNodeError");
-
-// Errors
-var errorBases = {};
-var VALID_NODE_ERROR_BASES = {
-  TypeError,
-  RangeError,
-  Error,
-};
-
-function getNodeErrorByName(typeName) {
-  var base = errorBases[typeName];
-  if (base) {
-    return base;
-  }
-  if (!ObjectKeys(VALID_NODE_ERROR_BASES).includes(typeName)) {
-    throw new Error("Invalid NodeError type");
-  }
-
-  var Base = VALID_NODE_ERROR_BASES[typeName];
-
-  class NodeError extends Base {
-    [kIsNodeError] = true;
-    code;
-    constructor(msg, opts) {
-      super(msg, opts);
-      this.code = opts?.code || "ERR_GENERIC";
-    }
-
-    toString() {
-      return `${this.name} [${this.code}]: ${this.message}`;
-    }
-  }
-  errorBases[typeName] = NodeError;
-  return NodeError;
-}
-
-var NodeError = getNodeErrorByName("Error");
-var NodeTypeError = getNodeErrorByName("TypeError");
-var NodeRangeError = getNodeErrorByName("RangeError");
-
-class ERR_INVALID_ARG_TYPE extends NodeTypeError {
-  constructor(name, type, value) {
-    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value}`, {
-      code: "ERR_INVALID_ARG_TYPE",
-    });
-  }
-}
-
-class ERR_INVALID_ARG_VALUE extends NodeTypeError {
-  constructor(name, value, reason = "not specified") {
-    super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
-      code: "ERR_INVALID_ARG_VALUE",
-    });
-  }
-}
-
-class ERR_INVALID_CURSOR_POS extends NodeTypeError {
-  constructor() {
-    super("Cannot set cursor row without setting its column", {
-      code: "ERR_INVALID_CURSOR_POS",
-    });
-  }
-}
-
-class ERR_OUT_OF_RANGE extends NodeRangeError {
-  constructor(name, range, received) {
-    super(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`, {
-      code: "ERR_OUT_OF_RANGE",
-    });
-  }
-}
-
-class ERR_USE_AFTER_CLOSE extends NodeError {
-  constructor() {
-    super("This socket has been ended by the other party", {
-      code: "ERR_USE_AFTER_CLOSE",
-    });
-  }
-}
-
-class AbortError extends Error {
-  code;
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
-  }
-}
-
-// Validators
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-function validateAbortSignal(signal, name) {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-}
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-function validateArray(value, name, minLength = 0) {
-  // var validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!$isJSArray(value)) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    var reason = `must be longer than ${minLength}`;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-}
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-
-/**
- * @callback validateBoolean
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is boolean}
- */
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-function validateObject(value, name, options = null) {
-  // var validateObject = hideStackFrames((value, name, options = null) => {
-  var allowArray = options?.allowArray ?? false;
-  var allowFunction = options?.allowFunction ?? false;
-  var nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && $isJSArray.$call(null, value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-}
-
-/**
- * @callback validateInteger
- * @param {*} value
- * @param {string} name
- * @param {number} [min]
- * @param {number} [max]
- * @returns {asserts value is number}
- */
-function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-}
-
-/**
- * @callback validateUint32
- * @param {*} value
- * @param {string} name
- * @param {number|boolean} [positive=false]
- * @returns {asserts value is number}
- */
-function validateUint32(value, name, positive = false) {
-  if (typeof value !== "number") {
-    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  }
-
-  if (!NumberIsInteger(value)) {
-    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  }
-
-  var min = positive ? 1 : 0; // 2 ** 32 === 4294967296
-  var max = 4_294_967_295;
-
-  if (value < min || value > max) {
-    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-  }
-}
 
 // ----------------------------------------------------------------------------
 // Section: Utils
@@ -473,6 +199,7 @@ function charLengthAt(str, i) {
 /*
   Some patterns seen in terminal key escape codes, derived from combos seen
   at http://www.midnight-commander.org/browser/lib/tty/key.c
+
   ESC letter
   ESC [ letter
   ESC [ modifier letter
@@ -487,6 +214,7 @@ function charLengthAt(str, i) {
   ESC [ [ 1 ; modifier letter
   ESC ESC [ num char
   ESC ESC O letter
+
   - char is usually ~ but $ and ^ also happen with rxvt
   - modifier is 1 +
                 (shift     * 1) +
@@ -497,23 +225,23 @@ function charLengthAt(str, i) {
 */
 function* emitKeys(stream) {
   while (true) {
-    var ch = yield;
-    var s = ch;
-    var escaped = false;
-
-    var keySeq = null;
-    var keyName;
-    var keyCtrl = false;
-    var keyMeta = false;
-    var keyShift = false;
-
-    // var key = {
-    //   sequence: null,
-    //   name: undefined,
-    //   ctrl: false,
-    //   meta: false,
-    //   shift: false,
-    // };
+    let ch = yield;
+    let s = ch;
+    let escaped = false;
+    const key: {
+      sequence: string | null;
+      name?: string;
+      code?: string;
+      ctrl: boolean;
+      meta: boolean;
+      shift: boolean;
+    } = {
+      sequence: null,
+      name: undefined,
+      ctrl: false,
+      meta: false,
+      shift: false,
+    };
 
     if (ch === kEscape) {
       escaped = true;
@@ -526,8 +254,8 @@ function* emitKeys(stream) {
 
     if (escaped && (ch === "O" || ch === "[")) {
       // ANSI escape sequence
-      var code = ch;
-      var modifier = 0;
+      let code = ch;
+      let modifier = 0;
 
       if (ch === "O") {
         // ESC O letter
@@ -567,8 +295,10 @@ function* emitKeys(stream) {
          *
          *  - `;5` part is optional, e.g. it could be `\x1b[24~`
          *  - first part can contain one or two digits
+         *  - there is also special case when there can be 3 digits
+         *    but without modifier. They are the case of paste bracket mode
          *
-         * So the generic regexp is like /^\d\d?(;\d)?[~^$]$/
+         * So the generic regexp is like /^(?:\d\d?(;\d)?[~^$]|\d{3}~)$/
          *
          *
          * 2. `\x1b[1;5H` should be parsed as { code: '[H', modifier: 5 }
@@ -581,7 +311,7 @@ function* emitKeys(stream) {
          * So the generic regexp is like /^((\d;)?\d)?[A-Za-z]$/
          *
          */
-        var cmdStart = s.length - 1;
+        const cmdStart = s.length - 1;
 
         // Skip one or two leading digits
         if (ch >= "0" && ch <= "9") {
@@ -589,6 +319,10 @@ function* emitKeys(stream) {
 
           if (ch >= "0" && ch <= "9") {
             s += ch = yield;
+
+            if (ch >= "0" && ch <= "9") {
+              s += ch = yield;
+            }
           }
         }
 
@@ -605,12 +339,16 @@ function* emitKeys(stream) {
          * We buffered enough data, now trying to extract code
          * and modifier from it
          */
-        var cmd = StringPrototypeSlice.$call(s, cmdStart);
-        var match;
+        const cmd = StringPrototypeSlice.$call(s, cmdStart);
+        let match;
 
-        if ((match = RegExpPrototypeExec.$call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))) {
-          code += match[1] + match[4];
-          modifier = (match[3] || 1) - 1;
+        if ((match = RegExpPrototypeExec.$call(/^(?:(\d\d?)(?:;(\d))?([~^$])|(\d{3}~))$/, cmd))) {
+          if (match[4]) {
+            code += match[4];
+          } else {
+            code += match[1] + match[3];
+            modifier = (match[2] || 1) - 1;
+          }
         } else if ((match = RegExpPrototypeExec.$call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))) {
           code += match[4];
           modifier = (match[3] || 1) - 1;
@@ -620,344 +358,336 @@ function* emitKeys(stream) {
       }
 
       // Parse the key modifier
-      keyCtrl = !!(modifier & 4);
-      keyMeta = !!(modifier & 10);
-      keyShift = !!(modifier & 1);
+      key.ctrl = !!(modifier & 4);
+      key.meta = !!(modifier & 10);
+      key.shift = !!(modifier & 1);
+      key.code = code;
 
       // Parse the key itself
       switch (code) {
         /* xterm/gnome ESC [ letter (with modifier) */
         case "[P":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[Q":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[R":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[S":
-          keyName = "f4";
+          key.name = "f4";
           break;
 
         /* xterm/gnome ESC O letter (without modifier) */
         case "OP":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "OQ":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "OR":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "OS":
-          keyName = "f4";
+          key.name = "f4";
           break;
 
         /* xterm/rxvt ESC [ number ~ */
         case "[11~":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[12~":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[13~":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[14~":
-          keyName = "f4";
+          key.name = "f4";
+          break;
+
+        /* paste bracket mode */
+        case "[200~":
+          key.name = "paste-start";
+          break;
+        case "[201~":
+          key.name = "paste-end";
           break;
 
         /* from Cygwin and used in libuv */
         case "[[A":
-          keyName = "f1";
+          key.name = "f1";
           break;
         case "[[B":
-          keyName = "f2";
+          key.name = "f2";
           break;
         case "[[C":
-          keyName = "f3";
+          key.name = "f3";
           break;
         case "[[D":
-          keyName = "f4";
+          key.name = "f4";
           break;
         case "[[E":
-          keyName = "f5";
+          key.name = "f5";
           break;
 
         /* common */
         case "[15~":
-          keyName = "f5";
+          key.name = "f5";
           break;
         case "[17~":
-          keyName = "f6";
+          key.name = "f6";
           break;
         case "[18~":
-          keyName = "f7";
+          key.name = "f7";
           break;
         case "[19~":
-          keyName = "f8";
+          key.name = "f8";
           break;
         case "[20~":
-          keyName = "f9";
+          key.name = "f9";
           break;
         case "[21~":
-          keyName = "f10";
+          key.name = "f10";
           break;
         case "[23~":
-          keyName = "f11";
+          key.name = "f11";
           break;
         case "[24~":
-          keyName = "f12";
+          key.name = "f12";
           break;
 
         /* xterm ESC [ letter */
         case "[A":
-          keyName = "up";
+          key.name = "up";
           break;
         case "[B":
-          keyName = "down";
+          key.name = "down";
           break;
         case "[C":
-          keyName = "right";
+          key.name = "right";
           break;
         case "[D":
-          keyName = "left";
+          key.name = "left";
           break;
         case "[E":
-          keyName = "clear";
+          key.name = "clear";
           break;
         case "[F":
-          keyName = "end";
+          key.name = "end";
           break;
         case "[H":
-          keyName = "home";
+          key.name = "home";
           break;
 
         /* xterm/gnome ESC O letter */
         case "OA":
-          keyName = "up";
+          key.name = "up";
           break;
         case "OB":
-          keyName = "down";
+          key.name = "down";
           break;
         case "OC":
-          keyName = "right";
+          key.name = "right";
           break;
         case "OD":
-          keyName = "left";
+          key.name = "left";
           break;
         case "OE":
-          keyName = "clear";
+          key.name = "clear";
           break;
         case "OF":
-          keyName = "end";
+          key.name = "end";
           break;
         case "OH":
-          keyName = "home";
+          key.name = "home";
           break;
 
         /* xterm/rxvt ESC [ number ~ */
         case "[1~":
-          keyName = "home";
+          key.name = "home";
           break;
         case "[2~":
-          keyName = "insert";
+          key.name = "insert";
           break;
         case "[3~":
-          keyName = "delete";
+          key.name = "delete";
           break;
         case "[4~":
-          keyName = "end";
+          key.name = "end";
           break;
         case "[5~":
-          keyName = "pageup";
+          key.name = "pageup";
           break;
         case "[6~":
-          keyName = "pagedown";
+          key.name = "pagedown";
           break;
 
         /* putty */
         case "[[5~":
-          keyName = "pageup";
+          key.name = "pageup";
           break;
         case "[[6~":
-          keyName = "pagedown";
+          key.name = "pagedown";
           break;
 
         /* rxvt */
         case "[7~":
-          keyName = "home";
+          key.name = "home";
           break;
         case "[8~":
-          keyName = "end";
+          key.name = "end";
           break;
 
         /* rxvt keys with modifiers */
         case "[a":
-          keyName = "up";
-          keyShift = true;
+          key.name = "up";
+          key.shift = true;
           break;
         case "[b":
-          keyName = "down";
-          keyShift = true;
+          key.name = "down";
+          key.shift = true;
           break;
         case "[c":
-          keyName = "right";
-          keyShift = true;
+          key.name = "right";
+          key.shift = true;
           break;
         case "[d":
-          keyName = "left";
-          keyShift = true;
+          key.name = "left";
+          key.shift = true;
           break;
         case "[e":
-          keyName = "clear";
-          keyShift = true;
+          key.name = "clear";
+          key.shift = true;
           break;
 
         case "[2$":
-          keyName = "insert";
-          keyShift = true;
+          key.name = "insert";
+          key.shift = true;
           break;
         case "[3$":
-          keyName = "delete";
-          keyShift = true;
+          key.name = "delete";
+          key.shift = true;
           break;
         case "[5$":
-          keyName = "pageup";
-          keyShift = true;
+          key.name = "pageup";
+          key.shift = true;
           break;
         case "[6$":
-          keyName = "pagedown";
-          keyShift = true;
+          key.name = "pagedown";
+          key.shift = true;
           break;
         case "[7$":
-          keyName = "home";
-          keyShift = true;
+          key.name = "home";
+          key.shift = true;
           break;
         case "[8$":
-          keyName = "end";
-          keyShift = true;
+          key.name = "end";
+          key.shift = true;
           break;
 
         case "Oa":
-          keyName = "up";
-          keyCtrl = true;
+          key.name = "up";
+          key.ctrl = true;
           break;
         case "Ob":
-          keyName = "down";
-          keyCtrl = true;
+          key.name = "down";
+          key.ctrl = true;
           break;
         case "Oc":
-          keyName = "right";
-          keyCtrl = true;
+          key.name = "right";
+          key.ctrl = true;
           break;
         case "Od":
-          keyName = "left";
-          keyCtrl = true;
+          key.name = "left";
+          key.ctrl = true;
           break;
         case "Oe":
-          keyName = "clear";
-          keyCtrl = true;
+          key.name = "clear";
+          key.ctrl = true;
           break;
 
         case "[2^":
-          keyName = "insert";
-          keyCtrl = true;
+          key.name = "insert";
+          key.ctrl = true;
           break;
         case "[3^":
-          keyName = "delete";
-          keyCtrl = true;
+          key.name = "delete";
+          key.ctrl = true;
           break;
         case "[5^":
-          keyName = "pageup";
-          keyCtrl = true;
+          key.name = "pageup";
+          key.ctrl = true;
           break;
         case "[6^":
-          keyName = "pagedown";
-          keyCtrl = true;
+          key.name = "pagedown";
+          key.ctrl = true;
           break;
         case "[7^":
-          keyName = "home";
-          keyCtrl = true;
+          key.name = "home";
+          key.ctrl = true;
           break;
         case "[8^":
-          keyName = "end";
-          keyCtrl = true;
+          key.name = "end";
+          key.ctrl = true;
           break;
 
         /* misc. */
         case "[Z":
-          keyName = "tab";
-          keyShift = true;
+          key.name = "tab";
+          key.shift = true;
           break;
         default:
-          keyName = "undefined";
+          key.name = "undefined";
           break;
       }
     } else if (ch === "\r") {
       // carriage return
-      keyName = "return";
-      keyMeta = escaped;
+      key.name = "return";
+      key.meta = escaped;
     } else if (ch === "\n") {
       // Enter, should have been called linefeed
-      keyName = "enter";
-      keyMeta = escaped;
+      key.name = "enter";
+      key.meta = escaped;
     } else if (ch === "\t") {
       // tab
-      keyName = "tab";
-      keyMeta = escaped;
+      key.name = "tab";
+      key.meta = escaped;
     } else if (ch === "\b" || ch === "\x7f") {
       // backspace or ctrl+h
-      keyName = "backspace";
-      keyMeta = escaped;
+      key.name = "backspace";
+      key.meta = escaped;
     } else if (ch === kEscape) {
       // escape key
-      keyName = "escape";
-      keyMeta = escaped;
+      key.name = "escape";
+      key.meta = escaped;
     } else if (ch === " ") {
-      keyName = "space";
-      keyMeta = escaped;
+      key.name = "space";
+      key.meta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      keyName = StringFromCharCode(
-        StringPrototypeCharCodeAt.$call(ch, 0) + StringPrototypeCharCodeAt.$call("a", 0) - 1,
-      );
-      keyCtrl = true;
+      key.name = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch, 0) + StringPrototypeCharCodeAt.$call("a", 0) - 1); // prettier-ignore
+      key.ctrl = true;
     } else if (RegExpPrototypeExec.$call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
-      keyName = StringPrototypeToLowerCase.$call(ch);
-      keyShift = RegExpPrototypeExec.$call(/^[A-Z]$/, ch) !== null;
-      keyMeta = escaped;
+      key.name = StringPrototypeToLowerCase.$call(ch);
+      key.shift = RegExpPrototypeExec.$call(/^[A-Z]$/, ch) !== null;
+      key.meta = escaped;
     } else if (escaped) {
       // Escape sequence timeout
-      keyName = ch.length ? undefined : "escape";
-      keyMeta = true;
-    } else {
-      // Otherwise, unhandled
-      keyName = undefined;
+      key.name = ch.length ? undefined : "escape";
+      key.meta = true;
     }
 
-    keySeq = s;
+    key.sequence = s;
 
-    if (s.length !== 0 && (keyName !== undefined || escaped)) {
+    if (s.length !== 0 && (key.name !== undefined || escaped)) {
       /* Named character or sequence */
-      stream.emit("keypress", escaped ? undefined : s, {
-        sequence: keySeq,
-        name: keyName,
-        ctrl: keyCtrl,
-        meta: keyMeta,
-        shift: keyShift,
-      });
+      stream.emit("keypress", escaped ? undefined : s, key);
     } else if (charLengthAt(s, 0) === s.length) {
       /* Single unnamed character, e.g. "." */
-      stream.emit("keypress", s, {
-        sequence: keySeq,
-        name: keyName,
-        ctrl: keyCtrl,
-        meta: keyMeta,
-        shift: keyShift,
-      });
+      stream.emit("keypress", s, key);
     }
     /* Unrecognized or broken escape sequence, don't emit anything */
   }
@@ -1000,15 +730,15 @@ function cursorTo(stream, x, y, callback) {
     y = undefined;
   }
 
-  if (NumberIsNaN(x)) throw new ERR_INVALID_ARG_VALUE("x", x);
-  if (NumberIsNaN(y)) throw new ERR_INVALID_ARG_VALUE("y", y);
+  if (NumberIsNaN(x)) throw $ERR_INVALID_ARG_VALUE("x", x);
+  if (NumberIsNaN(y)) throw $ERR_INVALID_ARG_VALUE("y", y);
 
   if (stream == null || (typeof x !== "number" && typeof y !== "number")) {
     if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  if (typeof x !== "number") throw new ERR_INVALID_CURSOR_POS();
+  if (typeof x !== "number") throw $ERR_INVALID_CURSOR_POS();
 
   var data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
   return stream.write(data, callback);
@@ -1405,7 +1135,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
       if (NumberIsFinite(inputEscapeCodeTimeout)) {
         this.escapeCodeTimeout = inputEscapeCodeTimeout;
       } else {
-        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
+        throw $ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
       }
     }
 
@@ -1418,7 +1148,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   if (completer !== undefined && typeof completer !== "function") {
-    throw new ERR_INVALID_ARG_VALUE("completer", completer);
+    throw $ERR_INVALID_ARG_VALUE("completer", completer);
   }
 
   if (history === undefined) {
@@ -1431,9 +1161,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     historySize = kHistorySize;
   }
 
-  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
-    throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
-  }
+  validateNumber(historySize, "historySize", 0);
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified
@@ -1515,8 +1243,6 @@ ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
 // ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
-  // TODO: Enumerate all the properties of the class
-
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
@@ -1544,8 +1270,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     return this[kPrompt];
   }
 
-  [kSetRawMode](flag) {
-    const mode = flag + 0;
+  [kSetRawMode](mode) {
     const wasInRawMode = this.input.isRaw;
 
     var setRawMode = this.input.setRawMode;
@@ -1561,7 +1286,7 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @param {boolean} [preserveCursor]
    * @returns {void}
    */
-  prompt(preserveCursor) {
+  prompt(preserveCursor?) {
     if (this.paused) this.resume();
     if (this.terminal && process.env.TERM !== "dumb") {
       if (!preserveCursor) this.cursor = 0;
@@ -1573,7 +1298,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
   [kQuestion](query, cb) {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE("readline");
+      throw $ERR_USE_AFTER_CLOSE("readline");
     }
     if (this[kQuestionCallback]) {
       this.prompt();
@@ -1766,6 +1491,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       if (this[kLine_buffer]) {
         string = this[kLine_buffer] + string;
         this[kLine_buffer] = null;
+        lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
         newPartContainsEnding = RegExpPrototypeExec.$call(lineEnding, string);
       }
       this[kSawReturnAt] = StringPrototypeEndsWith.$call(string, "\r") ? DateNow() : 0;
@@ -1858,7 +1584,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // Apply/show completions.
     var completionsWidth = ArrayPrototypeMap.$call(completions, e => getStringWidth(e));
-    var width = MathMax.$apply(completionsWidth) + 2; // 2 space padding
+    var width = MathMax.$apply(null, completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;
@@ -2434,19 +2160,21 @@ var _Interface = class Interface extends InterfaceConstructor {
         // falls through
         default:
           if (typeof s === "string" && s) {
-            var nextMatch = RegExpPrototypeExec.$call(lineEnding, s);
-            if (nextMatch !== null) {
-              this[kInsertString](StringPrototypeSlice.$call(s, 0, nextMatch.index));
-              var { lastIndex } = lineEnding;
-              while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
-                this[kLine]();
-                this[kInsertString](StringPrototypeSlice.$call(s, lastIndex, nextMatch.index));
-                ({ lastIndex } = lineEnding);
-              }
-              if (lastIndex === s.length) this[kLine]();
-            } else {
-              this[kInsertString](s);
+            // Erase state of previous searches.
+            lineEnding.lastIndex = 0;
+            let nextMatch;
+            // Keep track of the end of the last match.
+            let lastIndex = 0;
+            while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
+              this[kInsertString](StringPrototypeSlice.$call(s, lastIndex, nextMatch.index));
+              ({ lastIndex } = lineEnding);
+              this[kLine]();
+              // Restore lastIndex as the call to kLine could have mutated it.
+              lineEnding.lastIndex = lastIndex;
             }
+            // This ensures that the last line is written if it doesn't end in a newline.
+            // Note that the last line may be the first line, in which case this still works.
+            this[kInsertString](StringPrototypeSlice.$call(s, lastIndex));
           }
       }
     }
@@ -2540,32 +2268,34 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-Interface.prototype.question[promisify.custom] = function question(query, options) {
-  if (options === null || typeof options !== "object") {
-    options = kEmptyObject;
-  }
-
-  var signal = options?.signal;
-
-  if (signal && signal.aborted) {
-    return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
-  }
-
-  return new Promise((resolve, reject) => {
-    var cb = resolve;
-    if (signal) {
-      var onAbort = () => {
-        reject(new AbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
+{
+  Interface.prototype.question[promisify.custom] = function question(query, options) {
+    if (options === null || typeof options !== "object") {
+      options = kEmptyObject;
     }
-    this.question(query, options, cb);
-  });
-};
+
+    var signal = options?.signal;
+
+    if (signal && signal.aborted) {
+      return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+    }
+
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (signal) {
+        var onAbort = () => {
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this.question(query, options, cb);
+    });
+  };
+}
 
 /**
  * Creates a new `readline.Interface` instance.
@@ -2596,133 +2326,111 @@ ObjectDefineProperties(Interface.prototype, {
   // Redirect internal prototype methods to the underscore notation for backward
   // compatibility.
   [kSetRawMode]: {
-    __proto__: null,
     get() {
       return this._setRawMode;
     },
   },
   [kOnLine]: {
-    __proto__: null,
     get() {
       return this._onLine;
     },
   },
   [kWriteToOutput]: {
-    __proto__: null,
     get() {
       return this._writeToOutput;
     },
   },
   [kAddHistory]: {
-    __proto__: null,
     get() {
       return this._addHistory;
     },
   },
   [kRefreshLine]: {
-    __proto__: null,
     get() {
       return this._refreshLine;
     },
   },
   [kNormalWrite]: {
-    __proto__: null,
     get() {
       return this._normalWrite;
     },
   },
   [kInsertString]: {
-    __proto__: null,
     get() {
       return this._insertString;
     },
   },
   [kTabComplete]: {
-    __proto__: null,
     get() {
       return this._tabComplete;
     },
   },
   [kWordLeft]: {
-    __proto__: null,
     get() {
       return this._wordLeft;
     },
   },
   [kWordRight]: {
-    __proto__: null,
     get() {
       return this._wordRight;
     },
   },
   [kDeleteLeft]: {
-    __proto__: null,
     get() {
       return this._deleteLeft;
     },
   },
   [kDeleteRight]: {
-    __proto__: null,
     get() {
       return this._deleteRight;
     },
   },
   [kDeleteWordLeft]: {
-    __proto__: null,
     get() {
       return this._deleteWordLeft;
     },
   },
   [kDeleteWordRight]: {
-    __proto__: null,
     get() {
       return this._deleteWordRight;
     },
   },
   [kDeleteLineLeft]: {
-    __proto__: null,
     get() {
       return this._deleteLineLeft;
     },
   },
   [kDeleteLineRight]: {
-    __proto__: null,
     get() {
       return this._deleteLineRight;
     },
   },
   [kLine]: {
-    __proto__: null,
     get() {
       return this._line;
     },
   },
   [kHistoryNext]: {
-    __proto__: null,
     get() {
       return this._historyNext;
     },
   },
   [kHistoryPrev]: {
-    __proto__: null,
     get() {
       return this._historyPrev;
     },
   },
   [kGetDisplayPos]: {
-    __proto__: null,
     get() {
       return this._getDisplayPos;
     },
   },
   [kMoveCursor]: {
-    __proto__: null,
     get() {
       return this._moveCursor;
     },
   },
   [kTtyWrite]: {
-    __proto__: null,
     get() {
       return this._ttyWrite;
     },
@@ -2731,7 +2439,6 @@ ObjectDefineProperties(Interface.prototype, {
   // Defining proxies for the internal instance properties for backward
   // compatibility.
   _decoder: {
-    __proto__: null,
     get() {
       return this[kDecoder];
     },
@@ -2740,7 +2447,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _line_buffer: {
-    __proto__: null,
     get() {
       return this[kLine_buffer];
     },
@@ -2749,7 +2455,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _oldPrompt: {
-    __proto__: null,
     get() {
       return this[kOldPrompt];
     },
@@ -2758,7 +2463,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _previousKey: {
-    __proto__: null,
     get() {
       return this[kPreviousKey];
     },
@@ -2767,7 +2471,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _prompt: {
-    __proto__: null,
     get() {
       return this[kPrompt];
     },
@@ -2776,7 +2479,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _questionCallback: {
-    __proto__: null,
     get() {
       return this[kQuestionCallback];
     },
@@ -2785,7 +2487,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _sawKeyPress: {
-    __proto__: null,
     get() {
       return this[kSawKeyPress];
     },
@@ -2794,7 +2495,6 @@ ObjectDefineProperties(Interface.prototype, {
     },
   },
   _sawReturnAt: {
-    __proto__: null,
     get() {
       return this[kSawReturnAt];
     },
@@ -2897,7 +2597,7 @@ class Readline {
 
   constructor(stream, options = undefined) {
     isWritable ??= require("node:stream").isWritable;
-    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    if (!isWritable(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");
@@ -2989,11 +2689,17 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    const { resolve, promise } = $newPromiseCapability(Promise);
-    this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
-    this.#todo = [];
+    const { resolve, reject, promise } = $newPromiseCapability(Promise);
 
-    return promise;
+    try {
+      const data = ArrayPrototypeJoin.$call(this.#todo, "");
+      this.#stream.write(data, resolve);
+      this.#todo = [];
+    } catch (err) {
+      reject(err);
+    } finally {
+      return promise;
+    }
   }
 
   /**
@@ -3017,7 +2723,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (signal) {
       validateAbortSignal(signal, "options.signal");
       if (signal.aborted) {
-        return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
+        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
       }
     }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);
@@ -3025,7 +2731,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (options?.signal) {
       var onAbort = () => {
         this[kQuestionCancel]();
-        reject(new AbortError(undefined, { cause: signal.reason }));
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       cb = answer => {

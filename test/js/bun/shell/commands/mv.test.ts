@@ -1,9 +1,9 @@
 import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "../test_builder";
-const TestBuilder = createTestBuilder(import.meta.path);
-import { sortedShellOutput } from "../util";
+import { describe, expect } from "bun:test";
 import { join } from "path";
+import { createTestBuilder } from "../test_builder";
+import { sortedShellOutput } from "../util";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 $.nothrow();
 

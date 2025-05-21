@@ -1,5 +1,5 @@
-import { itBundled } from "../expectBundled";
 import { describe, test } from "bun:test";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_tsconfig_test.go
@@ -367,7 +367,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/JSX", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
@@ -393,11 +392,12 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api
         .expectFile("/Users/user/project/out.js")
-        .toContain(`console.log(R.c(R.F, null, R.c(\"div\", null), R.c(\"div\", null)));\n`);
+        .toContain(
+          `console.log(/* @__PURE__ */ R.c(R.F, null, /* @__PURE__ */ R.c(\"div\", null), /* @__PURE__ */ R.c(\"div\", null)));\n`,
+        );
     },
   });
   itBundled("tsconfig/ReactJSXNotReact", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/notreact/jsx-runtime.ts": `
@@ -426,7 +426,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSXNotReactScoped", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/@notreact/jsx/jsx-runtime.ts": `
@@ -455,7 +454,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSXDevNotReact", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/notreact/jsx-dev-runtime.ts": `
@@ -482,7 +480,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSXDev", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
@@ -508,7 +505,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSXDevTSConfigProduction", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
@@ -537,7 +533,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSX", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-runtime.ts": `
@@ -560,7 +555,6 @@ describe("bundler", () => {
   });
 
   itBundled("tsconfig/ReactJSXClassic", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
@@ -587,7 +581,6 @@ describe("bundler", () => {
     },
   });
   itBundled("tsconfig/ReactJSXClassicWithNODE_ENV=Production", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `
@@ -618,7 +611,6 @@ describe("bundler", () => {
   });
 
   itBundled("tsconfig/ReactJSXClassicWithNODE_ENV=Development", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/node_modules/react/jsx-dev-runtime.ts": `

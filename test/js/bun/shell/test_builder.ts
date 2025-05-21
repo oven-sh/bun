@@ -1,9 +1,8 @@
-import { ShellError, ShellOutput } from "bun";
-import { ShellPromise, ShellExpression } from "bun";
+import { ShellError, ShellExpression } from "bun";
 // import { tempDirWithFiles } from "harness";
-import { join } from "node:path";
-import * as os from "node:os";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import { join } from "node:path";
 // import { bunExe } from "harness";
 
 export function createTestBuilder(path: string) {
@@ -188,7 +187,7 @@ export function createTestBuilder(path: string) {
 
     static tmpdir(): string {
       const tmp = os.tmpdir();
-      return fs.mkdtempSync(join(tmp, "test_builder"));
+      return fs.realpathSync(fs.mkdtempSync(join(tmp, "test_builder")));
     }
 
     setTempdir(tempdir: string): this {

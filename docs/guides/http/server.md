@@ -4,11 +4,11 @@ name: Common HTTP server usage
 
 This starts an HTTP server listening on port `3000`. It demonstrates basic routing with a number of common responses and also handles POST data from standard forms or as JSON.
 
-See [`Bun.serve`](/docs/api/http) for details.
+See [`Bun.serve`](https://bun.sh/docs/api/http) for details.
 
 ```ts
 const server = Bun.serve({
-  async fetch (req) {
+  async fetch(req) {
     const path = new URL(req.url).pathname;
 
     // respond with text/html
@@ -39,8 +39,8 @@ const server = Bun.serve({
 
     // 404s
     return new Response("Page not found", { status: 404 });
-  }
-})
+  },
+});
 
 console.log(`Listening on ${server.url}`);
 ```

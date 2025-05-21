@@ -24,18 +24,25 @@
 // If you decide to not use INIT_NATIVE_MODULE. make sure the first property
 // given is the default export
 
-#define BUN_FOREACH_NATIVE_MODULE(macro) \
-    macro("bun"_s, BunObject) \
+#define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
-    macro("node:module"_s, NodeModule) \
-    macro("node:process"_s, NodeProcess) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
-    macro("abort-controller"_s, AbortControllerModule) \
+    macro("abort-controller"_s, AbortControllerModule)
+
+#define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
+    macro("node:module"_s, NodeModule)  \
+    macro("node:process"_s, NodeProcess) \
+    macro("bun"_s, BunObject)
+
+#define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
+    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
+
 
 #if ASSERT_ENABLED
 
@@ -61,6 +68,11 @@
 
 #define DEFINE_NATIVE_MODULE(name)                                             \
   inline void generateNativeModule_##name(                                     \
+      JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
+      Vector<JSC::Identifier, 4> &exportNames,                                 \
+      JSC::MarkedArgumentBuffer &exportValues)
+#define DEFINE_NATIVE_MODULE_NOINLINE(name)                                             \
+  void generateNativeModule_##name(                                     \
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
@@ -94,3 +106,11 @@
   while (0) {                                                                  \
   }
 
+namespace Zig {
+#define FORWARD_DECL_GENERATOR(id, enumName) \
+void generateNativeModule_##enumName( \
+  JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
+  Vector<JSC::Identifier, 4> &exportNames, \
+  JSC::MarkedArgumentBuffer &exportValues);
+BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
+} // namespace Zig

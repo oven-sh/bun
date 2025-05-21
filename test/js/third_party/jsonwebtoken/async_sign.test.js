@@ -1,7 +1,7 @@
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
-import jws from "jws";
+import { describe, expect, it } from "bun:test";
 import { generateKeyPairSync } from "crypto";
+import jwt from "jsonwebtoken";
+import jws from "jws";
 var PS_SUPPORTED = true;
 
 describe("signing a token asynchronously", function () {

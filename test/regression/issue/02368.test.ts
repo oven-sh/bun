@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("can clone a response", async () => {
   const response = new Response("bun", {

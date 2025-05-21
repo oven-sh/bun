@@ -219,6 +219,11 @@ The following classes are typed arrays, along with a description of how they int
 
 ---
 
+- [`Float16Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+- Every two (2) bytes are interpreted as a 16-bit floating point number. Range -6.104e5 to 6.55e4.
+
+---
+
 - [`Float32Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array)
 - Every four (4) bytes are interpreted as a 32-bit floating point number. Range -3.4e38 to 3.4e38.
 
@@ -230,7 +235,7 @@ The following classes are typed arrays, along with a description of how they int
 ---
 
 - [`BigInt64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt64Array)
-- Every eight (8) bytes are interpreted as an unsigned `BigInt`. Range -9223372036854775808 to 9223372036854775807 (though `BigInt` is capable of representing larger numbers).
+- Every eight (8) bytes are interpreted as a signed `BigInt`. Range -9223372036854775808 to 9223372036854775807 (though `BigInt` is capable of representing larger numbers).
 
 ---
 
@@ -377,6 +382,16 @@ Refer to the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/Ja
 
 It's worth specifically highlighting `Uint8Array`, as it represents a classic "byte array"—a sequence of 8-bit unsigned integers between 0 and 255. This is the most common typed array you'll encounter in JavaScript.
 
+In Bun, and someday in other JavaScript engines, it has methods available for converting between byte arrays and serialized representations of those arrays as base64 or hex strings.
+
+```ts
+new Uint8Array([1, 2, 3, 4, 5]).toBase64(); // "AQIDBA=="
+Uint8Array.fromBase64("AQIDBA=="); // Uint8Array(4) [1, 2, 3, 4, 5]
+
+new Uint8Array([255, 254, 253, 252, 251]).toHex(); // "fffefdfcfb=="
+Uint8Array.fromHex("fffefdfcfb"); // Uint8Array(5) [255, 254, 253, 252, 251]
+```
+
 It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder), and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder), two utility classes designed to translate strings and various binary encodings, most notably `"utf-8"`.
 
 ```ts
@@ -437,6 +452,7 @@ The contents of a `Blob` can be asynchronously read in various formats.
 
 ```ts
 await blob.text(); // => <html><body>hello</body></html>
+await blob.bytes(); // => Uint8Array (copies contents)
 await blob.arrayBuffer(); // => ArrayBuffer (copies contents)
 await blob.stream(); // => ReadableStream
 ```
@@ -506,7 +522,7 @@ for await (const chunk of stream) {
 }
 ```
 
-For a more complete discussion of streams in Bun, see [API > Streams](/docs/api/streams).
+For a more complete discussion of streams in Bun, see [API > Streams](https://bun.sh/docs/api/streams).
 
 ## Conversion
 
@@ -539,6 +555,8 @@ Buffer.from(buf, 0, 10);
 ```
 
 #### To `string`
+
+As UTF-8:
 
 ```ts
 new TextDecoder().decode(buf);
@@ -620,6 +638,8 @@ Buffer.from(arr);
 
 #### To `string`
 
+As UTF-8:
+
 ```ts
 new TextDecoder().decode(arr);
 ```
@@ -633,6 +653,7 @@ Array.from(arr);
 #### To `Blob`
 
 ```ts
+// only if arr is a view of its entire backing TypedArray
 new Blob([arr.buffer], { type: "text/plain" });
 ```
 
@@ -695,6 +716,8 @@ Buffer.from(view.buffer, view.byteOffset, view.byteLength);
 ```
 
 #### To `string`
+
+As UTF-8:
 
 ```ts
 new TextDecoder().decode(view);
@@ -767,8 +790,22 @@ new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 
 #### To `string`
 
+As UTF-8:
+
 ```ts
 buf.toString();
+```
+
+As base64:
+
+```ts
+buf.toString("base64");
+```
+
+As hex:
+
+```ts
+buf.toString("hex");
 ```
 
 #### To `number[]`
@@ -829,7 +866,7 @@ await blob.arrayBuffer();
 #### To `TypedArray`
 
 ```ts
-new Uint8Array(await blob.arrayBuffer());
+await blob.bytes();
 ```
 
 #### To `DataView`
@@ -846,6 +883,8 @@ Buffer.from(await blob.arrayBuffer());
 
 #### To `string`
 
+As UTF-8:
+
 ```ts
 await blob.text();
 ```
@@ -853,7 +892,7 @@ await blob.text();
 #### To `number[]`
 
 ```ts
-Array.from(new Uint8Array(await blob.arrayBuffer()));
+Array.from(await blob.bytes());
 ```
 
 #### To `ReadableStream`
@@ -931,9 +970,11 @@ Buffer.from(Bun.readableStreamToArrayBuffer(stream));
 
 #### To `string`
 
+As UTF-8:
+
 ```ts
 // with Response
-new Response(stream).text();
+await new Response(stream).text();
 
 // with Bun function
 await Bun.readableStreamToText(stream);
@@ -943,8 +984,8 @@ await Bun.readableStreamToText(stream);
 
 ```ts
 // with Response
-const buf = await new Response(stream).arrayBuffer();
-Array.from(new Uint8Array(buf));
+const arr = await new Response(stream).bytes();
+Array.from(arr);
 
 // with Bun function
 Array.from(new Uint8Array(Bun.readableStreamToArrayBuffer(stream)));

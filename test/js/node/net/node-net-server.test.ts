@@ -1,8 +1,9 @@
-import { createServer, Server, AddressInfo, Socket } from "net";
 import { realpathSync } from "fs";
+import { AddressInfo, createServer, Server, Socket } from "net";
+import { createTest } from "node-harness";
+import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createTest } from "node-harness";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -284,7 +285,8 @@ describe("net.createServer listen", () => {
 
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
-        expect(err!.name).toBe("ECONNREFUSED");
+        expect(err!.name).toBe("Error");
+        expect(err!.code).toBe("ECONNREFUSED");
 
         server.close();
         done();
@@ -388,15 +390,12 @@ describe("net.createServer events", () => {
     );
   });
 
-  it("should call close", done => {
-    let closed = false;
+  it("should call close", async () => {
+    const { promise, reject, resolve } = Promise.withResolvers();
     const server: Server = createServer();
-    server.listen().on("close", () => {
-      closed = true;
-    });
+    server.listen().on("close", resolve).on("error", reject);
     server.close();
-    expect(closed).toBe(true);
-    done();
+    await promise;
   });
 
   it("should call connection and drop", done => {
@@ -567,5 +566,28 @@ describe("net.createServer events", () => {
         },
       }).catch(closeAndFail);
     });
+  });
+
+  it("#8374", async () => {
+    const server = createServer();
+    const socketPath = join(tmpdir(), "test-unix-socket");
+
+    server.listen({ path: socketPath });
+    await once(server, "listening");
+
+    try {
+      const address = server.address() as string;
+      expect(address).toBe(socketPath);
+
+      const client = await Bun.connect({
+        unix: socketPath,
+        socket: {
+          data() {},
+        },
+      });
+      client.end();
+    } finally {
+      server.close();
+    }
   });
 });

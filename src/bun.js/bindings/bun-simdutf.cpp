@@ -1,4 +1,4 @@
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 
 typedef struct SIMDUTFResult {
     int error;
@@ -264,6 +264,10 @@ size_t simdutf__convert_valid_utf16be_to_utf32(const char16_t* buf, size_t len,
 {
     return simdutf::convert_valid_utf16be_to_utf32(buf, len, utf32_buffer);
 }
+size_t simdutf__convert_latin1_to_utf8(const char* input, size_t length, char* utf8_buffer)
+{
+    return simdutf::convert_latin1_to_utf8(input, length, utf8_buffer);
+}
 void simdutf__change_endianness_utf16(const char16_t* buf, size_t length,
     char16_t* output)
 {
@@ -325,9 +329,19 @@ size_t simdutf__utf32_length_from_utf8(const char* input, size_t length)
     return simdutf::utf32_length_from_utf8(input, length);
 }
 
+size_t simdutf__utf8_length_from_latin1(const char* input, size_t length)
+{
+    return simdutf::utf8_length_from_latin1(input, length);
+}
+
 size_t simdutf__base64_encode(const char* input, size_t length, char* output, int is_urlsafe)
 {
     return simdutf::binary_to_base64(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
+}
+
+size_t simdutf__base64_length_from_binary(size_t length, int is_urlsafe)
+{
+    return simdutf::base64_length_from_binary(length, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
 }
 
 SIMDUTFResult simdutf__base64_decode_from_binary(const char* input, size_t length, char* output, size_t outlen_, int is_urlsafe)
@@ -352,5 +366,11 @@ SIMDUTFResult simdutf__base64_decode_from_binary16(const char16_t* input, size_t
     }
 
     return { .error = res.error, .count = res.count };
+}
+
+size_t simdutf__utf16_length_from_latin1(const char* input, size_t length)
+{
+    UNUSED_PARAM(input);
+    return simdutf::utf16_length_from_latin1(length);
 }
 }

@@ -20,7 +20,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-const { URL, URLSearchParams } = globalThis;
+const URL = /* @__PURE__ */ globalThis.URL;
+const URLSearchParams = /* @__PURE__ */ globalThis.URLSearchParams;
 
 function util_isString(arg) {
   return typeof arg === "string";
@@ -33,9 +34,6 @@ function util_isNull(arg) {
 }
 function util_isNullOrUndefined(arg) {
   return arg == null;
-}
-function util_isUndefined(arg) {
-  return arg === void 0;
 }
 
 function Url() {
@@ -732,12 +730,15 @@ Url.prototype.parseHost = function () {
   if (host) this.hostname = host;
 };
 
-export { URL, URLSearchParams };
-export { urlParse as parse };
-export { urlResolve as resolve };
-export { urlResolveObject as resolveObject };
-export { urlFormat as format };
-export { Url as Url };
+export {
+  URL,
+  URLSearchParams,
+  Url as Url,
+  urlFormat as format,
+  urlParse as parse,
+  urlResolve as resolve,
+  urlResolveObject as resolveObject,
+};
 
 export default {
   parse: urlParse,

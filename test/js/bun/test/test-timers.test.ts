@@ -20,7 +20,9 @@ test("we can go back in time", () => {
     expect(DateBeforeMocked).not.toBe(Date);
     expect(DateBeforeMocked.now).not.toBe(Date.now);
   }
-
+  jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z").getTime());
+  expect(new Date().toISOString()).toBe("2020-01-01T00:00:00.000Z");
+  expect(Date.now()).toBe(1577836800000);
   jest.useRealTimers();
   const now = new Date();
   now.setHours(0, 0, 0, 0);

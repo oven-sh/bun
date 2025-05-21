@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("setImmediate doesn't block the event loop", async () => {
   const incomingTimestamps = [];

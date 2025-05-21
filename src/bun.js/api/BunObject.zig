@@ -1949,7 +1949,7 @@ pub const JSZstd = struct {
             const output_slice = this.output;
             const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
             if (globalThis.hasException()) {
-                promise.reject(globalThis, globalThis.takeError(error.JSError));
+                promise.reject(globalThis, error.JSError);
                 return;
             }
             if (buffer_value == .zero) {

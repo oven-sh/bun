@@ -36,6 +36,7 @@ const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
 const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
 const FilterRun = @import("./cli/filter_run.zig");
+const NodeNetBinding = @import("./bun.js/node/node_net_binding.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
@@ -240,6 +241,7 @@ pub const Arguments = struct {
         clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
         clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
+        clap.parseParam("--network-family-autoselection-attempt-timeout <INT> Set the default timeout in ms for network family autoselection") catch unreachable,
         clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
@@ -810,6 +812,16 @@ pub const Arguments = struct {
 
             if (args.option("--dns-result-order")) |order| {
                 ctx.runtime_options.dns_result_order = order;
+            }
+
+            if (args.option("--network-family-autoselection-attempt-timeout")) |timeout_str| {
+                var timeout = std.fmt.parseInt(u32, timeout_str, 10) catch {
+                    Output.errGeneric("Invalid value for --network-family-autoselection-attempt-timeout: \"{s}\". Must be a positive integer\n", .{timeout_str});
+                    Global.exit(1);
+                };
+                if (timeout < 10)
+                    timeout = 10;
+                NodeNetBinding.autoSelectFamilyAttemptTimeoutDefault = timeout;
             }
 
             if (args.option("--inspect")) |inspect_flag| {

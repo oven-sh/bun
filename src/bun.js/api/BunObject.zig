@@ -1843,9 +1843,7 @@ pub const JSZstd = struct {
         }
 
         // Allocate output buffer based on decompressed size
-        var output = allocator.alloc(u8, decompressed_size) catch {
-            return globalThis.throwOutOfMemory();
-        };
+        var output = try allocator.alloc(u8, decompressed_size)
 
         // Perform decompression
         const actual_size = switch (bun.zstd.decompress(output, input)) {

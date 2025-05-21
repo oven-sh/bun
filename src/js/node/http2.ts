@@ -1879,10 +1879,23 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      this.rstCode = code;
+      const { ending } = this._writableState;
+      if (!ending) {
+        // If the writable side of the Http2Stream is still open, emit the
+        // 'aborted' event and set the aborted flag.
+        if (!this.aborted) {
+          this[kAborted] = true;
+          this.emit("aborted");
+        }
+        this.end();
+      }
       markStreamClosed(this);
-
-      session[bunHTTP2Native]?.rstStream(this.#id, code);
+      if (this.writableFinished) {
+        this.rstCode = code;
+        session[bunHTTP2Native]?.rstStream(this.#id, code);
+      } else {
+        this.once("finish", rstNextTick.bind(session, this.#id, code));
+      }
     }
   }
   _destroy(err, callback) {
@@ -1897,7 +1910,7 @@ class Http2Stream extends Duplex {
       }
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
-      this.end(); // why this is needed?
+      this.end();
       // we now restore the destroyed flag
       this._writableState.destroyed = true;
     }
@@ -1942,6 +1955,15 @@ class Http2Stream extends Duplex {
   _final(callback) {
     const status = this[bunHTTP2StreamStatus];
 
+    const session = this[bunHTTP2Session];
+    if (session) {
+      const native = session[bunHTTP2Native];
+      if (native) {
+        this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        native.writeStream(this.#id, "", "ascii", true, callback);
+        return;
+      }
+    }
     if ((status & StreamState.WritableClosed) !== 0 || (status & StreamState.Closed) !== 0) {
       callback();
       this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
@@ -2000,13 +2022,7 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(
-          this.#id,
-          chunk,
-          undefined,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          callback,
-        );
+        native.writeStream(this.#id, chunk, undefined, false, callback);
         return;
       }
     }
@@ -2019,13 +2035,7 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(
-          this.#id,
-          chunk,
-          encoding,
-          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
-          callback,
-        );
+        native.writeStream(this.#id, chunk, encoding, false, callback);
         return;
       }
     }

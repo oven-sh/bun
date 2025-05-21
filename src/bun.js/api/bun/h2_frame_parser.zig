@@ -1262,9 +1262,6 @@ pub const H2FrameParser = struct {
             this.windowSize += WINDOW_INCREMENT_SIZE * total_increment; // we will need at least this many increments to send all the streams
             this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE * total_increment));
         }
-
-        // incrementing the window size is a good time to flush
-        _ = this.flush();
     }
 
     pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) bool {
@@ -2387,6 +2384,7 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
+            defer this.incrementWindowSizeIfNeeded();
             if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
                 defer _ = this.flushStreamQueue();
                 this.remoteWindowSize = remoteSettings.initialWindowSize;

@@ -33,6 +33,25 @@ pub fn SSLWrapper(comptime T: type) type {
 
         flags: Flags = .{},
 
+        const StackBuffer = [BUFFER_SIZE]u8;
+
+        const TStruct = std.meta.Child(T);
+
+        inline fn getSharedBuffer() []u8 {
+            if (comptime @hasDecl(TStruct, "ssl_wrapper_static_buffer")) {
+                return &@field(TStruct, "ssl_wrapper_static_buffer");
+            }
+
+            @compileError("ssl_wrapper_static_buffer is not declared in " ++ @typeName(TStruct));
+        }
+
+        inline fn getStackBuffer() StackBuffer {
+            // We do not need to initialize this memory.
+            return undefined;
+        }
+
+        const getBuffer = if (@hasDecl(TStruct, "ssl_wrapper_static_buffer")) getSharedBuffer else getStackBuffer;
+
         pub const Flags = packed struct(u8) {
             handshake_state: HandshakeState = HandshakeState.HANDSHAKE_PENDING,
             received_ssl_shutdown: bool = false,
@@ -377,7 +396,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
         /// Handle reading data
         /// Returns true if we can call handleWriting
-        fn handleReading(this: *This, buffer: *[BUFFER_SIZE]u8) bool {
+        fn handleReading(this: *This, buffer: []u8) bool {
             var read: usize = 0;
 
             // read data from the input BIO
@@ -450,7 +469,7 @@ pub fn SSLWrapper(comptime T: type) type {
             return true;
         }
 
-        fn handleWriting(this: *This, buffer: *[BUFFER_SIZE]u8) void {
+        fn handleWriting(this: *This, buffer: []u8) void {
             while (true) {
                 const ssl = this.ssl orelse return;
 
@@ -462,9 +481,9 @@ pub fn SSLWrapper(comptime T: type) type {
                     break;
                 }
                 // limit the read to the buffer size
-                const len = @min(pending, buffer.len);
+                const len: usize = @min(@as(usize, @intCast(pending)), buffer.len);
                 const pending_buffer = buffer[0..len];
-                const read = BoringSSL.BIO_read(output, pending_buffer.ptr, len);
+                const read = BoringSSL.BIO_read(output, pending_buffer.ptr, @intCast(len));
                 if (read > 0) {
                     this.triggerWannaWriteCallback(buffer[0..@intCast(read)]);
                 }
@@ -474,16 +493,18 @@ pub fn SSLWrapper(comptime T: type) type {
         fn handleTraffic(this: *This) void {
             // always handle the handshake first
             if (this.updateHandshakeState()) {
-                // shared stack buffer for reading and writing
-                var buffer: [BUFFER_SIZE]u8 = undefined;
+                var buffer_maybe_stack = getBuffer();
+                const buffer: []u8 = if (@TypeOf(buffer_maybe_stack) == []u8) buffer_maybe_stack else &buffer_maybe_stack;
                 // drain the input BIO first
-                this.handleWriting(&buffer);
+                this.handleWriting(buffer);
                 // drain the output BIO
-                if (this.handleReading(&buffer)) {
+                if (this.handleReading(buffer)) {
                     // read data can trigger writing so we need to handle it
-                    this.handleWriting(&buffer);
+                    this.handleWriting(buffer);
                 }
             }
         }
     };
 }
+
+const std = @import("std");

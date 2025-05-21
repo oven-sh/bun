@@ -402,7 +402,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_unrefBody(
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     impl.jsUnref(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(&castedThis));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

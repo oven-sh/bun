@@ -1986,9 +1986,9 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
-fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u8 {
-    var args = std.ArrayList([:0]const u8).init(allocator);
+fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
+    var offset_in_args: usize = 1;
     while (i < env.len) {
         // skip whitespace
         while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
@@ -2034,7 +2034,8 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
             const arg_len = j - start;
             const arg = try allocator.allocSentinel(u8, arg_len, 0);
             @memcpy(arg, env[start..j]);
-            try args.append(arg);
+            try args.insert(offset_in_args, arg);
+            offset_in_args += 1;
 
             i = j;
             continue;
@@ -2090,10 +2091,9 @@ fn parseOptionsEnv(env: []const u8, allocator: std.mem.Allocator) ![][:0]const u
 
         try buf.append(0);
         const owned = try buf.toOwnedSlice();
-        try args.append(owned[0 .. owned.len - 1 :0]);
+        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        offset_in_args += 1;
     }
-
-    return args.toOwnedSlice();
 }
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
@@ -2157,14 +2157,9 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 
     if (bun.getenvZ("BUN_OPTIONS")) |opts| {
-        const extra = try parseOptionsEnv(opts, allocator);
-        if (extra.len > 0) {
-            const new_argv = try allocator.alloc([:0]const u8, argv.len + extra.len);
-            new_argv[0] = argv[0];
-            @memcpy(new_argv[1 .. 1 + extra.len], extra);
-            @memcpy(new_argv[1 + extra.len ..], argv[1..]);
-            argv = new_argv;
-        }
+        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        try appendOptionsEnv(opts, &argv_list, allocator);
+        argv = argv_list.items;
     }
 }
 

@@ -93,7 +93,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     // https://github.com/WICG/webcrypto-secure-curves/pull/29
     if (length && !(*length)) {
         // Avoid executing the key-derivation, since we are going to return an empty string.
-        callback({ });
+        callback({});
         return;
     }
 
@@ -109,7 +109,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
 #if !HAVE(X25519_ZERO_CHECKS)
         // https://datatracker.ietf.org/doc/html/rfc7748#section-6.1
         constexpr auto expectedOutputSize = 32;
-        constexpr std::array<uint8_t, expectedOutputSize> zeros { };
+        constexpr std::array<uint8_t, expectedOutputSize> zeros {};
         if (derivedKey->size() != expectedOutputSize || !constantTimeMemcmp(derivedKey->span(), zeros)) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;
@@ -245,6 +245,5 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
 }
 
 } // namespace WebCore
-
 
 #endif // ENABLE(WEB_CRYPTO)

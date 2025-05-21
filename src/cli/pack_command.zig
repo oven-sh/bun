@@ -2126,6 +2126,22 @@ pub const PackCommand = struct {
                                     },
                                     .{},
                                 );
+                            } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog| {
+                                _ = catalog;
+                                // const dependency_name_str = dependency.key.?.asString(allocator).?;
+
+                                // const lockfile = maybe_lockfile orelse {
+                                //     Output.errGeneric("Failed to resolve catalog version for \"{s}\" in `{s}` (catalogs require a lockfile).", .{
+                                //         dependency_name,
+                                //         dependency_group,
+                                //     });
+                                //     Global.crash();
+                                // };
+
+                                // const catalog_name = Semver.String.init(catalog, catalog);
+                                // const dependency_name = Semver.String.init(dependency_name_str, dependency_name_str);
+
+                                // const catalog_version = lockfile.catalogs.get(lockfile, catalog_name, dependency_name_str);
                             }
                         }
                     },

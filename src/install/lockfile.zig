@@ -156,6 +156,7 @@ workspace_versions: VersionHashMap = .{},
 trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
+catalogs: CatalogMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -465,6 +466,7 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.workspace_paths = .{};
     this.workspace_versions = .{};
     this.overrides = .{};
+    this.catalogs = .{};
     this.patched_dependencies = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
@@ -1385,8 +1387,10 @@ pub fn cleanWithLogger(
     {
         var builder = new.stringBuilder();
         old.overrides.count(old, &builder);
+        old.catalogs.count(old, &builder);
         try builder.allocate();
         new.overrides = try old.overrides.clone(manager, old, new, &builder);
+        new.catalogs = try old.catalogs.clone(manager, old, new, &builder);
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -2640,6 +2644,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_paths = .{},
         .workspace_versions = .{},
         .overrides = .{},
+        .catalogs = .{},
         .meta_hash = zero_hash,
     };
 }
@@ -2996,9 +3001,358 @@ pub const PackageIndex = struct {
     };
 };
 
-pub inline fn hasOverrides(this: *Lockfile) bool {
-    return this.overrides.map.count() > 0;
-}
+pub const CatalogMap = struct {
+    const Map = std.ArrayHashMapUnmanaged(String, Dependency, String.ArrayHashContext, true);
+
+    default: Map = .{},
+    groups: std.ArrayHashMapUnmanaged(String, Map, String.ArrayHashContext, true) = .{},
+
+    pub fn hasAny(this: *const CatalogMap) bool {
+        return this.default.count() > 0 or this.groups.count() > 0;
+    }
+
+    pub fn get(this: *CatalogMap, lockfile: *const Lockfile, catalog_name: String, dep_name: String) ?Dependency {
+        if (catalog_name.isEmpty()) {
+            if (this.default.count() == 0) {
+                return null;
+            }
+            return this.default.getContext(dep_name, String.arrayHashContext(lockfile, null)) orelse {
+                // error or warn?
+                return null;
+            };
+        }
+
+        const group = this.groups.getContext(catalog_name, String.arrayHashContext(lockfile, null)) orelse {
+            // error or warn?
+            return null;
+        };
+
+        if (group.count() == 0) {
+            return null;
+        }
+
+        return group.getContext(dep_name, String.arrayHashContext(lockfile, null)) orelse {
+            // error or warn?
+            return null;
+        };
+    }
+
+    pub fn getGroup(this: *CatalogMap, lockfile: *Lockfile, catalog_name: String) OOM!*Map {
+        if (catalog_name.isEmpty()) {
+            return &this.default;
+        }
+
+        const entry = try this.groups.getOrPutContext(
+            lockfile.allocator,
+            catalog_name,
+            String.arrayHashContext(lockfile, null),
+        );
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{};
+        }
+
+        return entry.value_ptr;
+    }
+
+    pub fn parseCount(_: *CatalogMap, lockfile: *Lockfile, expr: Expr, builder: *Lockfile.StringBuilder) void {
+        if (expr.get("catalog")) |default_catalog| {
+            switch (default_catalog.data) {
+                .e_object => |obj| {
+                    for (obj.properties.slice()) |item| {
+                        const dep_name = item.key.?.asString(lockfile.allocator).?;
+                        builder.count(dep_name);
+                        switch (item.value.?.data) {
+                            .e_string => |version_str| {
+                                builder.count(version_str.slice(lockfile.allocator));
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (expr.get("catalogs")) |catalogs| {
+            switch (catalogs.data) {
+                .e_object => |catalog_names| {
+                    for (catalog_names.properties.slice()) |catalog| {
+                        const catalog_name = catalog.key.?.asString(lockfile.allocator).?;
+                        builder.count(catalog_name);
+                        switch (catalog.value.?.data) {
+                            .e_object => |obj| {
+                                for (obj.properties.slice()) |item| {
+                                    const dep_name = item.key.?.asString(lockfile.allocator).?;
+                                    builder.count(dep_name);
+                                    switch (item.value.?.data) {
+                                        .e_string => |version_str| {
+                                            builder.count(version_str.slice(lockfile.allocator));
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn parseAppend(this: *CatalogMap, pm: *PackageManager, lockfile: *Lockfile, log: *logger.Log, expr: Expr, builder: *Lockfile.StringBuilder) OOM!void {
+        if (expr.get("catalog")) |default_catalog| {
+            const group = try this.getGroup(lockfile, .empty);
+            switch (default_catalog.data) {
+                .e_object => |obj| {
+                    for (obj.properties.slice()) |item| {
+                        const dep_name_str = item.key.?.asString(lockfile.allocator).?;
+
+                        const dep_name_hash = String.Builder.stringHash(dep_name_str);
+                        const dep_name = builder.appendWithHash(String, dep_name_str, dep_name_hash);
+
+                        switch (item.value.?.data) {
+                            .e_string => |version_str| {
+                                const version_literal = builder.append(String, version_str.slice(lockfile.allocator));
+
+                                const version_sliced = version_literal.sliced(lockfile.buffers.string_bytes.items);
+
+                                const version = Dependency.parse(
+                                    lockfile.allocator,
+                                    dep_name,
+                                    dep_name_hash,
+                                    version_sliced.slice,
+                                    &version_sliced,
+                                    log,
+                                    pm,
+                                ) orelse {
+                                    // error?
+                                    continue;
+                                };
+
+                                const entry = try group.getOrPutContext(
+                                    lockfile.allocator,
+                                    dep_name,
+                                    String.arrayHashContext(lockfile, null),
+                                );
+
+                                if (entry.found_existing) {
+                                    // error or warn?
+                                    continue;
+                                }
+
+                                const dep: Dependency = .{
+                                    .name = dep_name,
+                                    .name_hash = dep_name_hash,
+                                    .version = version,
+                                };
+
+                                entry.value_ptr.* = dep;
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        if (expr.get("catalogs")) |catalogs| {
+            switch (catalogs.data) {
+                .e_object => |catalog_names| {
+                    for (catalog_names.properties.slice()) |catalog| {
+                        const catalog_name_str = catalog.key.?.asString(lockfile.allocator).?;
+                        const catalog_name = builder.append(String, catalog_name_str);
+
+                        const group = try this.getGroup(lockfile, catalog_name);
+
+                        switch (catalog.value.?.data) {
+                            .e_object => |obj| {
+                                for (obj.properties.slice()) |item| {
+                                    const dep_name_str = item.key.?.asString(lockfile.allocator).?;
+                                    const dep_name_hash = String.Builder.stringHash(dep_name_str);
+                                    const dep_name = builder.appendWithHash(String, dep_name_str, dep_name_hash);
+                                    switch (item.value.?.data) {
+                                        .e_string => |version_str| {
+                                            const version_literal = builder.append(String, version_str.slice(lockfile.allocator));
+                                            const version_sliced = version_literal.sliced(lockfile.buffers.string_bytes.items);
+
+                                            const version = Dependency.parse(
+                                                lockfile.allocator,
+                                                dep_name,
+                                                dep_name_hash,
+                                                version_sliced.slice,
+                                                &version_sliced,
+                                                log,
+                                                pm,
+                                            ) orelse {
+                                                // error or warning?
+                                                continue;
+                                            };
+
+                                            const entry = try group.getOrPutContext(
+                                                lockfile.allocator,
+                                                dep_name,
+
+                                                String.arrayHashContext(lockfile, null),
+                                            );
+
+                                            if (entry.found_existing) {
+                                                // error or warning?
+                                                continue;
+                                            }
+
+                                            const dep: Dependency = .{
+                                                .name = dep_name,
+                                                .name_hash = dep_name_hash,
+                                                .version = version,
+                                            };
+
+                                            entry.value_ptr.* = dep;
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn sort(this: *CatalogMap, lockfile: *const Lockfile) void {
+        const DepSortCtx = struct {
+            buf: string,
+            catalog_deps: [*]const Dependency,
+
+            pub fn lessThan(sorter: *@This(), l: usize, r: usize) bool {
+                const deps = sorter.catalog_deps;
+                const l_dep = deps[l];
+                const r_dep = deps[r];
+                const buf = sorter.buf;
+
+                return l_dep.name.order(&r_dep.name, buf, buf) == .lt;
+            }
+        };
+
+        const NameSortCtx = struct {
+            buf: string,
+            catalog_names: [*]const String,
+
+            pub fn lessThan(sorter: *@This(), l: usize, r: usize) bool {
+                const buf = sorter.buf;
+                const names = sorter.catalog_names;
+                const l_name = names[l];
+                const r_name = names[r];
+
+                return l_name.order(&r_name, buf, buf) == .lt;
+            }
+        };
+
+        var dep_sort_ctx: DepSortCtx = .{
+            .buf = lockfile.buffers.string_bytes.items,
+            .catalog_deps = lockfile.catalogs.default.values().ptr,
+        };
+
+        this.default.sort(&dep_sort_ctx);
+
+        var iter = this.groups.iterator();
+        while (iter.next()) |catalog| {
+            dep_sort_ctx.catalog_deps = catalog.value_ptr.values().ptr;
+            catalog.value_ptr.sort(&dep_sort_ctx);
+        }
+
+        var name_sort_ctx: NameSortCtx = .{
+            .buf = lockfile.buffers.string_bytes.items,
+            .catalog_names = this.groups.keys().ptr,
+        };
+
+        this.groups.sort(&name_sort_ctx);
+    }
+
+    pub fn deinit(this: *CatalogMap, allocator: std.mem.Allocator) void {
+        this.default.deinit(allocator);
+        for (this.groups.values()) |*group| {
+            group.deinit(allocator);
+        }
+        this.groups.deinit(allocator);
+    }
+
+    pub fn count(this: *CatalogMap, lockfile: *Lockfile, builder: *Lockfile.StringBuilder) void {
+        var deps_iter = this.default.iterator();
+        while (deps_iter.next()) |entry| {
+            const dep_name = entry.key_ptr;
+            const dep = entry.value_ptr;
+            builder.count(dep_name.slice(lockfile.buffers.string_bytes.items));
+            dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+        }
+
+        var groups_iter = this.groups.iterator();
+        while (groups_iter.next()) |catalog| {
+            const catalog_name = catalog.key_ptr;
+            builder.count(catalog_name.slice(lockfile.buffers.string_bytes.items));
+
+            deps_iter = catalog.value_ptr.iterator();
+            while (deps_iter.next()) |entry| {
+                const dep_name = entry.key_ptr;
+                const dep = entry.value_ptr;
+                builder.count(dep_name.slice(lockfile.buffers.string_bytes.items));
+                dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+            }
+        }
+    }
+
+    pub fn clone(this: *CatalogMap, pm: *PackageManager, old: *Lockfile, new: *Lockfile, builder: *Lockfile.StringBuilder) OOM!CatalogMap {
+        var new_catalog: CatalogMap = .{};
+
+        try new_catalog.default.ensureTotalCapacity(new.allocator, this.default.count());
+
+        var deps_iter = this.default.iterator();
+        while (deps_iter.next()) |entry| {
+            const dep_name = entry.key_ptr;
+            const dep = entry.value_ptr;
+            new_catalog.default.putAssumeCapacityContext(
+                builder.append(String, dep_name.slice(old.buffers.string_bytes.items)),
+                try dep.clone(pm, old.buffers.string_bytes.items, @TypeOf(builder), builder),
+                String.arrayHashContext(new, null),
+            );
+        }
+
+        try new_catalog.groups.ensureTotalCapacity(new.allocator, this.groups.count());
+
+        var groups_iter = this.groups.iterator();
+        while (groups_iter.next()) |group| {
+            const catalog_name = group.key_ptr;
+            const deps = group.value_ptr;
+
+            var new_group: Map = .{};
+            try new_group.ensureTotalCapacity(new.allocator, deps.count());
+
+            deps_iter = deps.iterator();
+            while (deps_iter.next()) |entry| {
+                const dep_name = entry.key_ptr;
+                const dep = entry.value_ptr;
+                new_group.putAssumeCapacityContext(
+                    builder.append(String, dep_name.slice(old.buffers.string_bytes.items)),
+                    try dep.clone(pm, old.buffers.string_bytes.items, @TypeOf(builder), builder),
+                    String.arrayHashContext(new, null),
+                );
+            }
+
+            new_catalog.groups.putAssumeCapacityContext(
+                builder.append(String, catalog_name.slice(old.buffers.string_bytes.items)),
+                new_group,
+                String.arrayHashContext(new, null),
+            );
+        }
+
+        return new_catalog;
+    }
+};
 
 pub const OverrideMap = struct {
     const debug = Output.scoped(.OverrideMap, false);
@@ -3013,6 +3367,9 @@ pub const OverrideMap = struct {
     /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
     pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
         debug("looking up override for {x}", .{name_hash});
+        if (this.map.count() == 0) {
+            return null;
+        }
         return if (this.map.get(name_hash)) |dep|
             dep.version
         else
@@ -4282,6 +4639,7 @@ pub const Package = extern struct {
             remove: u32 = 0,
             update: u32 = 0,
             overrides_changed: bool = false,
+            catalogs_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -4297,7 +4655,7 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or
+                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -4316,6 +4674,7 @@ pub const Package = extern struct {
             id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
+            const is_root = id_mapping != null;
             var to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
@@ -4342,6 +4701,74 @@ pub const Package = extern struct {
                             Output.prettyErrorln("Overrides changed since last install", .{});
                         }
                         break;
+                    }
+                }
+            }
+
+            if (is_root) catalogs: {
+
+                // don't sort if lengths are different
+                if (from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count()) {
+                    summary.catalogs_changed = true;
+                    break :catalogs;
+                }
+
+                if (from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count()) {
+                    summary.catalogs_changed = true;
+                    break :catalogs;
+                }
+
+                from_lockfile.catalogs.sort(from_lockfile);
+                to_lockfile.catalogs.sort(to_lockfile);
+
+                for (
+                    from_lockfile.catalogs.default.keys(),
+                    from_lockfile.catalogs.default.values(),
+                    to_lockfile.catalogs.default.keys(),
+                    to_lockfile.catalogs.default.values(),
+                ) |from_dep_name, *from_dep, to_dep_name, *to_dep| {
+                    if (!from_dep_name.eql(to_dep_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                        summary.catalogs_changed = true;
+                        break :catalogs;
+                    }
+
+                    if (!from_dep.eql(to_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                        summary.catalogs_changed = true;
+                        break :catalogs;
+                    }
+                }
+
+                for (
+                    from_lockfile.catalogs.groups.keys(),
+                    from_lockfile.catalogs.groups.values(),
+                    to_lockfile.catalogs.groups.keys(),
+                    to_lockfile.catalogs.groups.values(),
+                ) |from_catalog_name, from_catalog_deps, to_catalog_name, to_catalog_deps| {
+                    if (!from_catalog_name.eql(to_catalog_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                        summary.catalogs_changed = true;
+                        break :catalogs;
+                    }
+
+                    if (from_catalog_deps.count() != to_catalog_deps.count()) {
+                        summary.catalogs_changed = true;
+                        break :catalogs;
+                    }
+
+                    for (
+                        from_catalog_deps.keys(),
+                        from_catalog_deps.values(),
+                        to_catalog_deps.keys(),
+                        to_catalog_deps.values(),
+                    ) |from_dep_name, *from_dep, to_dep_name, *to_dep| {
+                        if (!from_dep_name.eql(to_dep_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                            summary.catalogs_changed = true;
+                            break :catalogs;
+                        }
+
+                        if (!from_dep.eql(to_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                            summary.catalogs_changed = true;
+                            break :catalogs;
+                        }
                     }
                 }
             }
@@ -5627,6 +6054,7 @@ pub const Package = extern struct {
 
         if (comptime features.is_main) {
             lockfile.overrides.parseCount(lockfile, json, &string_builder);
+            lockfile.catalogs.parseCount(lockfile, json, &string_builder);
         }
 
         try string_builder.allocate();
@@ -5989,6 +6417,7 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+            try lockfile.catalogs.parseAppend(pm, lockfile, log, json, &string_builder);
         }
 
         string_builder.clamp();
@@ -6252,6 +6681,7 @@ pub fn deinit(this: *Lockfile) void {
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);
+    this.catalogs.deinit(this.allocator);
 }
 
 const Buffers = struct {
@@ -6640,6 +7070,7 @@ pub const Serializer = struct {
     const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
     const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
     const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
+    const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
 
     pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
@@ -6808,6 +7239,72 @@ pub const Serializer = struct {
                 []PatchedDep,
                 this.patched_dependencies.values(),
             );
+        }
+
+        if (this.catalogs.hasAny()) {
+            try writer.writeAll(std.mem.asBytes(&has_catalogs_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []String,
+                this.catalogs.default.keys(),
+            );
+
+            var external_deps_buf: std.ArrayListUnmanaged(Dependency.External) = try .initCapacity(z_allocator, this.catalogs.default.count());
+            defer external_deps_buf.deinit(z_allocator);
+            external_deps_buf.items.len = this.catalogs.default.count();
+            for (external_deps_buf.items, this.catalogs.default.values()) |*dest, src| {
+                dest.* = src.toExternal();
+            }
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []Dependency.External,
+                external_deps_buf.items,
+            );
+            external_deps_buf.clearRetainingCapacity();
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []String,
+                this.catalogs.groups.keys(),
+            );
+
+            for (this.catalogs.groups.values()) |catalog_deps| {
+                try Lockfile.Buffers.writeArray(
+                    StreamType,
+                    stream,
+                    @TypeOf(writer),
+                    writer,
+                    []String,
+                    catalog_deps.keys(),
+                );
+
+                try external_deps_buf.ensureTotalCapacity(z_allocator, catalog_deps.count());
+                defer external_deps_buf.clearRetainingCapacity();
+
+                for (external_deps_buf.items, catalog_deps.values()) |*dest, src| {
+                    dest.* = src.toExternal();
+                }
+
+                try Lockfile.Buffers.writeArray(
+                    StreamType,
+                    stream,
+                    @TypeOf(writer),
+                    writer,
+                    []Dependency.External,
+                    external_deps_buf.items,
+                );
+            }
         }
 
         total_size.* = try stream.getPos();
@@ -7026,6 +7523,59 @@ pub const Serializer = struct {
 
                     for (patched_dependencies_name_and_version_hashes.items, patched_dependencies_paths.items) |name_hash, patch_path| {
                         map.putAssumeCapacity(name_hash, patch_path);
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readInt(u64, .little);
+                if (next_num == has_catalogs_tag) {
+                    lockfile.catalogs = .{};
+
+                    var default_dep_names = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(String));
+                    defer default_dep_names.deinit(allocator);
+
+                    var default_deps = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
+                    defer default_deps.deinit(allocator);
+
+                    try lockfile.catalogs.default.ensureTotalCapacity(allocator, default_deps.items.len);
+
+                    const context: Dependency.Context = .{
+                        .allocator = allocator,
+                        .log = log,
+                        .buffer = lockfile.buffers.string_bytes.items,
+                        .package_manager = manager,
+                    };
+
+                    for (default_dep_names.items, default_deps.items) |dep_name, dep| {
+                        lockfile.catalogs.default.putAssumeCapacityContext(dep_name, Dependency.toDependency(dep, context), String.arrayHashContext(lockfile, null));
+                    }
+
+                    var catalog_names = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(String));
+                    defer catalog_names.deinit(allocator);
+
+                    try lockfile.catalogs.groups.ensureTotalCapacity(allocator, catalog_names.items.len);
+
+                    for (catalog_names.items) |catalog_name| {
+                        var catalog_dep_names = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(String));
+                        defer catalog_dep_names.deinit(allocator);
+
+                        var catalog_deps = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(Dependency.External));
+                        defer catalog_deps.deinit(allocator);
+
+                        const group = try lockfile.catalogs.getGroup(lockfile, catalog_name);
+
+                        try group.ensureTotalCapacity(allocator, catalog_deps.items.len);
+
+                        for (catalog_dep_names.items, catalog_deps.items) |dep_name, dep| {
+                            group.putAssumeCapacityContext(dep_name, Dependency.toDependency(dep, context), String.arrayHashContext(lockfile, null));
+                        }
                     }
                 } else {
                     stream.pos -= 8;
@@ -7530,6 +8080,18 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
             try w.write(info.resolved.slice(sb));
             try w.objectField("package_name");
             try w.write(info.package_name.slice(sb));
+        },
+        .catalog => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info = dep.version.value.catalog;
+
+            try w.objectField("name");
+            try w.write(dep.name.slice(sb));
+
+            try w.objectField("version");
+            try w.print("catalog:{s}", .{info.fmtJson(sb, .{ .quote = false })});
         },
     }
 

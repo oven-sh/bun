@@ -7,6 +7,8 @@ pub const String = extern struct {
     /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
+    pub const empty: String = .{};
+
     /// Create an inline string
     pub fn from(comptime inlinable_buffer: []const u8) String {
         comptime {
@@ -225,6 +227,13 @@ pub const String = extern struct {
         }
     };
 
+    pub fn hashContext(l_lockfile: *Lockfile, r_lockfile: ?*Lockfile) HashContext {
+        return .{
+            .a_buf = l_lockfile.buffers.string_bytes.items,
+            .b_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+        };
+    }
+
     pub const ArrayHashContext = struct {
         a_buf: []const u8,
         b_buf: []const u8,
@@ -238,6 +247,13 @@ pub const String = extern struct {
             return @as(u32, @truncate(bun.hash(str)));
         }
     };
+
+    pub fn arrayHashContext(l_lockfile: *const Lockfile, r_lockfile: ?*const Lockfile) ArrayHashContext {
+        return .{
+            .a_buf = l_lockfile.buffers.string_bytes.items,
+            .b_buf = if (r_lockfile) |r| r.buffers.string_bytes.items else l_lockfile.buffers.string_bytes.items,
+        };
+    }
 
     pub fn init(
         buf: string,

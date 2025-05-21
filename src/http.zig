@@ -507,8 +507,10 @@ const ProxyTunnel = struct {
         this.ref();
         defer this.deref();
         defer if (this.wrapper) |*wrapper| {
-            _ = wrapper.flush(); // Cycle to through the SSL state machine
-        }
+            // Cycle to through the SSL state machine
+            _ = wrapper.flush();
+        };
+
         const encoded_data = this.write_buffer.slice();
         if (encoded_data.len == 0) {
             return;

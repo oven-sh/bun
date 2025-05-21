@@ -35,7 +35,7 @@ describe("Zstandard compression", async () => {
   });
 
   // Test with known zstd-compressed data
-  describe.only("zstd CLI compatibility", () => {
+  describe("zstd CLI compatibility", () => {
     for (const { name, compressed, original } of [
       {
         name: "package.json",
@@ -144,7 +144,7 @@ describe("Zstandard compression", async () => {
             },
             null,
             2,
-          ),
+          ) + "\n",
         ),
       },
     ] as const) {

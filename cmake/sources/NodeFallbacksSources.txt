@@ -17,6 +17,7 @@ src/node-fallbacks/stream.js
 src/node-fallbacks/string_decoder.js
 src/node-fallbacks/sys.js
 src/node-fallbacks/timers.js
+src/node-fallbacks/timers.promises.js
 src/node-fallbacks/tty.js
 src/node-fallbacks/url.js
 src/node-fallbacks/util.js

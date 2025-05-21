@@ -825,6 +825,10 @@ pub fn migrateNPMLockfile(
 
                                     break :resolved switch (res_version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+
+                                        // npm does not support catalogs
+                                        .catalog => return error.InvalidNPMLockfile,
+
                                         .npm, .dist_tag => res: {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
                                             // an npm dependency, but that case is so convoluted that it is not worth handling.

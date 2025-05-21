@@ -22,13 +22,13 @@ pub const Ctx = union(enum) {
 var is_enabled_once = std.once(isEnabledOnce);
 var is_enabled = std.atomic.Value(bool).init(false);
 fn isEnabledOnMacOSOnce() void {
-    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag("BUN_INSTRUMENTS")) {
+    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag(.BUN_INSTRUMENTS)) {
         is_enabled.store(true, .seq_cst);
     }
 }
 
 fn isEnabledOnLinuxOnce() void {
-    if (bun.getRuntimeFeatureFlag("BUN_TRACE")) {
+    if (bun.getRuntimeFeatureFlag(.BUN_TRACE)) {
         is_enabled.store(true, .seq_cst);
     }
 }

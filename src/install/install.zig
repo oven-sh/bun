@@ -478,7 +478,7 @@ const NetworkTask = struct {
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
+        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
             this.unsafe_http_client.client.flags.force_last_modified = true;
             this.unsafe_http_client.client.if_modified_since = last_modified;
         }
@@ -2843,7 +2843,7 @@ pub const PackageManager = struct {
     pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
         const log_level = this.options.log_level;
         if (log_level == .silent) return;
-        if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
             return;
         }
 

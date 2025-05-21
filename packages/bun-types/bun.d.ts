@@ -7482,6 +7482,8 @@ declare module "bun" {
     overrides?: Record<string, string>;
     patchedDependencies?: Record<string, string>;
     trustedDependencies?: string[];
+    catalog?: Record<string, string>;
+    catalogs?: Record<string, Record<string, string>>;
 
     /**
      * ```

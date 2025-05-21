@@ -21,8 +21,10 @@ pub fn parse(
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
+
     var log = logger.Log.init(default_allocator);
-    const arguments = callframe.arguments_old(2).slice();
+
+    const arguments = callframe.arguments();
     if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to parse", .{});
     }
@@ -99,7 +101,9 @@ pub fn parse(
         }
     }
 
-    var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
+    var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator) catch {
+        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to get the string out of th JS world"));
+    };
     defer input_slice.deinit();
     var source = logger.Source.initPathString("input.csv", input_slice.slice());
 
@@ -108,26 +112,16 @@ pub fn parse(
         return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse CSV"));
     };
 
-    // for now...
-    const buffer_writer = js_printer.BufferWriter.init(allocator);
-    var writer = js_printer.BufferPrinter.init(buffer_writer);
-    _ = js_printer.printJSON(
-        *js_printer.BufferPrinter,
-        &writer,
-        parse_result,
-        &source,
-        .{
-            .mangled_props = null,
+    const js_val = parse_result.toJS(allocator, globalThis) catch |err| switch (err) {
+        error.OutOfMemory => return bun.outOfMemory(),
+        else => {
+            // clear the JSC exception so we can throw our own
+            globalThis.clearException();
+            return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to convert CSV to JS"));
         },
-    ) catch {
-        return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print csv"));
     };
 
-    const slice = writer.ctx.buffer.slice();
-    var out = bun.String.fromUTF8(slice);
-    defer out.deref();
-
-    return out.toJSByParseJSON(globalThis);
+    return js_val;
 }
 
 const CSVObject = @This();

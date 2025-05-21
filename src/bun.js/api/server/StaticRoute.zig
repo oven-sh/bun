@@ -76,7 +76,7 @@ pub fn memoryCost(this: *const StaticRoute) usize {
     return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!*StaticRoute {
+pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*StaticRoute {
     if (argument.as(JSC.WebCore.Response)) |response| {
 
         // The user may want to pass in the same Response object multiple endpoints
@@ -147,45 +147,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         });
     }
 
-    return globalThis.throwInvalidArguments(
-        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
-        \\
-        \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
-        \\
-        \\Example:
-        \\
-        \\```js
-        \\import { serve } from "bun";
-        \\import app from "./app.html";
-        \\
-        \\serve({
-        \\  routes: {
-        \\    "/index.json": Response.json({ message: "Hello World" }),
-        \\    "/app": app,
-        \\    "/path/:param": (req) => {
-        \\      const param = req.params.param;
-        \\      return Response.json({ message: `Hello ${param}` });
-        \\    },
-        \\    "/path": {
-        \\      GET(req) {
-        \\        return Response.json({ message: "Hello World" });
-        \\      },
-        \\      POST(req) {
-        \\        return Response.json({ message: "Hello World" });
-        \\      },
-        \\    },
-        \\  },
-        \\
-        \\  fetch(request) {
-        \\    return new Response("fallback response");
-        \\  },
-        \\});
-        \\```
-        \\
-        \\See https://bun.sh/docs/api/http for more information.
-    ,
-        .{},
-    );
+    return null;
 }
 
 // HEAD requests have no body.

@@ -2489,6 +2489,7 @@ pub const E = struct {
         }
 
         pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
+            bun.assert(s.next == null);
             return if (s.isUTF8())
                 strings.eqlComptime(s.data, value)
             else
@@ -6209,6 +6210,7 @@ pub const Expr = struct {
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
+                                l.resolveRopeIfNeeded(p.allocator);
                                 if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
                                     return Equality.true;
                                 }

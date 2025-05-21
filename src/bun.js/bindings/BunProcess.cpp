@@ -1113,23 +1113,60 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     return true;
 }
 
+bool isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
+{
+    //   return typeof obj === 'object' &&
+    //      obj !== null &&
+    //      ObjectPrototypeHasOwnProperty(obj, 'stack');
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!obj.isObject()) return false;
+
+    auto* object = JSC::jsCast<JSC::JSObject*>(obj);
+    auto propertyKey = Identifier::fromString(globalObject->vm(), "stack"_s);
+    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);
+    RELEASE_AND_RETURN(scope, result);
+}
+
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
+    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());
-    MarkedArgumentBuffer args;
-    args.append(reason);
-    args.append(promise);
+
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
+        MarkedArgumentBuffer args;
+        args.append(reason);
+        args.append(promise);
         wrapped.emit(eventType, args);
         return true;
-    } else {
-        return false;
     }
+
+    // With --unhandled-rejections=throw (default), unhandled rejections will be sent to the uncaught exception handler unless an unhandledRejection handler is registered.
+    auto isErrorLikeResult = isErrorLike(globalObject, reason);
+    if (scope.exception()) {
+        scope.clearException();
+    }
+    if (!isErrorLikeResult) {
+        auto reasonStr = reason.toString(globalObject); // here, node uses noSideEffectsToString
+        if (scope.exception()) {
+            scope.clearException();
+        }
+        // Non-errors are wrapped in ERR_UNHANDLED_REJECTION before being sent to the uncaught exception handler
+        reason = Bun::createError(
+            lexicalGlobalObject,
+            Bun::ErrorCode::ERR_UNHANDLED_REJECTION,
+            makeString(
+                "This error originated either by throwing inside of an async function without a catch block, "
+                "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \""_s,
+                reasonStr->getString(globalObject),
+                "\"."_s));
+    }
+
+    return Bun__handleUncaughtException(lexicalGlobalObject, reason, 1);
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);

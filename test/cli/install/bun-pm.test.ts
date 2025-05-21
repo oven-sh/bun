@@ -141,10 +141,7 @@ it("should list top-level dependency as json", async () => {
     }),
   );
   await mkdir(join(package_dir, "moo"));
-  await writeFile(
-    join(package_dir, "moo", "package.json"),
-    JSON.stringify({ name: "moo", version: "0.1.0" }),
-  );
+  await writeFile(join(package_dir, "moo", "package.json"), JSON.stringify({ name: "moo", version: "0.1.0" }));
   {
     const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],

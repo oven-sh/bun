@@ -3387,7 +3387,7 @@ pub const OverrideMap = struct {
             null;
     }
 
-    pub fn sort(this: *OverrideMap, lockfile: *const Lockfile, comptime lt: std.math.Order) void {
+    pub fn sort(this: *OverrideMap, lockfile: *const Lockfile) void {
         const Ctx = struct {
             buf: string,
             override_deps: [*]const Dependency,
@@ -3398,7 +3398,7 @@ pub const OverrideMap = struct {
                 const r_dep = deps[r];
 
                 const buf = sorter.buf;
-                return l_dep.name.order(&r_dep.name, buf, buf) == lt;
+                return l_dep.name.order(&r_dep.name, buf, buf) == .lt;
             }
         };
 
@@ -4698,8 +4698,8 @@ pub const Package = extern struct {
                     Output.prettyErrorln("Overrides changed since last install", .{});
                 }
             } else {
-                from_lockfile.overrides.sort(from_lockfile, .lt);
-                to_lockfile.overrides.sort(to_lockfile, .lt);
+                from_lockfile.overrides.sort(from_lockfile);
+                to_lockfile.overrides.sort(to_lockfile);
                 for (
                     from_lockfile.overrides.map.keys(),
                     from_lockfile.overrides.map.values(),

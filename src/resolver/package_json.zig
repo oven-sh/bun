@@ -927,8 +927,8 @@ pub const PackageJSON = struct {
                     package_json.dependencies.map = DependencyMap.HashMap{};
                     package_json.dependencies.source_buf = json_source.contents;
                     const ctx = String.ArrayHashContext{
-                        .a_buf = json_source.contents,
-                        .b_buf = json_source.contents,
+                        .arg_buf = json_source.contents,
+                        .existing_buf = json_source.contents,
                     };
                     package_json.dependencies.map.ensureTotalCapacityContext(
                         allocator,

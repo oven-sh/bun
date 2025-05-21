@@ -791,6 +791,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     RedisClient                                   BunObject_getter_wrap_ValkeyClient                                  DontDelete|PropertyCallback
     redis                                         BunObject_getter_wrap_valkey                                        DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
+    zstdCompressSync                               BunObject_callback_zstdCompressSync                                DontDelete|Function 1
+    zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
+    zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1
+    zstdDecompress                                 BunObject_callback_zstdDecompress                                    DontDelete|Function 1
 @end
 */
 

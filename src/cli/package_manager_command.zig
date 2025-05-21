@@ -583,7 +583,7 @@ fn behaviorPrefix(behavior: Dependency.Behavior) []const u8 {
     return "";
 }
 
-fn printWhy(lockfile: *Lockfile, _pm: *PackageManager, query: []const u8) !void {
+fn printWhy(lockfile: *Lockfile, pm: *PackageManager, query: []const u8) !void {
     const string_bytes = lockfile.buffers.string_bytes.items;
     const dependencies = lockfile.buffers.dependencies.items;
     const trees = lockfile.buffers.trees.items;
@@ -596,6 +596,33 @@ fn printWhy(lockfile: *Lockfile, _pm: *PackageManager, query: []const u8) !void 
     var path_buf: bun.PathBuffer = undefined;
     var depth_buf: Lockfile.Tree.DepthBuf = undefined;
     var found = false;
+    
+    const json_output = strings.leftHasAnyInRight(pm.options.positionals, &.{"--json"});
+    
+    // For JSON output, we'll collect all dependencies in this structure
+    var json_deps = std.ArrayList(struct {
+        name: []const u8,
+        version: []const u8,
+        path: []const u8,
+        chain: std.ArrayList(struct {
+            name: []const u8,
+            version: []const u8,
+            from_name: ?[]const u8,
+            from_version: ?[]const u8,
+            path: ?[]const u8,
+            behavior: []const u8,
+            literal: []const u8,
+        })
+    }).init(lockfile.allocator);
+    defer {
+        if (json_output) {
+            for (json_deps.items) |*dep| {
+                for (dep.chain.items) |_| {}
+                dep.chain.deinit();
+            }
+            json_deps.deinit();
+        }
+    }
 
     while (iterator.next(null)) |node| {
         const tree = trees[node.tree_id];
@@ -611,10 +638,32 @@ fn printWhy(lockfile: *Lockfile, _pm: *PackageManager, query: []const u8) !void 
         found = true;
 
         const res = Lockfile.Tree.relativePathAndDepth(lockfile, node.tree_id, &path_buf, &depth_buf, .node_modules);
-        const rel_path = res.\"0\";
-
-        Output.prettyln("{s}@{any}", .{ name, pkg_resolutions[pkg_id].fmt(string_bytes, .auto) });
-        Output.prettyln("{s}", .{ rel_path });
+        const rel_path = res[0];
+        
+        // Create a temporary buffer for string formatting
+        var version_buf: [512]u8 = undefined;
+        const version_str = try std.fmt.bufPrint(&version_buf, "{}", .{pkg_resolutions[pkg_id].fmt(string_bytes, .auto)});
+        
+        if (json_output) {
+            // For JSON output, we'll collect the data and print it later
+            var dep_entry = try json_deps.addOne();
+            dep_entry.name = try lockfile.allocator.dupe(u8, name);
+            dep_entry.version = try lockfile.allocator.dupe(u8, version_str);
+            dep_entry.path = try lockfile.allocator.dupe(u8, rel_path);
+            dep_entry.chain = std.ArrayList(struct {
+                name: []const u8,
+                version: []const u8,
+                from_name: ?[]const u8,
+                from_version: ?[]const u8,
+                path: ?[]const u8,
+                behavior: []const u8,
+                literal: []const u8,
+            }).init(lockfile.allocator);
+        } else {
+            // For text output, we'll print as we go
+            Output.prettyln("{s}@{s}", .{ name, version_str });
+            Output.prettyln("{s}", .{ rel_path });
+        }
 
         var chain: [Lockfile.Tree.max_depth]Lockfile.Tree.Id = undefined;
         var len: usize = 0;
@@ -636,32 +685,122 @@ fn printWhy(lockfile: *Lockfile, _pm: *PackageManager, query: []const u8) !void 
             const dep_literal = child_dep.version.literal.slice(string_bytes);
             const parent_pkg_id = resolutions[trees[parent].dependency_id];
             const parent_name = pkg_names[parent_pkg_id].slice(string_bytes);
-            const parent_version_fmt = pkg_resolutions[parent_pkg_id].fmt(string_bytes, .auto);
-
-            var j: usize = 0;
-            while (j < indent) : (j += 1) {
-                Output.writer().writeByte(' ') catch {};
-            }
-            if (parent == 0) {
-                Output.prettyln("{s}{s}@\"{s}\" from the root project", .{ prefix, child_dep.name.slice(string_bytes), dep_literal });
+            
+            var parent_version_buf: [512]u8 = undefined;
+            const parent_version_str = try std.fmt.bufPrint(&parent_version_buf, "{}", .{pkg_resolutions[parent_pkg_id].fmt(string_bytes, .auto)});
+            
+            if (json_output) {
+                var parent_path_str: ?[]const u8 = null;
+                
+                if (parent != 0) {
+                    const res_parent = Lockfile.Tree.relativePathAndDepth(lockfile, parent, &path_buf, &depth_buf, .node_modules);
+                    const parent_path = res_parent[0];
+                    parent_path_str = try lockfile.allocator.dupe(u8, parent_path);
+                }
+                
+                var chain_entry = try json_deps.items[json_deps.items.len - 1].chain.addOne();
+                chain_entry.name = try lockfile.allocator.dupe(u8, child_dep.name.slice(string_bytes));
+                chain_entry.literal = try lockfile.allocator.dupe(u8, dep_literal);
+                chain_entry.behavior = try lockfile.allocator.dupe(u8, prefix);
+                chain_entry.path = parent_path_str;
+                
+                if (parent == 0) {
+                    chain_entry.from_name = null;
+                    chain_entry.from_version = null;
+                } else {
+                    chain_entry.from_name = try lockfile.allocator.dupe(u8, parent_name);
+                    chain_entry.from_version = try lockfile.allocator.dupe(u8, parent_version_str);
+                }
             } else {
-                Output.prettyln("{s}{s}@\"{s}\" from {s}@{any}", .{ prefix, child_dep.name.slice(string_bytes), dep_literal, parent_name, parent_version_fmt });
-
-                const res_parent = Lockfile.Tree.relativePathAndDepth(lockfile, parent, &path_buf, &depth_buf, .node_modules);
-                const parent_path = res_parent.\"0\";
-                j = 0;
+                var j: usize = 0;
                 while (j < indent) : (j += 1) {
                     Output.writer().writeByte(' ') catch {};
                 }
-                Output.prettyln("{s}", .{ parent_path });
+                
+                if (parent == 0) {
+                    Output.prettyln("{s}{s}@\"{s}\" from the root project", .{ prefix, child_dep.name.slice(string_bytes), dep_literal });
+                } else {
+                    Output.prettyln("{s}{s}@\"{s}\" from {s}@{s}", .{ prefix, child_dep.name.slice(string_bytes), dep_literal, parent_name, parent_version_str });
+
+                    const res_parent = Lockfile.Tree.relativePathAndDepth(lockfile, parent, &path_buf, &depth_buf, .node_modules);
+                    const parent_path = res_parent[0];
+                    j = 0;
+                    while (j < indent) : (j += 1) {
+                        Output.writer().writeByte(' ') catch {};
+                    }
+                    Output.prettyln("{s}", .{ parent_path });
+                }
             }
+            
             indent += 2;
         }
 
-        Output.prettyln("", .{});
+        if (!json_output) {
+            Output.prettyln("", .{});
+        }
     }
 
     if (!found) {
-        Output.prettyErrorln("<r><red>error<r>: package '{s}' not found", .{ query });
+        if (json_output) {
+            try Output.writer().writeAll("{\"error\": \"package not found\"}\n");
+        } else {
+            Output.prettyErrorln("<r><red>error<r>: package '{s}' not found", .{ query });
+        }
+        return;
+    }
+    
+    if (json_output) {
+        // Build the JSON output
+        try Output.writer().writeAll("{\n");
+        try Output.writer().writeAll("  \"dependencies\": [\n");
+        
+        for (json_deps.items, 0..) |dep, dep_index| {
+            try Output.writer().print("    {{\n      \"name\": \"{s}\",\n      \"version\": \"{s}\",\n      \"path\": \"{s}\",\n", .{
+                dep.name,
+                dep.version,
+                dep.path,
+            });
+            
+            try Output.writer().writeAll("      \"dependencyChain\": [\n");
+            
+            for (dep.chain.items, 0..) |chain_item, chain_index| {
+                try Output.writer().writeAll("        {\n");
+                try Output.writer().print("          \"name\": \"{s}\",\n", .{chain_item.name});
+                try Output.writer().print("          \"version\": \"{s}\",\n", .{chain_item.literal});
+                try Output.writer().print("          \"type\": \"{s}\",\n", .{chain_item.behavior});
+                
+                if (chain_item.from_name) |from_name| {
+                    try Output.writer().print("          \"from\": \"{s}@{s}\",\n", .{
+                        from_name,
+                        chain_item.from_version.?,
+                    });
+                } else {
+                    try Output.writer().writeAll("          \"from\": \"root\",\n");
+                }
+                
+                if (chain_item.path) |path| {
+                    try Output.writer().print("          \"path\": \"{s}\"\n", .{path});
+                } else {
+                    try Output.writer().writeAll("          \"path\": null\n");
+                }
+                
+                if (chain_index == dep.chain.items.len - 1) {
+                    try Output.writer().writeAll("        }\n");
+                } else {
+                    try Output.writer().writeAll("        },\n");
+                }
+            }
+            
+            try Output.writer().writeAll("      ]\n");
+            
+            if (dep_index == json_deps.items.len - 1) {
+                try Output.writer().writeAll("    }\n");
+            } else {
+                try Output.writer().writeAll("    },\n");
+            }
+        }
+        
+        try Output.writer().writeAll("  ]\n");
+        try Output.writer().writeAll("}\n");
     }
 }

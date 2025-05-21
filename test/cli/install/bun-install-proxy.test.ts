@@ -63,9 +63,6 @@ if (isDockerEnabled()) {
         "module": "index.ts",
         "type": "module",
         "private": true,
-        "devDependencies": {
-          "@types/bun": "latest",
-        },
         "dependencies": {
           "gastby": "1.0.1",
           "mitata": "1.0.34",

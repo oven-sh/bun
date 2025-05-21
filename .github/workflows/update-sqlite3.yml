@@ -101,7 +101,7 @@ jobs:
           title: "deps: update sqlite to ${{ steps.check-version.outputs.latest }}"
           delete-branch: true
           branch: deps/update-sqlite
-          lables: "automation"
+          labels: "automation"
           body: |
             ## What does this PR do?
 

@@ -20,7 +20,6 @@
 
 #include "config.h"
 
-
 #if ENABLE(WEB_CRYPTO)
 #include "JSX25519Params.h"
 
@@ -28,9 +27,6 @@
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertStrings.h"
 #include <JavaScriptCore/JSCInlines.h>
-
-
-
 
 namespace WebCore {
 using namespace JSC;
@@ -43,7 +39,7 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) [[unlikely]] {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return  { };
+        return {};
     }
     CryptoAlgorithmX25519Params result;
     JSValue nameValue;
@@ -51,11 +47,11 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(throwScope,  { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (nameValue.isUndefined()) {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "X25519Params"_s, "DOMString"_s);
-        return  { };
+        return {};
     }
     auto nameConversionResult = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -65,19 +61,18 @@ template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Pa
         publicKeyValue = jsUndefined();
     else {
         publicKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "publicKey"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (publicKeyValue.isUndefined()) {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey"_s, "X25519Params"_s, "CryptoKey"_s);
-        return  { };
+        return {};
     }
     auto publicKeyConversionResult = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue);
-        RETURN_IF_EXCEPTION(throwScope,  { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result.publicKey = publicKeyConversionResult;
     return result;
 }
 
 } // namespace WebCore
-
 
 #endif // ENABLE(WEB_CRYPTO)

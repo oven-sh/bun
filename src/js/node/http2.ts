@@ -1890,9 +1890,9 @@ class Http2Stream extends Duplex {
         this.end();
       }
       markStreamClosed(this);
+      this.rstCode = code;
       if (this.writableFinished) {
-        this.rstCode = code;
-        session[bunHTTP2Native]?.rstStream(this.#id, code);
+        setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
@@ -2194,7 +2194,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed || this.closed) {
+    if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -2235,7 +2235,7 @@ class ServerHttp2Stream extends Http2Stream {
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
-    if (this.destroyed || this.closed) {
+    if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -2348,7 +2348,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    if (this.destroyed || this.closed) {
+    if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 

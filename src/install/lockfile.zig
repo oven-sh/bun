@@ -3376,7 +3376,7 @@ pub const OverrideMap = struct {
             null;
     }
 
-    pub fn sort(this: *OverrideMap, lockfile: *const Lockfile) void {
+    pub fn sort(this: *OverrideMap, lockfile: *const Lockfile, comptime lt: std.math.Order) void {
         const Ctx = struct {
             buf: string,
             override_deps: [*]const Dependency,
@@ -3387,7 +3387,7 @@ pub const OverrideMap = struct {
                 const r_dep = deps[r];
 
                 const buf = sorter.buf;
-                return l_dep.name.order(&r_dep.name, buf, buf) == .lt;
+                return l_dep.name.order(&r_dep.name, buf, buf) == lt;
             }
         };
 
@@ -4687,8 +4687,8 @@ pub const Package = extern struct {
                     Output.prettyErrorln("Overrides changed since last install", .{});
                 }
             } else {
-                from_lockfile.overrides.sort(from_lockfile);
-                to_lockfile.overrides.sort(to_lockfile);
+                from_lockfile.overrides.sort(from_lockfile, .lt);
+                to_lockfile.overrides.sort(to_lockfile, .lt);
                 for (
                     from_lockfile.overrides.map.keys(),
                     from_lockfile.overrides.map.values(),
@@ -6054,7 +6054,10 @@ pub const Package = extern struct {
 
         if (comptime features.is_main) {
             lockfile.overrides.parseCount(lockfile, json, &string_builder);
-            lockfile.catalogs.parseCount(lockfile, json, &string_builder);
+
+            if (json.get("workspaces")) |workspaces_expr| {
+                lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
+            }
         }
 
         try string_builder.allocate();
@@ -6417,7 +6420,9 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
-            try lockfile.catalogs.parseAppend(pm, lockfile, log, json, &string_builder);
+            if (json.get("workspaces")) |workspaces_expr| {
+                try lockfile.catalogs.parseAppend(pm, lockfile, log, workspaces_expr, &string_builder);
+            }
         }
 
         string_builder.clamp();

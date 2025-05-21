@@ -335,7 +335,9 @@ pub const Stringifier = struct {
             }
 
             if (lockfile.overrides.map.count() > 0) {
-                lockfile.overrides.sort(lockfile);
+                // this was accidentally sorting with gt. keeping it
+                // to avoid git diffs
+                lockfile.overrides.sort(lockfile, .gt);
 
                 try writeIndent(writer, indent);
                 try writer.writeAll(

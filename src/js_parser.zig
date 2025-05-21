@@ -24814,13 +24814,4 @@ pub const ConvertESMExportsForHmr = struct {
     }
 };
 
-/// Equivalent of esbuild's js_ast_helpers.ToInt32
-fn floatToInt32(f: f64) i32 {
-    // Special-case non-finite numbers
-    if (!std.math.isFinite(f))
-        return 0;
-
-    const uint: u32 = @intFromFloat(@mod(@abs(f), std.math.maxInt(u32) + 1));
-    const int: i32 = @bitCast(uint);
-    return if (f < 0) @as(i32, 0) -% int else int;
-}
+const floatToInt32 = bun.JSC.toInt32;

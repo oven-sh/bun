@@ -1,5 +1,3 @@
-# Catalogs
-
 Catalogs in Bun provide a straightforward way to share common dependency versions across multiple packages in a monorepo. Rather than specifying the same versions repeatedly in each workspace package, you define them once in the root package.json and reference them consistently throughout your project.
 
 ## Overview

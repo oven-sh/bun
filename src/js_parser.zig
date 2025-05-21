@@ -7722,7 +7722,9 @@ fn NewParser_(
                 }
             }
 
-            p.popScope();
+            if (pushedScopeForFunctionArgs) {
+                p.popScope();
+            }
 
             // Only declare the function after we know if it had a body or not. Otherwise
             // TypeScript code such as this will double-declare the symbol:

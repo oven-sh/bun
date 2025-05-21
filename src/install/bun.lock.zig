@@ -1356,7 +1356,7 @@ pub fn parseIntoBinaryLockfile(
 
     if (root.get("catalogs")) |catalogs_expr| {
         if (!catalogs_expr.isObject()) {
-            try log.addError(source, catalogs_expr.loc, "Expected on object");
+            try log.addError(source, catalogs_expr.loc, "Expected an object");
             return error.InvalidCatalogsObject;
         }
 

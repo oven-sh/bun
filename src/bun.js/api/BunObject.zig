@@ -1787,7 +1787,7 @@ pub const JSZstd = struct {
         if (options_val) |option_obj| {
             if (try option_obj.get(globalThis, "level")) |level_val| {
                 level = level_val.coerce(i32, globalThis);
-                if (globalThis.hasException()) return .zero;
+                if (globalThis.hasException()) return error.JSError;
 
                 // Validate level range (1-22 for zstd)
                 if (level < 1 or level > 22) {

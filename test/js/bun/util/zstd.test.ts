@@ -35,48 +35,127 @@ describe("Zstandard compression", async () => {
   });
 
   // Test with known zstd-compressed data
-  describe("zstd CLI compatibility", () => {
-    const binaryData = Buffer.from(
-      "d99672ce993fec2d180320aef27f9d05617958e6e67eb2e734cd976034d9301f410ccfca695075f02c5c2969b525a54b7e95ea61797a591daf09a8764800a8d99ad06ba3fcc5c89bd074a47f6a11c1",
-      "hex",
-    );
-
-    const testDataCases = [
+  describe.only("zstd CLI compatibility", () => {
+    for (const { name, compressed, original } of [
       {
-        name: "binary data level 1",
+        name: "package.json",
         compressed: Buffer.from(
-          "KLUv/WQAAwEgANmWcs6ZP+wtGAMgrvJ/nQVheVjm5n6y5zTNl2A02TAfQQzPymlQdfAsXClptSWlS36V6mF5elkdrwmodkgAqNma0Guj/MXIm9B0pH9qEcF",
+          `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`,
           "base64",
         ),
-        original: binaryData,
-      },
-      {
-        name: "binary data level 10",
-        compressed: Buffer.from(
-          "KLUv/WQAAwEgANmWcs6ZP+wtGAMgrvJ/nQVheVjm5n6y5zTNl2A02TAfQQzPymlQdfAsXClptSWlS36V6mF5elkdrwmodkgAqNma0Guj/MXIm9B0pH9qEcF",
-          "base64",
+        original: Buffer.from(
+          JSON.stringify(
+            {
+              "private": true,
+              "name": "bun",
+              "version": "1.2.14",
+              "workspaces": ["./packages/bun-types", "./packages/@types/bun"],
+              "devDependencies": {
+                "@types/react": "^18.3.3",
+                "esbuild": "^0.21.4",
+                "mitata": "^0.1.11",
+                "peechy": "0.4.34",
+                "prettier": "^3.5.3",
+                "prettier-plugin-organize-imports": "^4.0.0",
+                "react": "^18.3.1",
+                "react-dom": "^18.3.1",
+                "source-map-js": "^1.2.0",
+                "typescript": "^5.7.2",
+              },
+              "resolutions": {
+                "bun-types": "workspace:packages/bun-types",
+                "@types/bun": "workspace:packages/@types/bun",
+              },
+              "scripts": {
+                "build": "bun run build:debug",
+                "watch":
+                  "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
+                "watch-windows":
+                  "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
+                "agent":
+                  "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
+                "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
+                "build:debug:asan":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON -B build/debug-asan",
+                "build:valgrind":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_BASELINE=ON -ENABLE_VALGRIND=ON -B build/debug-valgrind",
+                "build:release": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -B build/release",
+                "build:ci":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_VERBOSE_MAKEFILE=ON -DCI=true -B build/release-ci --verbose --fresh",
+                "build:assert":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_ASSERTIONS=ON -DENABLE_LOGS=ON -B build/release-assert",
+                "build:asan":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASSERTIONS=ON -DENABLE_LOGS=OFF -DENABLE_ASAN=ON -DENABLE_LTO=OFF -B build/release-asan",
+                "build:logs":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=ON -B build/release-logs",
+                "build:safe":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=ReleaseSafe -B build/release-safe",
+                "build:smol": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=MinSizeRel -B build/release-smol",
+                "build:local":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DWEBKIT_LOCAL=ON -B build/debug-local",
+                "build:release:local":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DWEBKIT_LOCAL=ON -B build/release-local",
+                "build:release:with_logs":
+                  "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
+                "build:debug-zig-release":
+                  "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
+                "run:linux":
+                  'docker run --rm  -v "$PWD:/root/bun/" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image',
+                "css-properties": "bun run src/css/properties/generate_properties.ts",
+                "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
+                "bump": "bun ./scripts/bump.ts",
+                "typecheck": "tsc --noEmit && cd test && bun run typecheck",
+                "fmt": "bun run prettier",
+                "fmt:cpp": "bun run clang-format",
+                "fmt:zig": "bun run zig-format",
+                "lint": "bunx oxlint --config=oxlint.json --format=github src/js",
+                "lint:fix": "oxlint --config oxlint.json --fix",
+                "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
+                "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
+                "banned": "bun test test/internal/ban-words.test.ts",
+                "glob-sources": "bun scripts/glob-sources.mjs",
+                "zig": "vendor/zig/zig.exe",
+                "zig:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",
+                "zig:test:release":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUNTEST=ON -B build/release",
+                "zig:test:ci":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_TEST=ON -DZIG_OPTIMIZE=ReleaseSafe -DCMAKE_VERBOSE_MAKEFILE=ON -DCI=true -B build/release-ci --verbose --fresh",
+                "zig:fmt": "bun run zig-format",
+                "zig:check": "bun run zig build check --summary new",
+                "zig:check-all": "bun run zig build check-all --summary new",
+                "zig:check-windows": "bun run zig build check-windows --summary new",
+                "analysis":
+                  "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DENABLE_CCACHE=OFF -B build/analysis",
+                "analysis:no-llvm": "bun run analysis -DENABLE_LLVM=OFF",
+                "clang-format": "bun run analysis --target clang-format",
+                "clang-format:check": "bun run analysis --target clang-format-check",
+                "clang-format:diff": "bun run analysis --target clang-format-diff",
+                "clang-tidy": "bun run analysis --target clang-tidy",
+                "clang-tidy:check": "bun run analysis --target clang-tidy-check",
+                "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
+                "zig-format": "bun run analysis:no-llvm --target zig-format",
+                "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
+                "prettier":
+                  "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
+                "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
+                "clean:zig":
+                  "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
+              },
+            },
+            null,
+            2,
+          ),
         ),
-        original: binaryData,
       },
-      {
-        name: "binary data level 19",
-        compressed: Buffer.from(
-          "KLUv/WQAAwEgANmWcs6ZP+wtGAMgrvJ/nQVheVjm5n6y5zTNl2A02TAfQQzPymlQdfAsXClptSWlS36V6mF5elkdrwmodkgAqNma0Guj/MXIm9B0pH9qEcF",
-          "base64",
-        ),
-        original: binaryData,
-      },
-    ];
-
-    for (const { name, compressed, original } of testDataCases) {
+    ] as const) {
       it(`can decompress ${name}`, async () => {
         // Test sync decompression
         const syncDecompressed = zstdDecompressSync(compressed);
-        expect(syncDecompressed).toStrictEqual(original);
+        expect(syncDecompressed.toString()).toStrictEqual(original.toString());
 
         // Test async decompression
         const asyncDecompressed = await zstdDecompress(compressed);
-        expect(asyncDecompressed).toStrictEqual(original);
+        expect(asyncDecompressed.toString()).toStrictEqual(original.toString());
       });
     }
   });

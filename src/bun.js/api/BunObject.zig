@@ -1746,6 +1746,23 @@ pub const JSZstd = struct {
         return globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
     }
 
+    fn getLevel(globalThis: *JSGlobalObject, options_val: ?JSValue) bun.JSError!i32 {
+        if (options_val) |option_obj| {
+            if (try option_obj.get(globalThis, "level")) |level_val| {
+                const value = level_val.coerce(i32, globalThis);
+                if (globalThis.hasException()) return error.JSError;
+
+                if (value < 1 or value > 22) {
+                    return globalThis.throwInvalidArguments("Compression level must be between 1 and 22", .{});
+                }
+
+                return value;
+            }
+        }
+
+        return 3;
+    }
+
     inline fn getOptionsAsync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue, i32 } {
         const arguments = callframe.arguments();
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
@@ -1756,19 +1773,7 @@ pub const JSZstd = struct {
                 return globalThis.throwInvalidArguments("Expected options to be an object", .{});
             } else null;
 
-        var level: i32 = 3; // Default compression level
-
-        if (options_val) |option_obj| {
-            if (try option_obj.get(globalThis, "level")) |level_val| {
-                level = level_val.coerce(i32, globalThis);
-                if (globalThis.hasException()) return error.JSError;
-
-                // Validate level range (1-22 for zstd)
-                if (level < 1 or level > 22) {
-                    return globalThis.throwInvalidArguments("Compression level must be between 1 and 22", .{});
-                }
-            }
-        }
+        const level = try getLevel(globalThis, options_val);
 
         const allow_string_object = true;
         if (try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, buffer_value, true, allow_string_object)) |buffer| {
@@ -1782,49 +1787,30 @@ pub const JSZstd = struct {
         const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
 
-        var level: i32 = 3; // Default compression level
-
-        if (options_val) |option_obj| {
-            if (try option_obj.get(globalThis, "level")) |level_val| {
-                level = level_val.coerce(i32, globalThis);
-                if (globalThis.hasException()) return error.JSError;
-
-                // Validate level range (1-22 for zstd)
-                if (level < 1 or level > 22) {
-                    return globalThis.throwInvalidArguments("Compression level must be between 1 and 22", .{});
-                }
-            }
-        }
+        const level = try getLevel(globalThis, options_val);
 
         const input = buffer.slice();
         const allocator = bun.default_allocator;
 
         // Calculate max compressed size
         const max_size = bun.zstd.compressBound(input.len);
-        var output = try allocator.alloc(u8, max_size)
-
-        // Create a context for better control
-        const cctx = bun.zstd.ZSTD_createCCtx() orelse {
-            allocator.free(output);
-            return globalThis.ERR(.ZSTD, "Failed to create compression context", .{}).throw();
-        };
-        defer _ = bun.zstd.ZSTD_freeCCtx(cctx);
+        var output = try allocator.alloc(u8, max_size);
 
         // Perform compression with context
-        const compressed_size = bun.zstd.ZSTD_compressCCtx(cctx, output.ptr, output.len, input.ptr, input.len, level);
-
-        if (bun.zstd.ZSTD_isError(compressed_size) != 0) {
-            allocator.free(output);
-            return globalThis.ERR(.ZSTD, "{s}", .{bun.zstd.ZSTD_getErrorName(compressed_size)}).throw();
-        }
+        const compressed_size = switch (bun.zstd.compress(output, input, level)) {
+            .success => |size| size,
+            .err => |err| {
+                allocator.free(output);
+                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
+            },
+        };
 
         // Resize to actual compressed size
         if (compressed_size < output.len) {
-            output = try allocator.realloc(output, compressed_size)
+            output = try allocator.realloc(output, compressed_size);
         }
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(output, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, output.ptr, deallocator, null);
+        return JSC.JSValue.createBuffer(globalThis, output, bun.default_allocator);
     }
 
     pub fn decompressSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -1843,7 +1829,7 @@ pub const JSZstd = struct {
         }
 
         // Allocate output buffer based on decompressed size
-        var output = try allocator.alloc(u8, decompressed_size)
+        var output = try allocator.alloc(u8, decompressed_size);
 
         // Perform decompression
         const actual_size = switch (bun.zstd.decompress(output, input)) {
@@ -1859,8 +1845,7 @@ pub const JSZstd = struct {
         // mimalloc doesn't care about the self-reported size of the slice.
         output.len = actual_size;
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(output, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, output.ptr, deallocator, null);
+        return JSC.JSValue.createBuffer(globalThis, output, bun.default_allocator);
     }
 
     // --- Async versions ---
@@ -1900,7 +1885,10 @@ pub const JSZstd = struct {
                     .success => |size| blk: {
                         // Resize to actual compressed size
                         if (size < job.output.len) {
-                            break :blk allocator.realloc(job.output, size) catch { job.error_message = "Out of memory"; return ;}
+                            break :blk allocator.realloc(job.output, size) catch {
+                                job.error_message = "Out of memory";
+                                return;
+                            };
                         }
                         break :blk job.output;
                     },

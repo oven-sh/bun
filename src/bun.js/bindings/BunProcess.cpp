@@ -3540,7 +3540,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {
-    auto* process = static_cast<Process*>(global->processObject());
+    auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
 
     auto ident = vm.propertyNames->message;
@@ -3554,7 +3554,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
-    auto* process = static_cast<Process*>(global->processObject());
+    auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
@@ -3565,7 +3565,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value)
 {
-    auto* process = static_cast<Process*>(global->processObject());
+    auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
         JSC::MarkedArgumentBuffer args;

@@ -1900,7 +1900,7 @@ pub const JSZstd = struct {
                     .success => |size| blk: {
                         // Resize to actual compressed size
                         if (size < job.output.len) {
-                            break :blk allocator.realloc(job.output, size) catch job.output[0..size];
+                            break :blk allocator.realloc(job.output, size) catch { job.error_message = "Out of memory"; return ;}
                         }
                         break :blk job.output;
                     },

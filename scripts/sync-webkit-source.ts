@@ -1,5 +1,5 @@
-import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const bunRepo = dirname(import.meta.dir);
 const webkitRepo = join(bunRepo, "vendor/WebKit");

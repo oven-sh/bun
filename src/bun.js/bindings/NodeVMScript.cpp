@@ -10,7 +10,6 @@
 #include "../vm/SigintWatcher.h"
 
 #include <bit>
-#include <print>
 
 namespace Bun {
 using namespace NodeVM;

@@ -97,7 +97,7 @@ if (isDockerEnabled()) {
       }, 6_000); // should not take more than 6 seconds per install
       try {
         await Promise.race([
-          Bun.$`${bunExe()} i --no-cache`
+          Bun.$`${bunExe()} i --no-cache --ignore-scripts`
             // @ts-ignore
             .env({
               ...bunEnv,

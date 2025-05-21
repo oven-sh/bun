@@ -1,11 +1,44 @@
-/**
- * Browser polyfill for the `"crypto"` module.
- *
- * Imported on usage in `bun build --target=browser`
- */
+import cryptoBrowserify from "crypto-browserify";
 
-export * from "crypto-browserify";
-import * as cryptoBrowserify from "crypto-browserify";
+export const prng = cryptoBrowserify.prng;
+export const pseudoRandomBytes = cryptoBrowserify.pseudoRandomBytes;
+export const rng = cryptoBrowserify.rng;
+export const randomBytes = cryptoBrowserify.randomBytes;
+export const Hash = cryptoBrowserify.Hash;
+export const createHash = cryptoBrowserify.createHash;
+export const Hmac = cryptoBrowserify.Hmac;
+export const createHmac = cryptoBrowserify.createHmac;
+export const getHashes = cryptoBrowserify.getHashes;
+export const pbkdf2 = cryptoBrowserify.pbkdf2;
+export const pbkdf2Sync = cryptoBrowserify.pbkdf2Sync;
+export const Cipher = cryptoBrowserify.Cipher;
+export const createCipher = cryptoBrowserify.createCipher;
+export const Cipheriv = cryptoBrowserify.Cipheriv;
+export const createCipheriv = cryptoBrowserify.createCipheriv;
+export const Decipher = cryptoBrowserify.Decipher;
+export const createDecipher = cryptoBrowserify.createDecipher;
+export const Decipheriv = cryptoBrowserify.Decipheriv;
+export const createDecipheriv = cryptoBrowserify.createDecipheriv;
+export const getCiphers = cryptoBrowserify.getCiphers;
+export const listCiphers = cryptoBrowserify.listCiphers;
+export const DiffieHellmanGroup = cryptoBrowserify.DiffieHellmanGroup;
+export const createDiffieHellmanGroup = cryptoBrowserify.createDiffieHellmanGroup;
+export const getDiffieHellman = cryptoBrowserify.getDiffieHellman;
+export const createDiffieHellman = cryptoBrowserify.createDiffieHellman;
+export const DiffieHellman = cryptoBrowserify.DiffieHellman;
+export const createSign = cryptoBrowserify.createSign;
+export const Sign = cryptoBrowserify.Sign;
+export const createVerify = cryptoBrowserify.createVerify;
+export const Verify = cryptoBrowserify.Verify;
+export const createECDH = cryptoBrowserify.createECDH;
+export const publicEncrypt = cryptoBrowserify.publicEncrypt;
+export const privateEncrypt = cryptoBrowserify.privateEncrypt;
+export const publicDecrypt = cryptoBrowserify.publicDecrypt;
+export const privateDecrypt = cryptoBrowserify.privateDecrypt;
+export const randomFill = cryptoBrowserify.randomFill;
+export const randomFillSync = cryptoBrowserify.randomFillSync;
+export const createCredentials = cryptoBrowserify.createCredentials;
+export const constants = cryptoBrowserify.constants;
 
 export var DEFAULT_ENCODING = "buffer";
 
@@ -18,7 +51,7 @@ export const randomUUID = () => {
   return crypto.randomUUID();
 };
 
-const harcoded_curves = [
+const hardcoded_curves = [
   "p192",
   "p224",
   "p256",
@@ -36,42 +69,7 @@ const harcoded_curves = [
 ];
 
 export function getCurves() {
-  return harcoded_curves;
-}
-
-export const timingSafeEqual =
-  "timingSafeEqual" in crypto
-    ? (a, b) => {
-        const { byteLength: byteLengthA } = a;
-        const { byteLength: byteLengthB } = b;
-        if (typeof byteLengthA !== "number" || typeof byteLengthB !== "number") {
-          throw new TypeError("Input must be an array buffer view");
-        }
-
-        if (byteLengthA !== byteLengthB) {
-          throw new RangeError("Input buffers must have the same length");
-        }
-
-        // these error checks are also performed in the function
-        // however there is a bug where exceptions return no value
-        return crypto.timingSafeEqual(a, b);
-      }
-    : undefined;
-
-if (timingSafeEqual) {
-  // hide it from stack trace
-  Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  });
+  return hardcoded_curves;
 }
 
 export const webcrypto = crypto;
-
-export default {
-  ...cryptoBrowserify,
-  getRandomValues,
-  randomUUID,
-  timingSafeEqual,
-  webcrypto,
-  getCurves,
-};

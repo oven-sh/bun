@@ -495,6 +495,8 @@ pub const Version = struct {
         /// GitHub Repository (via REST API)
         github = 8,
 
+        catalog = 9,
+
         pub const map = bun.ComptimeStringMap(Tag, .{
             .{ "npm", .npm },
             .{ "dist_tag", .dist_tag },
@@ -504,6 +506,7 @@ pub const Version = struct {
             .{ "workspace", .workspace },
             .{ "git", .git },
             .{ "github", .github },
+            .{ "catalog", .catalog },
         });
         pub const fromJS = map.fromJS;
 
@@ -573,6 +576,11 @@ pub const Version = struct {
                     if (strings.hasPrefixComptime(dependency, "file:")) {
                         if (isTarball(dependency)) return .tarball;
                         return .folder;
+                    }
+                },
+                'c' => {
+                    if (strings.hasPrefixComptime(dependency, "catalog:")) {
+                        return .catalog;
                     }
                 },
                 // git_user/repo
@@ -820,6 +828,10 @@ pub const Version = struct {
         workspace: String,
         git: Repository,
         github: Repository,
+
+        // dep version without 'catalog:' protocol
+        // empty string == default catalog
+        catalog: String,
     };
 };
 
@@ -1237,6 +1249,19 @@ pub fn parseWithTag(
             return .{
                 .value = .{ .workspace = sliced.sub(input).value() },
                 .tag = .workspace,
+                .literal = sliced.value(),
+            };
+        },
+        .catalog => {
+            bun.assert(strings.hasPrefixComptime(dependency, "catalog:"));
+
+            const group = dependency["catalog:".len..];
+
+            const trimmed = strings.trim(group, &strings.whitespace_chars);
+
+            return .{
+                .value = .{ .catalog = sliced.sub(trimmed).value() },
+                .tag = .catalog,
                 .literal = sliced.value(),
             };
         },

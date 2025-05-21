@@ -1891,7 +1891,7 @@ class Http2Stream extends Duplex {
       }
       markStreamClosed(this);
       this.rstCode = code;
-      if (this.writableFinished) {
+      if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));

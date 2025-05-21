@@ -28,6 +28,7 @@ server.listen(0, function() {
                                { rejectUnauthorized: false }
   );
   client_stream = client.request({ ':method': 'POST' });
+  
   client_stream.on('close', common.mustCall(() => {
     client.close();
     server.close();

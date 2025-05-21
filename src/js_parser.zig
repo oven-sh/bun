@@ -12626,10 +12626,9 @@ fn NewParser_(
             p.allow_in = true;
 
             const loc = p.lexer.loc();
-            var scopeIndex: usize = 0;
             var pushedScopeForFunctionBody = false;
             if (p.lexer.token == .t_open_brace) {
-                scopeIndex = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+                _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
                 pushedScopeForFunctionBody = true;
             }
 
@@ -12638,7 +12637,7 @@ fn NewParser_(
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
             try p.lexer.next();
 
-            if (pushedScopeForFunctionBody) p.popAndDiscardScope(scopeIndex);
+            if (pushedScopeForFunctionBody) p.popScope();
 
             p.allow_in = oldAllowIn;
             p.fn_or_arrow_data_parse = oldFnOrArrowData;

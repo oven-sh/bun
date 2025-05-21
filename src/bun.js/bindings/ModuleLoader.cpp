@@ -39,6 +39,8 @@
 
 #include "JSCommonJSExtensions.h"
 
+#include "BunProcess.h"
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;

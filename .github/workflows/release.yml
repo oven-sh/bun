@@ -378,8 +378,8 @@ jobs:
           await packageJson.write(JSON.stringify(json, null, 2) + "\n");
           '
   
+      - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
-        token: ${{ secrets.GITHUB_TOKEN }}
         with:
           title: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"
           add-paths: |

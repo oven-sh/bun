@@ -433,8 +433,8 @@ exports[`should sort overrides before comparing 1`] = `
     },
   },
   "overrides": {
-    "what-bin": "1.0.0",
     "no-deps": "2.0.0",
+    "what-bin": "1.0.0",
   },
   "packages": {
     "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],
@@ -470,9 +470,9 @@ exports[`should include unused resolutions in the lockfile 1`] = `
     },
   },
   "overrides": {
-    "what-bin": "1.0.0",
-    "no-deps": "2.0.0",
     "jquery": "4.0.0",
+    "no-deps": "2.0.0",
+    "what-bin": "1.0.0",
   },
   "packages": {
     "no-deps": ["no-deps@2.0.0", "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}, "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g=="],

@@ -97,6 +97,13 @@ pub const Resolution = extern struct {
             .symlink => error.UnexpectedResolution,
             .folder => error.UnexpectedResolution,
 
+            // even though it's a dependency type, it's not
+            // possible for 'catalog:' to be written to the
+            // lockfile for any resolution because the install
+            // will fail it it's not successfully replaced by
+            // a version
+            .catalog => error.UnexpectedResolution,
+
             // should not happen
             .dist_tag => error.UnexpectedResolution,
             .uninitialized => error.UnexpectedResolution,

@@ -205,6 +205,28 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+export function makeTreeSync(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = (typeof raw_contents === "function" ? raw_contents({ root: base }) : raw_contents) as string;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
+      }
+    }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTreeSync(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
+  }
+}
+
 /**
  * Recursively create files within a new temporary directory.
  *
@@ -224,7 +246,7 @@ export async function makeTree(base: string, tree: DirectoryTree) {
  */
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTree(base, files);
+  makeTreeSync(base, files);
   return base;
 }
 

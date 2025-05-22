@@ -152,6 +152,8 @@ class Module {
         options.lineOffset,
         options.columnOffset,
         options.cachedData,
+        options.initializeImportMeta,
+        this,
       );
       registry = {
         __proto__: null,

@@ -71,12 +71,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         status(Status::Evaluating);
         evaluateDependencies(globalObject, record, timeout, breakOnSigint);
         if (sourceTextThis) {
-            result = sourceTextThis->moduleRecord(globalObject)->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-        } else if (syntheticThis) {
-            result = syntheticThis->moduleRecord(globalObject)->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid module type");
+            sourceTextThis->initializeImportMeta(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
         }
+        result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 
     setSigintReceived(false);
@@ -94,6 +92,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     } else {
         run();
     }
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (timeout != 0) {
         vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);

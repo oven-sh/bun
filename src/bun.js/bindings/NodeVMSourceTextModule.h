@@ -39,6 +39,7 @@ public:
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
     Exception* evaluationException() const { return m_evaluationException.get(); }
+    void initializeImportMeta(JSGlobalObject* globalObject);
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
     ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
@@ -52,11 +53,14 @@ private:
     WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Exception> m_evaluationException;
+    WriteBarrier<Unknown> m_initializeImportMeta;
+    WriteBarrier<Unknown> m_moduleWrapper;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
 
-    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode)
+    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper)
         : Base(vm, structure, WTFMove(identifier), context)
+        , m_moduleWrapper(vm, this, moduleWrapper)
         , m_sourceCode(WTFMove(sourceCode))
     {
     }

@@ -753,7 +753,6 @@ void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 JSValue ImportMetaObject::getPrototype(JSObject* object, JSC::JSGlobalObject* globalObject)
 {
-    return Base::getPrototype(object, globalObject);
     ASSERT(object->inherits(info()));
     return jsNull();
 }

@@ -6,7 +6,9 @@
 
 #include "wtf/Scope.h"
 
+#include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
@@ -63,6 +65,18 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
+    JSValue initializeImportMeta = args.at(6);
+    if (!initializeImportMeta.isUndefined() && !initializeImportMeta.isCallable()) {
+        throwArgumentTypeError(*globalObject, scope, 6, "options.initializeImportMeta"_s, "Module"_s, "Module"_s, "function"_s);
+        return nullptr;
+    }
+
+    JSValue moduleWrapper = args.at(7);
+    if (!moduleWrapper.isUndefined() && !moduleWrapper.isObject()) {
+        throwArgumentTypeError(*globalObject, scope, 7, "moduleWrapper"_s, "Module"_s, "Module"_s, "object"_s);
+        return nullptr;
+    }
+
     uint32_t lineOffset = lineOffsetValue.toUInt32(globalObject);
     uint32_t columnOffset = columnOffsetValue.toUInt32(globalObject);
 
@@ -72,8 +86,12 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode));
+    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
+
+    if (initializeImportMeta && !initializeImportMeta.isUndefined()) {
+        ptr->m_initializeImportMeta.set(vm, ptr, initializeImportMeta);
+    }
 
     if (cachedData.isEmpty()) {
         return ptr;
@@ -345,6 +363,28 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     return m_cachedBytecodeBuffer.get();
 }
 
+void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
+{
+    if (!m_initializeImportMeta) {
+        return;
+    }
+
+    JSModuleEnvironment* moduleEnvironment = m_moduleRecord->moduleEnvironmentMayBeNull();
+    ASSERT(moduleEnvironment != nullptr);
+
+    JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
+    ASSERT(metaValue);
+    ASSERT(metaValue.isObject());
+
+    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
+
+    MarkedArgumentBuffer args;
+    args.append(metaValue);
+    args.append(m_moduleWrapper.get());
+
+    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+}
+
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     return NodeVMModulePrototype::create(vm, NodeVMModulePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
@@ -362,6 +402,8 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_evaluationException);
+    visitor.append(vmModule->m_initializeImportMeta);
+    visitor.append(vmModule->m_moduleWrapper);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

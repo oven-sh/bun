@@ -599,21 +599,26 @@ fn printWhy(lockfile: *Lockfile, pm: *PackageManager, query: []const u8) !void {
     
     const json_output = strings.leftHasAnyInRight(pm.options.positionals, &.{"--json"});
     
-    // For JSON output, we'll collect all dependencies in this structure
-    var json_deps = std.ArrayList(struct {
+    // Define struct types for consistent type usage
+    const DependencyChainItem = struct {
+        name: []const u8,
+        version: []const u8,
+        from_name: ?[]const u8,
+        from_version: ?[]const u8,
+        path: ?[]const u8,
+        behavior: []const u8,
+        literal: []const u8,
+    };
+    
+    const PackageDependency = struct {
         name: []const u8,
         version: []const u8,
         path: []const u8,
-        chain: std.ArrayList(struct {
-            name: []const u8,
-            version: []const u8,
-            from_name: ?[]const u8,
-            from_version: ?[]const u8,
-            path: ?[]const u8,
-            behavior: []const u8,
-            literal: []const u8,
-        })
-    }).init(lockfile.allocator);
+        chain: std.ArrayList(DependencyChainItem)
+    };
+    
+    // For JSON output, we'll collect all dependencies in this structure
+    var json_deps = std.ArrayList(PackageDependency).init(lockfile.allocator);
     defer {
         if (json_output) {
             for (json_deps.items) |*dep| {
@@ -650,15 +655,7 @@ fn printWhy(lockfile: *Lockfile, pm: *PackageManager, query: []const u8) !void {
             dep_entry.name = try lockfile.allocator.dupe(u8, name);
             dep_entry.version = try lockfile.allocator.dupe(u8, version_str);
             dep_entry.path = try lockfile.allocator.dupe(u8, rel_path);
-            dep_entry.chain = std.ArrayList(struct {
-                name: []const u8,
-                version: []const u8,
-                from_name: ?[]const u8,
-                from_version: ?[]const u8,
-                path: ?[]const u8,
-                behavior: []const u8,
-                literal: []const u8,
-            }).init(lockfile.allocator);
+            dep_entry.chain = std.ArrayList(DependencyChainItem).init(lockfile.allocator);
         } else {
             // For text output, we'll print as we go
             Output.prettyln("{s}@{s}", .{ name, version_str });

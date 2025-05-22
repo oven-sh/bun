@@ -439,7 +439,11 @@ export function getChannel() {
   })();
 }
 
-export function emitWorkerStdioInParent(worker, fd, data) {
-  console.log(worker.on);
+export function emitWorkerStdioInParent(worker: Worker, fd: number, data: Uint8Array) {
+  const { webWorkerToNodeWorker } = require("internal/worker_threads");
+  const nodeWorker = webWorkerToNodeWorker.get(worker);
+  if (nodeWorker) {
+    nodeWorker.stdout.write(data);
+  }
   process.stdout.write(data);
 }

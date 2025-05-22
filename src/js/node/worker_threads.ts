@@ -20,7 +20,13 @@ const {
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { _workerData, _threadId, _receiveMessageOnPort, environmentData } = require("internal/worker_threads");
+const {
+  _workerData,
+  _threadId,
+  _receiveMessageOnPort,
+  environmentData,
+  webWorkerToNodeWorker,
+} = require("internal/worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -268,6 +274,8 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
+
+    webWorkerToNodeWorker.set(this.#worker, this);
   }
 
   get threadId() {

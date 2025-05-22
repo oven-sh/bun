@@ -1,4 +1,5 @@
 const { Readable, Writable } = require("node:stream");
+import type { Worker } from "node:worker_threads";
 
 const {
   0: _workerData,
@@ -29,6 +30,8 @@ class WritableWorkerStdio extends Writable {
 
 class ReadableWorkerStdio extends Readable {}
 
+const webWorkerToNodeWorker = new WeakMap<globalThis.Worker, Worker>();
+
 export default {
   WritableWorkerStdio,
   ReadableWorkerStdio,
@@ -37,4 +40,5 @@ export default {
   _receiveMessageOnPort,
   environmentData,
   pushStdioToParent,
+  webWorkerToNodeWorker,
 };

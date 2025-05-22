@@ -1301,6 +1301,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     ErrorableResolvedSource res;
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
     if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
         if (res.success)

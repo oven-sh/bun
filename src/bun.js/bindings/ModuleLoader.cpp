@@ -532,7 +532,8 @@ JSValue resolveAndFetchBuiltinModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    memset(&res, 0, sizeof(ErrorableResolvedSource));
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
         ASSERT(res.success);
 
@@ -607,7 +608,8 @@ JSValue fetchCommonJSModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
-    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
+    resValue.success = false;
+    memset(&resValue.result, 0, sizeof resValue.result);
 
     ErrorableResolvedSource* res = &resValue;
     ResolvedSourceCodeHolder sourceCodeHolder(res);
@@ -1074,8 +1076,9 @@ using namespace Bun;
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    ErrorableResolvedSource res = {};
+    ErrorableResolvedSource res;
     res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     JSC::JSValue objectResult = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     JSC::JSValue specifierString = pendingModule->internalField(0).get();

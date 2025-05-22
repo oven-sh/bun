@@ -1062,8 +1062,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     auto specifier = Bun::toString(moduleKey);
     ErrorableResolvedSource res;
     res.success = false;
-    res.result.err.code = 0;
-    res.result.err.ptr = nullptr;
+    // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
+    // EncodedJSValues are empty, which our code should be handling
+    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = Bun::fetchESMSourceCodeSync(
         globalObject,
@@ -4191,8 +4192,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
     res.success = false;
-    res.result.err.code = 0;
-    res.result.err.ptr = nullptr;
+    // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
+    // EncodedJSValues are empty, which our code should be handling
+    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
         reinterpret_cast<Zig::GlobalObject*>(globalObject),

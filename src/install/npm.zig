@@ -16,6 +16,7 @@ const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = bun.logger;
 const Output = bun.Output;
+const Global = bun.Global;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
@@ -35,7 +36,6 @@ const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const Global = bun.Global;
 const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
@@ -193,12 +193,12 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     return username;
 }
 
-pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string) !void {
+pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string, property_path: ?string, json_output: bool) !void {
     var name = spec;
     var version: ?string = null;
     if (strings.lastIndexOfChar(spec, '@')) |idx| {
         if (idx != 0) {
-            if (spec[0] != '@' or (strings.indexOfChar(spec, '/')) |slash| idx > slash) {
+            if (spec[0] != '@' or if (strings.indexOfChar(spec, '/')) |slash| idx > slash else true) {
                 name = spec[0..idx];
                 version = spec[idx + 1 ..];
             }
@@ -276,12 +276,12 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
 
     var manifest = json;
     var versions_len: usize = 1;
-    if (!version) {
+    if (version == null) {
         if (json.getObject("versions")) |versions_obj| {
             versions_len = versions_obj.data.e_object.properties.len;
             var latest_version: ?string = null;
             if (json.getObject("dist-tags")) |tags| {
-                if (tags.getStringCloned(allocator, "latest")) |lv| {
+                if (tags.getStringCloned(allocator, "latest") catch null) |lv| {
                     latest_version = lv;
                 }
             }
@@ -296,9 +296,53 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         }
     }
 
-    const pkg_name = manifest.getStringCloned(allocator, "name") orelse name;
-    const pkg_version = manifest.getStringCloned(allocator, "version") orelse version orelse "";
-    const license = manifest.getStringCloned(allocator, "license") orelse "";
+    // Handle property lookup if specified
+    if (property_path) |prop_path| {
+        if (manifest.getPathMayBeIndex(prop_path)) |*value| {
+            if (value.data == .e_string) {
+                const slice = value.data.e_string.slice(allocator);
+                Output.println("{s}", .{slice});
+                Output.flush();
+                return;
+            }
+
+            const JSPrinter = bun.js_printer;
+            var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
+            buffer_writer.append_newline = true;
+            var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+            _ = try bun.js_printer.printJSON(
+                @TypeOf(&package_json_writer),
+                &package_json_writer,
+                value.*,
+                &source,
+                .{
+                    .mangled_props = null,
+                    .indent = .{
+                        .count = 2,
+                    },
+                },
+            );
+            Output.print("{s}", .{package_json_writer.ctx.getWritten()});
+            Output.flush();
+        } else {
+            Output.errGeneric("Property '{s}' not found", .{prop_path});
+            Global.crash();
+        }
+        return;
+    }
+
+    if (json_output) {
+        // Output raw JSON for the manifest
+        Output.flush();
+        Output.disableBuffering();
+        _ = Output.writer().write(response_buf.list.items) catch {};
+        Output.enableBuffering();
+        return;
+    }
+
+    const pkg_name = manifest.getStringCloned(allocator, "name") catch null orelse name;
+    const pkg_version = manifest.getStringCloned(allocator, "version") catch null orelse version orelse "";
+    const license = manifest.getStringCloned(allocator, "license") catch null orelse "";
     var dep_count: usize = 0;
     if (manifest.getObject("dependencies")) |deps| {
         dep_count = deps.data.e_object.properties.len;
@@ -312,10 +356,10 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         versions_len,
     });
 
-    if (manifest.getStringCloned(allocator, "description")) |desc| {
+    if (manifest.getStringCloned(allocator, "description") catch null) |desc| {
         Output.prettyln("{s}", .{desc});
     }
-    if (manifest.getStringCloned(allocator, "homepage")) |hp| {
+    if (manifest.getStringCloned(allocator, "homepage") catch null) |hp| {
         Output.prettyln("{s}", .{hp});
     }
 
@@ -330,47 +374,66 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
             }
         }
         if (keywords.list.items.len > 0) {
-            Output.prettyln("\n<blue>keywords<r>: {s}", .{keywords.list.items});
+            Output.prettyln("\n<blue>keywords<r><d>:<r> {s}", .{keywords.list.items});
         }
     }
 
-    if (manifest.getObject("dist")) |dist| {
-        Output.prettyln("\n<b>dist<r>", .{});
-        if (dist.getStringCloned(allocator, "tarball")) |t| {
-            Output.prettyln(".tarball: {s}", .{t});
+    if (manifest.getObject(".dist")) |dist| {
+        Output.prettyln("\n<d>.<r><b>dist<r>", .{});
+        if (dist.getStringCloned(allocator, "tarball") catch null) |t| {
+            Output.prettyln("<d>.<r>tarball<d>:<r> {s}", .{t});
         }
-        if (dist.getStringCloned(allocator, "shasum")) |s| {
-            Output.prettyln(".shasum: {s}", .{s});
+        if (dist.getStringCloned(allocator, ".shasum") catch null) |s| {
+            Output.prettyln("<d>.<r>shasum<d>:<r> {s}", .{s});
         }
-        if (dist.getStringCloned(allocator, "integrity")) |i| {
-            Output.prettyln(".integrity: {s}", .{i});
+        if (dist.getStringCloned(allocator, ".integrity") catch null) |i| {
+            Output.prettyln("<d>.<r>integrity<d>:<r> {s}", .{i});
         }
-        if (dist.getNumber("unpackedSize")) |u| {
-            Output.prettyln(".unpackedSize: {d} bytes", .{@as(u64, @intFromFloat(u.value))});
+        if (dist.getNumber(".unpackedSize")) |u| {
+            Output.prettyln("<d>.<r>unpackedSize<d>:<r> {d} bytes", .{@as(u64, @intFromFloat(u[0]))});
         }
     }
 
     if (manifest.getArray("maintainers")) |maint_iter| {
-        Output.prettyln("\n<b>maintainers<r>:", .{});
+        Output.prettyln("\n<b>maintainers<r><d>:<r>", .{});
         var iter = maint_iter;
         while (iter.next()) |m| {
-            var nm = m.getStringCloned(allocator, "name") orelse "";
-            var em = m.getStringCloned(allocator, "email") orelse "";
-            Output.prettyln("- {s} <{s}>", .{nm, em});
+            const nm = m.getStringCloned(allocator, "name") catch null orelse "";
+            const em = m.getStringCloned(allocator, "email") catch null orelse "";
+            if (em.len > 0) {
+                Output.prettyln("- {s} <d>\\<{s}\\><r>", .{ nm, em });
+            } else {
+                Output.prettyln("- {s}", .{nm});
+            }
         }
     }
 
     if (json.getObject("dist-tags")) |tags_obj| {
-        Output.prettyln("\n<b>dist-tags<r>:", .{});
+        Output.prettyln("\n<b>dist-tags<r><d>:<r>", .{});
         for (tags_obj.data.e_object.properties.slice()) |prop| {
             if (prop.key == null or prop.value == null) continue;
             const tagname_expr = prop.key.?;
             const val_expr = prop.value.?;
             if (tagname_expr.asString(allocator)) |tag| {
                 if (val_expr.asString(allocator)) |val| {
-                    Output.prettyln("{s}: {s}", .{tag, val});
+                    if (strings.eqlComptime(tag, "latest")) {
+                        Output.prettyln("<cyan>{s}<r><d>:<r> {s}", .{ tag, val });
+                    } else if (strings.eqlComptime(tag, "beta")) {
+                        Output.prettyln("<blue>{s}<r><d>:<r> {s}", .{ tag, val });
+                    } else {
+                        Output.prettyln("<magenta>{s}<r><d>:<r> {s}", .{ tag, val });
+                    }
                 }
             }
+        }
+    }
+
+    // Add published date information
+    if (json.getObject("time")) |time_obj| {
+        if (time_obj.getStringCloned(allocator, pkg_version) catch null) |published_time| {
+            Output.prettyln("\n<b>Published<r><d>:<r> {s}", .{published_time});
+        } else if (time_obj.getStringCloned(allocator, "modified") catch null) |modified_time| {
+            Output.prettyln("\n<b>Published<r><d>:<r> {s}", .{modified_time});
         }
     }
 }

@@ -7213,7 +7213,7 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_filename: string = "",
         pack_gzip_level: ?string = null,
-        // json_output: bool = false,
+        json_output: bool = false,
 
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
@@ -9694,6 +9694,7 @@ pub const PackageManager = struct {
 
     pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
+        clap.parseParam("--json                              Output in JSON format") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
@@ -9736,7 +9737,7 @@ pub const PackageManager = struct {
     });
 
     const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+        clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
         clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
@@ -9785,7 +9786,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        // json_output: bool = false,
+        json_output: bool = false,
         filters: []const string = &.{},
 
         pack_destination: string = "",
@@ -10203,10 +10204,13 @@ pub const PackageManager = struct {
             if (comptime subcommand == .outdated) {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
-                // cli.json_output = args.flag("--json");
+                cli.json_output = args.flag("--json");
             }
 
             if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
+                if (comptime subcommand == .pm) {
+                    cli.json_output = args.flag("--json");
+                }
                 if (comptime subcommand != .publish) {
                     if (args.option("--destination")) |dest| {
                         cli.pack_destination = dest;

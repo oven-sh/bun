@@ -514,7 +514,34 @@ it("handles chunked extensions with special characters", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-it("doesnt error if the trailing \r\n is missing", async () => {
+it.only("Proper error if missing zero-length chunk", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = net
+    .createServer(socket => {
+      socket.write("HTTP/1.1 200 OK\r\n");
+      socket.write("Content-Type: text/plain\r\n");
+      socket.write("Transfer-Encoding: chunked\r\n");
+      socket.write("\r\n");
+
+      // Valid chunk
+      socket.write("5\r\nHello\r\n");
+
+      // End the connection abruptly
+      socket.end();
+    })
+    .listen(0, "localhost", () => {
+      resolve(server.address());
+    });
+
+  try {
+    const address = await promise;
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("ECONNRESET");
+  }
+});
+it("Proper error if missing CRLF after chunk data", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {

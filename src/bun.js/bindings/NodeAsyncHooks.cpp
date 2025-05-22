@@ -31,21 +31,4 @@ JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC::JSValue createAsyncHooksBinding(Zig::GlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto binding = constructEmptyArray(globalObject, nullptr, 2);
-    binding->putByIndexInline(
-        globalObject,
-        (unsigned)0,
-        JSC::JSFunction::create(vm, globalObject, 0, "setAsyncHooksEnabled"_s, jsSetAsyncHooksEnabled, ImplementationVisibility::Public),
-        false);
-    binding->putByIndexInline(
-        globalObject,
-        (unsigned)1,
-        JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, jsCleanupLater, ImplementationVisibility::Public),
-        false);
-    return binding;
-}
-
 }

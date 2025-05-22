@@ -3153,7 +3153,7 @@ class ClientHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     const nativeSocket = socket._handle;
-    if (nativeSocket) {
+    if (nativeSocket && nativeSocket.readyState > 0) {
       this.#parser.setNativeSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
@@ -3386,6 +3386,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket._handle;
+
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,

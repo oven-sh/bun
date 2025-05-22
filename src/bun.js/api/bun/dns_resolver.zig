@@ -1398,8 +1398,7 @@ pub const InternalDNS = struct {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        // observed .ADDRCONFIG=true causing issues in the wild once node:net was brought more in sync with tests
-        .flags = .{},
+        .flags = .{ .ADDRCONFIG = true },
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,

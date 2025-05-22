@@ -1545,7 +1545,7 @@ function lookupAndConnect(self, options) {
     dnsopts.hints = dns.ADDRCONFIG;
   }
 
-  $debug("connect: find host", host);
+  $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
   self._host = host;
   const lookup = options.lookup || dns.lookup;

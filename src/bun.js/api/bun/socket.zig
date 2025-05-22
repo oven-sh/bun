@@ -3668,6 +3668,8 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             }
         }
 
+        pub const onFd = null;
+
         pub fn onWritable(this: WrappedSocket, socket: Socket) void {
             if (comptime tls) {
                 TLSSocket.onWritable(this.tls, socket);

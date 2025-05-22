@@ -440,7 +440,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.is_paused = 0;
     socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
-    
+    socket->connect_next = NULL;
 
     us_internal_socket_context_link_socket(context, socket);
 

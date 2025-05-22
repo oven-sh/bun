@@ -25,6 +25,7 @@ const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
 const Npm = Install.Npm;
 const File = bun.sys.File;
 
@@ -129,6 +130,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>         print the hash stored in the current lockfile
+            \\  <b><green>bun pm<r> <blue>audit<r>              check installed packages for vulnerabilities
             \\  <b><green>bun pm<r> <blue>cache<r>              print the path to the cache folder
             \\  <b><green>bun pm<r> <blue>cache rm<r>           clear the cache
             \\  <b><green>bun pm<r> <blue>migrate<r>            migrate another package manager's lockfile without installing anything
@@ -243,6 +245,9 @@ pub const PackageManagerCommand = struct {
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "audit")) {
+            try AuditCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;

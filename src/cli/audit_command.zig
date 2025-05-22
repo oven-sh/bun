@@ -158,6 +158,85 @@ pub const AuditCommand = struct {
     }
 };
 
+fn printVulnerability(package_name: []const u8, vuln: bun.JSAst.Expr, vuln_counts: anytype) void {
+    var severity: []const u8 = "moderate";
+    var title: []const u8 = "Vulnerability found";
+    var url: []const u8 = "";
+    var vulnerable_versions: []const u8 = "";
+    var id: []const u8 = "";
+
+    if (vuln.data == .e_object) {
+        const props = vuln.data.e_object.properties.slice();
+        for (props) |prop| {
+            if (prop.key) |key| {
+                if (key.data == .e_string) {
+                    const field_name = key.data.e_string.data;
+                    if (prop.value) |value| {
+                        if (value.data == .e_string) {
+                            const field_value = value.data.e_string.data;
+                            if (std.mem.eql(u8, field_name, "severity")) {
+                                severity = field_value;
+                            } else if (std.mem.eql(u8, field_name, "title")) {
+                                title = field_value;
+                            } else if (std.mem.eql(u8, field_name, "url")) {
+                                url = field_value;
+                            } else if (std.mem.eql(u8, field_name, "vulnerable_versions")) {
+                                vulnerable_versions = field_value;
+                            } else if (std.mem.eql(u8, field_name, "id")) {
+                                id = field_value;
+                            }
+                        } else if (value.data == .e_number) {
+                            if (std.mem.eql(u8, field_name, "id")) {
+                                id = std.fmt.allocPrint(bun.default_allocator, "{d}", .{@as(u64, @intFromFloat(value.data.e_number.value))}) catch "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (std.mem.eql(u8, severity, "low")) {
+        vuln_counts.low += 1;
+    } else if (std.mem.eql(u8, severity, "moderate")) {
+        vuln_counts.moderate += 1;
+    } else if (std.mem.eql(u8, severity, "high")) {
+        vuln_counts.high += 1;
+    } else if (std.mem.eql(u8, severity, "critical")) {
+        vuln_counts.critical += 1;
+    } else {
+        vuln_counts.moderate += 1; //default
+    }
+
+    if (vulnerable_versions.len > 0) {
+        Output.prettyln("<red>{s}<r>  {s}", .{ package_name, vulnerable_versions });
+    } else {
+        Output.prettyln("<red>{s}<r>", .{package_name});
+    }
+
+    const severity_color = if (std.mem.eql(u8, severity, "critical"))
+        "<red>critical<r>"
+    else if (std.mem.eql(u8, severity, "high"))
+        "<red>high<r>"
+    else if (std.mem.eql(u8, severity, "moderate"))
+        "<yellow>moderate<r>"
+    else
+        "<cyan>low<r>";
+
+    Output.prettyln("Severity: {s}", .{severity_color});
+
+    if (title.len > 0) {
+        Output.prettyln("{s}", .{title});
+    }
+
+    if (url.len > 0) {
+        Output.prettyln("<blue>{s}<r>", .{url});
+    }
+
+    Output.prettyln("fix available via `bun update`", .{});
+    Output.prettyln("", .{});
+}
+
 fn printAuditReport(response_text: []const u8) !void {
     const source = logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(bun.default_allocator);
@@ -178,26 +257,66 @@ fn printAuditReport(response_text: []const u8) !void {
 
     if (expr.data == .e_object) {
         const properties = expr.data.e_object.properties.slice();
-        var vuln_count: u32 = 0;
+        var vuln_counts = struct {
+            low: u32 = 0,
+            moderate: u32 = 0,
+            high: u32 = 0,
+            critical: u32 = 0,
+        }{};
 
         for (properties) |prop| {
             if (prop.key) |key| {
                 if (key.data == .e_string) {
-                    const package_name_data = key.data.e_string.data;
+                    const package_name = key.data.e_string.data;
 
-                    vuln_count += 1;
-                    Output.prettyln("<red>{s}<r>", .{package_name_data});
-                    Output.prettyln("Severity: high", .{});
-                    Output.prettyln("Vulnerability details available", .{});
-                    Output.prettyln("", .{});
+                    // Parse vulnerability array for this package
+                    if (prop.value) |value| {
+                        if (value.data == .e_array) {
+                            const vulns = value.data.e_array.items.slice();
+                            for (vulns) |vuln| {
+                                if (vuln.data == .e_object) {
+                                    printVulnerability(package_name, vuln, &vuln_counts);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        if (vuln_count > 0) {
-            Output.prettyln("{d} vulnerabilities found", .{vuln_count});
+        const total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
+        if (total > 0) {
             Output.prettyln("", .{});
-            Output.prettyln("To address issues, update the affected packages to their latest versions.", .{});
+            var severity_parts = std.ArrayList([]const u8).init(bun.default_allocator);
+            defer severity_parts.deinit();
+
+            if (vuln_counts.low > 0) {
+                const part = std.fmt.allocPrint(bun.default_allocator, "{d} low", .{vuln_counts.low}) catch "";
+                severity_parts.append(part) catch {};
+            }
+            if (vuln_counts.moderate > 0) {
+                const part = std.fmt.allocPrint(bun.default_allocator, "{d} moderate", .{vuln_counts.moderate}) catch "";
+                severity_parts.append(part) catch {};
+            }
+            if (vuln_counts.high > 0) {
+                const part = std.fmt.allocPrint(bun.default_allocator, "{d} high", .{vuln_counts.high}) catch "";
+                severity_parts.append(part) catch {};
+            }
+            if (vuln_counts.critical > 0) {
+                const part = std.fmt.allocPrint(bun.default_allocator, "{d} critical", .{vuln_counts.critical}) catch "";
+                severity_parts.append(part) catch {};
+            }
+
+            Output.pretty("{d} vulnerabilities (", .{total});
+            for (severity_parts.items, 0..) |part, i| {
+                if (i > 0) Output.pretty(", ", .{});
+                Output.pretty("{s}", .{part});
+                bun.default_allocator.free(part);
+            }
+            Output.prettyln(")", .{});
+            Output.prettyln("", .{});
+            Output.prettyln("To address issues, run:", .{});
+            Output.prettyln("  bun update", .{});
         }
     } else {
         Output.writer().writeAll(response_text) catch {};

@@ -1,4 +1,6 @@
-export {
+import * as assert from "./node_modules/assert";
+
+export const {
   AssertionError,
   CallTracker,
   deepEqual,
@@ -19,5 +21,5 @@ export {
   strict,
   strictEqual,
   throws,
-} from "./node_modules/assert";
-export * as default from "./node_modules/assert";
+} = assert;
+export default assert;

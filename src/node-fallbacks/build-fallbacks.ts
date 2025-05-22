@@ -32,19 +32,20 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
 
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --outdir=${outdir} ${name} --minify-syntax  --format=esm --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
     buildCommand.then(async text => {
       // This is very brittle. But that should be okay for our usecase
       let outfile = (await Bun.file(`${outdir}/${name}`).text())
         .replaceAll("__require(", "require(")
-        .replace(/var __require.*$/gim, "")
+        .replaceAll("import.meta.url", "''")
+        .replaceAll("createRequire", "")
         .replaceAll("global.process", "require('process')")
         .trim();
 
-      while (outfile.startsWith("import {")) {
-        outfile = outfile.slice(outfile.indexOf(";\n") + 1);
+      while (outfile.startsWith("import{")) {
+        outfile = outfile.slice(outfile.indexOf(";") + 1);
       }
 
       if (outfile.includes('"node:module"')) {

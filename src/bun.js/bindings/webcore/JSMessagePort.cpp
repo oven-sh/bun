@@ -304,10 +304,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
     }
 
     if (argsCount >= 2) {
-        JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        bool hasIterator = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
+        JSValue distinguishingTransferArg = callFrame->uncheckedArgument(1);
+        bool hasIterator = hasIteratorMethod(lexicalGlobalObject, distinguishingTransferArg);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!distinguishingArg.isUndefinedOrNull() && !distinguishingArg.isObject() && !hasIterator) {
+        if (!distinguishingTransferArg.isUndefinedOrNull() && !distinguishingTransferArg.isObject() && !hasIterator) {
             return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                 "Optional transferList argument must be an iterable"_s);
         }

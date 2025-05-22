@@ -48,6 +48,10 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!transferValue.isUndefined()) {
+        if (transferValue.isNull()) {
+            throwTypeError(&lexicalGlobalObject, throwScope, "Optional options.transfer argument must be an iterable"_s);
+            return result;
+        }
         result.transfer = convert<IDLSequence<IDLObject>>(lexicalGlobalObject, transferValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else

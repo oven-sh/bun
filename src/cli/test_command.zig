@@ -972,9 +972,11 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
         break :brk zig_slice.slice();
     };
 
-    // always ignore node_modules.
-    if (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\")) {
-        return false;
+    // always ignore node_modules unless include_node_modules is true
+    if (!bun.JSC.Jest.runner.?.test_options.coverage.include_node_modules) {
+        if (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\")) {
+            return false;
+        }
     }
 
     const ext = std.fs.path.extension(slice);
@@ -1009,6 +1011,7 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        include_node_modules: bool = false, // NEW OPTION
     };
     pub const Reporter = enum {
         text,

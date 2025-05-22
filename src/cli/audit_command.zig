@@ -11,6 +11,55 @@ const MutableString = bun.MutableString;
 const URL = @import("../url.zig").URL;
 const logger = bun.logger;
 
+const VulnerabilityInfo = struct {
+    severity: []const u8,
+    title: []const u8,
+    url: []const u8,
+    vulnerable_versions: []const u8,
+    id: []const u8,
+    package_name: []const u8,
+};
+
+const PackageInfo = struct {
+    package_id: u32,
+    name: []const u8,
+    version: []const u8,
+    vulnerabilities: std.ArrayList(VulnerabilityInfo),
+    dependents: std.ArrayList(DependencyPath),
+
+    const DependencyPath = struct {
+        path: std.ArrayList([]const u8),
+        is_direct: bool,
+    };
+};
+
+const AuditResult = struct {
+    vulnerable_packages: std.StringHashMap(PackageInfo),
+    all_vulnerabilities: std.ArrayList(VulnerabilityInfo),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) AuditResult {
+        return AuditResult{
+            .vulnerable_packages = std.StringHashMap(PackageInfo).init(allocator),
+            .all_vulnerabilities = std.ArrayList(VulnerabilityInfo).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *AuditResult) void {
+        var iter = self.vulnerable_packages.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.vulnerabilities.deinit();
+            for (entry.value_ptr.dependents.items) |*dependent| {
+                dependent.path.deinit();
+            }
+            entry.value_ptr.dependents.deinit();
+        }
+        self.vulnerable_packages.deinit();
+        self.all_vulnerabilities.deinit();
+    }
+};
+
 pub const AuditCommand = struct {
     pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) !void {
         _ = args;
@@ -20,149 +69,200 @@ pub const AuditCommand = struct {
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         @import("./package_manager_command.zig").PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
 
-        const packages = pm.lockfile.packages.slice();
-        const pkg_names = packages.items(.name);
-        const pkg_resolutions = packages.items(.resolution);
-        const buf = pm.lockfile.buffers.string_bytes.items;
-        const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
+        var dependency_tree = try buildDependencyTree(ctx.allocator, pm);
+        defer dependency_tree.deinit();
 
-        var packages_list = std.ArrayList(struct {
-            name: []const u8,
-            versions: std.ArrayList([]const u8),
-        }).init(ctx.allocator);
-        defer {
-            for (packages_list.items) |item| {
-                ctx.allocator.free(item.name);
-                for (item.versions.items) |version| {
-                    ctx.allocator.free(version);
-                }
-                item.versions.deinit();
-            }
-            packages_list.deinit();
-        }
+        const packages_json = try collectPackagesForAudit(ctx.allocator, pm);
+        defer ctx.allocator.free(packages_json);
 
-        for (pkg_names, pkg_resolutions, 0..) |name, res, idx| {
-            if (idx == root_id) continue;
-            if (res.tag != .npm) continue;
+        const response_text = try sendAuditRequest(ctx.allocator, pm, packages_json);
+        defer ctx.allocator.free(response_text);
 
-            const name_slice = name.slice(buf);
-            const ver_str = try std.fmt.allocPrint(ctx.allocator, "{}", .{res.value.npm.version.fmt(buf)});
-
-            var found_package: ?*@TypeOf(packages_list.items[0]) = null;
-            for (packages_list.items) |*item| {
-                if (std.mem.eql(u8, item.name, name_slice)) {
-                    found_package = item;
-                    break;
-                }
-            }
-
-            if (found_package == null) {
-                try packages_list.append(.{
-                    .name = try ctx.allocator.dupe(u8, name_slice),
-                    .versions = std.ArrayList([]const u8).init(ctx.allocator),
-                });
-                found_package = &packages_list.items[packages_list.items.len - 1];
-            }
-
-            var version_exists = false;
-            for (found_package.?.versions.items) |existing_ver| {
-                if (std.mem.eql(u8, existing_ver, ver_str)) {
-                    version_exists = true;
-                    break;
-                }
-            }
-
-            if (!version_exists) {
-                try found_package.?.versions.append(ver_str);
-            } else {
-                ctx.allocator.free(ver_str);
-            }
-        }
-
-        var body = try MutableString.init(ctx.allocator, 1024);
-        body.appendChar('{') catch {};
-
-        for (packages_list.items, 0..) |package, pkg_idx| {
-            if (pkg_idx > 0) body.appendChar(',') catch {};
-            body.appendChar('"') catch {};
-            body.appendSlice(package.name) catch {};
-            body.appendChar('"') catch {};
-            body.appendChar(':') catch {};
-            body.appendChar('[') catch {};
-            for (package.versions.items, 0..) |version, ver_idx| {
-                if (ver_idx > 0) body.appendChar(',') catch {};
-                body.appendChar('"') catch {};
-                body.appendSlice(version) catch {};
-                body.appendChar('"') catch {};
-            }
-            body.appendChar(']') catch {};
-        }
-        body.appendChar('}') catch {};
-
-        var headers: HeaderBuilder = .{};
-        headers.count("accept", "application/json");
-        headers.count("content-type", "application/json");
-        if (pm.options.scope.token.len > 0) {
-            headers.count("authorization", "");
-            headers.content.cap += "Bearer ".len + pm.options.scope.token.len;
-        } else if (pm.options.scope.auth.len > 0) {
-            headers.count("authorization", "");
-            headers.content.cap += "Basic ".len + pm.options.scope.auth.len;
-        }
-        try headers.allocate(ctx.allocator);
-        headers.append("accept", "application/json");
-        headers.append("content-type", "application/json");
-        if (pm.options.scope.token.len > 0) {
-            headers.appendFmt("authorization", "Bearer {s}", .{pm.options.scope.token});
-        } else if (pm.options.scope.auth.len > 0) {
-            headers.appendFmt("authorization", "Basic {s}", .{pm.options.scope.auth});
-        }
-
-        const url_str = try std.fmt.allocPrint(ctx.allocator, "{s}/-/npm/v1/security/advisories/bulk", .{strings.withoutTrailingSlash(pm.options.scope.url.href)});
-        defer ctx.allocator.free(url_str);
-        const url = URL.parse(url_str);
-
-        var response_buf = try MutableString.init(ctx.allocator, 1024);
-        var req = http.AsyncHTTP.initSync(
-            ctx.allocator,
-            .POST,
-            url,
-            headers.entries,
-            headers.content.ptr.?[0..headers.content.len],
-            &response_buf,
-            body.slice(),
-            null,
-            null,
-            .follow,
-        );
-        const res = req.sendSync() catch |err| {
-            Output.err(err, "audit request failed", .{});
-            Global.crash();
-        };
-
-        if (res.status_code >= 400) {
-            Output.prettyErrorln(comptime Output.prettyFmt("<red>error<r>: audit request failed (status {d})", true), .{res.status_code});
-            Global.crash();
-        }
-
-        const response_text = response_buf.slice();
         if (response_text.len > 0) {
-            printAuditReport(response_text) catch {
-                Output.writer().writeAll(response_text) catch {};
-                Output.writer().writeByte('\n') catch {};
-            };
+            try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
         } else {
-            Output.prettyln("No vulnerabilities found.", .{});
+            Output.prettyln(comptime Output.prettyFmt("<green>No vulnerabilities found.<r>", true), .{});
         }
     }
 };
 
-fn printVulnerability(package_name: []const u8, vuln: bun.JSAst.Expr, vuln_counts: anytype) void {
-    var severity: []const u8 = "moderate";
-    var title: []const u8 = "Vulnerability found";
-    var url: []const u8 = "";
-    var vulnerable_versions: []const u8 = "";
-    var id: []const u8 = "";
+fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) !std.StringHashMap(std.ArrayList([]const u8)) {
+    var dependency_tree = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+
+    const packages = pm.lockfile.packages.slice();
+    const pkg_names = packages.items(.name);
+    const pkg_dependencies = packages.items(.dependencies);
+    const pkg_resolutions = packages.items(.resolutions);
+    const buf = pm.lockfile.buffers.string_bytes.items;
+    const dependencies = pm.lockfile.buffers.dependencies.items;
+    const resolutions = pm.lockfile.buffers.resolutions.items;
+
+    for (pkg_names, pkg_dependencies, pkg_resolutions, 0..) |pkg_name, deps, res_list, pkg_idx| {
+        const package_name = pkg_name.slice(buf);
+
+        if (packages.items(.resolution)[pkg_idx].tag != .npm) continue;
+
+        const dep_slice = deps.get(dependencies);
+        const res_slice = res_list.get(resolutions);
+
+        for (dep_slice, res_slice) |_, resolved_pkg_id| {
+            if (resolved_pkg_id >= pkg_names.len) continue;
+
+            const resolved_name = pkg_names[resolved_pkg_id].slice(buf);
+
+            const result = try dependency_tree.getOrPut(try allocator.dupe(u8, resolved_name));
+            if (!result.found_existing) {
+                result.value_ptr.* = std.ArrayList([]const u8).init(allocator);
+            }
+            try result.value_ptr.append(try allocator.dupe(u8, package_name));
+        }
+    }
+
+    return dependency_tree;
+}
+
+fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) ![]u8 {
+    const packages = pm.lockfile.packages.slice();
+    const pkg_names = packages.items(.name);
+    const pkg_resolutions = packages.items(.resolution);
+    const buf = pm.lockfile.buffers.string_bytes.items;
+    const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
+
+    var packages_list = std.ArrayList(struct {
+        name: []const u8,
+        versions: std.ArrayList([]const u8),
+    }).init(allocator);
+    defer {
+        for (packages_list.items) |item| {
+            allocator.free(item.name);
+            for (item.versions.items) |version| {
+                allocator.free(version);
+            }
+            item.versions.deinit();
+        }
+        packages_list.deinit();
+    }
+
+    for (pkg_names, pkg_resolutions, 0..) |name, res, idx| {
+        if (idx == root_id) continue;
+        if (res.tag != .npm) continue;
+
+        const name_slice = name.slice(buf);
+        const ver_str = try std.fmt.allocPrint(allocator, "{}", .{res.value.npm.version.fmt(buf)});
+
+        var found_package: ?*@TypeOf(packages_list.items[0]) = null;
+        for (packages_list.items) |*item| {
+            if (std.mem.eql(u8, item.name, name_slice)) {
+                found_package = item;
+                break;
+            }
+        }
+
+        if (found_package == null) {
+            try packages_list.append(.{
+                .name = try allocator.dupe(u8, name_slice),
+                .versions = std.ArrayList([]const u8).init(allocator),
+            });
+            found_package = &packages_list.items[packages_list.items.len - 1];
+        }
+
+        var version_exists = false;
+        for (found_package.?.versions.items) |existing_ver| {
+            if (std.mem.eql(u8, existing_ver, ver_str)) {
+                version_exists = true;
+                break;
+            }
+        }
+
+        if (!version_exists) {
+            try found_package.?.versions.append(ver_str);
+        } else {
+            allocator.free(ver_str);
+        }
+    }
+
+    var body = try MutableString.init(allocator, 1024);
+    body.appendChar('{') catch {};
+
+    for (packages_list.items, 0..) |package, pkg_idx| {
+        if (pkg_idx > 0) body.appendChar(',') catch {};
+        body.appendChar('"') catch {};
+        body.appendSlice(package.name) catch {};
+        body.appendChar('"') catch {};
+        body.appendChar(':') catch {};
+        body.appendChar('[') catch {};
+        for (package.versions.items, 0..) |version, ver_idx| {
+            if (ver_idx > 0) body.appendChar(',') catch {};
+            body.appendChar('"') catch {};
+            body.appendSlice(version) catch {};
+            body.appendChar('"') catch {};
+        }
+        body.appendChar(']') catch {};
+    }
+    body.appendChar('}') catch {};
+
+    return try allocator.dupe(u8, body.slice());
+}
+
+fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []const u8) ![]u8 {
+    var headers: HeaderBuilder = .{};
+    headers.count("accept", "application/json");
+    headers.count("content-type", "application/json");
+    if (pm.options.scope.token.len > 0) {
+        headers.count("authorization", "");
+        headers.content.cap += "Bearer ".len + pm.options.scope.token.len;
+    } else if (pm.options.scope.auth.len > 0) {
+        headers.count("authorization", "");
+        headers.content.cap += "Basic ".len + pm.options.scope.auth.len;
+    }
+    try headers.allocate(allocator);
+    headers.append("accept", "application/json");
+    headers.append("content-type", "application/json");
+    if (pm.options.scope.token.len > 0) {
+        headers.appendFmt("authorization", "Bearer {s}", .{pm.options.scope.token});
+    } else if (pm.options.scope.auth.len > 0) {
+        headers.appendFmt("authorization", "Basic {s}", .{pm.options.scope.auth});
+    }
+
+    const url_str = try std.fmt.allocPrint(allocator, "{s}/-/npm/v1/security/advisories/bulk", .{strings.withoutTrailingSlash(pm.options.scope.url.href)});
+    defer allocator.free(url_str);
+    const url = URL.parse(url_str);
+
+    var response_buf = try MutableString.init(allocator, 1024);
+    var req = http.AsyncHTTP.initSync(
+        allocator,
+        .POST,
+        url,
+        headers.entries,
+        headers.content.ptr.?[0..headers.content.len],
+        &response_buf,
+        body,
+        null,
+        null,
+        .follow,
+    );
+    const res = req.sendSync() catch |err| {
+        Output.err(err, "audit request failed", .{});
+        Global.crash();
+    };
+
+    if (res.status_code >= 400) {
+        Output.prettyErrorln(comptime Output.prettyFmt("<red>error<r>: audit request failed (status {d})", true), .{res.status_code});
+        Global.crash();
+    }
+
+    return try allocator.dupe(u8, response_buf.slice());
+}
+
+fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vuln: bun.JSAst.Expr) !VulnerabilityInfo {
+    var vulnerability = VulnerabilityInfo{
+        .severity = "moderate",
+        .title = "Vulnerability found",
+        .url = "",
+        .vulnerable_versions = "",
+        .id = "",
+        .package_name = try allocator.dupe(u8, package_name),
+    };
 
     if (vuln.data == .e_object) {
         const props = vuln.data.e_object.properties.slice();
@@ -174,19 +274,19 @@ fn printVulnerability(package_name: []const u8, vuln: bun.JSAst.Expr, vuln_count
                         if (value.data == .e_string) {
                             const field_value = value.data.e_string.data;
                             if (std.mem.eql(u8, field_name, "severity")) {
-                                severity = field_value;
+                                vulnerability.severity = field_value;
                             } else if (std.mem.eql(u8, field_name, "title")) {
-                                title = field_value;
+                                vulnerability.title = field_value;
                             } else if (std.mem.eql(u8, field_name, "url")) {
-                                url = field_value;
+                                vulnerability.url = field_value;
                             } else if (std.mem.eql(u8, field_name, "vulnerable_versions")) {
-                                vulnerable_versions = field_value;
+                                vulnerability.vulnerable_versions = field_value;
                             } else if (std.mem.eql(u8, field_name, "id")) {
-                                id = field_value;
+                                vulnerability.id = field_value;
                             }
                         } else if (value.data == .e_number) {
                             if (std.mem.eql(u8, field_name, "id")) {
-                                id = std.fmt.allocPrint(bun.default_allocator, "{d}", .{@as(u64, @intFromFloat(value.data.e_number.value))}) catch "";
+                                vulnerability.id = try std.fmt.allocPrint(allocator, "{d}", .{@as(u64, @intFromFloat(value.data.e_number.value))});
                             }
                         }
                     }
@@ -195,52 +295,109 @@ fn printVulnerability(package_name: []const u8, vuln: bun.JSAst.Expr, vuln_count
         }
     }
 
-    if (std.mem.eql(u8, severity, "low")) {
-        vuln_counts.low += 1;
-    } else if (std.mem.eql(u8, severity, "moderate")) {
-        vuln_counts.moderate += 1;
-    } else if (std.mem.eql(u8, severity, "high")) {
-        vuln_counts.high += 1;
-    } else if (std.mem.eql(u8, severity, "critical")) {
-        vuln_counts.critical += 1;
-    } else {
-        vuln_counts.moderate += 1; //default
-    }
-
-    if (vulnerable_versions.len > 0) {
-        Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>  {s}", true), .{ package_name, vulnerable_versions });
-    } else {
-        Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>", true), .{package_name});
-    }
-
-    if (std.mem.eql(u8, severity, "critical")) {
-        Output.prettyln(comptime Output.prettyFmt("Severity: <red>critical<r>", true), .{});
-    } else if (std.mem.eql(u8, severity, "high")) {
-        Output.prettyln(comptime Output.prettyFmt("Severity: <red>high<r>", true), .{});
-    } else if (std.mem.eql(u8, severity, "moderate")) {
-        Output.prettyln(comptime Output.prettyFmt("Severity: <yellow>moderate<r>", true), .{});
-    } else {
-        Output.prettyln(comptime Output.prettyFmt("Severity: <cyan>low<r>", true), .{});
-    }
-
-    if (title.len > 0) {
-        Output.prettyln("{s}", .{title});
-    }
-
-    if (url.len > 0) {
-        Output.prettyln(comptime Output.prettyFmt("<blue>{s}<r>", true), .{url});
-    }
-
-    Output.prettyln("fix available via `bun update`", .{});
-    Output.prettyln("", .{});
+    return vulnerability;
 }
 
-fn printAuditReport(response_text: []const u8) !void {
+fn findDependencyPaths(
+    allocator: std.mem.Allocator,
+    target_package: []const u8,
+    dependency_tree: *const std.StringHashMap(std.ArrayList([]const u8)),
+    pm: *PackageManager,
+) !std.ArrayList(PackageInfo.DependencyPath) {
+    var paths = std.ArrayList(PackageInfo.DependencyPath).init(allocator);
+
+    const packages = pm.lockfile.packages.slice();
+    const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
+    const root_deps = packages.items(.dependencies)[root_id];
+    const dependencies = pm.lockfile.buffers.dependencies.items;
+    const buf = pm.lockfile.buffers.string_bytes.items;
+
+    const dep_slice = root_deps.get(dependencies);
+    for (dep_slice) |dependency| {
+        const dep_name = dependency.name.slice(buf);
+        if (std.mem.eql(u8, dep_name, target_package)) {
+            var direct_path = PackageInfo.DependencyPath{
+                .path = std.ArrayList([]const u8).init(allocator),
+                .is_direct = true,
+            };
+            try direct_path.path.append(try allocator.dupe(u8, target_package));
+            try paths.append(direct_path);
+            break;
+        }
+    }
+
+    var queue = std.ArrayList([]const u8).init(allocator);
+    defer queue.deinit();
+    var visited = std.StringHashMap(void).init(allocator);
+    defer visited.deinit();
+    var parent_map = std.StringHashMap([]const u8).init(allocator);
+    defer parent_map.deinit();
+
+    if (dependency_tree.get(target_package)) |dependents| {
+        for (dependents.items) |dependent| {
+            try queue.append(dependent);
+            try parent_map.put(dependent, target_package);
+        }
+    }
+
+    while (queue.items.len > 0) {
+        const current = queue.orderedRemove(0);
+
+        if (visited.contains(current)) continue;
+        try visited.put(current, {});
+
+        var is_root_dep = false;
+        for (dep_slice) |dependency| {
+            const dep_name = dependency.name.slice(buf);
+            if (std.mem.eql(u8, dep_name, current)) {
+                is_root_dep = true;
+                break;
+            }
+        }
+
+        if (is_root_dep) {
+            var path = PackageInfo.DependencyPath{
+                .path = std.ArrayList([]const u8).init(allocator),
+                .is_direct = false,
+            };
+
+            var trace = current;
+            while (true) {
+                try path.path.insert(0, try allocator.dupe(u8, trace));
+                if (parent_map.get(trace)) |parent| {
+                    trace = parent;
+                } else {
+                    break;
+                }
+            }
+
+            try paths.append(path);
+        } else {
+            if (dependency_tree.get(current)) |dependents| {
+                for (dependents.items) |dependent| {
+                    if (!visited.contains(dependent)) {
+                        try queue.append(dependent);
+                        try parent_map.put(dependent, current);
+                    }
+                }
+            }
+        }
+    }
+
+    return paths;
+}
+
+fn printEnhancedAuditReport(
+    allocator: std.mem.Allocator,
+    response_text: []const u8,
+    pm: *PackageManager,
+    dependency_tree: *const std.StringHashMap(std.ArrayList([]const u8)),
+) !void {
     const source = logger.Source.initPathString("audit-response.json", response_text);
-    var log = logger.Log.init(bun.default_allocator);
+    var log = logger.Log.init(allocator);
     defer log.deinit();
 
-    const expr = @import("../json_parser.zig").parse(&source, &log, bun.default_allocator, true) catch {
+    const expr = @import("../json_parser.zig").parse(&source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return;
@@ -253,27 +410,44 @@ fn printAuditReport(response_text: []const u8) !void {
 
     Output.prettyln("# bun audit report\n", .{});
 
+    var audit_result = AuditResult.init(allocator);
+    defer audit_result.deinit();
+
+    var vuln_counts = struct {
+        low: u32 = 0,
+        moderate: u32 = 0,
+        high: u32 = 0,
+        critical: u32 = 0,
+    }{};
+
     if (expr.data == .e_object) {
         const properties = expr.data.e_object.properties.slice();
-        var vuln_counts = struct {
-            low: u32 = 0,
-            moderate: u32 = 0,
-            high: u32 = 0,
-            critical: u32 = 0,
-        }{};
 
         for (properties) |prop| {
             if (prop.key) |key| {
                 if (key.data == .e_string) {
                     const package_name = key.data.e_string.data;
 
-                    // Parse vulnerability array for this package
                     if (prop.value) |value| {
                         if (value.data == .e_array) {
                             const vulns = value.data.e_array.items.slice();
                             for (vulns) |vuln| {
                                 if (vuln.data == .e_object) {
-                                    printVulnerability(package_name, vuln, &vuln_counts);
+                                    const vulnerability = try parseVulnerability(allocator, package_name, vuln);
+
+                                    if (std.mem.eql(u8, vulnerability.severity, "low")) {
+                                        vuln_counts.low += 1;
+                                    } else if (std.mem.eql(u8, vulnerability.severity, "moderate")) {
+                                        vuln_counts.moderate += 1;
+                                    } else if (std.mem.eql(u8, vulnerability.severity, "high")) {
+                                        vuln_counts.high += 1;
+                                    } else if (std.mem.eql(u8, vulnerability.severity, "critical")) {
+                                        vuln_counts.critical += 1;
+                                    } else {
+                                        vuln_counts.moderate += 1;
+                                    }
+
+                                    try audit_result.all_vulnerabilities.append(vulnerability);
                                 }
                             }
                         }
@@ -282,39 +456,123 @@ fn printAuditReport(response_text: []const u8) !void {
             }
         }
 
+        for (audit_result.all_vulnerabilities.items) |vulnerability| {
+            const paths = try findDependencyPaths(allocator, vulnerability.package_name, dependency_tree, pm);
+
+            const result = try audit_result.vulnerable_packages.getOrPut(vulnerability.package_name);
+            if (!result.found_existing) {
+                result.value_ptr.* = PackageInfo{
+                    .package_id = 0,
+                    .name = vulnerability.package_name,
+                    .version = vulnerability.vulnerable_versions,
+                    .vulnerabilities = std.ArrayList(VulnerabilityInfo).init(allocator),
+                    .dependents = paths,
+                };
+            }
+            try result.value_ptr.vulnerabilities.append(vulnerability);
+        }
+
+        var package_iter = audit_result.vulnerable_packages.iterator();
+        while (package_iter.next()) |entry| {
+            const package_info = entry.value_ptr;
+
+            if (package_info.vulnerabilities.items.len > 0) {
+                const main_vuln = package_info.vulnerabilities.items[0];
+
+                if (main_vuln.vulnerable_versions.len > 0) {
+                    Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>  {s}", true), .{ main_vuln.package_name, main_vuln.vulnerable_versions });
+                } else {
+                    Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>", true), .{main_vuln.package_name});
+                }
+
+                for (package_info.vulnerabilities.items) |vuln| {
+                    if (std.mem.eql(u8, vuln.severity, "critical")) {
+                        Output.prettyln(comptime Output.prettyFmt("Severity: <red>critical<r>", true), .{});
+                    } else if (std.mem.eql(u8, vuln.severity, "high")) {
+                        Output.prettyln(comptime Output.prettyFmt("Severity: <red>high<r>", true), .{});
+                    } else if (std.mem.eql(u8, vuln.severity, "moderate")) {
+                        Output.prettyln(comptime Output.prettyFmt("Severity: <yellow>moderate<r>", true), .{});
+                    } else {
+                        Output.prettyln(comptime Output.prettyFmt("Severity: <cyan>low<r>", true), .{});
+                    }
+
+                    if (vuln.title.len > 0) {
+                        Output.prettyln("{s} - {s}", .{ vuln.title, vuln.url });
+                    }
+                }
+
+                var has_fix_available = false;
+                var has_breaking_changes = false;
+
+                for (package_info.dependents.items) |path| {
+                    if (path.is_direct) {
+                        Output.prettyln("fix available via `bun update`", .{});
+                        has_fix_available = true;
+                    } else {
+                        Output.print("node_modules/{s}", .{path.path.items[path.path.items.len - 1]});
+                        for (1..path.path.items.len) |i| {
+                            const dep_name = path.path.items[path.path.items.len - 1 - i];
+                            Output.print("\n  {s}  ", .{dep_name});
+                            Output.prettyln("Depends on vulnerable versions of {s}", .{path.path.items[path.path.items.len - i]});
+                            Output.print("  node_modules/{s}/node_modules/{s}", .{ dep_name, path.path.items[path.path.items.len - i] });
+                        }
+                        Output.prettyln("", .{});
+
+                        if (!has_fix_available) {
+                            Output.prettyln("fix available via `bun update --force`", .{});
+                            has_breaking_changes = true;
+                        }
+                    }
+                }
+
+                if (has_breaking_changes) {
+                    Output.prettyln(comptime Output.prettyFmt("<yellow>Will install updated versions, which may be a breaking change<r>", true), .{});
+                }
+
+                Output.prettyln("", .{});
+            }
+        }
+
         const total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if (total > 0) {
             Output.prettyln("", .{});
-            var severity_parts = std.ArrayList([]const u8).init(bun.default_allocator);
-            defer severity_parts.deinit();
-
-            if (vuln_counts.low > 0) {
-                const part = std.fmt.allocPrint(bun.default_allocator, "{d} low", .{vuln_counts.low}) catch "";
-                severity_parts.append(part) catch {};
+            var severity_parts = std.ArrayList([]const u8).init(allocator);
+            defer {
+                for (severity_parts.items) |part| {
+                    allocator.free(part);
+                }
+                severity_parts.deinit();
             }
-            if (vuln_counts.moderate > 0) {
-                const part = std.fmt.allocPrint(bun.default_allocator, "{d} moderate", .{vuln_counts.moderate}) catch "";
-                severity_parts.append(part) catch {};
+
+            if (vuln_counts.critical > 0) {
+                const part = try std.fmt.allocPrint(allocator, "{d} critical", .{vuln_counts.critical});
+                try severity_parts.append(part);
             }
             if (vuln_counts.high > 0) {
-                const part = std.fmt.allocPrint(bun.default_allocator, "{d} high", .{vuln_counts.high}) catch "";
-                severity_parts.append(part) catch {};
+                const part = try std.fmt.allocPrint(allocator, "{d} high", .{vuln_counts.high});
+                try severity_parts.append(part);
             }
-            if (vuln_counts.critical > 0) {
-                const part = std.fmt.allocPrint(bun.default_allocator, "{d} critical", .{vuln_counts.critical}) catch "";
-                severity_parts.append(part) catch {};
+            if (vuln_counts.moderate > 0) {
+                const part = try std.fmt.allocPrint(allocator, "{d} moderate", .{vuln_counts.moderate});
+                try severity_parts.append(part);
+            }
+            if (vuln_counts.low > 0) {
+                const part = try std.fmt.allocPrint(allocator, "{d} low", .{vuln_counts.low});
+                try severity_parts.append(part);
             }
 
             Output.pretty("{d} vulnerabilities (", .{total});
             for (severity_parts.items, 0..) |part, i| {
                 if (i > 0) Output.pretty(", ", .{});
                 Output.pretty("{s}", .{part});
-                bun.default_allocator.free(part);
             }
             Output.prettyln(")", .{});
             Output.prettyln("", .{});
-            Output.prettyln("To address issues, run:", .{});
+            Output.prettyln("To address issues that do not require attention, run:", .{});
             Output.prettyln("  bun update", .{});
+            Output.prettyln("", .{});
+            Output.prettyln("To address all issues (including breaking changes), run:", .{});
+            Output.prettyln("  bun update --force", .{});
         }
     } else {
         Output.writer().writeAll(response_text) catch {};

@@ -2170,6 +2170,7 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
             break;
         case NapiStringEncoding::utf16le:
             [[fallthrough]];
+            ;
         case NapiStringEncoding::latin1:
             // if the string's encoding is the same as the destination encoding, this is trivially correct
             // if we are converting UTF-16 to Latin-1, then we do so by truncating each code unit, so the length is the same

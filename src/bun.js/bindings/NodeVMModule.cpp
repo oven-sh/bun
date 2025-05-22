@@ -49,6 +49,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         return {};
     }
 
+    if (m_status == Status::Evaluated) {
+        return m_evaluationResult.get();
+    }
+
     auto* sourceTextThis = jsDynamicCast<NodeVMSourceTextModule*>(this);
     auto* syntheticThis = jsDynamicCast<NodeVMSyntheticModule*>(this);
 
@@ -124,6 +128,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     status(Status::Evaluated);
+    m_evaluationResult.set(vm, this, result);
     return result;
 }
 
@@ -477,6 +482,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(vmModule->m_namespaceObject);
     visitor.append(vmModule->m_context);
+    visitor.append(vmModule->m_evaluationResult);
 
     auto moduleNatives = vmModule->m_resolveCache.values();
     visitor.append(moduleNatives.begin(), moduleNatives.end());

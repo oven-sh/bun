@@ -69,10 +69,11 @@ public:
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
-    mutable WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
-    mutable WriteBarrier<JSObject> m_context;
+    WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
+    WriteBarrier<JSObject> m_context;
+    WriteBarrier<Unknown> m_evaluationResult;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
-    mutable WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context);
 

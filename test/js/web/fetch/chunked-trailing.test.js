@@ -514,7 +514,7 @@ it("handles chunked extensions with special characters", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-it("Proper error if missing zero-length chunk", async () => {
+it("proper error if missing zero-length chunk", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
@@ -535,13 +535,15 @@ it("Proper error if missing zero-length chunk", async () => {
 
   try {
     const address = await promise;
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    const response = await fetch(`http://localhost:${address.port}`);
+    expect(response.status).toBe(200);
+    await response.text();
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
   }
 });
-it("Proper error if missing CRLF after chunk data", async () => {
+it("proper error if missing CRLF after chunk data", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {

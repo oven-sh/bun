@@ -25,6 +25,7 @@
 #include "JSDOMConvertSequences.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include "../ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -49,7 +50,7 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
     }
     if (!transferValue.isUndefined()) {
         if (transferValue.isNull()) {
-            throwTypeError(&lexicalGlobalObject, throwScope, "Optional options.transfer argument must be an iterable"_s);
+            Bun::throwError(&lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Optional options.transfer argument must be an iterable"_s);
             return result;
         }
         result.transfer = convert<IDLSequence<IDLObject>>(lexicalGlobalObject, transferValue);

@@ -20,10 +20,11 @@ pub const phr_header = struct_phr_header;
 pub const phr_chunked_decoder = struct_phr_chunked_decoder;
 
 pub const ChunkedEncodingState = enum(u8) {
-    CHUNKED_IN_CHUNK_SIZE,
-    CHUNKED_IN_CHUNK_EXT,
-    CHUNKED_IN_CHUNK_DATA,
-    CHUNKED_IN_CHUNK_CRLF,
-    CHUNKED_IN_TRAILERS_LINE_HEAD,
-    CHUNKED_IN_TRAILERS_LINE_MIDDLE,
+    CHUNKED_IN_CHUNK_SIZE = 0,
+    CHUNKED_IN_CHUNK_EXT = 1,
+    CHUNKED_IN_CHUNK_DATA = 2,
+    CHUNKED_IN_CHUNK_CRLF = 3,
+    CHUNKED_IN_TRAILERS_LINE_HEAD = 4,
+    CHUNKED_IN_TRAILERS_LINE_MIDDLE = 5,
+    _,
 };

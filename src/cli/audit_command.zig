@@ -504,20 +504,18 @@ fn printEnhancedAuditReport(
 
                 for (package_info.dependents.items) |path| {
                     if (path.is_direct) {
-                        Output.prettyln("fix available via `bun update`", .{});
+                        Output.prettyln(comptime Output.prettyFmt("fix available via <green>`bun update`<r>", true), .{});
                         has_fix_available = true;
                     } else {
-                        Output.print("node_modules/{s}", .{path.path.items[path.path.items.len - 1]});
+                        Output.prettyln(comptime Output.prettyFmt("<d>node_modules/{s}<r>", true), .{path.path.items[path.path.items.len - 1]});
                         for (1..path.path.items.len) |i| {
                             const dep_name = path.path.items[path.path.items.len - 1 - i];
-                            Output.print("\n  {s}  ", .{dep_name});
-                            Output.prettyln("Depends on vulnerable versions of {s}", .{path.path.items[path.path.items.len - i]});
-                            Output.print("  node_modules/{s}/node_modules/{s}", .{ dep_name, path.path.items[path.path.items.len - i] });
+                            Output.prettyln(comptime Output.prettyFmt("<d>  {s}  Depends on vulnerable versions of {s}<r>", true), .{ dep_name, path.path.items[path.path.items.len - i] });
+                            Output.prettyln(comptime Output.prettyFmt("<d>  node_modules/{s}/node_modules/{s}<r>", true), .{ dep_name, path.path.items[path.path.items.len - i] });
                         }
-                        Output.prettyln("", .{});
 
                         if (!has_fix_available) {
-                            Output.prettyln("fix available via `bun update --force`", .{});
+                            Output.prettyln(comptime Output.prettyFmt("fix available via <green>`bun update --force`<r>", true), .{});
                             has_breaking_changes = true;
                         }
                     }
@@ -534,43 +532,36 @@ fn printEnhancedAuditReport(
         const total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if (total > 0) {
             Output.prettyln("", .{});
-            var severity_parts = std.ArrayList([]const u8).init(allocator);
-            defer {
-                for (severity_parts.items) |part| {
-                    allocator.free(part);
-                }
-                severity_parts.deinit();
-            }
 
+            Output.pretty(comptime Output.prettyFmt("<b>{d} vulnerabilities<r> (", true), .{total});
+
+            var has_previous = false;
             if (vuln_counts.critical > 0) {
-                const part = try std.fmt.allocPrint(allocator, "{d} critical", .{vuln_counts.critical});
-                try severity_parts.append(part);
+                Output.pretty(comptime Output.prettyFmt("<red><b>{d} critical<r>", true), .{vuln_counts.critical});
+                has_previous = true;
             }
             if (vuln_counts.high > 0) {
-                const part = try std.fmt.allocPrint(allocator, "{d} high", .{vuln_counts.high});
-                try severity_parts.append(part);
+                if (has_previous) Output.pretty(", ", .{});
+                Output.pretty(comptime Output.prettyFmt("<red>{d} high<r>", true), .{vuln_counts.high});
+                has_previous = true;
             }
             if (vuln_counts.moderate > 0) {
-                const part = try std.fmt.allocPrint(allocator, "{d} moderate", .{vuln_counts.moderate});
-                try severity_parts.append(part);
+                if (has_previous) Output.pretty(", ", .{});
+                Output.pretty(comptime Output.prettyFmt("<yellow>{d} moderate<r>", true), .{vuln_counts.moderate});
+                has_previous = true;
             }
             if (vuln_counts.low > 0) {
-                const part = try std.fmt.allocPrint(allocator, "{d} low", .{vuln_counts.low});
-                try severity_parts.append(part);
-            }
-
-            Output.pretty("{d} vulnerabilities (", .{total});
-            for (severity_parts.items, 0..) |part, i| {
-                if (i > 0) Output.pretty(", ", .{});
-                Output.pretty("{s}", .{part});
+                if (has_previous) Output.pretty(", ", .{});
+                Output.pretty(comptime Output.prettyFmt("<cyan>{d} low<r>", true), .{vuln_counts.low});
             }
             Output.prettyln(")", .{});
+
             Output.prettyln("", .{});
             Output.prettyln("To address issues that do not require attention, run:", .{});
-            Output.prettyln("  bun update", .{});
+            Output.prettyln(comptime Output.prettyFmt("  <green>bun update<r>", true), .{});
             Output.prettyln("", .{});
             Output.prettyln("To address all issues (including breaking changes), run:", .{});
-            Output.prettyln("  bun update --force", .{});
+            Output.prettyln(comptime Output.prettyFmt("  <green>bun update --force<r>", true), .{});
         }
     } else {
         Output.writer().writeAll(response_text) catch {};

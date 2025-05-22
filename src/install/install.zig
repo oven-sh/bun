@@ -7627,7 +7627,7 @@ pub const PackageManager = struct {
                 this.pack_destination = cli.pack_destination;
                 this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
+                this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;

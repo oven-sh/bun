@@ -26,6 +26,7 @@ const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrusted
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
 const Npm = Install.Npm;
+const PmViewCommand = @import("./pm_view_command.zig");
 const File = bun.sys.File;
 
 const ByName = struct {
@@ -199,7 +200,7 @@ pub const PackageManagerCommand = struct {
                 Global.exit(1);
             }
             const property_path = if (pm.options.positionals.len > 2) pm.options.positionals[2] else null;
-            try Npm.view(ctx.allocator, pm, pm.options.positionals[1], property_path, pm.options.json_output);
+            try PmViewCommand.view(ctx.allocator, pm, pm.options.positionals[1], property_path, pm.options.json_output);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));

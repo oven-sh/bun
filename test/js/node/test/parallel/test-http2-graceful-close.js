@@ -31,7 +31,6 @@ server.on('stream', common.mustCall((stream, headers) => {
     for (let i = 0; i < 16; i++) {
       stream.write(chunk);
     }
-
     // Stream end should happen after data is written
     stream.end();
   });

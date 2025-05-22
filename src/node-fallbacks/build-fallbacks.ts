@@ -30,7 +30,6 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
-  console.log(`bun build ${file} --minify-syntax ${externalModules}`);
   // Create the build command with all the specified options
   const buildCommand =
     Bun.$`bun build --outdir=${outdir} ${name} --minify-syntax  --format=esm --target=node ${{ raw: externalModules }}`.text();
@@ -48,8 +47,29 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         outfile = outfile.slice(outfile.indexOf(";\n") + 1);
       }
 
-      if (text.includes("import ")) {
+      if (outfile.includes('"node:module"')) {
+        console.log(outfile);
         throw new Error("Unexpected import in " + name);
+      }
+
+      if (outfile.includes("import.meta")) {
+        throw new Error("Unexpected import.meta in " + name);
+      }
+
+      if (outfile.includes(".$apply")) {
+        throw new Error("$apply is not supported in browsers (while building " + name + ")");
+      }
+
+      if (outfile.includes(".$call")) {
+        throw new Error("$call is not supported in browsers (while building " + name + ")");
+      }
+
+      if (
+        outfile.includes("$isObject(") ||
+        outfile.includes("$isPromise(") ||
+        outfile.includes("$isUndefinedOrNull(")
+      ) {
+        throw new Error("Unsupported function in " + name);
       }
 
       await Bun.write(`${outdir}/${name}`, outfile);

@@ -81,6 +81,8 @@
 #include <JavaScriptCore/HandleSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#if OS(LINUX)
+#include <limits>
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

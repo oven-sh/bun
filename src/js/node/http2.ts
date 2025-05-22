@@ -3810,8 +3810,8 @@ class Http2Server extends net.Server {
     }
   }
 
-  close() {
-    super.close();
+  close(callback?: Function) {
+    super.close(callback);
     closeAllSessions(this);
   }
 }
@@ -3902,8 +3902,8 @@ class Http2SecureServer extends tls.Server {
       options.settings = { ...options.settings, ...settings };
     }
   }
-  close() {
-    super.close();
+  close(callback?: Function) {
+    super.close(callback);
     closeAllSessions(this);
   }
 }

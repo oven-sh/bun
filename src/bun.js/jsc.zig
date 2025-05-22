@@ -278,3 +278,10 @@ fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
 
 const bun = @import("bun");
 const std = @import("std");
+
+pub const math = struct {
+    extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;
+    pub fn pow(x: f64, y: f64) f64 {
+        return Bun__JSC__operationMathPow(x, y);
+    }
+};

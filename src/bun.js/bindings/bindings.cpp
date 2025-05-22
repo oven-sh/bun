@@ -6453,3 +6453,8 @@ CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
     return callFrame->describeFrame();
 }
 #endif
+
+extern "C" double Bun__JSC__operationMathPow(double x, double y)
+{
+    return operationMathPow(x, y);
+}

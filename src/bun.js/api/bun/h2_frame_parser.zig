@@ -697,7 +697,7 @@ pub const H2FrameParser = struct {
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 65535,
+    remoteWindowSize: u64 = 0,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -2365,7 +2365,25 @@ pub const H2FrameParser = struct {
                 if (this.outstandingSettings > 0) {
                     this.outstandingSettings -= 1;
                 }
+
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
+            } else {
+                if (this.remoteSettings == null) {
+                    // ok empty settings so default settings
+                    const remoteSettings: FullSettingsPayload = .{};
+                    this.remoteSettings = remoteSettings;
+                    defer this.incrementWindowSizeIfNeeded();
+                    if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
+                        defer _ = this.flushStreamQueue();
+                        this.remoteWindowSize = remoteSettings.initialWindowSize;
+                        var it = this.streams.valueIterator();
+                        while (it.next()) |stream| {
+                            if (remoteSettings.initialWindowSize >= stream.remoteUsedWindowSize) {
+                                stream.remoteWindowSize = remoteSettings.initialWindowSize;
+                            }
+                        }
+                    }
+                }
             }
 
             this.currentFrame = null;

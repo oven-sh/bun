@@ -14,7 +14,7 @@ const logger = bun.logger;
 pub const AuditCommand = struct {
     pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) !void {
         _ = args;
-        Output.prettyError("<r><b>bun pm audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+        Output.prettyError(comptime Output.prettyFmt("<r><b>bun pm audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
         Output.flush();
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
@@ -142,7 +142,7 @@ pub const AuditCommand = struct {
         };
 
         if (res.status_code >= 400) {
-            Output.prettyErrorln("<red>error<r>: audit request failed (status {d})", .{res.status_code});
+            Output.prettyErrorln(comptime Output.prettyFmt("<red>error<r>: audit request failed (status {d})", true), .{res.status_code});
             Global.crash();
         }
 
@@ -209,28 +209,27 @@ fn printVulnerability(package_name: []const u8, vuln: bun.JSAst.Expr, vuln_count
     }
 
     if (vulnerable_versions.len > 0) {
-        Output.prettyln("<red>{s}<r>  {s}", .{ package_name, vulnerable_versions });
+        Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>  {s}", true), .{ package_name, vulnerable_versions });
     } else {
-        Output.prettyln("<red>{s}<r>", .{package_name});
+        Output.prettyln(comptime Output.prettyFmt("<red>{s}<r>", true), .{package_name});
     }
 
-    const severity_color = if (std.mem.eql(u8, severity, "critical"))
-        "<red>critical<r>"
-    else if (std.mem.eql(u8, severity, "high"))
-        "<red>high<r>"
-    else if (std.mem.eql(u8, severity, "moderate"))
-        "<yellow>moderate<r>"
-    else
-        "<cyan>low<r>";
-
-    Output.prettyln("Severity: {s}", .{severity_color});
+    if (std.mem.eql(u8, severity, "critical")) {
+        Output.prettyln(comptime Output.prettyFmt("Severity: <red>critical<r>", true), .{});
+    } else if (std.mem.eql(u8, severity, "high")) {
+        Output.prettyln(comptime Output.prettyFmt("Severity: <red>high<r>", true), .{});
+    } else if (std.mem.eql(u8, severity, "moderate")) {
+        Output.prettyln(comptime Output.prettyFmt("Severity: <yellow>moderate<r>", true), .{});
+    } else {
+        Output.prettyln(comptime Output.prettyFmt("Severity: <cyan>low<r>", true), .{});
+    }
 
     if (title.len > 0) {
         Output.prettyln("{s}", .{title});
     }
 
     if (url.len > 0) {
-        Output.prettyln("<blue>{s}<r>", .{url});
+        Output.prettyln(comptime Output.prettyFmt("<blue>{s}<r>", true), .{url});
     }
 
     Output.prettyln("fix available via `bun update`", .{});
@@ -249,7 +248,7 @@ fn printAuditReport(response_text: []const u8) !void {
     };
 
     if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
-        Output.prettyln("<green>No vulnerabilities found.<r>", .{});
+        Output.prettyln(comptime Output.prettyFmt("<green>No vulnerabilities found.<r>", true), .{});
         return;
     }
 

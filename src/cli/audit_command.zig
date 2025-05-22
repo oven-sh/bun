@@ -193,11 +193,10 @@ fn printAuditReport(response_text: []const u8) !void {
         for (properties) |prop| {
             if (prop.key) |key| {
                 if (key.data == .e_string) {
-                    const package_name = key.data.e_string.slice(bun.default_allocator);
-                    defer bun.default_allocator.free(package_name);
+                    const package_name_data = key.data.e_string.data;
 
                     vuln_count += 1;
-                    Output.prettyln("<red>{s}<r>", .{package_name});
+                    Output.prettyln("<red>{s}<r>", .{package_name_data});
                     Output.prettyln("Severity: high", .{});
                     Output.prettyln("Vulnerability details available", .{});
                     Output.prettyln("", .{});

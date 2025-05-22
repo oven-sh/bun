@@ -86,6 +86,8 @@ extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, 
 using namespace JSC;
 using namespace WebCore;
 
+static_assert(std::is_same_v<JSBigInt::Digit, uint64_t>, "all Buffer BigInt functions assume bigint digits are 64 bits");
+
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 JSC_DECLARE_HOST_FUNCTION(callJSBuffer);
 
@@ -2454,7 +2456,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (!valueVal.isBigInt()) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
     auto* bigint = valueVal.asHeapBigInt();
-    if (bigint->sign()) [[unlikely]]
+    if (bigint->length() > 1) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
     if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
@@ -2493,7 +2495,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (!valueVal.isBigInt()) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
     auto* bigint = valueVal.asHeapBigInt();
-    if (bigint->sign()) [[unlikely]]
+    if (bigint->length() > 1) [[unlikely]]
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
     if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);

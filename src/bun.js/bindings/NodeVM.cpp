@@ -711,6 +711,16 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         }
 
         if (contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
+            if (thisObject->m_sandbox.get() == slot.getValue(globalObject, propertyName)) {
+                // If the sandbox is being accessed, we need to provide globalThis instead.
+                // See /test/js/node/test/parallel/test-vm-property-not-on-sandbox.js.
+                if (!slot.isCacheable()) {
+                    slot.setValue(cell, PropertyAttribute::ReadOnly | 0, thisObject->globalThis());
+                } else {
+                    slot.setCacheableCustom(cell, PropertyAttribute::ReadOnly | 0, +[](JSGlobalObject* globalObject, EncodedJSValue, PropertyName) { return JSValue::encode(globalObject->globalThis()); });
+                }
+            }
+
             return true;
         }
 

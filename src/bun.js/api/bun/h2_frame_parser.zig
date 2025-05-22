@@ -697,7 +697,7 @@ pub const H2FrameParser = struct {
 
     // remote Window limits the upload of data
     // remote window size for the connection
-    remoteWindowSize: u64 = 0,
+    remoteWindowSize: u64 = 65535,
     // remote used window size for the connection
     remoteUsedWindowSize: u64 = 0,
 
@@ -2385,6 +2385,7 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
             defer this.incrementWindowSizeIfNeeded();
+            log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
                 defer _ = this.flushStreamQueue();
                 this.remoteWindowSize = remoteSettings.initialWindowSize;

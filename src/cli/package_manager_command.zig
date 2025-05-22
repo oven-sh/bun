@@ -396,10 +396,6 @@ pub const PackageManagerCommand = struct {
                 try Output.writer().writeAll("]\n");
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
-                const path = bun.getcwd(&cwd_buf) catch {
-                    Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
-                    Global.exit(1);
-                };
                 const dependencies = lockfile.buffers.dependencies.items;
                 const slice = lockfile.packages.slice();
                 const resolutions = slice.items(.resolution);

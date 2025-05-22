@@ -459,7 +459,7 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
     }
 }
 
-static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
+static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
     memset(storage, 0, sizeof(struct sockaddr_storage));
     // Try to parse as IPv4
     struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
@@ -469,7 +469,7 @@ static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *s
 #ifdef __APPLE__
         addr4->sin_len = sizeof(struct sockaddr_in);
 #endif
-        return 0;
+        return 1;
     }
 
     // Try to parse as IPv6
@@ -480,11 +480,11 @@ static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *s
 #ifdef __APPLE__
         addr6->sin6_len = sizeof(struct sockaddr_in6);
 #endif
-        return 0;
+        return 1;
     }
 
     // If we reach here, the input is neither IPv4 nor IPv6
-    return 1;
+    return 0;
 }
 
 void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
@@ -498,7 +498,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     // fast path for IP addresses in text form
     struct sockaddr_storage addr;
-    if (try_parse_ip(host, port, &addr) == 0) {
+    if (try_parse_ip(host, port, &addr)) {
         *is_connecting = 1;
         return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
     }

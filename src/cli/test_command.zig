@@ -973,10 +973,9 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     };
 
     // always ignore node_modules unless include_node_modules is true
-    if (!bun.JSC.Jest.runner.?.test_options.coverage.include_node_modules) {
-        if (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\")) {
-            return false;
-        }
+    if (!bun.JSC.Jest.runner.?.test_options.coverage.include_node_modules and 
+        (bun.strings.contains(slice, "/node_modules/") or bun.strings.contains(slice, "\\node_modules\\"))) {
+        return false;
     }
 
     const ext = std.fs.path.extension(slice);

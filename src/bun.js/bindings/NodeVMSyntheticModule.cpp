@@ -1,6 +1,7 @@
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
+#include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
@@ -47,18 +48,34 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
         return nullptr;
     }
 
-    WTF::Vector<Identifier, 4> exportNames;
+    JSValue syntheticEvaluationStepsValue = args.at(3);
+    if (!syntheticEvaluationStepsValue.isUndefined()) {
+        if (!syntheticEvaluationStepsValue.isCallable()) {
+            throwArgumentTypeError(*globalObject, scope, 3, "syntheticEvaluationSteps"_s, "Module"_s, "Module"_s, "function"_s);
+            return nullptr;
+        }
+
+        syntheticEvaluationStepsValue = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, syntheticEvaluationStepsValue);
+    }
+
+    JSValue moduleWrapperValue = args.at(4);
+    if (!moduleWrapperValue.isObject()) {
+        throwArgumentTypeError(*globalObject, scope, 4, "moduleWrapper"_s, "Module"_s, "Module"_s, "object"_s);
+        return nullptr;
+    }
+
+    WTF::HashSet<String> exportNames;
     for (unsigned i = 0; i < exportNamesArray->getArrayLength(); i++) {
         JSValue exportNameValue = exportNamesArray->getDirectIndex(globalObject, i);
         if (!exportNameValue.isString()) {
             throwArgumentTypeError(*globalObject, scope, 2, "exportNames"_s, "Module"_s, "Module"_s, "string[]"_s);
         }
-        exportNames.append(Identifier::fromString(vm, exportNameValue.toWTFString(globalObject)));
+        exportNames.addVoid(exportNameValue.toWTFString(globalObject));
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     auto* structure = zigGlobalObject->NodeVMSyntheticModuleStructure();
-    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, identifierValue.toWTFString(globalObject), contextValue, WTFMove(exportNames));
+    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, identifierValue.toWTFString(globalObject), contextValue, moduleWrapperValue, WTFMove(exportNames), syntheticEvaluationStepsValue);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -82,10 +99,11 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
     ScopeOffset offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
     exportSymbolTable->set(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
 
-    for (const Identifier& exportName : m_exportNames) {
+    for (const String& exportName : m_exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        exportSymbolTable->set(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(offset)));
-        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportName, exportName));
+        Identifier exportIdentifier = Identifier::fromString(vm, exportName);
+        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));
+        exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
     }
 
     JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsTDZValue(), moduleRecord);
@@ -152,6 +170,25 @@ JSValue NodeVMSyntheticModule::instantiate(JSGlobalObject* globalObject)
     return JSC::jsUndefined();
 }
 
+JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
+{
+    if (m_status == Status::Evaluated) {
+        return m_evaluationResult.get();
+    }
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_status != Status::Linked) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before evaluating"_s);
+        return {};
+    }
+
+    ArgList args;
+
+    return AsyncContextFrame::call(globalObject, m_syntheticEvaluationSteps.get(), m_moduleWrapper.get(), args);
+}
+
 void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -159,6 +196,11 @@ void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String 
 
     if (status() < Status::Linked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before exports can be set"_s);
+        return;
+    }
+
+    if (!m_exportNames.contains(exportName)) {
+        throwVMError(globalObject, scope, createReferenceError(globalObject, makeString("Export '"_s, exportName, "' is not defined in module"_s)));
         return;
     }
 
@@ -180,6 +222,7 @@ void NodeVMSyntheticModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(vmModule, visitor);
 
     visitor.append(vmModule->m_moduleRecord);
+    visitor.append(vmModule->m_syntheticEvaluationSteps);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSyntheticModule);

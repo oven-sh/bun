@@ -403,7 +403,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_evaluationException);
     visitor.append(vmModule->m_initializeImportMeta);
-    visitor.append(vmModule->m_moduleWrapper);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

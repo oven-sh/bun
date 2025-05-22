@@ -54,13 +54,11 @@ private:
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Exception> m_evaluationException;
     WriteBarrier<Unknown> m_initializeImportMeta;
-    WriteBarrier<Unknown> m_moduleWrapper;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper)
-        : Base(vm, structure, WTFMove(identifier), context)
-        , m_moduleWrapper(vm, this, moduleWrapper)
+        : Base(vm, structure, WTFMove(identifier), context, moduleWrapper)
         , m_sourceCode(WTFMove(sourceCode))
     {
     }

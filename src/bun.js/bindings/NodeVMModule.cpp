@@ -74,13 +74,15 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     auto run = [&] {
-        status(Status::Evaluating);
-        evaluateDependencies(globalObject, record, timeout, breakOnSigint);
         if (sourceTextThis) {
+            status(Status::Evaluating);
+            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
             sourceTextThis->initializeImportMeta(globalObject);
-            if (scope.exception()) {
-                return;
-            }
+        } else if (syntheticThis) {
+            syntheticThis->evaluate(globalObject);
+        }
+        if (scope.exception()) {
+            return;
         }
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
@@ -132,9 +134,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     return result;
 }
 
-NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context)
+NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper)
     : Base(vm, structure)
     , m_identifier(WTFMove(identifier))
+    , m_moduleWrapper(vm, this, moduleWrapper)
 {
     if (context.isObject()) {
         m_context.set(vm, this, asObject(context));
@@ -143,20 +146,24 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 
 void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     for (const auto& request : record->requestedModules()) {
         if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
             auto* dependency = jsCast<NodeVMModule*>(iter->value.get());
             RELEASE_ASSERT(dependency != nullptr);
 
-            if (dependency->status() == Status::Linked) {
-                JSValue dependencyResult {};
+            if (dependency->status() == Status::Unlinked) {
                 if (auto* syntheticDependency = jsDynamicCast<NodeVMSyntheticModule*>(dependency)) {
-                    dependencyResult = syntheticDependency->evaluate(globalObject, timeout, breakOnSigint);
-                } else if (auto* sourceTextDependency = jsDynamicCast<NodeVMSourceTextModule*>(dependency)) {
-                    dependencyResult = sourceTextDependency->evaluate(globalObject, timeout, breakOnSigint);
-                } else {
-                    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid dependency type");
+                    syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
+                    RETURN_IF_EXCEPTION(scope, );
                 }
+            }
+
+            if (dependency->status() == Status::Linked) {
+                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
+                RETURN_IF_EXCEPTION(scope, );
                 RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm module dependencies");
             }
         }
@@ -381,10 +388,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
         breakOnSigint = breakOnSigintValue.asBoolean();
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
         return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
     } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
+        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
         return {};
     }
 }
@@ -446,6 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
         }
         JSValue exportValue = callFrame->argument(1);
         thisObject->setExport(globalObject, nameValue.toWTFString(globalObject), exportValue);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         throwTypeError(globalObject, scope, "This function must be called on a SyntheticModule"_s);
         return {};
@@ -483,6 +491,7 @@ void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_namespaceObject);
     visitor.append(vmModule->m_context);
     visitor.append(vmModule->m_evaluationResult);
+    visitor.append(vmModule->m_moduleWrapper);
 
     auto moduleNatives = vmModule->m_resolveCache.values();
     visitor.append(moduleNatives.begin(), moduleNatives.end());

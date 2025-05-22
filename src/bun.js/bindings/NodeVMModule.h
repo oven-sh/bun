@@ -72,10 +72,11 @@ protected:
     WriteBarrier<JSModuleNamespaceObject> m_namespaceObject;
     WriteBarrier<JSObject> m_context;
     WriteBarrier<Unknown> m_evaluationResult;
+    WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
 
-    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context);
+    NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
     void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
 

@@ -169,7 +169,7 @@ class Module {
       // registerModule(this[kNative], registry);
     } else {
       $assert(syntheticEvaluationSteps);
-      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps);
+      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
     }
 
     this[kContext] = context;

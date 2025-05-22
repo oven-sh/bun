@@ -38,7 +38,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                                              \
-    if (!thisObject) [[unlikely]] {                                                                       \
+    if (!thisObject) [[unlikely]] {                                                                    \
         scope.throwException(globalObject, createInvalidThisError(globalObject, thisValue, "Mock"_s)); \
         return {};                                                                                     \
     }

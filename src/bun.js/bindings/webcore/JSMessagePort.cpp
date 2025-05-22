@@ -53,6 +53,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "JSEventEmitter.h"
+
 
 namespace WebCore {
 using namespace JSC;
@@ -158,7 +160,11 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
+    auto* structure =
+    JSMessagePortPrototype::createStructure(vm, &globalObject,
+                                            JSEventEmitter::prototype(vm,
+                                                                      globalObject));
+
     structure->setMayBePrototype(true);
     return JSMessagePortPrototype::create(vm, &globalObject, structure);
 }

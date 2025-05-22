@@ -84,6 +84,7 @@
 #if OS(LINUX)
 #include <limits>
 #endif
+#endif
 
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1

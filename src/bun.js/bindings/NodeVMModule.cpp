@@ -37,6 +37,8 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
+void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
+
 JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
@@ -72,18 +74,19 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         evaluateDependencies(globalObject, record, timeout, breakOnSigint);
         if (sourceTextThis) {
             sourceTextThis->initializeImportMeta(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            if (scope.exception()) {
+                return;
+            }
         }
         result = record->evaluate(globalObject, jsUndefined(), jsNumber(static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode)));
     };
 
     setSigintReceived(false);
 
+    std::optional<double> oldLimit, newLimit;
+
     if (timeout != 0) {
-        JSC::JSLockHolder locker(vm);
-        JSC::Watchdog& dog = vm.ensureWatchdog();
-        dog.enteredVM();
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+        setupWatchdog(vm, timeout, &oldLimit.emplace(), &newLimit.emplace());
     }
 
     if (breakOnSigint) {
@@ -93,10 +96,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         run();
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
     }
 
     if (vm.hasPendingTerminationException()) {
@@ -105,8 +106,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else {
+        } else if (timeout != 0) {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
+        } else {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
         }
     } else {
         setSigintReceived(false);
@@ -375,10 +378,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
 
     if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
         return JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint));
-        // } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
-        //     return thisObject->link(globalObject, specifiers, moduleNatives);
     } else {
-        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);
         return {};
     }
 }

@@ -272,7 +272,7 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
     return false;
 }
 
-static void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
+void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& dog = vm.ensureWatchdog();

@@ -68,7 +68,7 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *const BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
@@ -335,26 +335,8 @@ pub const Stringifier = struct {
             }
 
             if (lockfile.overrides.map.count() > 0) {
-                var overrides_buf: std.ArrayListUnmanaged(Dependency) = try .initCapacity(allocator, lockfile.overrides.map.count());
-                defer overrides_buf.deinit(allocator);
+                lockfile.overrides.sort(lockfile);
 
-                try overrides_buf.appendSlice(allocator, lockfile.overrides.map.values());
-
-                const OverridesSortCtx = struct {
-                    buf: string,
-
-                    pub fn lessThan(this: *@This(), l_dep: Dependency, r_dep: Dependency) bool {
-                        return l_dep.name.order(&r_dep.name, this.buf, this.buf) == .lt;
-                    }
-                };
-
-                var sort_ctx: OverridesSortCtx = .{
-                    .buf = buf,
-                };
-
-                std.sort.pdq(Dependency, overrides_buf.items, &sort_ctx, OverridesSortCtx.lessThan);
-
-                // lockfile.overrides.sort(lockfile);
                 try writeIndent(writer, indent);
                 try writer.writeAll(
                     \\"overrides": {
@@ -367,6 +349,64 @@ pub const Stringifier = struct {
                         \\{}: {},
                         \\
                     , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll("},\n");
+            }
+
+            if (lockfile.catalogs.hasAny()) {
+                // this will sort the default map, and each
+                // named catalog map
+                lockfile.catalogs.sort(lockfile);
+            }
+
+            if (lockfile.catalogs.default.count() > 0) {
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"catalog": {
+                    \\
+                );
+                indent.* += 1;
+                for (lockfile.catalogs.default.values()) |catalog_dep| {
+                    try writeIndent(writer, indent);
+                    try writer.print(
+                        \\{}: {},
+                        \\
+                    , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll("},\n");
+            }
+
+            if (lockfile.catalogs.groups.count() > 0) {
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"catalogs": {
+                    \\
+                );
+                indent.* += 1;
+
+                var iter = lockfile.catalogs.groups.iterator();
+                while (iter.next()) |entry| {
+                    const catalog_name = entry.key_ptr;
+                    const catalog_deps = entry.value_ptr;
+
+                    try writeIndent(writer, indent);
+                    try writer.print("{}: {{\n", .{catalog_name.fmtJson(buf, .{})});
+                    indent.* += 1;
+
+                    for (catalog_deps.values()) |catalog_dep| {
+                        try writeIndent(writer, indent);
+                        try writer.print(
+                            \\{}: {},
+                            \\
+                        , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
+                    }
+
+                    try decIndent(writer, indent);
+                    try writer.writeAll("},\n");
                 }
 
                 try decIndent(writer, indent);
@@ -1001,6 +1041,8 @@ const ParseError = OOM || error{
     InvalidPackagesTree,
     InvalidTrustedDependenciesSet,
     InvalidOverridesObject,
+    InvalidCatalogObject,
+    InvalidCatalogsObject,
     InvalidDependencyName,
     InvalidDependencyVersion,
     InvalidPackageResolution,
@@ -1248,6 +1290,148 @@ pub fn parseIntoBinaryLockfile(
             };
 
             try lockfile.overrides.map.put(allocator, name_hash, dep);
+        }
+    }
+
+    if (root.get("catalog")) |catalog_expr| {
+        if (!catalog_expr.isObject()) {
+            try log.addError(source, catalog_expr.loc, "Expected an object");
+            return error.InvalidCatalogObject;
+        }
+
+        for (catalog_expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+
+            if (!key.isString() or key.data.e_string.len() == 0) {
+                try log.addError(source, key.loc, "Expected a non-empty string");
+                return error.InvalidCatalogObject;
+            }
+
+            const dep_name_str = key.asString(allocator).?;
+            const dep_name_hash = String.Builder.stringHash(dep_name_str);
+            const dep_name = try string_buf.appendWithHash(dep_name_str, dep_name_hash);
+
+            if (!value.isString()) {
+                try log.addError(source, value.loc, "Expected a string");
+                return error.InvalidCatalogObject;
+            }
+
+            const version_str = value.asString(allocator).?;
+            const version_hash = String.Builder.stringHash(version_str);
+            const version = try string_buf.appendWithHash(version_str, version_hash);
+            const version_sliced = version.sliced(string_buf.bytes.items);
+
+            const dep: Dependency = .{
+                .name = dep_name,
+                .name_hash = dep_name_hash,
+                .version = Dependency.parse(
+                    allocator,
+                    dep_name,
+                    dep_name_hash,
+                    version_sliced.slice,
+                    &version_sliced,
+                    log,
+                    manager,
+                ) orelse {
+                    try log.addError(source, value.loc, "Invalid catalog version");
+                    return error.InvalidCatalogObject;
+                },
+            };
+
+            const entry = try lockfile.catalogs.default.getOrPutContext(
+                allocator,
+                dep_name,
+                String.arrayHashContext(lockfile, null),
+            );
+
+            if (entry.found_existing) {
+                try log.addError(source, key.loc, "Duplicate catalog entry");
+                return error.InvalidCatalogObject;
+            }
+
+            entry.value_ptr.* = dep;
+        }
+    }
+
+    if (root.get("catalogs")) |catalogs_expr| {
+        if (!catalogs_expr.isObject()) {
+            try log.addError(source, catalogs_expr.loc, "Expected an object");
+            return error.InvalidCatalogsObject;
+        }
+
+        for (catalogs_expr.data.e_object.properties.slice()) |catalog_prop| {
+            const catalog_key = catalog_prop.key.?;
+            const catalog_value = catalog_prop.value.?;
+
+            if (!catalog_key.isString() or catalog_key.data.e_string.len() == 0) {
+                try log.addError(source, catalog_key.loc, "Expected a non-empty string");
+                return error.InvalidCatalogsObject;
+            }
+
+            if (!catalog_value.isObject()) {
+                try log.addError(source, catalog_value.loc, "Expected an object");
+                return error.InvalidCatalogsObject;
+            }
+
+            const catalog_name_str = catalog_key.asString(allocator).?;
+            const catalog_name = try string_buf.append(catalog_name_str);
+
+            const group = try lockfile.catalogs.getOrPutGroup(lockfile, catalog_name);
+
+            for (catalog_value.data.e_object.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+
+                if (!key.isString() or key.data.e_string.len() == 0) {
+                    try log.addError(source, key.loc, "Expected a non-empty string");
+                    return error.InvalidCatalogObject;
+                }
+
+                const dep_name_str = key.asString(allocator).?;
+                const dep_name_hash = String.Builder.stringHash(dep_name_str);
+                const dep_name = try string_buf.appendWithHash(dep_name_str, dep_name_hash);
+
+                if (!value.isString()) {
+                    try log.addError(source, value.loc, "Expected a string");
+                    return error.InvalidCatalogObject;
+                }
+
+                const version_str = value.asString(allocator).?;
+                const version_hash = String.Builder.stringHash(version_str);
+                const version = try string_buf.appendWithHash(version_str, version_hash);
+                const version_sliced = version.sliced(string_buf.bytes.items);
+
+                const dep: Dependency = .{
+                    .name = dep_name,
+                    .name_hash = dep_name_hash,
+                    .version = Dependency.parse(
+                        allocator,
+                        dep_name,
+                        dep_name_hash,
+                        version_sliced.slice,
+                        &version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        try log.addError(source, value.loc, "Invalid catalog version");
+                        return error.InvalidCatalogObject;
+                    },
+                };
+
+                const entry = try group.getOrPutContext(
+                    allocator,
+                    dep_name,
+                    String.arrayHashContext(lockfile, null),
+                );
+
+                if (entry.found_existing) {
+                    try log.addError(source, key.loc, "Duplicate catalog entry");
+                    return error.InvalidCatalogObject;
+                }
+
+                entry.value_ptr.* = dep;
+            }
         }
     }
 

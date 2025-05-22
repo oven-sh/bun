@@ -39,6 +39,7 @@
   "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
+
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

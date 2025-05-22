@@ -66,6 +66,7 @@ struct loop_ssl_data {
 
 struct us_internal_ssl_socket_context_t {
   struct us_socket_context_t sc;
+  struct us_bun_socket_context_options_t options;
 
   // this thing can be shared with other socket contexts via socket transfer!
   // maybe instead of holding once you hold many, a vector or set
@@ -285,7 +286,6 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
       // we got some error here, but we dont care about it, we are closing the socket
       int err = SSL_get_error(s->ssl, ret);
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // clear
         ERR_clear_error();
         s->fatal_error = 1;
         // Fatal error occurred, we should close the socket imeadiatly
@@ -326,6 +326,41 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+/**
+ * Override the protocol error if the secure_protocol_method is set. This is to match Node's
+ * behaviour
+ * Will modify the verify_error struct to override the error code and reason if necessary.
+
+ * Returns 1 if the protocol error was overridden, 0 otherwise
+*/
+static int should_override_protocol_error(const char *proto, int is_server, int openssl_reason, struct us_bun_verify_error_t *verify_error) {
+    if (!proto) return 0;
+    if (is_server) {
+        if (strcmp(proto, "TLSv1_method") == 0 || strcmp(proto, "TLSv1_1_method") == 0) {
+            if (openssl_reason == SSL_R_WRONG_VERSION_NUMBER) {
+                verify_error->code = "ERR_SSL_WRONG_VERSION_NUMBER";
+                verify_error->reason = "Wrong version number on server";
+            } else if (openssl_reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+                verify_error->code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+                verify_error->reason = "Unsupported protocol on server";
+            }
+
+            verify_error->error = -1;
+            ERR_clear_error();
+            return 1;
+        }
+    } else {
+        if (strcmp(proto, "SSLv23_method") == 0) {
+            verify_error->code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+            verify_error->reason = "Unsupported protocol";
+            verify_error->error = -1;
+            ERR_clear_error();
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
@@ -348,6 +383,72 @@ void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
 
   if (context->on_handshake != NULL) {
     struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
+
+    if (!success && (verify_error.code == NULL || verify_error.code[0] == 0)) {
+      const char *proto = context->options.secure_protocol_method;
+      unsigned long err = ERR_peek_error();
+      int reason = ERR_GET_REASON(err);
+      if (should_override_protocol_error(proto, SSL_is_server(s->ssl), reason, &verify_error)) {
+        context->on_handshake(s, success, verify_error, context->handshake_data);
+        return;
+      }
+
+      if (context->options.secure_protocol_method) {
+        if (SSL_is_server(s->ssl)) {
+          unsigned long err = ERR_peek_error();
+          int reason = ERR_GET_REASON(err);
+          if ((strcmp(proto, "TLSv1_1_method") == 0 || strcmp(proto, "TLSv1_method") == 0)) {
+            if (reason == SSL_R_WRONG_VERSION_NUMBER) {
+              verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
+              verify_error.reason = "Wrong version number on server";
+              verify_error.error = -1;
+              ERR_clear_error();
+              context->on_handshake(s, success, verify_error, context->handshake_data);
+              return;
+            } else if (reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+              verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+              verify_error.reason = "Unsupported protocol on server";
+              verify_error.error = -1;
+              ERR_clear_error();
+              context->on_handshake(s, success, verify_error, context->handshake_data);
+              return;
+            }
+          }
+        } else {
+          if (strcmp(proto, "SSLv23_method") == 0) {
+            verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+            verify_error.reason = "Unsupported protocol";
+            verify_error.error = -1;
+            ERR_clear_error();
+            context->on_handshake(s, success, verify_error, context->handshake_data);
+            return;
+          }
+        }
+      }
+
+      if (verify_error.error == 0) {
+        verify_error.error = -1;
+
+        unsigned long err = ERR_peek_error();
+        int reason = ERR_GET_REASON(err);
+
+        if (reason == SSL_R_TLSV1_ALERT_PROTOCOL_VERSION) {
+          verify_error.code = "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION";
+          verify_error.reason = "TLSv1 alert protocol version";
+        } else if (reason == SSL_R_UNSUPPORTED_PROTOCOL) {
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+          verify_error.reason = SSL_is_server(s->ssl) ? "Unsupported protocol on server" : "Unsupported protocol on client";
+        } else if (reason == SSL_R_WRONG_VERSION_NUMBER) {
+          verify_error.code = "ERR_SSL_WRONG_VERSION_NUMBER";
+          verify_error.reason = "Wrong version number on server";
+        } else {
+          verify_error.code = "ERR_SSL_UNSUPPORTED_PROTOCOL";
+          verify_error.reason = "Unsupported protocol";
+        }
+        ERR_clear_error();
+      }
+    }
+
     context->on_handshake(s, success, verify_error, context->handshake_data);
   }
 }
@@ -400,8 +501,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   
   if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
      (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
-
-    us_internal_trigger_handshake_callback(s, 0);
+    us_internal_trigger_handshake_callback_econnreset(s); 
     return;
   }
 
@@ -507,6 +607,7 @@ restart:
     
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
+      
       // as far as I know these are the only errors we want to handle
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
@@ -540,12 +641,11 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          // clear per thread error queue if it may contain something
-          ERR_clear_error();
           s->fatal_error = 1;
+          us_internal_trigger_handshake_callback(s, 0);
         }
 
-        // terminate connection here
+        // Terminate connection after reporting the handshake error
         us_internal_ssl_socket_close(s, 0, NULL);
         return NULL; // stop processing data
       } else {
@@ -1140,14 +1240,31 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
+
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   /* we should always accept moving write buffer so we can retry writes with a
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  if (options.min_tls_version > 0) {
+    if (!SSL_CTX_set_min_proto_version(ssl_context, options.min_tls_version)) {
+      free_ssl_context(ssl_context);
+      return NULL; 
+    }
+  } else {
+     
+    if (!SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION)) {
+      free_ssl_context(ssl_context);
+      return NULL;
+    }
+  }
 
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  if (options.max_tls_version > 0) {
+    if (!SSL_CTX_set_max_proto_version(ssl_context, options.max_tls_version)) {
+      free_ssl_context(ssl_context);
+      return NULL;
+    }
+  }
 
   /* The following are helpers. You may easily implement whatever you want by
    * using the native handle directly */
@@ -1545,6 +1662,7 @@ us_internal_bun_create_ssl_socket_context(
   context->ssl_context =
       ssl_context; // create_ssl_context_from_options(options);
   context->is_parent = 1;
+  context->options = options;
 
   context->on_handshake = NULL;
   context->handshake_data = NULL;

@@ -74,6 +74,9 @@
 #include <wtf/Platform.h>
 
 #ifdef __cplusplus
+#if OS(LINUX)
+#include <limits>
+#endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/MakeString.h>
@@ -81,9 +84,6 @@
 #include <JavaScriptCore/HandleSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#if OS(LINUX)
-#include <limits>
-#endif
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

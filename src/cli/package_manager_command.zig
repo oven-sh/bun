@@ -126,6 +126,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                   list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>whoami<r>             print the current npm username
+            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>         print the hash stored in the current lockfile
@@ -191,6 +192,13 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
             Output.println("{s}", .{username});
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "view")) {
+            if (pm.options.positionals.len < 2) {
+                Output.errGeneric("missing package specifier", .{});
+                Global.exit(1);
+            }
+            try Npm.view(ctx.allocator, pm, pm.options.positionals[1]);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));

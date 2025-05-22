@@ -193,6 +193,188 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     return username;
 }
 
+pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string) !void {
+    var name = spec;
+    var version: ?string = null;
+    if (strings.lastIndexOfChar(spec, '@')) |idx| {
+        if (idx != 0) {
+            if (spec[0] != '@' or (strings.indexOfChar(spec, '/')) |slash| idx > slash) {
+                name = spec[0..idx];
+                version = spec[idx + 1 ..];
+            }
+        }
+    }
+
+    const scope = manager.scopeForPackageName(name);
+
+    var url_buf: bun.PathBuffer = undefined;
+    const encoded_name = try std.fmt.bufPrint(&url_buf, "{s}", .{bun.fmt.dependencyUrl(name)});
+    var path_buf: bun.PathBuffer = undefined;
+    const url = URL.parse(if (version) |v|
+        try std.fmt.bufPrint(&path_buf, "{s}/{s}/{s}", .{
+            strings.withoutTrailingSlash(scope.url.href),
+            encoded_name,
+            v,
+        })
+    else
+        try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{
+            strings.withoutTrailingSlash(scope.url.href),
+            encoded_name,
+        }));
+
+    var headers: http.HeaderBuilder = .{};
+    headers.count("Accept", "application/json");
+    if (scope.token.len > 0) {
+        headers.count("Authorization", "");
+        headers.content.cap += "Bearer ".len + scope.token.len;
+    } else if (scope.auth.len > 0) {
+        headers.count("Authorization", "");
+        headers.content.cap += "Basic ".len + scope.auth.len;
+    }
+    try headers.allocate(allocator);
+    headers.append("Accept", "application/json");
+    if (scope.token.len > 0) {
+        headers.appendFmt("Authorization", "Bearer {s}", .{scope.token});
+    } else if (scope.auth.len > 0) {
+        headers.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+    }
+
+    var response_buf = try MutableString.init(allocator, 2048);
+    var req = http.AsyncHTTP.initSync(
+        allocator,
+        .GET,
+        url,
+        headers.entries,
+        headers.content.ptr.?[0..headers.content.len],
+        &response_buf,
+        "",
+        manager.httpProxy(url),
+        null,
+        .follow,
+    );
+    req.client.flags.reject_unauthorized = manager.tlsRejectUnauthorized();
+
+    const res = req.sendSync() catch |err| {
+        Output.err(err, "view request failed to send", .{});
+        Global.crash();
+    };
+
+    if (res.status_code >= 400) {
+        try responseError(allocator, &req, &res, if (version) |v| .{ name, v } else null, &response_buf, false);
+    }
+
+    var log = logger.Log.init(allocator);
+    const source = logger.Source.initPathString("view.json", response_buf.list.items);
+    var json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        Output.err(err, "failed to parse response body as JSON", .{});
+        Global.crash();
+    };
+    if (log.errors > 0) {
+        try log.print(Output.errorWriter());
+        Global.crash();
+    }
+
+    var manifest = json;
+    var versions_len: usize = 1;
+    if (!version) {
+        if (json.getObject("versions")) |versions_obj| {
+            versions_len = versions_obj.data.e_object.properties.len;
+            var latest_version: ?string = null;
+            if (json.getObject("dist-tags")) |tags| {
+                if (tags.getStringCloned(allocator, "latest")) |lv| {
+                    latest_version = lv;
+                }
+            }
+            if (latest_version) |lv| {
+                if (versions_obj.asProperty(lv)) |vprop| {
+                    manifest = vprop.expr;
+                    version = lv;
+                }
+            } else if (versions_obj.data.e_object.properties.len > 0) {
+                manifest = versions_obj.data.e_object.properties.ptr[0].value.?;
+            }
+        }
+    }
+
+    const pkg_name = manifest.getStringCloned(allocator, "name") orelse name;
+    const pkg_version = manifest.getStringCloned(allocator, "version") orelse version orelse "";
+    const license = manifest.getStringCloned(allocator, "license") orelse "";
+    var dep_count: usize = 0;
+    if (manifest.getObject("dependencies")) |deps| {
+        dep_count = deps.data.e_object.properties.len;
+    }
+
+    Output.prettyln("<b><green>{s}<r>@<b>{s}<r> | <cyan>{s}<r> | deps: {d} | versions: {d}", .{
+        pkg_name,
+        pkg_version,
+        license,
+        dep_count,
+        versions_len,
+    });
+
+    if (manifest.getStringCloned(allocator, "description")) |desc| {
+        Output.prettyln("{s}", .{desc});
+    }
+    if (manifest.getStringCloned(allocator, "homepage")) |hp| {
+        Output.prettyln("{s}", .{hp});
+    }
+
+    if (manifest.getArray("keywords")) |arr| {
+        var keywords = MutableString.init(allocator, 64) catch unreachable;
+        var iter = arr;
+        var first = true;
+        while (iter.next()) |kw_expr| {
+            if (kw_expr.asString(allocator)) |kw| {
+                if (!first) keywords.appendSlice(", ") catch unreachable else first = false;
+                keywords.appendSlice(kw) catch unreachable;
+            }
+        }
+        if (keywords.list.items.len > 0) {
+            Output.prettyln("\n<blue>keywords<r>: {s}", .{keywords.list.items});
+        }
+    }
+
+    if (manifest.getObject("dist")) |dist| {
+        Output.prettyln("\n<b>dist<r>", .{});
+        if (dist.getStringCloned(allocator, "tarball")) |t| {
+            Output.prettyln(".tarball: {s}", .{t});
+        }
+        if (dist.getStringCloned(allocator, "shasum")) |s| {
+            Output.prettyln(".shasum: {s}", .{s});
+        }
+        if (dist.getStringCloned(allocator, "integrity")) |i| {
+            Output.prettyln(".integrity: {s}", .{i});
+        }
+        if (dist.getNumber("unpackedSize")) |u| {
+            Output.prettyln(".unpackedSize: {d} bytes", .{@as(u64, @intFromFloat(u.value))});
+        }
+    }
+
+    if (manifest.getArray("maintainers")) |maint_iter| {
+        Output.prettyln("\n<b>maintainers<r>:", .{});
+        var iter = maint_iter;
+        while (iter.next()) |m| {
+            var nm = m.getStringCloned(allocator, "name") orelse "";
+            var em = m.getStringCloned(allocator, "email") orelse "";
+            Output.prettyln("- {s} <{s}>", .{nm, em});
+        }
+    }
+
+    if (json.getObject("dist-tags")) |tags_obj| {
+        Output.prettyln("\n<b>dist-tags<r>:", .{});
+        for (tags_obj.data.e_object.properties.slice()) |prop| {
+            if (prop.key == null or prop.value == null) continue;
+            const tagname_expr = prop.key.?;
+            const val_expr = prop.value.?;
+            if (tagname_expr.asString(allocator)) |tag| {
+                if (val_expr.asString(allocator)) |val| {
+                    Output.prettyln("{s}: {s}", .{tag, val});
+                }
+            }
+        }
+    }
+}
+
 pub fn responseError(
     allocator: std.mem.Allocator,
     req: *const http.AsyncHTTP,

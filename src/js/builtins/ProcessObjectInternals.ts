@@ -31,52 +31,54 @@ const enum BunProcessStdinFdType {
 }
 
 export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
-  $assert(typeof fd === "number", `Expected fd to be a number, got ${typeof fd}`);
+  $assert(fd === 0 || fd === 1 || fd === 2, `Expected fd to be 0, 1, or 2, got ${fd}`);
 
   let stream;
-  if (isTTY) {
-    const tty = require("node:tty");
-    stream = new tty.WriteStream(fd);
-    // TODO: this is the wrong place for this property.
-    // but the TTY is technically duplex
-    // see test-fs-syncwritestream.js
-    stream.readable = true;
-    process.on("SIGWINCH", () => {
-      stream._refreshSize();
-    });
-    stream._type = "tty";
+  if (Bun.isMainThread /* TODO or if web worker thread */) {
+    if (isTTY) {
+      const tty = require("node:tty");
+      stream = new tty.WriteStream(fd);
+      // TODO: this is the wrong place for this property.
+      // but the TTY is technically duplex
+      // see test-fs-syncwritestream.js
+      stream.readable = true;
+      process.on("SIGWINCH", () => {
+        stream._refreshSize();
+      });
+      stream._type = "tty";
+    } else {
+      const fs = require("node:fs");
+      stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+      stream.readable = false;
+      stream._type = "fs";
+    }
+
+    if (fd === 1 || fd === 2) {
+      stream.destroySoon = stream.destroy;
+      stream._destroy = function (err, cb) {
+        cb(err);
+        this._undestroy();
+
+        if (!this._writableState.emitClose) {
+          process.nextTick(() => {
+            this.emit("close");
+          });
+        }
+      };
+    }
+
+    stream._isStdio = true;
+    stream.fd = fd;
   } else {
-    const fs = require("node:fs");
-    stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
-    stream.readable = false;
-    stream._type = "fs";
+    stream = new (require("internal/worker_threads").WritableWorkerStdio)(fd);
   }
-
-  if (fd === 1 || fd === 2) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
-
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
-  }
-
-  stream._isStdio = true;
-  stream.fd = fd;
 
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
 export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
   const native = Bun.stdin.stream();
-  // @ts-expect-error
   const source = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -435,4 +437,9 @@ export function getChannel() {
       setRef(false);
     }
   })();
+}
+
+export function emitWorkerStdioInParent(worker, fd, data) {
+  console.log(worker.on);
+  process.stdout.write(data);
 }

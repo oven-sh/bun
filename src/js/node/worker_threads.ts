@@ -20,17 +20,7 @@ const {
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const {
-  0: _workerData,
-  1: _threadId,
-  2: _receiveMessageOnPort,
-  3: environmentData,
-} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
-  unknown,
-  number,
-  (port: unknown) => unknown,
-  Map<unknown, unknown>,
-];
+const { _workerData, _threadId, _receiveMessageOnPort, environmentData } = require("internal/worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -223,7 +213,7 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
+const unsupportedOptions = ["trackedUnmanagedFds", "resourceLimits"];
 
 class Worker extends EventEmitter {
   #worker: WebWorker;

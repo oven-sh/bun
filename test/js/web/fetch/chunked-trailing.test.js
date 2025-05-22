@@ -514,7 +514,7 @@ it("handles chunked extensions with special characters", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-it.only("Proper error if missing zero-length chunk", async () => {
+it("Proper error if missing zero-length chunk", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {

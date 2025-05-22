@@ -51,7 +51,7 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
     if (!transferValue.isUndefined()) {
         if (transferValue.isNull()) {
             Bun::throwError(&lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Optional options.transfer argument must be an iterable"_s);
-            return result;
+            return {};
         }
         result.transfer = convert<IDLSequence<IDLObject>>(lexicalGlobalObject, transferValue);
         RETURN_IF_EXCEPTION(throwScope, {});

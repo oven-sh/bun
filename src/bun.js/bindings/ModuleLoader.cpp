@@ -111,7 +111,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         bool hasDefault = false;
 
         for (auto& entry : properties) {
-            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+            if (entry == vm.propertyNames->defaultKeyword) [[unlikely]] {
                 hasDefault = true;
             }
             exportNames.append(entry);
@@ -219,7 +219,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     JSC::JSObject* object = objectValue.getObject();
-    if (UNLIKELY(!object)) {
+    if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
 
         result.value.error = scope.exception();
@@ -253,7 +253,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(loader == BunLoaderTypeNone)) {
+    if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
         result.value.error = scope.exception();
         return result;
@@ -275,7 +275,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(result.value.sourceText.value.isEmpty())) {
+    if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
         return result;

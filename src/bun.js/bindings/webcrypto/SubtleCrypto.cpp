@@ -122,7 +122,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.name);
-    if (UNLIKELY(!identifier))
+    if (!identifier) [[unlikely]]
         return Exception { NotSupportedError };
 
     if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
@@ -1156,13 +1156,13 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     }
 
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappedKeyAlgorithm->identifier);
-    if (UNLIKELY(!importAlgorithm)) {
+    if (!importAlgorithm) [[unlikely]] {
         promise->reject(Exception { NotSupportedError });
         return;
     }
 
     auto unwrapAlgorithm = CryptoAlgorithmRegistry::singleton().create(unwrappingKey.algorithmIdentifier());
-    if (UNLIKELY(!unwrapAlgorithm)) {
+    if (!unwrapAlgorithm) [[unlikely]] {
         promise->reject(Exception { NotSupportedError });
         return;
     }

@@ -203,7 +203,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortSignalConstructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSAbortSignalPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortSignal::getConstructor(vm, prototype->globalObject()));
 }
@@ -268,7 +268,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
@@ -287,10 +287,10 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_timeoutBody(J
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto milliseconds = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument0.value());
@@ -310,7 +310,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 

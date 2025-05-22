@@ -110,10 +110,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSBroadcastChannelDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "BroadcastChannel"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -271,7 +271,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannelConstructor, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSBroadcastChannelPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSBroadcastChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -350,7 +350,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_postMessag
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
@@ -434,7 +434,7 @@ bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
     auto* jsBroadcastChannel = jsCast<JSBroadcastChannel*>(handle.slot()->asCell());
     auto& wrapped = jsBroadcastChannel->wrapped();
     if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }

@@ -30,7 +30,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     auto eventType = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return Bun::throwError(globalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
             "ERR_INVALID_ARG_TYPE: first argument must be of type EventEmitter"_s);
     }

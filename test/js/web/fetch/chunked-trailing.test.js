@@ -514,8 +514,7 @@ it("handles chunked extensions with special characters", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-// TODO: do we want this behavior?
-it.skip("doesnt error if the trailing \r\n is missing", async () => {
+it("doesnt error if the trailing \r\n is missing", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
@@ -537,9 +536,11 @@ it.skip("doesnt error if the trailing \r\n is missing", async () => {
       resolve(server.address());
     });
 
-  const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
-  expect(res.status).toBe(200);
-
-  expect(await res.text()).toMatchInlineSnapshot(`"HelloWorld"`);
+  try {
+    const address = await promise;
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("InvalidHTTPResponse");
+  }
 });

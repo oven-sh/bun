@@ -487,10 +487,10 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
     return 0;
 }
 
-void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* has_dns_resolved) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
-        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, has_dns_resolved);
     }
 #endif
 
@@ -499,7 +499,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     // fast path for IP addresses in text form
     struct sockaddr_storage addr;
     if (try_parse_ip(host, port, &addr)) {
-        *is_connecting = 1;
+        *has_dns_resolved = 1;
         return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
     }
 
@@ -518,7 +518,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
         if (result->entries && result->entries->info.ai_next == NULL) {
             struct sockaddr_storage addr;
             init_addr_with_port(&result->entries->info, port, &addr);
-            *is_connecting = 1;
+            *has_dns_resolved = 1;
             struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;

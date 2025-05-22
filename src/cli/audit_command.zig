@@ -408,8 +408,6 @@ fn printEnhancedAuditReport(
         return;
     }
 
-    Output.prettyln("# bun audit report\n", .{});
-
     var audit_result = AuditResult.init(allocator);
     defer audit_result.deinit();
 

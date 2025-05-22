@@ -91,43 +91,43 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
     const parsed_manifest = @import("../install/npm.zig").PackageManifest.parse(
         allocator,
-        &scope,
+        scope,
         &log,
         response_buf.list.items,
         name,
         "", // last_modified (not needed for view)
         "", // etag (not needed for view)
-        0,  // public_max_age (not needed for view)
+        0, // public_max_age (not needed for view)
     ) catch |err| {
         Output.err(err, "failed to parse package manifest", .{});
-        Global.crash();
+        Global.exit(1);
     } orelse {
         Output.errGeneric("failed to parse package manifest", .{});
         Global.crash();
     };
-    
+
     // Now use the existing version resolution logic from outdated_command
     var manifest = json;
     var resolved_version: ?string = null;
     var versions_len: usize = 1;
-    
+
     if (json.getObject("versions")) |versions_obj| {
         versions_len = versions_obj.data.e_object.properties.len;
-        
+
         if (version) |version_spec| {
             // Use the exact same logic as outdated_command.zig
             var wanted_version: ?Semver.Version = null;
-            
+
             // First try dist-tag lookup (like "latest", "beta", etc.)
             if (parsed_manifest.findByDistTag(version_spec)) |result| {
                 wanted_version = result.version;
             } else {
                 // Parse as semver query and find best version - exactly like outdated_command.zig line 325
                 const sliced_literal = Semver.SlicedString.init(version_spec, version_spec);
-                if (Semver.Query.parse(allocator, sliced_literal, sliced_literal)) |query| {
-                    defer query.deinit(allocator);
+                if (Semver.Query.parse(allocator, version_spec, sliced_literal)) |query| {
+                    defer query.deinit();
                     // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                    if (parsed_manifest.findBestVersion(query.head, parsed_manifest.string_buf)) |result| {
+                    if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
                         wanted_version = result.version;
                     }
                 } else |_| {
@@ -137,7 +137,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
                     }
                 }
             }
-            
+
             // Find the version string from JSON that matches the resolved version
             if (wanted_version) |wv| {
                 const versions = versions_obj.data.e_object.properties.slice();
@@ -146,7 +146,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
                     const version_str = prop.key.?.asString(allocator) orelse continue;
                     const sliced_version = Semver.SlicedString.init(version_str, version_str);
                     const parsed_version = Semver.Version.parse(sliced_version);
-                    if (parsed_version.valid and parsed_version.version.eql(wv)) {
+                    if (parsed_version.valid and parsed_version.version.max().eql(wv)) {
                         resolved_version = version_str;
                         break;
                     }
@@ -161,14 +161,14 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
                     const version_str = prop.key.?.asString(allocator) orelse continue;
                     const sliced_version = Semver.SlicedString.init(version_str, version_str);
                     const parsed_version = Semver.Version.parse(sliced_version);
-                    if (parsed_version.valid and parsed_version.version.eql(result.version)) {
+                    if (parsed_version.valid and parsed_version.version.max().eql(result.version)) {
                         resolved_version = version_str;
                         break;
                     }
                 }
             }
         }
-        
+
         // Get the manifest for the resolved version
         if (resolved_version) |rv| {
             if (versions_obj.asProperty(rv)) |vprop| {

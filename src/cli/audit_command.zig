@@ -27,7 +27,6 @@ pub const AuditCommand = struct {
         const buf = pm.lockfile.buffers.string_bytes.items;
         const root_id = pm.root_package_id.get(pm.lockfile, pm.workspace_name_hash);
 
-        // Use a simple array approach to avoid hash map stability issues
         var packages_list = std.ArrayList(struct {
             name: []const u8,
             versions: std.ArrayList([]const u8),
@@ -50,7 +49,6 @@ pub const AuditCommand = struct {
             const name_slice = name.slice(buf);
             const ver_str = try std.fmt.allocPrint(ctx.allocator, "{}", .{res.value.npm.version.fmt(buf)});
 
-            // Find existing package or create new one
             var found_package: ?*@TypeOf(packages_list.items[0]) = null;
             for (packages_list.items) |*item| {
                 if (std.mem.eql(u8, item.name, name_slice)) {
@@ -67,7 +65,6 @@ pub const AuditCommand = struct {
                 found_package = &packages_list.items[packages_list.items.len - 1];
             }
 
-            // Check if version already exists
             var version_exists = false;
             for (found_package.?.versions.items) |existing_ver| {
                 if (std.mem.eql(u8, existing_ver, ver_str)) {
@@ -149,11 +146,9 @@ pub const AuditCommand = struct {
             Global.crash();
         }
 
-        // Try to pretty print the audit response
         const response_text = response_buf.slice();
         if (response_text.len > 0) {
             printAuditReport(response_text) catch {
-                // Fallback to raw JSON if parsing fails
                 Output.writer().writeAll(response_text) catch {};
                 Output.writer().writeByte('\n') catch {};
             };
@@ -164,19 +159,16 @@ pub const AuditCommand = struct {
 };
 
 fn printAuditReport(response_text: []const u8) !void {
-    // Try to parse as JSON and format nicely
     const source = logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(bun.default_allocator);
     defer log.deinit();
 
     const expr = @import("../json_parser.zig").parse(&source, &log, bun.default_allocator, true) catch {
-        // If parsing fails, just print raw response
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
         return;
     };
 
-    // Check if it's an empty object (no vulnerabilities)
     if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
         Output.prettyln("<green>No vulnerabilities found.<r>", .{});
         return;
@@ -184,8 +176,6 @@ fn printAuditReport(response_text: []const u8) !void {
 
     Output.prettyln("# bun audit report\n", .{});
 
-    // For now, let's do a simple pretty print of the JSON structure
-    // TODO: Parse specific npm audit response format and make it look like npm's output
     if (expr.data == .e_object) {
         const properties = expr.data.e_object.properties.slice();
         var vuln_count: u32 = 0;
@@ -210,7 +200,6 @@ fn printAuditReport(response_text: []const u8) !void {
             Output.prettyln("To address issues, update the affected packages to their latest versions.", .{});
         }
     } else {
-        // Fallback: print raw JSON if structure is unexpected
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
     }

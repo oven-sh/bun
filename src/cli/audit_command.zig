@@ -483,17 +483,42 @@ fn printEnhancedAuditReport(
         var package_iter = audit_result.vulnerable_packages.iterator();
         while (package_iter.next()) |entry| {
             const package_info = entry.value_ptr;
-            const is_first = package_iter.index == 0;
 
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
-
-                if (!is_first) Output.prettyln("", .{});
 
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
                 } else {
                     Output.prettyln("<red>{s}<r>", .{main_vuln.package_name});
+                }
+
+                var has_fix_available = false;
+                var has_breaking_changes = false;
+
+                for (package_info.dependents.items) |path| {
+                    if (path.is_direct) {
+                        has_fix_available = true;
+                    } else {
+                        var i = path.path.items.len;
+
+                        while (i > 0) {
+                            i -= 1;
+                            const pkg_name = path.path.items[i];
+
+                            if (i == path.path.items.len - 1) {
+                                Output.prettyln("   <green>{s}<r>", .{pkg_name});
+                            } else if (i == 0) {
+                                Output.prettyln("     └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
+                            } else {
+                                Output.prettyln("     └─> {s}", .{pkg_name});
+                            }
+                        }
+
+                        if (!has_fix_available) {
+                            has_breaking_changes = true;
+                        }
+                    }
                 }
 
                 for (package_info.vulnerabilities.items) |vuln| {
@@ -515,40 +540,10 @@ fn printEnhancedAuditReport(
                     }
                 }
 
-                var has_fix_available = false;
-                var has_breaking_changes = false;
-
-                for (package_info.dependents.items) |path| {
-                    if (path.is_direct) {
-                        Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
-                        has_fix_available = true;
-                    } else {
-                        // Output.prettyln("", .{});
-
-                        var i = path.path.items.len;
-                        while (i > 0) {
-                            i -= 1;
-                            const pkg_name = path.path.items[i];
-
-                            if (i == path.path.items.len - 1) {
-                                Output.prettyln("  ›   <green>{s}<r> (your direct dependency)", .{pkg_name});
-                            } else if (i == 0) {
-                                Output.prettyln("  ›     └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
-                            } else {
-                                Output.prettyln("  ›     └─> {s}", .{pkg_name});
-                            }
-                        }
-
-                        // Output.prettyln("", .{});
-
-                        if (!has_fix_available) {
-                            Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});
-                            has_breaking_changes = true;
-                        }
-                    }
-                }
-
-                if (has_breaking_changes) {
+                if (has_fix_available) {
+                    Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
+                } else if (has_breaking_changes) {
+                    Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});
                     Output.prettyln("   <yellow>Will install updated versions, which may be a breaking change<r>", .{});
                 }
 

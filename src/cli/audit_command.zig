@@ -506,9 +506,9 @@ fn printEnhancedAuditReport(
                     }
 
                     if (vuln.title.len > 0) {
-                        Output.prettyln("{s} {s} - {s}", .{ severity_str, vuln.title, vuln.url });
+                        Output.prettyln("   {s} {s} - {s}", .{ severity_str, vuln.title, vuln.url });
                     } else {
-                        Output.prettyln("{s} {s}", .{ severity_str, vuln.url });
+                        Output.prettyln("   {s} {s}", .{ severity_str, vuln.url });
                     }
                 }
 
@@ -517,10 +517,11 @@ fn printEnhancedAuditReport(
 
                 for (package_info.dependents.items) |path| {
                     if (path.is_direct) {
-                        Output.prettyln("Fix available via <green>`bun update`<r>", .{});
+                        Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
                         has_fix_available = true;
                     } else {
-                        const vulnerable_pkg = path.path.items[0];
+                        const vuln_pkg_path = std.mem.join(allocator, "/", path.path.items);
+                        defer allocator.free(vuln_pkg_path);
 
                         var i = path.path.items.len;
                         while (i > 0) {
@@ -528,25 +529,25 @@ fn printEnhancedAuditReport(
                             const pkg_name = path.path.items[i];
 
                             if (i == path.path.items.len - 1) {
-                                Output.prettyln("  <green>{s}<r> (your direct dependency)", .{pkg_name});
+                                Output.prettyln("     <green>{s}<r> (your direct dependency)", .{pkg_name});
                             } else if (i == 0) {
-                                Output.prettyln("    └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
+                                Output.prettyln("       └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
                             } else {
-                                Output.prettyln("    └─> {s}", .{pkg_name});
+                                Output.prettyln("       └─> {s}", .{pkg_name});
                             }
                         }
 
-                        Output.prettyln("Located at: <d>node_modules/{s}<r>", .{vulnerable_pkg});
+                        Output.prettyln("   Located at: <d>node_modules/{s}<r>", .{vuln_pkg_path});
 
                         if (!has_fix_available) {
-                            Output.prettyln("fix available via <green>`bun update --latest`<r>", .{});
+                            Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});
                             has_breaking_changes = true;
                         }
                     }
                 }
 
                 if (has_breaking_changes) {
-                    Output.prettyln("<yellow>Will install updated versions, which may be a breaking change<r>", .{});
+                    Output.prettyln("   <yellow>Will install updated versions, which may be a breaking change<r>", .{});
                 }
 
                 Output.prettyln("", .{});

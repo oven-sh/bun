@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
 
-function fixture(folder: "express@3") {
+function fixture(folder: "express@3" | "vuln-with-only-dev-dependencies") {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
@@ -54,7 +54,7 @@ function doAuditTest(
   });
 }
 
-describe("bun pm audit", async () => {
+describe("`bun pm audit`", () => {
   doAuditTest("Should fail with no package.json", {
     exitCode: 1,
     files: {
@@ -95,9 +95,20 @@ describe("bun pm audit", async () => {
     args: ["--json"],
     fn: async ({ stdout }) => {
       const out = await stdout;
-      const json = JSON.parse(out);
+      const json = JSON.parse(out); // this would throw making the test fail if the JSON was invalid
 
       expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout");
     },
   });
+
+  doAuditTest(
+    "should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified",
+    {
+      exitCode: 1,
+      files: fixture("vuln-with-only-dev-dependencies"),
+      fn: async ({ stdout }) => {
+        expect(await stdout).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
+      },
+    },
+  );
 });

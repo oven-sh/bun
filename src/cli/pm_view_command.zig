@@ -293,13 +293,13 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     }
 
     if (json.getArray("keywords")) |arr| {
-        var keywords = MutableString.init(allocator, 64) catch unreachable;
+        var keywords = try MutableString.init(allocator, 64);
         var iter = arr;
         var first = true;
         while (iter.next()) |kw_expr| {
             if (kw_expr.asString(allocator)) |kw| {
-                if (!first) keywords.appendSlice(", ") catch unreachable else first = false;
-                keywords.appendSlice(kw) catch unreachable;
+                if (!first) try keywords.appendSlice(", ") else first = false;
+                try keywords.appendSlice(kw);
             }
         }
         if (keywords.list.items.len > 0) {

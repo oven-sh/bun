@@ -590,7 +590,7 @@ async function runTests() {
     try {
       // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
       const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-      let coresDir = "";
+      let coresDir = sysctl.stdout;
       if (sysctl.ok) {
         if (coresDir.startsWith("|")) {
           throw new Error("cores are being piped not saved");

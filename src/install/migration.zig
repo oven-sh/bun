@@ -186,8 +186,7 @@ pub fn migrateNPMLockfile(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
-                &workspaces,
+            const workspace_packages_count = try workspaces.processNamesArray(
                 allocator,
                 &manager.workspace_package_json_cache,
                 log,

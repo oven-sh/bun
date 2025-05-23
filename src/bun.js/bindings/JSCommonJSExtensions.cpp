@@ -73,11 +73,11 @@ bool isAllowedToMutateExtensions(JSC::JSGlobalObject* globalObject)
         return false; // Next.js adds SWC support to add features Bun already has.
     if (CHECK_PATH(url, "@meteorjs/babel"_s, "@meteorjs\\babel"_s))
         return false; // Wraps existing loaders to use Babel.
-        // NOTE: @babel/core is not on this list because it checks if extensions[".ts"] exists
-        //       before adding it's own.
-        // NOTE: vitest uses extensions correctly
-        // NOTE: vite doesn't need to use extensions, but blocking them would make
-        //       it slower as they already bundle the code before injecting the hook.
+    // NOTE: @babel/core is not on this list because it checks if extensions[".ts"] exists
+    //       before adding it's own.
+    // NOTE: vitest uses extensions correctly
+    // NOTE: vite doesn't need to use extensions, but blocking them would make
+    //       it slower as they already bundle the code before injecting the hook.
 
 #undef CHECK_PATH
     return true;

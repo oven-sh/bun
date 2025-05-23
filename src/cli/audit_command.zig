@@ -535,9 +535,9 @@ fn printEnhancedAuditReport(
                 }
 
                 if (has_fix_available) {
-                    Output.prettyln("  Fix available with <green>`bun update`<r>", .{});
+                    Output.prettyln("  Fix available with <green>`bun update {s}`<r>", .{package_info.name});
                 } else if (has_breaking_changes) {
-                    Output.prettyln("  Fix available with <green>`bun update --force`<r><d> (may be a breaking change)<r>", .{});
+                    Output.prettyln("  Fix available with <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
                 }
 
                 Output.prettyln("", .{});

@@ -1,4 +1,4 @@
-name: Claude Code
+name: Triage Agent
 
 on:
   issues:
@@ -8,7 +8,7 @@ env:
   BUN_VERSION: "1.2.11"
 
 jobs:
-  claude:
+  triage:
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -71,7 +71,7 @@ if (positionals.length === 0) {
   process.exit(1);
 }
 
-const promptName = positionals[0].toLowerCase();
+const promptName = positionals[0].toUpperCase();
 const promptFile = `.agent/${promptName}.md`;
 const extraArgs = positionals.slice(1);
 

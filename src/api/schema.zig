@@ -1612,6 +1612,24 @@ pub const Api = struct {
         }
     };
 
+    /// This enum is mirrored in BunProcess.cpp
+    pub const UnhandledRejections = enum(u8) {
+        strict = 0,
+        throw = 1,
+        warn = 2,
+        none = 3,
+        warn_with_error_code = 4,
+        bun = 5,
+
+        pub const map = bun.ComptimeStringMap(UnhandledRejections, .{
+            .{ "strict", .strict },
+            .{ "throw", .throw },
+            .{ "warn", .warn },
+            .{ "none", .none },
+            .{ "warn-with-error-code", .warn_with_error_code },
+        });
+    };
+
     pub const TransformOptions = struct {
         /// jsx
         jsx: ?Jsx = null,
@@ -1709,11 +1727,13 @@ pub const Api = struct {
 
         // from --no-addons. null == true
         allow_addons: ?bool = null,
+        /// from --unhandled-rejections, default is 'throw'
+        unhandled_rejections: ?UnhandledRejections = null,
 
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
-            var this = std.mem.zeroes(TransformOptions);
+            var this = std.mem.zeroes(TransformOptions); //
 
             while (true) {
                 switch (try reader.readByte()) {

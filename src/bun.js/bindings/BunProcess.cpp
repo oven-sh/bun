@@ -1127,6 +1127,16 @@ bool isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
     RELEASE_AND_RETURN(scope, result);
 }
 
+enum UnhandledRejectionsMode : uint8_t {
+    // This enum is mirrored in schema.zig
+    UnhandledRejectionsMode_strict = 0,
+    UnhandledRejectionsMode_throw = 1,
+    UnhandledRejectionsMode_warn = 2,
+    UnhandledRejectionsMode_none = 3,
+    UnhandledRejectionsMode_warn_with_error_code = 4,
+};
+extern "C" UnhandledRejectionsMode Bun__VM__unhandledRejectionsMode(void* bunVM);
+
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
@@ -1143,6 +1153,11 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         args.append(promise);
         wrapped.emit(eventType, args);
         return true;
+    }
+
+    auto unhandledRejectionsMode = Bun__VM__unhandledRejectionsMode(globalObject->bunVM());
+    if (unhandledRejectionsMode == UnhandledRejectionsMode_none) {
+        return true; // mark the rejection as handled in order to not print it
     }
 
     // With --unhandled-rejections=throw (default), unhandled rejections will be sent to the uncaught exception handler unless an unhandledRejection handler is registered.

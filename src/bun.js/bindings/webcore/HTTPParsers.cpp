@@ -131,7 +131,7 @@ bool isValidHTTPHeaderValue(const StringView& value)
         const LChar* begin = value.span8().data();
         const LChar* end = begin + value.length();
         for (const LChar* p = begin; p != end; ++p) {
-            if (UNLIKELY(*p <= 13)) {
+            if (*p <= 13) [[unlikely]] {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
                     return false;

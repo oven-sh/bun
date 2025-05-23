@@ -1,4 +1,3 @@
-import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";

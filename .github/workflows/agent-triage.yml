@@ -4,6 +4,9 @@ on:
   issues:
     types: [opened, reopened, edited, assigned]
 
+env:
+  BUN_VERSION: "1.2.11"
+
 jobs:
   claude:
     runs-on: ubuntu-latest
@@ -17,20 +20,11 @@ jobs:
         with:
           fetch-depth: 1
 
-      - id: prompt
-        name: Read Prompt
-        run: |
-          {
-            echo 'prompt<<EOF'
-            cat .agent/TRIAGE.md
-            echo EOF
-          } >> "$GITHUB_ENV"
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          version: ${{ env.BUN_VERSION }}
 
       - name: Run Agent
-        uses: anthropics/claude-code-action@beta
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          direct_prompt: ${{ steps.prompt.outputs.prompt }}
-          trigger_phrase: " " # Always trigger
-          allowed_tools: "Bash,Edit,Replace,Search"
-          timeout_minutes: 5
+        run: |
+          bun .agent/agent.mjs triage ${{ github.event.issue.number }}

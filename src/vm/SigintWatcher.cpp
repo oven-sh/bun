@@ -1,10 +1,26 @@
 #include "NodeVM.h"
 #include "SigintWatcher.h"
 
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__ensureSignalHandler();
 
 namespace Bun {
+
+#if OS(WINDOWS)
+static BOOL WindowsCtrlHandler(DWORD signal)
+{
+    if (signal == CTRL_C_EVENT) {
+        SigintWatcher::get().signalReceived();
+        return true;
+    }
+
+    return false;
+}
+#endif
 
 SigintWatcher SigintWatcher::s_instance;
 
@@ -22,7 +38,7 @@ SigintWatcher::~SigintWatcher()
 void SigintWatcher::install()
 {
 #if OS(WINDOWS)
-    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
+    SetConsoleCtrlHandler(WindowsCtrlHandler, true);
 #else
     Bun__ensureSignalHandler();
 
@@ -53,9 +69,13 @@ void SigintWatcher::install()
             ASSERT(success);
             if (m_waiting.test_and_set()) {
                 m_waiting.clear();
+#if !OS(WINDOWS)
                 if (!signalAll()) {
                     Bun__onPosixSignal(SIGINT);
                 }
+#else
+                signalAll();
+#endif
             } else {
                 m_waiting.clear();
             }
@@ -69,7 +89,7 @@ void SigintWatcher::uninstall()
         ASSERT(m_thread.get_id() != std::this_thread::get_id());
 
 #if OS(WINDOWS)
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
+        SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
         struct sigaction action;
         memset(&action, 0, sizeof(struct sigaction));

@@ -9,4 +9,3 @@ packages/bun-usockets/src/socket.c
 packages/bun-usockets/src/udp.c
 src/bun.js/bindings/uv-posix-polyfills.c
 src/bun.js/bindings/uv-posix-stubs.c
-src/asan-config.c

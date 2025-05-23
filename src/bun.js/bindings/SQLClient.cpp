@@ -134,7 +134,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
-        if (UNLIKELY(uint8Array == nullptr)) {
+        if (uint8Array == nullptr) [[unlikely]] {
             return {};
         }
 
@@ -173,7 +173,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
-        if (UNLIKELY(uint8Array == nullptr)) {
+        if (uint8Array == nullptr) [[unlikely]] {
             return {};
         }
 
@@ -195,7 +195,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         uint32_t length = cell.value.array.length;
         for (uint32_t i = 0; i < length; i++) {
             JSValue result = toJS(vm, globalObject, cell.value.array.cells[i]);
-            if (UNLIKELY(result.isEmpty())) {
+            if (result.isEmpty()) [[unlikely]] {
                 return {};
             }
 
@@ -210,7 +210,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         switch (type) {
         case JSC::JSType::Int32ArrayType: {
             JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -222,7 +222,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Uint32ArrayType: {
             JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -233,7 +233,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Int16ArrayType: {
             JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -245,7 +245,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Uint16ArrayType: {
             JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -256,7 +256,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float16ArrayType: {
             JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -267,7 +267,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float32ArrayType: {
             JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 
@@ -278,7 +278,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float64ArrayType: {
             JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
-            if (UNLIKELY(array == nullptr)) {
+            if (array == nullptr) [[unlikely]] {
                 return {};
             }
 

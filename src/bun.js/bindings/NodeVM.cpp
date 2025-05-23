@@ -1126,17 +1126,7 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    return JSValue::encode(JSC::jsBoolean(false)); // TODO(@heimskr): implement
-
-    // JSValue argument = callFrame->argument(0);
-    // if (!argument.isObject()) {
-    //     return JSValue::encode(JSC::jsBoolean(false));
-    // }
-
-    // JSObject* object = asObject(argument);
+    return JSValue::encode(JSC::jsBoolean(!!jsDynamicCast<JSModuleNamespaceObject*>(callFrame->argument(0))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

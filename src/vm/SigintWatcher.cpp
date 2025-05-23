@@ -22,7 +22,7 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 }
 #endif
 
-SigintWatcher SigintWatcher::s_instance;
+SigintWatcher* SigintWatcher::s_instance = nullptr;
 
 SigintWatcher::SigintWatcher()
     : m_semaphore(1)
@@ -180,7 +180,11 @@ void SigintWatcher::deref()
 
 SigintWatcher& SigintWatcher::get()
 {
-    return s_instance;
+    if (!s_instance) {
+        s_instance = new SigintWatcher();
+    }
+
+    return *s_instance;
 }
 
 bool SigintWatcher::signalAll()

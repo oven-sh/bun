@@ -109,7 +109,7 @@ private:
 
     bool signalAll();
 
-    static SigintWatcher s_instance;
+    static SigintWatcher* s_instance;
 };
 
 } // namespace Bun

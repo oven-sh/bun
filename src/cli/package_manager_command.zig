@@ -253,8 +253,8 @@ pub const PackageManagerCommand = struct {
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "audit")) {
-            try AuditCommand.exec(ctx, pm, args);
-            Global.exit(0);
+            const code = try AuditCommand.exec(ctx, pm, args);
+            Global.exit(code);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();

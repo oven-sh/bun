@@ -89,7 +89,7 @@ describe("bun pm audit", async () => {
     exitCode: 1,
     files: auditFixture("express3"),
     fn: async ({ stdout }) => {
-      expect(await stdout).toContain("Vulnerabilities found");
+      expect(await stdout).toContain("21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)");
     },
   });
 

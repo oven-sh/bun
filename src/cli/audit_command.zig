@@ -62,7 +62,10 @@ const AuditResult = struct {
 };
 
 pub const AuditCommand = struct {
-    pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) !void {
+    /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
+    /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
+    /// for the audit information"
+    pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) bun.OOM!u32 {
         var json_output = false;
         for (args) |arg| {
             if (std.mem.eql(u8, arg, "--json")) {
@@ -89,10 +92,12 @@ pub const AuditCommand = struct {
         if (json_output) {
             Output.writer().writeAll(response_text) catch {};
             Output.writer().writeByte('\n') catch {};
+            return 0;
         } else if (response_text.len > 0) {
-            try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
+            return try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
         } else {
             Output.prettyln("<green>No vulnerabilities found.<r>", .{});
+            return 0;
         }
     }
 };
@@ -121,8 +126,9 @@ fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OO
 
             const resolved_name = pkg_names[resolved_pkg_id].slice(buf);
 
-            const result = try dependency_tree.getOrPut(try allocator.dupe(u8, resolved_name));
+            const result = try dependency_tree.getOrPut(resolved_name);
             if (!result.found_existing) {
+                result.key_ptr.* = try allocator.dupe(u8, resolved_name);
                 result.value_ptr.* = std.ArrayList([]const u8).init(allocator);
             }
             try result.value_ptr.append(try allocator.dupe(u8, package_name));
@@ -403,7 +409,7 @@ fn printEnhancedAuditReport(
     response_text: []const u8,
     pm: *PackageManager,
     dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
-) bun.OOM!void {
+) bun.OOM!u32 {
     const source = logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(allocator);
     defer log.deinit();
@@ -411,12 +417,12 @@ fn printEnhancedAuditReport(
     const expr = @import("../json_parser.zig").parse(&source, &log, allocator, true) catch {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
-        return;
+        return 1;
     };
 
     if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
         Output.prettyln("<green>No vulnerabilities found.<r>", .{});
-        return;
+        return 0;
     }
 
     var audit_result = AuditResult.init(allocator);
@@ -579,8 +585,14 @@ fn printEnhancedAuditReport(
             Output.prettyln("  <green>bun update --latest<r>", .{});
             Output.prettyln("", .{});
         }
+
+        if (total > 0) {
+            return 1;
+        }
     } else {
         Output.writer().writeAll(response_text) catch {};
         Output.writer().writeByte('\n') catch {};
     }
+
+    return 0;
 }

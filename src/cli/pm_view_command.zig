@@ -108,78 +108,98 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
 
     // Now use the existing version resolution logic from outdated_command
     var manifest = json;
-    var resolved_version: ?string = null;
+
     var versions_len: usize = 1;
 
-    if (json.getObject("versions")) |versions_obj| {
-        versions_len = versions_obj.data.e_object.properties.len;
+    version, manifest = brk: {
+        if (json.getObject("versions")) |versions_obj| {
+            versions_len = versions_obj.data.e_object.properties.len;
 
-        if (version) |version_spec| {
-            // Use the exact same logic as outdated_command.zig
-            var wanted_version: ?Semver.Version = null;
+            if (version) |version_spec| {
+                // Use the exact same logic as outdated_command.zig
+                var wanted_version: ?Semver.Version = null;
 
-            // First try dist-tag lookup (like "latest", "beta", etc.)
-            if (parsed_manifest.findByDistTag(version_spec)) |result| {
-                wanted_version = result.version;
+                // First try dist-tag lookup (like "latest", "beta", etc.)
+                if (parsed_manifest.findByDistTag(version_spec)) |result| {
+                    wanted_version = result.version;
+                } else {
+                    // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                    const sliced_literal = Semver.SlicedString.init(version_spec, version_spec);
+                    if (Semver.Query.parse(allocator, version_spec, sliced_literal)) |query| {
+                        defer query.deinit();
+                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
+                        if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
+                            wanted_version = result.version;
+                        }
+                    } else |_| {
+                        // Fallback to latest if parsing fails
+                        if (parsed_manifest.findByDistTag("latest")) |result| {
+                            wanted_version = result.version;
+                        }
+                    }
+                }
+
+                // Find the version string from JSON that matches the resolved version
+                if (wanted_version) |wv| {
+                    const versions = versions_obj.data.e_object.properties.slice();
+                    for (versions) |prop| {
+                        if (prop.key == null) continue;
+                        const version_str = prop.key.?.asString(allocator) orelse continue;
+                        const sliced_version = Semver.SlicedString.init(version_str, version_str);
+                        const parsed_version = Semver.Version.parse(sliced_version);
+                        if (parsed_version.valid and parsed_version.version.max().eql(wv)) {
+                            break :brk .{ version_str, prop.value.? };
+                        }
+                    }
+                }
             } else {
-                // Parse as semver query and find best version - exactly like outdated_command.zig line 325
-                const sliced_literal = Semver.SlicedString.init(version_spec, version_spec);
-                if (Semver.Query.parse(allocator, version_spec, sliced_literal)) |query| {
-                    defer query.deinit();
-                    // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                    if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
-                        wanted_version = result.version;
-                    }
-                } else |_| {
-                    // Fallback to latest if parsing fails
-                    if (parsed_manifest.findByDistTag("latest")) |result| {
-                        wanted_version = result.version;
+                // No version specified - use latest
+                if (parsed_manifest.findByDistTag("latest")) |result| {
+                    const versions = versions_obj.data.e_object.properties.slice();
+                    for (versions) |prop| {
+                        if (prop.key == null) continue;
+                        const version_str = prop.key.?.asString(allocator) orelse continue;
+                        const sliced_version = Semver.SlicedString.init(version_str, version_str);
+                        const parsed_version = Semver.Version.parse(sliced_version);
+                        if (parsed_version.valid and parsed_version.version.max().eql(result.version)) {
+                            break :brk .{ version_str, prop.value.? };
+                        }
                     }
                 }
             }
+        }
 
-            // Find the version string from JSON that matches the resolved version
-            if (wanted_version) |wv| {
-                const versions = versions_obj.data.e_object.properties.slice();
-                for (versions) |prop| {
-                    if (prop.key == null) continue;
-                    const version_str = prop.key.?.asString(allocator) orelse continue;
-                    const sliced_version = Semver.SlicedString.init(version_str, version_str);
-                    const parsed_version = Semver.Version.parse(sliced_version);
-                    if (parsed_version.valid and parsed_version.version.max().eql(wv)) {
-                        resolved_version = version_str;
-                        break;
-                    }
-                }
-            }
+        if (json_output) {
+            Output.print("{{ \"error\": \"No matching version found\", \"version\": {} }}\n", .{
+                bun.fmt.formatJSONStringUTF8(spec, .{
+                    .quote = true,
+                }),
+            });
+            Output.flush();
         } else {
-            // No version specified - use latest
-            if (parsed_manifest.findByDistTag("latest")) |result| {
-                const versions = versions_obj.data.e_object.properties.slice();
-                for (versions) |prop| {
-                    if (prop.key == null) continue;
-                    const version_str = prop.key.?.asString(allocator) orelse continue;
-                    const sliced_version = Semver.SlicedString.init(version_str, version_str);
-                    const parsed_version = Semver.Version.parse(sliced_version);
-                    if (parsed_version.valid and parsed_version.version.max().eql(result.version)) {
-                        resolved_version = version_str;
-                        break;
-                    }
+            Output.errGeneric("No version of <b>{}<r> satisfying <b>{}<r> found", .{
+                bun.fmt.quote(name),
+                bun.fmt.quote(version orelse "latest"),
+            });
+
+            const max_versions_to_display = 5;
+
+            const start_index = parsed_manifest.versions.len -| max_versions_to_display;
+            var versions_to_display = parsed_manifest.versions[start_index..];
+            versions_to_display = versions_to_display[0..@min(versions_to_display.len, max_versions_to_display)];
+            if (versions_to_display.len > 0) {
+                Output.prettyErrorln("\nRecent versions:<r>", .{});
+                for (versions_to_display) |*v| {
+                    Output.prettyErrorln("<d>-<r> {}", .{v.fmt(parsed_manifest.string_buf)});
+                }
+
+                if (start_index > 0) {
+                    Output.prettyErrorln("  <d>... and {d} more<r>", .{start_index});
                 }
             }
         }
-
-        // Get the manifest for the resolved version
-        if (resolved_version) |rv| {
-            if (versions_obj.asProperty(rv)) |vprop| {
-                manifest = vprop.expr;
-                version = rv;
-            }
-        } else if (versions_obj.data.e_object.properties.len > 0) {
-            // Fallback to first available version
-            manifest = versions_obj.data.e_object.properties.ptr[0].value.?;
-        }
-    }
+        Global.exit(1);
+    };
 
     // Handle property lookup if specified
     if (property_path) |prop_path| {
@@ -202,17 +222,27 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
                 &source,
                 .{
                     .mangled_props = null,
-                    .indent = .{
-                        .count = 2,
-                    },
+                    .indent = .{ .count = 2 },
                 },
             );
             Output.print("{s}", .{package_json_writer.ctx.getWritten()});
             Output.flush();
         } else {
-            Output.errGeneric("Property '{s}' not found", .{prop_path});
-            Global.crash();
+            if (json_output) {
+                Output.print("{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n", .{
+                    bun.fmt.formatJSONStringUTF8(spec, .{
+                        .quote = true,
+                    }),
+                    bun.fmt.formatJSONStringUTF8(prop_path, .{
+                        .quote = true,
+                    }),
+                });
+                Output.flush();
+            } else {
+                Output.errGeneric("Property <b>{s}<r> not found", .{prop_path});
+            }
         }
+        Global.exit(1);
         return;
     }
 
@@ -225,7 +255,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         _ = try bun.js_printer.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
-            json,
+            manifest,
             &source,
             .{
                 .mangled_props = null,
@@ -247,7 +277,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         dep_count = deps.data.e_object.properties.len;
     }
 
-    Output.prettyln("<b><green>{s}<r>@<b>{s}<r> | <cyan>{s}<r> | deps: {d} | versions: {d}", .{
+    Output.prettyln("<b><green>{s}<r>@<b>{s}<r> <d>|<r> <cyan>{s}<r> <d>|<r> deps<d>:<r> {d} <d>|<r> versions<d>:<r> {d}", .{
         pkg_name,
         pkg_version,
         license,
@@ -255,14 +285,15 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         versions_len,
     });
 
-    if (manifest.getStringCloned(allocator, "description") catch null) |desc| {
+    // Get description and homepage from the top-level package manifest, not the version-specific one
+    if (json.getStringCloned(allocator, "description") catch null) |desc| {
         Output.prettyln("{s}", .{desc});
     }
-    if (manifest.getStringCloned(allocator, "homepage") catch null) |hp| {
-        Output.prettyln("{s}", .{hp});
+    if (json.getStringCloned(allocator, "homepage") catch null) |hp| {
+        Output.prettyln("<blue>{s}<r>", .{hp});
     }
 
-    if (manifest.getArray("keywords")) |arr| {
+    if (json.getArray("keywords")) |arr| {
         var keywords = MutableString.init(allocator, 64) catch unreachable;
         var iter = arr;
         var first = true;
@@ -273,7 +304,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
             }
         }
         if (keywords.list.items.len > 0) {
-            Output.prettyln("\n<blue>keywords<r><d>:<r> {s}", .{keywords.list.items});
+            Output.prettyln("<d>keywords:<r> {s}", .{keywords.list.items});
         }
     }
 
@@ -293,7 +324,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         }
     }
 
-    if (manifest.getArray("maintainers")) |maint_iter| {
+    if (json.getArray("maintainers")) |maint_iter| {
         Output.prettyln("\n<b>maintainers<r><d>:<r>", .{});
         var iter = maint_iter;
         while (iter.next()) |m| {
@@ -301,7 +332,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
             const em = m.getStringCloned(allocator, "email") catch null orelse "";
             if (em.len > 0) {
                 Output.prettyln("- {s} <d>\\<{s}\\><r>", .{ nm, em });
-            } else {
+            } else if (nm.len > 0) {
                 Output.prettyln("- {s}", .{nm});
             }
         }

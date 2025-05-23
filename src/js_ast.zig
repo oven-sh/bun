@@ -3519,9 +3519,7 @@ pub const Expr = struct {
             if (expr.get(key)) |*sub_expr| {
                 const subpath = if (name.len > idx + 1) name[idx + 1 ..] else "";
                 if (subpath.len > 0) {
-                    if (sub_expr.getPathMayBeIndex(subpath)) |*result| {
-                        return result.*;
-                    }
+                    return sub_expr.getPathMayBeIndex(subpath);
                 }
 
                 return sub_expr.*;

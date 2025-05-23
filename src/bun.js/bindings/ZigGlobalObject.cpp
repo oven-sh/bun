@@ -3134,7 +3134,7 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     m_processObject.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::Process>::Initializer& init) {
             auto* globalObject = defaultGlobalObject(init.owner);
 
             auto* process = Bun::Process::create(

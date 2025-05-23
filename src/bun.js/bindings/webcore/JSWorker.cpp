@@ -344,7 +344,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if (nodeWorkerObject) {
         workerToEmit = nodeWorkerObject;
     }
-    auto* process = jsCast<Bun::Process*>(globalObject->processObject());
+    auto* process = globalObject->processObject();
     process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
     RETURN_IF_EXCEPTION(throwScope, {});
 

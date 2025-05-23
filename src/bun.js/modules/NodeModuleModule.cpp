@@ -1034,11 +1034,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->getIfPropertyExists(globalObject, property);
 
-        if (UNLIKELY(catchScope.exception())) {
+        if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
         }
-        if (UNLIKELY(value.isEmpty())) {
+        if (value.isEmpty()) [[unlikely]] {
             value = JSC::jsUndefined();
         }
 

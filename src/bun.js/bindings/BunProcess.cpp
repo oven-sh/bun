@@ -387,7 +387,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
     JSC::JSObject* moduleObject = jsDynamicCast<JSC::JSObject*>(moduleValue);
-    if (UNLIKELY(!moduleObject)) {
+    if (!moduleObject) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object as first argument"_s);
         return {};
     }
@@ -395,7 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     JSValue exports = moduleObject->getIfPropertyExists(globalObject, builtinNames(vm).exportsPublicName());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(!exports)) {
+    if (!exports) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
         return {};
     }
@@ -487,7 +487,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
-        if (UNLIKELY(!utf8_filename)) {
+        if (!utf8_filename) [[unlikely]] {
             JSC::throwTypeError(globalObject, scope, "process.dlopen requires a valid UTF-8 string for the filename"_s);
             return {};
         }
@@ -594,7 +594,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         dlclose(handle);
 #endif
 
-        if (LIKELY(!scope.exception())) {
+        if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         }
         return {};
@@ -843,7 +843,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
         }
     }
 
-    if (UNLIKELY(!array)) {
+    if (!array) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, throwScope);
         return {};
     }
@@ -1052,11 +1052,11 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
 #if OS(WINDOWS)
-    if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
+    if (signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return;
     // signal handlers can be run on any thread
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
@@ -1297,7 +1297,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             signalNumber,
                             &signalHandler);
 
-                        if (UNLIKELY(!signal_handle.handle))
+                        if (!signal_handle.handle) [[unlikely]]
                             return;
 #endif
 
@@ -2739,7 +2739,7 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     Process* process = jsDynamicCast<Process*>(thisValue);
 
     // Handle "var memoryUsage = process.memoryUsage; memoryUsage()"
-    if (UNLIKELY(!process)) {
+    if (!process) [[unlikely]] {
         // Handle calling this function from inside a node:vm
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(lexicalGlobalObject);
 
@@ -2828,14 +2828,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
         JSValue comparatorValue = callFrame->argument(0);
         if (!comparatorValue.isUndefined()) {
             JSC::JSObject* comparator = comparatorValue.getObject();
-            if (UNLIKELY(!comparator)) {
+            if (!comparator) [[unlikely]] {
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, comparatorValue);
             }
 
             JSValue userValue;
             JSValue systemValue;
 
-            if (LIKELY(comparator->structureID() == cpuUsageStructure->id())) {
+            if (comparator->structureID() == cpuUsageStructure->id()) [[likely]] {
                 userValue = comparator->getDirect(0);
                 systemValue = comparator->getDirect(1);
             } else {
@@ -2977,7 +2977,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     }
 
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
-    if (UNLIKELY(throwScope.exception())) {
+    if (throwScope.exception()) [[unlikely]] {
         return {};
     }
 
@@ -3047,7 +3047,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!resumeValue.isUndefinedOrNull()) {
             auto resumeFunction = jsDynamicCast<JSFunction*>(resumeValue);
-            if (UNLIKELY(!resumeFunction)) {
+            if (!resumeFunction) [[unlikely]] {
                 throwTypeError(globalObject, throwScope, "stdin.resume is not a function"_s);
                 return {};
             }

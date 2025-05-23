@@ -403,7 +403,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             view = str->substring(0, 25);
         }
         builder.append("type string ("_s);
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
                 const auto span = view.span<LChar>();
@@ -431,7 +431,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
         } else {
             builder.append('\'');

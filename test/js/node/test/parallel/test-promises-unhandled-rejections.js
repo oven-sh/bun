@@ -415,33 +415,31 @@ asyncTest('Failing to catch the Promise.all() of a collection that includes' +
   const p = Promise.all([Promise.reject(e)]);
 });
 
-// TODO: support rejectionHandled event
-// rejectionHandled occurs when a formerly unhandled rejection becomes handled
-// asyncTest('Waiting setTimeout(, 10) to catch a promise causes an' +
-//           ' unhandledRejection + rejectionHandled pair', function(done) {
-//   clean();
-//   const unhandledPromises = [];
-//   const e = new Error();
-//   process.on('unhandledRejection', function(reason, promise) {
-//     assert.strictEqual(reason, e);
-//     unhandledPromises.push(promise);
-//   });
-//   process.on('rejectionHandled', function(promise) {
-//     assert.strictEqual(unhandledPromises.length, 1);
-//     assert.strictEqual(unhandledPromises[0], promise);
-//     assert.strictEqual(promise, thePromise);
-//     done();
-//   });
+asyncTest('Waiting setTimeout(, 10) to catch a promise causes an' +
+          ' unhandledRejection + rejectionHandled pair', function(done) {
+  clean();
+  const unhandledPromises = [];
+  const e = new Error();
+  process.on('unhandledRejection', function(reason, promise) {
+    assert.strictEqual(reason, e);
+    unhandledPromises.push(promise);
+  });
+  process.on('rejectionHandled', function(promise) {
+    assert.strictEqual(unhandledPromises.length, 1);
+    assert.strictEqual(unhandledPromises[0], promise);
+    assert.strictEqual(promise, thePromise);
+    done();
+  });
 
-//   const thePromise = new Promise(function() {
-//     throw e;
-//   });
-//   setTimeout(function() {
-//     thePromise.then(assert.fail, function(reason) {
-//       assert.strictEqual(reason, e);
-//     });
-//   }, 10);
-// });
+  const thePromise = new Promise(function() {
+    throw e;
+  });
+  setTimeout(function() {
+    thePromise.then(assert.fail, function(reason) {
+      assert.strictEqual(reason, e);
+    });
+  }, 10);
+});
 
 asyncTest('Waiting for some combination of process.nextTick + promise' +
           ' microtasks to attach a catch handler is still soon enough to' +

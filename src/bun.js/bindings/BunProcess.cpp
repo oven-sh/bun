@@ -1184,6 +1184,26 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     return Bun__handleUncaughtException(lexicalGlobalObject, reason, 1);
 }
 
+extern "C" int Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
+{
+    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+
+    auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+    auto& wrapped = process->wrapped();
+    if (wrapped.listenerCount(eventType) > 0) {
+        MarkedArgumentBuffer args;
+        args.append(promise);
+        wrapped.emit(eventType, args);
+        return true;
+    }
+
+    return false;
+}
+
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);

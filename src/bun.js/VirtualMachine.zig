@@ -500,6 +500,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
 
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
+extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
 
 pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
     if (this.isShuttingDown()) {
@@ -519,6 +520,14 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
         this.onUnhandledRejection(this, globalObject, reason);
     }
     return handled;
+}
+
+pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, promise: JSValue) bool {
+    if (this.isShuttingDown()) {
+        return true;
+    }
+
+    return Bun__emitHandledPromiseEvent(globalObject, promise) > 0;
 }
 
 pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, err: JSValue, is_rejection: bool) bool {

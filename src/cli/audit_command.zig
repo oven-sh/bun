@@ -97,8 +97,6 @@ pub const AuditCommand = struct {
 };
 
 fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!bun.StringHashMap(std.ArrayList([]const u8)) {
-    // Create a REVERSE dependency map: package_name -> [list of packages that depend on it]
-    // This allows us to trace backwards from vulnerable packages to their dependents
     var dependency_tree = bun.StringHashMap(std.ArrayList([]const u8)).init(allocator);
 
     const packages = pm.lockfile.packages.slice();

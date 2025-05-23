@@ -31,5 +31,6 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           direct_prompt: ${{ steps.prompt.outputs.prompt }}
+          trigger_phrase: ""
           allowed_tools: "Bash,Edit,Replace,Search"
           timeout_minutes: 5

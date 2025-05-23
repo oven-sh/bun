@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { mkdirSync } from "fs";
+import { bunEnv, bunExe, hideFromStackTrace, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3459,6 +3460,28 @@ describe("await can only be used inside an async function message", () => {
 
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
+  });
+});
+
+describe("malformed function definition does not crash parser", () => {
+  const transpiler = new Bun.Transpiler();
+  const dir = tmpdirSync();
+  mkdirSync(dir, { recursive: true });
+  it("prints syntax error to stdout and exits cleanly", async () => {
+    const temp_files = ["index-1.js", "index-1.ts", "index-2.js", "index-2.ts"];
+    await Bun.write(join(dir, temp_files[0]), "function:");
+    await Bun.write(join(dir, temp_files[1]), "function:");
+    await Bun.write(join(dir, temp_files[2]), "function a() {function:}");
+    await Bun.write(join(dir, temp_files[3]), "function a() {function:}");
+
+    for (const temp_file of temp_files) {
+      let result = Bun.spawnSync({
+        cmd: [bunExe(), join(dir, temp_file)],
+        cwd: dir,
+        env: bunEnv,
+      });
+      expect(result.exitCode).toBe(1);
+    }
   });
 });
 

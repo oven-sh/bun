@@ -2,8 +2,8 @@
 
 #include "NodeVM.h"
 
-#include "AbstractModuleRecord.h"
-#include "JSModuleNamespaceObject.h"
+#include "JavaScriptCore/AbstractModuleRecord.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
 
 namespace Bun {
 

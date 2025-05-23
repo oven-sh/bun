@@ -55,7 +55,7 @@ function doAuditTest(
 }
 
 describe("`bun pm audit`", () => {
-  doAuditTest("Should fail with no package.json", {
+  doAuditTest("should fail with no package.json", {
     exitCode: 1,
     files: {
       "README.md": "This place sure is empty...",
@@ -65,7 +65,7 @@ describe("`bun pm audit`", () => {
     },
   });
 
-  doAuditTest("Should fail with package.json but no lockfile", {
+  doAuditTest("should fail with package.json but no lockfile", {
     exitCode: 1,
     files: {
       "package.json": JSON.stringify({
@@ -112,7 +112,7 @@ describe("`bun pm audit`", () => {
     },
   });
 
-  doAuditTest("Should exit code 1 when there are vulnerabilities", {
+  doAuditTest("should exit code 1 when there are vulnerabilities", {
     exitCode: 1,
     files: fixture("express@3"),
     fn: async ({ stdout }) => {

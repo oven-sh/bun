@@ -594,7 +594,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(leixcalGlobalObject);
-    if (UNLIKELY(!globalObject))
+    if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());

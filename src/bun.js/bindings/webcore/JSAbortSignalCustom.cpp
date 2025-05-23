@@ -34,7 +34,7 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto& abortSignal = JSC::jsCast<JSAbortSignal*>(handle.slot()->asCell())->wrapped();
     if (abortSignal.isFiringEventListeners()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
         return true;
     }
@@ -43,20 +43,20 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
         return false;
 
     if (abortSignal.isFollowingSignal()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "Is Following Signal"_s;
         return true;
     }
 
     if (abortSignal.hasAbortEventListener()) {
         if (abortSignal.hasActiveTimeoutTimer()) {
-            if (UNLIKELY(reason))
+            if (reason) [[unlikely]]
                 *reason = "Has Timeout And Abort Event Listener"_s;
             return true;
         }
         if (abortSignal.isDependent()) {
             if (!abortSignal.sourceSignals().isEmptyIgnoringNullReferences()) {
-                if (UNLIKELY(reason))
+                if (reason) [[unlikely]]
                     *reason = "Has Source Signals And Abort Event Listener"_s;
                 return true;
             }
@@ -64,7 +64,7 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 
         // https://github.com/oven-sh/bun/issues/4517
         if (abortSignal.hasPendingActivity()) {
-            if (UNLIKELY(reason))
+            if (reason) [[unlikely]]
                 *reason = "Has Pending Activity"_s;
             return true;
         }

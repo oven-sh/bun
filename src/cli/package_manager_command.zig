@@ -27,6 +27,7 @@ const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
 const Npm = Install.Npm;
+const PmViewCommand = @import("./pm_view_command.zig");
 const File = bun.sys.File;
 
 const ByName = struct {
@@ -127,6 +128,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                   list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>whoami<r>             print the current npm username
+            \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>         print the hash stored in the current lockfile
@@ -193,6 +195,10 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
             Output.println("{s}", .{username});
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "view")) {
+            const property_path = if (pm.options.positionals.len > 2) pm.options.positionals[2] else null;
+            try PmViewCommand.view(ctx.allocator, pm, if (pm.options.positionals.len > 1) pm.options.positionals[1] else "", property_path, pm.options.json_output);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));

@@ -3446,6 +3446,89 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |query| query.expr else null;
     }
 
+    /// Only use this for pretty-printing JSON. Do not use in transpiler.
+    ///
+    /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
+    pub fn getByIndex(expr: *const Expr, index: u32, index_str: string, allocator: std.mem.Allocator) ?Expr {
+        switch (expr.data) {
+            .e_array => |array| {
+                if (index >= array.items.len) return null;
+                return array.items.slice()[index];
+            },
+            .e_object => |object| {
+                for (object.properties.sliceConst()) |*prop| {
+                    const key = &(prop.key orelse continue);
+                    switch (key.data) {
+                        .e_string => |str| {
+                            if (str.eql(string, index_str)) {
+                                return prop.value;
+                            }
+                        },
+                        .e_number => |num| {
+                            if (num.toU32() == index) {
+                                return prop.value;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                return null;
+            },
+            .e_string => |str| {
+                if (str.len() > index) {
+                    var slice = str.slice(allocator);
+                    // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
+                    // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
+                    if (slice.len > index) {
+                        return Expr.init(E.String, .{ .data = slice[index..][0..1] }, expr.loc);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    /// Similar to `foo.bar[123]`
+    ///
+    /// This is not intended for use by the transpiler, instead by pretty printing JSON.
+    pub fn getPathMayBeIndex(expr: *const Expr, name: string) ?Expr {
+        if (name.len == 0) {
+            return null;
+        }
+
+        if (name[0] == '[') as_index: {
+            if (strings.indexOfChar(name, ']')) |idx| {
+                const index_str = name[1..idx];
+                const index = std.fmt.parseInt(u32, index_str, 10) catch break :as_index;
+                const rest = if (name.len > idx + 1) name[idx + 1 ..] else "";
+                if (expr.getByIndex(index, index_str, bun.default_allocator)) |*result| {
+                    if (rest.len > 0) {
+                        return result.getPathMayBeIndex(rest);
+                    }
+
+                    return result.*;
+                }
+            }
+        }
+
+        if (strings.indexOfChar(name, '.')) |idx| {
+            const key = name[0..idx];
+            if (expr.get(key)) |*sub_expr| {
+                const subpath = if (name.len > idx + 1) name[idx + 1 ..] else "";
+                if (subpath.len > 0) {
+                    return sub_expr.getPathMayBeIndex(subpath);
+                }
+
+                return sub_expr.*;
+            }
+        }
+
+        return expr.get(name);
+    }
+
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.

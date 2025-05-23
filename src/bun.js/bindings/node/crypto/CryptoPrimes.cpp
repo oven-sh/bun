@@ -377,12 +377,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     if (add) {
-        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
+        if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
             return JSValue::encode({});
         }
 
-        if (UNLIKELY(rem && add <= rem)) {
+        if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
             return JSValue::encode({});
         }
@@ -478,12 +478,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
     }
 
     if (add) {
-        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
+        if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
             return JSValue::encode({});
         }
 
-        if (UNLIKELY(rem && add <= rem)) {
+        if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
             return JSValue::encode({});
         }

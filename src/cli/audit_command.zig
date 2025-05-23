@@ -483,9 +483,12 @@ fn printEnhancedAuditReport(
         var package_iter = audit_result.vulnerable_packages.iterator();
         while (package_iter.next()) |entry| {
             const package_info = entry.value_ptr;
+            const is_first = package_iter.index == 0;
 
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
+
+                if (!is_first) Output.prettyln("", .{});
 
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
@@ -520,19 +523,23 @@ fn printEnhancedAuditReport(
                         Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
                         has_fix_available = true;
                     } else {
+                        // Output.prettyln("", .{});
+
                         var i = path.path.items.len;
                         while (i > 0) {
                             i -= 1;
                             const pkg_name = path.path.items[i];
 
                             if (i == path.path.items.len - 1) {
-                                Output.prettyln("     <green>{s}<r> (your direct dependency)", .{pkg_name});
+                                Output.prettyln("  ›   <green>{s}<r> (your direct dependency)", .{pkg_name});
                             } else if (i == 0) {
-                                Output.prettyln("       └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
+                                Output.prettyln("  ›     └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
                             } else {
-                                Output.prettyln("       └─> {s}", .{pkg_name});
+                                Output.prettyln("  ›     └─> {s}", .{pkg_name});
                             }
                         }
+
+                        // Output.prettyln("", .{});
 
                         if (!has_fix_available) {
                             Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});
@@ -582,6 +589,7 @@ fn printEnhancedAuditReport(
             Output.prettyln("", .{});
             Output.prettyln("To update all dependencies to the latest versions (including breaking changes):", .{});
             Output.prettyln("  <green>bun update --latest<r>", .{});
+            Output.prettyln("", .{});
         }
     } else {
         Output.writer().writeAll(response_text) catch {};

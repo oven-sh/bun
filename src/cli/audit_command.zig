@@ -508,7 +508,7 @@ fn printEnhancedAuditReport(
                         const vuln_pkg_path = try std.mem.join(allocator, " › ", reversed_items.items);
                         defer allocator.free(vuln_pkg_path);
 
-                        Output.prettyln("  <d>{s} › <red>{s}r>", .{ vuln_pkg_path, vulnerable_pkg });
+                        Output.prettyln("  <d>{s} › <red>{s}<r>", .{ vuln_pkg_path, vulnerable_pkg });
                     }
 
                     if (path.is_direct) {

@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { writeFile } from "fs/promises";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";

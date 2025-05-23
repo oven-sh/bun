@@ -1,0 +1,6 @@
+{
+  "name": "bun-audit-playground",
+  "dependencies": {
+    "express": "3"
+  }
+}

@@ -488,15 +488,15 @@ fn printEnhancedAuditReport(
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
 
-                const is_direct_dependency: bool = brk: {
-                    for (package_info.dependents.items) |path| {
-                        if (path.is_direct) {
-                            break :brk true;
-                        }
-                    }
+                // const is_direct_dependency: bool = brk: {
+                //     for (package_info.dependents.items) |path| {
+                //         if (path.is_direct) {
+                //             break :brk true;
+                //         }
+                //     }
 
-                    break :brk false;
-                };
+                //     break :brk false;
+                // };
 
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
@@ -536,11 +536,11 @@ fn printEnhancedAuditReport(
                     }
                 }
 
-                if (is_direct_dependency) {
-                    Output.prettyln("  Fix available with <green>`bun update {s}`<r>", .{package_info.name});
-                } else {
-                    Output.prettyln("  Fix available with <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
-                }
+                // if (is_direct_dependency) {
+                //     Output.prettyln("  To fix: <green>`bun update {s}`<r>", .{package_info.name});
+                // } else {
+                //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
+                // }
 
                 Output.prettyln("", .{});
             }

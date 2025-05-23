@@ -1,233 +1,95 @@
-import { readableStreamToText, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, VerdaccioRegistry } from "harness";
-import { join } from "path";
+import { readableStreamToText, spawn } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, DirectoryTree, lazyPromiseLike, tempDirWithFiles, VerdaccioRegistry } from "harness";
+import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
 
-beforeAll(async () => {
-  await registry.start();
-});
+function auditFixture(folder: "express3") {
+  return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
+}
 
-afterAll(() => {
-  registry.stop();
-});
+function fileFromAuditFixture(folder: "express3", path: string) {
+  return Bun.file(join(auditFixture(folder), path));
+}
+
+beforeAll(async () => await registry.start());
+afterAll(() => registry.stop());
+
+function doAuditTest(
+  label: string,
+  options: {
+    exitCode: number;
+    files: DirectoryTree | string;
+    fn: (std: { stdout: PromiseLike<string>; stderr: PromiseLike<string>; dir: string }) => Promise<void>;
+  },
+) {
+  test(label, async () => {
+    const dir = tempDirWithFiles("bun-test-pm-audit", options.files);
+
+    const proc = spawn({
+      cmd: [bunExe(), "pm", "audit"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: dir,
+      env: bunEnv,
+    });
+
+    const stdout = lazyPromiseLike(() => readableStreamToText(proc.stdout));
+    const stderr = lazyPromiseLike(() => readableStreamToText(proc.stderr));
+
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(options.exitCode);
+
+    try {
+      await options.fn({ stdout, stderr, dir });
+    } catch (e) {
+      const out = await stdout;
+      const err = await stderr;
+
+      // useful to see what went wrong otherwise
+      // we are just eating the rror silently
+      console.log(out);
+      console.log(err);
+
+      throw e; //but still rethrow so test fails
+    }
+  });
+}
 
 describe("bun pm audit", async () => {
-  it("should recognize audit as a command", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "test-package",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
-        },
-      }),
-    );
-
-    const installResult = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installResult.exited;
-
-    const auditResult = spawn({
-      cmd: [bunExe(), "pm", "audit"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(auditResult.stdout).text(),
-      new Response(auditResult.stderr).text(),
-    ]);
-
-    const exitCode = await auditResult.exited;
-
-    expect(stdout).toBeDefined();
-    expect(exitCode).toBe(0);
+  doAuditTest("Should fail with no package.json", {
+    exitCode: 1,
+    files: {
+      "README.md": "This place sure is empty...",
+    },
+    fn: async ({ stderr }) => {
+      expect(await stderr).toContain("No package.json was found for directory");
+    },
   });
 
-  it("should work with multiple packages", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "test-package",
+  doAuditTest("Should fail with package.json but no lockfile", {
+    exitCode: 1,
+    files: {
+      "package.json": JSON.stringify({
+        name: "test",
         version: "1.0.0",
         dependencies: {
-          "no-deps": "1.0.0",
-          "a-dep": "1.0.0",
+          "express": "3",
         },
       }),
-    );
-
-    const installResult = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installResult.exited;
-
-    const auditResult = spawn({
-      cmd: [bunExe(), "pm", "audit"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = await readableStreamToText(auditResult.stdout);
-
-    const exitCode = await auditResult.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toBeDefined();
+    },
+    fn: async ({ stderr }) => {
+      expect(await stderr).toContain("error: Lockfile not found");
+    },
   });
 
-  it("should work with workspaces", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "workspace-root",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        dependencies: {
-          "no-deps": "1.0.0",
-        },
-      }),
-    );
-
-    await write(
-      join(packageDir, "packages", "workspace-pkg", "package.json"),
-      JSON.stringify({
-        name: "workspace-pkg",
-        version: "1.0.0",
-        dependencies: {
-          "a-dep": "1.0.0",
-        },
-      }),
-    );
-
-    const installResult = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installResult.exited;
-
-    const auditResult = spawn({
-      cmd: [bunExe(), "pm", "audit"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(auditResult.stdout).text(),
-      new Response(auditResult.stderr).text(),
-    ]);
-
-    const exitCode = await auditResult.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toBeDefined();
-  });
-
-  it("should handle empty package.json", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "test-package",
-        version: "1.0.0",
-        dependencies: {},
-      }),
-    );
-
-    const auditResult = spawn({
-      cmd: [bunExe(), "pm", "audit"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(auditResult.stdout).text(),
-      new Response(auditResult.stderr).text(),
-    ]);
-
-    const exitCode = await auditResult.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toBeDefined();
-  });
-
-  it("should make HTTP request to audit endpoint", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await writeFile(
-      packageJson,
-      JSON.stringify({
-        name: "test-package",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
-          "a-dep": "1.0.0",
-        },
-      }),
-    );
-
-    const installResult = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await installResult.exited;
-
-    // @ts-expect-error issue with process.env in bun-types (is fixed in a PR)
-    const auditResult = spawn({
-      cmd: [bunExe(), "pm", "audit"],
-      cwd: packageDir,
-      env: {
-        ...env,
-
-        NODE_DEBUG: "http",
-        BUN_DEBUG_QUIET_LOGS: "0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(auditResult.stdout).text(),
-      new Response(auditResult.stderr).text(),
-    ]);
-
-    const exitCode = await auditResult.exited;
-
-    expect(exitCode).toBe(0);
-    expect(stdout).toBeDefined();
+  doAuditTest("Should exit code 1 when there are vulnerabilities", {
+    exitCode: 1,
+    files: auditFixture("express3"),
+    fn: async ({ stdout }) => {
+      expect(await stdout).toContain("Vulnerabilities found");
+    },
   });
 });

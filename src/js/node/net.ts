@@ -515,7 +515,7 @@ const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
     $debug("self[kupgraded]", String(self[kupgraded]));
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
-    if (!self[kupgraded]) {
+    if (self[kupgraded]) {
       self.connecting = false;
       const options = self[bunTLSConnectOptions];
       if (options) {
@@ -548,7 +548,6 @@ const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
       }
-    } else {
     }
   },
   end(socket) {
@@ -563,6 +562,7 @@ const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
   close(socket, err) {
     $debug("Bun.Socket close");
     let { self } = socket.data;
+    if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
     // TODO: should we be doing something with err?
@@ -953,7 +953,6 @@ Socket.prototype.connect = function connect(...args) {
       this.secureConnecting = true;
       this._secureEstablished = false;
       this._securePending = true;
-      // if (connectListener) this.on("secureConnect", connectListener);
       this[kConnectOptions] = options;
       this.prependListener("end", onConnectEnd);
     }
@@ -972,9 +971,7 @@ Socket.prototype.connect = function connect(...args) {
           upgradeDuplex = isNamedPipeSocket(socket);
         }
         if (upgradeDuplex) {
-          this.connecting = true;
           this[kupgraded] = connection;
-          connection.connecting = true;
           const [result, events] = upgradeDuplexToTLS(connection, {
             data: { self: this, req: { oncomplete: afterConnect } },
             tls,
@@ -987,9 +984,7 @@ Socket.prototype.connect = function connect(...args) {
           this._handle = result;
         } else {
           if (socket) {
-            this.connecting = true;
             this[kupgraded] = connection;
-            connection.connecting = true;
             const result = socket.upgradeTLS({
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
@@ -1015,9 +1010,7 @@ Socket.prototype.connect = function connect(...args) {
                 upgradeDuplex = isNamedPipeSocket(socket);
               }
               if (upgradeDuplex) {
-                this.connecting = true;
                 this[kupgraded] = connection;
-                connection.connecting = true;
                 const [result, events] = upgradeDuplexToTLS(connection, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -1029,9 +1022,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("close", events[3]);
                 this._handle = result;
               } else {
-                this.connecting = true;
                 this[kupgraded] = connection;
-                connection.connecting = true;
                 const result = socket.upgradeTLS({
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -1438,6 +1429,7 @@ Socket.prototype._writev = function _writev(data, callback) {
 };
 
 Socket.prototype._write = function _write(chunk, encoding, callback) {
+  $debug("Socket.prototype._write");
   // If we are still connecting, then buffer this for later.
   // The Writable logic will buffer up any more writes while
   // waiting for this one to be done.

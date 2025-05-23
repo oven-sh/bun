@@ -6,7 +6,7 @@ import net from "node:net";
 import { connect, createServer } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
-  await expectMaxObjectTypeCount(expect, "TLSSocket", 0, 50);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
   async function test(pipe_name: string) {
     const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
     const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
@@ -51,11 +51,11 @@ it.if(isWindows)("should work with named pipes and tls", async () => {
     }
   }
   await Promise.all(batch);
-  await expectMaxObjectTypeCount(expect, "TLSSocket", 1, 50);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
 });
 
 it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", async () => {
-  await expectMaxObjectTypeCount(expect, "TLSSocket", 1, 50);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
   const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers();
   const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers();
   let client: ReturnType<typeof net.connect> | ReturnType<typeof connect> | null = null;
@@ -90,5 +90,5 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
     }
   }
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
-  await expectMaxObjectTypeCount(expect, "TLSSocket", 3, 50);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });

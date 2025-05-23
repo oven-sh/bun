@@ -496,13 +496,13 @@ fn printEnhancedAuditReport(
                 for (package_info.vulnerabilities.items) |vuln| {
                     var severity_str: []const u8 = "";
                     if (std.mem.eql(u8, vuln.severity, "critical")) {
-                        severity_str = Output.prettyFmt("<red><b>[critical]<r>", true);
+                        severity_str = Output.prettyFmt("<red><b>critical<r>:", true);
                     } else if (std.mem.eql(u8, vuln.severity, "high")) {
-                        severity_str = Output.prettyFmt("<red><b>[high]<r>", true);
+                        severity_str = Output.prettyFmt("<red><b>high<r>:", true);
                     } else if (std.mem.eql(u8, vuln.severity, "moderate")) {
-                        severity_str = Output.prettyFmt("<yellow>[moderate]<r>", true);
+                        severity_str = Output.prettyFmt("<yellow>moderate<r>:", true);
                     } else {
-                        severity_str = Output.prettyFmt("<cyan>[low]<r>", true);
+                        severity_str = Output.prettyFmt("<cyan>low<r>:", true);
                     }
 
                     if (vuln.title.len > 0) {

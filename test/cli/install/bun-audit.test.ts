@@ -1,9 +1,7 @@
 import { readableStreamToText, spawn } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, lazyPromiseLike, tempDirWithFiles, VerdaccioRegistry } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, DirectoryTree, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";
-
-const registry = new VerdaccioRegistry();
 
 function fixture(
   folder:
@@ -15,8 +13,19 @@ function fixture(
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
-beforeAll(async () => await registry.start());
-afterAll(() => registry.stop());
+let server: Bun.Server;
+
+beforeAll(() => {
+  server = Bun.serve({
+    fetch: (req, server) => {
+      //
+    },
+  });
+});
+
+afterAll(() => {
+  server.stop();
+});
 
 function doAuditTest(
   label: string,

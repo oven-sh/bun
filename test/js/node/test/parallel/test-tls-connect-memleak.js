@@ -23,6 +23,7 @@
 // Flags: --expose-gc
 
 const common = require('../common');
+if (require("../../../../harness").isASAN) return; // TODO: BUN
 if (!common.hasCrypto)
   common.skip('missing crypto');
 

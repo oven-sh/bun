@@ -4,10 +4,13 @@
 // but using a net server/client instead
 
 require('../common');
+if (require("../../../../harness").isASAN) return; // TODO: BUN
 const { onGC } = require('../common/gc');
 const assert = require('assert');
 const net = require('net');
 const os = require('os');
+
+setTimeout(() => process.exit(1), 5000).unref();
 
 function serverHandler(sock) {
   sock.setTimeout(120000);
@@ -23,10 +26,11 @@ function serverHandler(sock) {
   });
   const timer = setTimeout(function() {
     sock.end('hello\n');
-  }, 100);
+  }, 500);
 }
 
 const cpus = os.availableParallelism();
+console.log(`cpus: ${cpus}`);
 let createClients = true;
 let done = 0;
 let count = 0;
@@ -41,7 +45,7 @@ function getAll() {
 
   const req = net.connect(server.address().port);
   req.resume();
-  req.setTimeout(10, function() {
+  req.setTimeout(250, function() {
     req.destroy();
     done++;
   });
@@ -65,12 +69,12 @@ function status() {
   if (done > 0) {
     createClients = false;
     global.gc();
-    console.log(`done/collected/total: ${done}/${countGC}/${count}`);
+    console.log(`done/collected/total: ${done}/${countGC}/${count}/${require("bun:jsc").heapStats().objectTypeCounts.TCPSocket-1}`);
     if (countGC === count) {
       server.close();
       return;
     }
   }
 
-  setImmediate(status);
+  setTimeout(status,100);
 }

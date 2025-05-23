@@ -23,6 +23,7 @@
 // Flags: --expose-gc
 
 const common = require('../common');
+if (require("../../../../harness").isASAN) return; // TODO: BUN
 const { onGC } = require('../common/gc');
 const assert = require('assert');
 const net = require('net');

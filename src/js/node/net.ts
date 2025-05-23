@@ -610,7 +610,6 @@ const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
   error(socket, error) {
     $debug("Bun.Socket error");
     if (socket.data === undefined) return;
-    console.log(error);
     const { self } = socket.data;
     if (self._hadError) return;
     self._hadError = true;

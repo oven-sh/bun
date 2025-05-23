@@ -224,7 +224,11 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         if (manifest.getPathMayBeIndex(prop_path) orelse json.getPathMayBeIndex(prop_path)) |value| {
             if (value.data == .e_string) {
                 const slice = value.data.e_string.slice(allocator);
-                Output.println("{s}", .{slice});
+                if (json_output) {
+                    Output.println("{s}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
+                } else {
+                    Output.println("{s}", .{slice});
+                }
                 Output.flush();
                 return;
             }

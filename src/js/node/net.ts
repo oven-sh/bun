@@ -1430,6 +1430,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (typeof port === "number" && (port < 0 || port >= 65536)) {
+    throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
+  }
+
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
@@ -1530,6 +1534,12 @@ Server.prototype[kRealListen] = function (
 
   //make this instance available on handlers
   this._handle.data = this;
+
+  const addr = this.address();
+  if (addr && typeof addr === "object") {
+    const familyLast = String(addr.family).slice(-1);
+    this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  }
 
   if (contexts) {
     for (const [name, context] of contexts) {

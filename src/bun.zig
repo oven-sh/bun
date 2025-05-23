@@ -772,7 +772,7 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
 }
 
 pub const MimallocArena = @import("./allocators/mimalloc_arena.zig").Arena;
-pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
     return struct {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
@@ -781,7 +781,7 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
-                    const enabled = if (getenvZ(flag)) |val|
+                    const enabled = if (getenvZ(@tagName(flag))) |val|
                         strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
                     else
                         false;

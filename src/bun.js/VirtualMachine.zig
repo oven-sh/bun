@@ -438,7 +438,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
-    if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER)) {
         this.transpiler_store.enabled = false;
     }
 
@@ -2489,8 +2489,8 @@ pub fn remapZigException(
 ) void {
     error_instance.toZigException(this.global, exception);
     const enable_source_code_preview = allow_source_code_preview and
-        !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+        !(bun.getRuntimeFeatureFlag(.BUN_DISABLE_SOURCE_CODE_PREVIEW) or
+            bun.getRuntimeFeatureFlag(.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW));
 
     defer {
         if (Environment.isDebug) {

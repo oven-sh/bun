@@ -329,10 +329,10 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
             Output.prettyln(" <d>tarball<d>:<r> {s}", .{t});
         }
         if (dist.getStringCloned(allocator, "shasum") catch null) |s| {
-            Output.prettyln(" <d>shasum<d>:<r> <g>{s}<r>", .{s});
+            Output.prettyln(" <d>shasum<d>:<r> <green>{s}<r>", .{s});
         }
         if (dist.getStringCloned(allocator, "integrity") catch null) |i| {
-            Output.prettyln(" <d>integrity<d>:<r> <g>{s}<r>", .{i});
+            Output.prettyln(" <d>integrity<d>:<r> <green>{s}<r>", .{i});
         }
         if (dist.getNumber("unpackedSize")) |u| {
             Output.prettyln(" <d>unpackedSize<d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});

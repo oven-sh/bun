@@ -3463,11 +3463,11 @@ describe("await can only be used inside an async function message", () => {
   });
 });
 
-describe("malformed function definition does not crash parser", () => {
+describe("malformed function definition does not crash due to invalid scope initialization", () => {
   const transpiler = new Bun.Transpiler();
   const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
-  it("prints syntax error to stdout and exits cleanly", async () => {
+  it("fails with a parse error and exits cleanly", async () => {
     const temp_files = ["index-1.js", "index-1.ts", "index-2.js", "index-2.ts"];
     await Bun.write(join(dir, temp_files[0]), "function:");
     await Bun.write(join(dir, temp_files[1]), "function:");
@@ -3475,12 +3475,8 @@ describe("malformed function definition does not crash parser", () => {
     await Bun.write(join(dir, temp_files[3]), "function a() {function:}");
 
     for (const temp_file of temp_files) {
-      let result = Bun.spawnSync({
-        cmd: [bunExe(), join(dir, temp_file)],
-        cwd: dir,
-        env: bunEnv,
-      });
-      expect(result.exitCode).toBe(1);
+      const code = await Bun.file(join(dir, temp_file)).text();
+      expect(() => transpiler.transformSync(code)).toThrow("Parse error");
     }
   });
 });

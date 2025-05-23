@@ -3129,6 +3129,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(true);
     }
     pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        log("rstStream", .{});
         JSC.markBinding(@src());
         const args_list = callframe.arguments_old(2);
         if (args_list.len < 2) {
@@ -3146,14 +3147,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.getPtr(stream_id) orelse {
+        const stream = this.streams.getPtr(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
-
-        if (!stream.canSendData() and !stream.canReceiveData()) {
-            return JSC.JSValue.jsBoolean(false);
-        }
-
         if (!error_arg.isNumber()) {
             return globalObject.throw("Invalid ErrorCode", .{});
         }
@@ -3467,7 +3463,13 @@ pub const H2FrameParser = struct {
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
                         stream.freeResources(this, false);
-                        stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
+                        stream.rstCode = @intFromEnum(ErrorCode.FRAME_SIZE_ERROR);
+                        this.dispatchWith2Extra(
+                            .onFrameError,
+                            identifier,
+                            JSC.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
+                            JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
+                        );
                         this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                         return .undefined;
                     };
@@ -3498,8 +3500,16 @@ pub const H2FrameParser = struct {
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
                     stream.freeResources(this, false);
-                    stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
+                    stream.rstCode = @intFromEnum(ErrorCode.FRAME_SIZE_ERROR);
+                    this.dispatchWith2Extra(
+                        .onFrameError,
+                        identifier,
+                        JSC.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
+                        JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
+                    );
+
                     this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
+
                     return .undefined;
                 };
             }
@@ -3703,9 +3713,6 @@ pub const H2FrameParser = struct {
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
-            if (this.isServer) {
-                if (stream.id % 2 == 0) continue;
-            } else if (stream.id % 2 != 0) continue;
             if (stream.state != .CLOSED) {
                 const old_state = stream.state;
                 stream.state = .CLOSED;

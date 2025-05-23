@@ -5,7 +5,7 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
-    "module": "preserve",
+    "module": "Preserve",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

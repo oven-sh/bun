@@ -45,8 +45,8 @@ pub fn order(
     const left_arg = arguments[0];
     const right_arg = arguments[1];
 
-    const left_string = left_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
-    const right_string = right_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+    const left_string = try left_arg.toJSString(globalThis);
+    const right_string = try right_arg.toJSString(globalThis);
 
     const left = left_string.toSlice(globalThis, allocator);
     defer left.deinit();
@@ -91,8 +91,8 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
     const left_arg = arguments[0];
     const right_arg = arguments[1];
 
-    const left_string = left_arg.toStringOrNull(globalThis) orelse return .zero;
-    const right_string = right_arg.toStringOrNull(globalThis) orelse return .zero;
+    const left_string = try left_arg.toJSString(globalThis);
+    const right_string = try right_arg.toJSString(globalThis);
 
     const left = left_string.toSlice(globalThis, allocator);
     defer left.deinit();

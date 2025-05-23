@@ -298,6 +298,12 @@ describe("TextDecoder", () => {
     const decoder = new TextDecoder(undefined);
     expect(decoder.encoding).toBe("utf-8");
   });
+
+  it("should support undefined options", () => {
+    expect(() => {
+      const decoder = new TextDecoder("utf-8", undefined);
+    }).not.toThrow();
+  });
 });
 
 describe("TextDecoder ignoreBOM", () => {
@@ -562,4 +568,14 @@ describe("stream", () => {
       });
     });
   }
+});
+
+it("should not crash with a getter that throws", () => {
+  expect(() =>
+    new TextDecoder().decode(new Uint8Array(32), {
+      get stream() {
+        throw new Error("stream get error");
+      },
+    }),
+  ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
 });

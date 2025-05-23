@@ -1390,12 +1390,40 @@ extern "C" void Bun__Process__emitWarning(Zig::GlobalObject* globalObject, Encod
         JSValue::decode(ctor));
 }
 
-JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
+JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = jsCast<Process*>(globalObject->processObject());
+
+    auto warningName = errorInstance.get(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isJSValueEqualToASCIILiteral(globalObject, warningName, "DeprecationWarning"_s)) {
+        if (Bun__Node__ProcessNoDeprecation) {
+            return jsUndefined();
+        }
+        if (Bun__Node__ProcessThrowDeprecation) {
+            // // Delay throwing the error to guarantee that all former warnings were properly logged.
+            // return process.nextTick(() => {
+            //    throw warning;
+            // });
+            auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
+            process->queueNextTick(globalObject, func, errorInstance);
+            return jsUndefined();
+        }
+    }
+
+    //   process.nextTick(doEmitWarning, warning);
+    auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
+    process->queueNextTick(globalObject, func, errorInstance);
+    return jsUndefined();
+}
+JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue detail = jsUndefined();
 
     if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
@@ -1453,25 +1481,7 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
     // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
 
-    if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
-        if (Bun__Node__ProcessNoDeprecation) {
-            return jsUndefined();
-        }
-        if (Bun__Node__ProcessThrowDeprecation) {
-            // // Delay throwing the error to guarantee that all former warnings were properly logged.
-            // return process.nextTick(() => {
-            //    throw warning;
-            // });
-            auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
-            process->queueNextTick(globalObject, func, errorInstance);
-            return jsUndefined();
-        }
-    }
-
-    //   process.nextTick(doEmitWarning, warning);
-    auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
-    process->queueNextTick(globalObject, func, errorInstance);
-    return jsUndefined();
+    RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -3310,15 +3320,11 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     return object;
 }
 
-static int _debugPort;
+static uint16_t debugPort;
 
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    if (_debugPort == 0) {
-        _debugPort = 9229;
-    }
-
-    return JSC::JSValue::encode(jsNumber(_debugPort));
+    return JSC::JSValue::encode(jsNumber(debugPort));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
@@ -3327,21 +3333,19 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
-    if (!value.isInt32AsAnyInt()) {
-        throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+    double port = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (std::isnan(port) || std::isinf(port)) {
+        port = 0;
+    }
+
+    if ((port != 0 && port < 1024) || port > 65535) {
+        throwNodeRangeError(globalObject, scope, "process.debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
-    int port = value.toInt32(globalObject);
-
-    if (port != 0) {
-        if (port < 1024 || port > 65535) {
-            throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
-            return false;
-        }
-    }
-
-    _debugPort = port;
+    debugPort = floor(port);
     return true;
 }
 

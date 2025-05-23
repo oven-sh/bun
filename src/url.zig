@@ -153,6 +153,10 @@ pub const URL = struct {
         return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
     }
 
+    pub fn isIPAddress(this: *const URL) bool {
+        return bun.strings.isIPAddress(this.hostname);
+    }
+
     pub fn hasValidPort(this: *const URL) bool {
         return (this.getPort() orelse 0) > 0;
     }

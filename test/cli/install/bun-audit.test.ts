@@ -115,7 +115,7 @@ describe("`bun pm audit`", () => {
       }),
     },
     fn: async ({ stdout }) => {
-      expect(await stdout).toBe("No vulnerabilities found.\n");
+      expect(await stdout).toBe("No vulnerabilities found\n");
     },
   });
 
@@ -123,7 +123,7 @@ describe("`bun pm audit`", () => {
     exitCode: 0,
     files: fixture("safe-is-number@7"),
     fn: async ({ stdout }) => {
-      expect(await stdout).toBe("No vulnerabilities found.\n");
+      expect(await stdout).toBe("No vulnerabilities found\n");
     },
   });
 

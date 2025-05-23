@@ -97,7 +97,7 @@ pub const AuditCommand = struct {
         } else if (response_text.len > 0) {
             return try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
         } else {
-            Output.prettyln("<green>No vulnerabilities found.<r>", .{});
+            Output.prettyln("<green>No vulnerabilities found<r>", .{});
             return 0;
         }
     }
@@ -435,7 +435,7 @@ fn printEnhancedAuditReport(
     };
 
     if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
-        Output.prettyln("<green>No vulnerabilities found.<r>", .{});
+        Output.prettyln("<green>No vulnerabilities found<r>", .{});
         return 0;
     }
 

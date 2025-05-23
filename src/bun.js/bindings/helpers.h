@@ -77,14 +77,14 @@ static const WTF::String toString(ZigString str)
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
     }
-    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
-    if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
+    if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-        if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+        if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
             return {};
         }
@@ -96,7 +96,7 @@ static const WTF::String toString(ZigString str)
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
         return {};
     }
 
@@ -121,12 +121,12 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
     }
-    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
         return {};
     }
 
@@ -141,12 +141,12 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
     }
-    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (UNLIKELY(str.len > Bun__stringSyntheticAllocationLimit)) {
+    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
         return {};
     }
 
@@ -161,21 +161,22 @@ static const WTF::String toStringCopy(ZigString str)
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
     }
-    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
         std::span<UChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
-        if (UNLIKELY(!impl))
+        if (!impl) [[unlikely]] {
             return WTF::String();
+        }
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(UChar));
         return WTF::String(WTFMove(impl));
     } else {
         std::span<LChar> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
-        if (UNLIKELY(!impl))
+        if (!impl) [[unlikely]]
             return WTF::String();
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
         return WTF::String(WTFMove(impl));
@@ -301,7 +302,7 @@ static const WTF::String toStringStatic(ZigString str)
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
     }
-    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         abort();
     }
 
@@ -318,7 +319,7 @@ static const WTF::String toStringStatic(ZigString str)
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     WTF::String message = toString(*str);
-    if (UNLIKELY(message.isNull() && str->len > 0)) {
+    if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
         return JSC::JSValue();
     }

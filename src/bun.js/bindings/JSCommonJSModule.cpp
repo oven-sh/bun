@@ -115,7 +115,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     SourceCode code = std::move(moduleObject->sourceCode);
 
     // If an exception occurred somewhere else, we might have cleared the source code.
-    if (UNLIKELY(code.isNull())) {
+    if (code.isNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
     }
@@ -142,7 +142,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         moduleObject->hasEvaluated = true;
     };
 
-    if (UNLIKELY(Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))) {
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
         initializeModuleObject();
         scope.assertNoExceptionExceptTermination();
 
@@ -168,13 +168,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     ASSERT(fnValue);
 
     JSObject* fn = fnValue.getObject();
-    if (UNLIKELY(!fn)) {
+    if (!fn) [[unlikely]] {
         scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
         RELEASE_AND_RETURN(scope, false);
     }
 
     JSC::CallData callData = JSC::getCallData(fn);
-    if (UNLIKELY(callData.type == CallData::Type::None)) {
+    if (callData.type == CallData::Type::None) [[unlikely]] {
         scope.throwException(globalObject, createTypeError(globalObject, "Expected CommonJS module to have a function wrapper. If you weren't messing around with Bun's internals, this is a bug in Bun"_s));
         RELEASE_AND_RETURN(scope, false);
     }
@@ -247,13 +247,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     ASSERT(callframe->argumentCount() == 2);
     JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->uncheckedArgument(0));
     JSCommonJSModule* referrer = jsDynamicCast<JSCommonJSModule*>(callframe->uncheckedArgument(1));
-    if (UNLIKELY(!moduleObject)) {
+    if (!moduleObject) [[unlikely]] {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
     }
 
     JSValue returnValue = jsNull();
-    if (LIKELY(referrer)) {
-        if (UNLIKELY(referrer->m_childrenValue)) {
+    if (referrer) [[likely]] {
+        if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
@@ -298,12 +298,12 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     // can see through the `this`.
     JSValue thisValue = callframe->thisValue();
     auto* requireResolveBound = jsDynamicCast<JSC::JSBoundFunction*>(thisValue);
-    if (UNLIKELY(!requireResolveBound)) {
+    if (!requireResolveBound) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
     JSValue boundThis = requireResolveBound->boundThis();
     JSString* filename = jsDynamicCast<JSString*>(boundThis);
-    if (UNLIKELY(!filename)) {
+    if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -421,7 +421,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(thisObject->m_filename.get());
@@ -429,7 +429,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JS
 JSC_DEFINE_CUSTOM_GETTER(getterId, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(thisObject->m_id.get());
@@ -438,7 +438,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterId, (JSC::JSGlobalObject * globalObject, JSC::Enc
 JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(thisObject->m_dirname.get());
@@ -447,7 +447,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
 JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -493,7 +493,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -527,7 +527,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
 JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* mod = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!mod)) {
+    if (!mod) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -543,10 +543,12 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
             JSCommonJSModule* child = jsCast<JSCommonJSModule*>(childBarrier.get());
             // Check the last module since duplicate imports, if any, will
             // probably be adjacent. Then just do a linear scan.
-            if (UNLIKELY(last == child)) continue;
+            if (last == child) [[unlikely]]
+                continue;
             int i = 0;
             while (i < n) {
-                if (UNLIKELY(children.at(i).asCell() == child)) goto next;
+                if (children.at(i).asCell() == child) [[unlikely]]
+                    goto next;
                 i += 1;
             }
             children.append(child);
@@ -571,7 +573,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
 JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -648,7 +650,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     if (thisObject->m_overriddenCompile) {
@@ -688,7 +690,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     String wrappedString;
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    if (UNLIKELY(zigGlobalObject->hasOverriddenModuleWrapper)) {
+    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         wrappedString = makeString(
             zigGlobalObject->m_moduleWrapperStart,
             sourceString,
@@ -1020,7 +1022,7 @@ void populateESMExports(
                 }
 
                 for (auto property : properties) {
-                    if (UNLIKELY(property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()))
+                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                         continue;
 
                     // ignore constructor
@@ -1077,7 +1079,7 @@ void populateESMExports(
             }
 
             for (auto property : properties) {
-                if (UNLIKELY(property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()))
+                if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                     continue;
 
                 // ignore constructor
@@ -1219,8 +1221,9 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     throwScope.throwException(globalObject, exception);
     RELEASE_AND_RETURN(throwScope, {});
 }
-#define REQUIRE_CJS_RETURN_IF_EXCEPTION \
-    if (UNLIKELY(throwScope.exception())) return finishRequireWithError(globalObject, throwScope, specifierValue)
+#define REQUIRE_CJS_RETURN_IF_EXCEPTION      \
+    if (throwScope.exception()) [[unlikely]] \
+    return finishRequireWithError(globalObject, throwScope, specifierValue)
 
 // JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
@@ -1253,7 +1256,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // $argumentCount() always returns a Int32 JSValue
     int32_t userArgumentCount = callframe->argument(2).asInt32();
     // If they called require(id), skip the check for the type attribute
-    if (UNLIKELY(userArgumentCount >= 2)) {
+    if (userArgumentCount >= 2) [[unlikely]] {
         JSValue options = callframe->uncheckedArgument(3);
         if (options.isObject()) {
             JSObject* obj = options.getObject();
@@ -1276,7 +1279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         specifierValue,
         specifier,
         &referrerStr,
-        LIKELY(typeAttribute.isEmpty())
+        typeAttribute.isEmpty()
             ? nullptr
             : &typeAttributeStr);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
@@ -1298,6 +1301,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     ErrorableResolvedSource res;
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
     if (auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res)) {
         if (res.success)
@@ -1324,7 +1329,7 @@ void JSCommonJSModule::evaluate(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (UNLIKELY(globalObject->hasOverriddenModuleWrapper)) {
+    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         auto string = source.source_code.toWTFString(BunString::ZeroCopy);
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
@@ -1431,7 +1436,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
-        if (UNLIKELY(globalObject->hasOverriddenModuleWrapper)) {
+        if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
             auto concat = makeString(
                 globalObject->m_moduleWrapperStart,
                 source.source_code.toWTFString(BunString::ZeroCopy),

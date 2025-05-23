@@ -21,7 +21,9 @@ SigintWatcher::~SigintWatcher()
 
 void SigintWatcher::install()
 {
-#if !OS(WINDOWS)
+#if OS(WINDOWS)
+    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
+#else
     Bun__ensureSignalHandler();
 
     struct sigaction action;
@@ -36,8 +38,6 @@ void SigintWatcher::install()
     action.sa_flags = 0;
 
     sigaction(SIGINT, &action, nullptr);
-#else
-    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
 #endif
 
     if (m_installed.exchange(true)) {
@@ -68,6 +68,9 @@ void SigintWatcher::uninstall()
     if (m_installed.exchange(false)) {
         ASSERT(m_thread.get_id() != std::this_thread::get_id());
 
+#if OS(WINDOWS)
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): implement sigint handler on Windows");
+#else
         struct sigaction action;
         memset(&action, 0, sizeof(struct sigaction));
         action.sa_handler = SIG_DFL;
@@ -75,6 +78,7 @@ void SigintWatcher::uninstall()
         sigaddset(&action.sa_mask, SIGINT);
         action.sa_flags = SA_RESTART;
         sigaction(SIGINT, &action, nullptr);
+#endif
 
         m_semaphore.signal();
         m_thread.join();

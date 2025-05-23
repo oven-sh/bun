@@ -10,6 +10,7 @@ const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = @import("../url.zig").URL;
 const logger = bun.logger;
+const semver = @import("../semver.zig");
 
 const VulnerabilityInfo = struct {
     severity: []const u8,

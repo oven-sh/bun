@@ -493,8 +493,7 @@ fn printEnhancedAuditReport(
                     Output.prettyln("<red>{s}<r>", .{main_vuln.package_name});
                 }
 
-                var has_fix_available = false;
-                var has_breaking_changes = false;
+                var is_direct_dependency = false;
 
                 for (package_info.dependents.items) |path| {
                     if (path.path.items.len > 1) {
@@ -512,11 +511,7 @@ fn printEnhancedAuditReport(
                     }
 
                     if (path.is_direct) {
-                        has_fix_available = true;
-                    } else {
-                        if (!has_fix_available) {
-                            has_breaking_changes = true;
-                        }
+                        is_direct_dependency = true;
                     }
                 }
 
@@ -534,9 +529,9 @@ fn printEnhancedAuditReport(
                     }
                 }
 
-                if (has_fix_available) {
+                if (is_direct_dependency) {
                     Output.prettyln("  Fix available with <green>`bun update {s}`<r>", .{package_info.name});
-                } else if (has_breaking_changes) {
+                } else {
                     Output.prettyln("  Fix available with <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
                 }
 
@@ -546,8 +541,6 @@ fn printEnhancedAuditReport(
 
         const total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if (total > 0) {
-            Output.prettyln("", .{});
-
             Output.pretty("<b>{d} vulnerabilities<r> (", .{total});
 
             var has_previous = false;

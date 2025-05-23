@@ -497,24 +497,24 @@ fn printEnhancedAuditReport(
                 var has_breaking_changes = false;
 
                 for (package_info.dependents.items) |path| {
+                    var path_buf = std.ArrayList(u8).init(allocator);
+                    defer path_buf.deinit();
+
+                    var i = path.path.items.len;
+                    if (i > 1) {
+                        while (i > 0) {
+                            i -= 1;
+                            if (i < path.path.items.len - 1) try path_buf.appendSlice(" › ");
+                            try path_buf.appendSlice(path.path.items[i]);
+                        }
+                        const dep_path = path_buf.items;
+
+                        Output.prettyln("  <d>{s}<r>", .{dep_path});
+                    }
+
                     if (path.is_direct) {
                         has_fix_available = true;
                     } else {
-                        var i = path.path.items.len;
-
-                        while (i > 0) {
-                            i -= 1;
-                            const pkg_name = path.path.items[i];
-
-                            if (i == path.path.items.len - 1) {
-                                Output.prettyln("   <green>{s}<r>", .{pkg_name});
-                            } else if (i == 0) {
-                                Output.prettyln("     └─> <red>{s}<r> <red>(vulnerable)<r>", .{pkg_name});
-                            } else {
-                                Output.prettyln("     └─> {s}", .{pkg_name});
-                            }
-                        }
-
                         if (!has_fix_available) {
                             has_breaking_changes = true;
                         }
@@ -522,29 +522,23 @@ fn printEnhancedAuditReport(
                 }
 
                 for (package_info.vulnerabilities.items) |vuln| {
-                    var severity_str: []const u8 = "";
-                    if (std.mem.eql(u8, vuln.severity, "critical")) {
-                        severity_str = Output.prettyFmt("<red><b>critical<r>:", true);
-                    } else if (std.mem.eql(u8, vuln.severity, "high")) {
-                        severity_str = Output.prettyFmt("<red><b>high<r>:", true);
-                    } else if (std.mem.eql(u8, vuln.severity, "moderate")) {
-                        severity_str = Output.prettyFmt("<yellow>moderate<r>:", true);
-                    } else {
-                        severity_str = Output.prettyFmt("<cyan>low<r>:", true);
-                    }
-
                     if (vuln.title.len > 0) {
-                        Output.prettyln("   {s} {s} - {s}", .{ severity_str, vuln.title, vuln.url });
-                    } else {
-                        Output.prettyln("   {s} {s}", .{ severity_str, vuln.url });
+                        if (std.mem.eql(u8, vuln.severity, "critical")) {
+                            Output.prettyln("  <red>critical<d>:<r> {s} - <d>{s}<r>", .{ vuln.title, vuln.url });
+                        } else if (std.mem.eql(u8, vuln.severity, "high")) {
+                            Output.prettyln("  <red>high<d>:<r> {s} - <d>{s}<r>", .{ vuln.title, vuln.url });
+                        } else if (std.mem.eql(u8, vuln.severity, "moderate")) {
+                            Output.prettyln("  <yellow>moderate<d>:<r> {s} - <d>{s}<r>", .{ vuln.title, vuln.url });
+                        } else {
+                            Output.prettyln("  <cyan>low<d>:<r> {s} - <d>{s}<r>", .{ vuln.title, vuln.url });
+                        }
                     }
                 }
 
                 if (has_fix_available) {
-                    Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
+                    Output.prettyln("  Fix available with <green>`bun update`<r>", .{});
                 } else if (has_breaking_changes) {
-                    Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});
-                    Output.prettyln("   <yellow>Will install updated versions, which may be a breaking change<r>", .{});
+                    Output.prettyln("  Fix available with <green>`bun update --force`<r><d> (may be a breaking change)<r>", .{});
                 }
 
                 Output.prettyln("", .{});

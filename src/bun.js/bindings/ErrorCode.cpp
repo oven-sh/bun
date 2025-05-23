@@ -999,6 +999,13 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
     return {};
 }
 
+JSC::EncodedJSValue WORKER_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral operation)
+{
+    auto message = makeString(operation, " is not supported in workers"_s);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, message));
+    return {};
+}
+
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView encoding)
 {
     auto message = makeString("Unknown encoding: "_s, encoding);

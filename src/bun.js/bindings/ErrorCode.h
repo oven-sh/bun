@@ -145,6 +145,11 @@ JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGl
 /// `File URL path {suffix}`
 JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral suffix);
 
+// Worker
+
+// `{operation} is not supported in workers`
+JSC::EncodedJSValue WORKER_UNSUPPORTED_OPERATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral operation);
+
 }
 
 void throwBoringSSLError(JSC::VM& vm, JSC::ThrowScope& scope, JSGlobalObject* globalObject, int errorCode);

@@ -514,8 +514,6 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     }
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
-
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -551,7 +549,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue threadId = jsNumber(0);
     JSMap* environmentData = nullptr;
 
-    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
+    if (auto* worker = globalObject->worker()) {
         auto& options = worker->options();
         auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.workerDataAndEnvironmentData);
@@ -597,7 +595,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());
+    Worker* worker = globalObject->worker();
     if (worker == nullptr)
         return JSValue::encode(jsUndefined());
 

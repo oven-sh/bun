@@ -88,6 +88,7 @@ public:
     // true if successful
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     void dispatchExit(int32_t exitCode);
+    // Returns the context of the thread that started this Worker
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }

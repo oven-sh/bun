@@ -4377,6 +4377,14 @@ bool GlobalObject::hasNapiFinalizers() const
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
+extern "C" WebCore::Worker* Bun__VirtualMachine__getWorker(VirtualMachine* bunVM);
+
+WebCore::Worker* GlobalObject::worker()
+{
+    // TODO make bunVM typed instead of void* everywhere
+    return Bun__VirtualMachine__getWorker(reinterpret_cast<VirtualMachine*>(bunVM()));
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

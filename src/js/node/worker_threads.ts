@@ -21,16 +21,12 @@ const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
 const {
-  0: _workerData,
-  1: _threadId,
-  2: _receiveMessageOnPort,
-  3: environmentData,
-} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
-  unknown,
-  number,
-  (port: unknown) => unknown,
-  Map<unknown, unknown>,
-];
+  _workerData,
+  _threadId,
+  _receiveMessageOnPort,
+  environmentData,
+  webWorkerToNodeWorker,
+} = require("internal/worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -223,7 +219,7 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
+const unsupportedOptions = ["trackedUnmanagedFds", "resourceLimits"];
 
 class Worker extends EventEmitter {
   #worker: WebWorker;
@@ -278,6 +274,8 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
+
+    webWorkerToNodeWorker.set(this.#worker, this);
   }
 
   get threadId() {

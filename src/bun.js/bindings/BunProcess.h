@@ -5,6 +5,7 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
+#include "JSWorker.h"
 
 namespace Zig {
 class GlobalObject;
@@ -26,6 +27,8 @@ class Process : public WebCore::JSEventEmitter {
     // Function that looks up "emit" on "process" and calls it with the provided arguments
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
+    // Function called when a Worker thread sends data from its stdout or stderr stream
+    LazyProperty<Process, JSFunction> m_emitWorkerStdioInParentFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
@@ -76,6 +79,8 @@ public:
 
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
+
+    void emitWorkerStdioInParent(JSWorker* worker, int fd, JSUint8Array* data);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

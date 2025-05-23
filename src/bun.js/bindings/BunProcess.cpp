@@ -2069,7 +2069,10 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     forceSync = true;
 #endif
     if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        JSValue underlyingSink = resultObject->getIndex(globalObject, 1);
+        if (!underlyingSink.isUndefined()) {
+            Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(underlyingSink));
+        }
     }
 
     return resultObject->getIndex(globalObject, 0);
@@ -2670,6 +2673,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_emitWorkerStdioInParentFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -3267,6 +3271,17 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     return nextTickFunction;
 }
 
+void Process::emitWorkerStdioInParent(JSWorker* worker, int fd, JSUint8Array* data)
+{
+    auto* fn = m_emitWorkerStdioInParentFunction.getInitializedOnMainThread(this);
+    auto callData = JSC::getCallData(fn);
+    MarkedArgumentBuffer args;
+    args.append(worker);
+    args.append(jsNumber(fd));
+    args.append(data);
+    JSC::call(globalObject(), fn, callData, jsNull(), args);
+}
+
 static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
 {
     JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
@@ -3696,6 +3711,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
+    });
+    m_emitWorkerStdioInParentFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), processObjectInternalsEmitWorkerStdioInParentCodeGenerator(init.vm), init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

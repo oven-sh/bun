@@ -98,7 +98,7 @@ public:
 private:
     std::thread m_thread;
     std::atomic_bool m_installed = false;
-    std::atomic_flag m_waiting = false;
+    std::atomic_flag m_waiting {};
     Semaphore m_semaphore;
     std::mutex m_globalObjectsMutex;
     std::mutex m_receiversMutex;

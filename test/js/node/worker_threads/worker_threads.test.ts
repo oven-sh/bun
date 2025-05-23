@@ -2,7 +2,7 @@ import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { duplexPair, Readable, Writable } from "node:stream";
+import { duplexPair, Readable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,

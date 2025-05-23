@@ -24,6 +24,10 @@ describe("setTimeout", () => {
     expect(c.signal.aborted).toBe(true);
     expect(unhandledRejectionCaught).toBe(false);
   });
+
+  it("an instance of AbortController can be passed as the thrid argument", async () => {
+    await expect(async () => await setTimeout(0, undefined, new AbortController())).not.toThrow();
+  });
 });
 
 describe("setImmediate", () => {

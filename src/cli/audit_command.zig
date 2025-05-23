@@ -497,19 +497,18 @@ fn printEnhancedAuditReport(
                 var has_breaking_changes = false;
 
                 for (package_info.dependents.items) |path| {
-                    var path_buf = std.ArrayList(u8).init(allocator);
-                    defer path_buf.deinit();
+                    if (path.path.items.len > 1) {
+                        const vulnerable_pkg = path.path.items[0];
 
-                    var i = path.path.items.len;
-                    if (i > 1) {
-                        while (i > 0) {
-                            i -= 1;
-                            if (i < path.path.items.len - 1) try path_buf.appendSlice(" › ");
-                            try path_buf.appendSlice(path.path.items[i]);
-                        }
-                        const dep_path = path_buf.items;
+                        var reversed_items = std.ArrayList([]const u8).init(allocator);
+                        for (path.path.items[1..]) |item| try reversed_items.append(item);
+                        std.mem.reverse([]const u8, reversed_items.items);
+                        defer reversed_items.deinit();
 
-                        Output.prettyln("  <d>{s}<r>", .{dep_path});
+                        const vuln_pkg_path = try std.mem.join(allocator, " › ", reversed_items.items);
+                        defer allocator.free(vuln_pkg_path);
+
+                        Output.prettyln("  <d>{s} › <red>{s}r>", .{ vuln_pkg_path, vulnerable_pkg });
                     }
 
                     if (path.is_direct) {

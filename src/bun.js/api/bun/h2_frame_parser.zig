@@ -3712,7 +3712,11 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
+
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
+            if (this.isServer) {
+                if (stream.id % 2 == 0) continue;
+            } else if (stream.id % 2 != 0) continue;
             if (stream.state != .CLOSED) {
                 const old_state = stream.state;
                 stream.state = .CLOSED;

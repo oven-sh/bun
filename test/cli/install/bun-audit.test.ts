@@ -1,7 +1,62 @@
-import { readableStreamToText, spawn } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, lazyPromiseLike, tempDirWithFiles } from "harness";
+import { $, readableStreamToText, spawn } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";
+import auditFixturesJson from "./registry/fixtures/audit/audit-fixtures.json" with { type: "json" };
+
+const auditFixtures = (() => {
+  const entries = Object.entries(auditFixturesJson);
+
+  class AuditFixtureMap {
+    private readonly map: Map<Record<string, string[]>, unknown> = new Map();
+
+    public put(key: Record<string, string[]>, value: unknown) {
+      this.map.set(key, value);
+    }
+
+    private static arrayHasExactlySameElementsButMaybeInDifferentOrder(a: string[], b: string[]) {
+      if (a.length !== b.length) {
+        return false;
+      }
+
+      return a.every(v => b.includes(v));
+    }
+
+    private static matches(a: Record<string, string[]>, b: Record<string, string[]>) {
+      const entries = Object.entries(a);
+
+      for (const [k, v] of entries) {
+        if (!b[k]) {
+          return false;
+        }
+
+        if (!AuditFixtureMap.arrayHasExactlySameElementsButMaybeInDifferentOrder(v, b[k])) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    public get(key: Record<string, string[]>) {
+      for (const [k, v] of this.map.entries()) {
+        if (AuditFixtureMap.matches(k, key)) {
+          return v;
+        }
+      }
+
+      return undefined;
+    }
+  }
+
+  const map = new AuditFixtureMap();
+
+  for (const [key, value] of entries) {
+    map.put(JSON.parse(key), value);
+  }
+
+  return map;
+})();
 
 function fixture(
   folder:
@@ -17,8 +72,16 @@ let server: Bun.Server;
 
 beforeAll(() => {
   server = Bun.serve({
-    fetch: (req, server) => {
-      //
+    fetch: async req => {
+      const body = await gunzipJsonRequest(req);
+
+      if (!auditFixtures.get(body)) {
+        return new Response("No fixture found", { status: 404 });
+      }
+
+      const fixture = auditFixtures.get(body);
+
+      return Response.json(fixture);
     },
   });
 });
@@ -37,14 +100,21 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-pm-audit", options.files);
+    const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+
+    console.log(dir);
+
+    await $`bun i`.cwd(dir).nothrow();
 
     const proc = spawn({
       cmd: [bunExe(), "pm", "audit", ...(options.args ?? [])],
       stdout: "pipe",
       stderr: "pipe",
       cwd: dir,
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        NPM_CONFIG_REGISTRY: server.url.toString(),
+      },
     });
 
     const stdout = lazyPromiseLike(() => readableStreamToText(proc.stdout));
@@ -56,13 +126,13 @@ function doAuditTest(
       expect(exitCode).toBe(options.exitCode);
       await options.fn({ stdout, stderr, dir });
     } catch (e) {
-      const out = await stdout;
-      const err = await stderr;
+      // const err = await stderr;
+      // const out = await stdout;
 
-      // useful to see what went wrong otherwise
-      // we are just eating the rror silently
-      console.log(out);
-      console.log(err);
+      // // useful to see what went wrong otherwise
+      // // we are just eating the rror silently
+      // console.log(out.split("\n").join(">\n"));
+      // console.log(err.split("\n").join(">\n"));
 
       throw e; //but still rethrow so test fails
     }

@@ -1700,3 +1700,10 @@ export function lazyPromiseLike<T>(fn: () => Promise<T>): PromiseLike<T> {
     },
   };
 }
+
+export async function gunzipJsonRequest(req: Request) {
+  const buf = await req.arrayBuffer();
+  const inflated = Bun.gunzipSync(buf);
+  const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
+  return body;
+}

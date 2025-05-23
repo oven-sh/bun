@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
       id-token: write
     steps:
       - name: Checkout
@@ -19,7 +20,11 @@ jobs:
       - id: prompt
         name: Read Prompt
         run: |
-          echo "prompt=$(cat .agent/TRIAGE.md)" >> $GITHUB_OUTPUT
+          {
+            echo 'prompt<<EOF'
+            cat .agent/TRIAGE.md
+            echo EOF
+          } >> "$GITHUB_ENV"
 
       - name: Run Agent
         uses: anthropics/claude-code-action@beta

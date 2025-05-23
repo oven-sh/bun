@@ -279,6 +279,14 @@ pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     return .{ str, null };
 }
 
+pub fn splitNameAndVersionOrLatest(str: string) struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse "latest",
+    };
+}
+
 pub fn splitNameAndVersion(str: string) error{MissingVersion}!struct { string, string } {
     const name, const version = splitNameAndMaybeVersion(str);
     return .{

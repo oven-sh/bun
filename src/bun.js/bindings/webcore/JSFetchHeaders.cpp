@@ -187,7 +187,7 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!castedThis)) {
+    if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -201,11 +201,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
-    if (UNLIKELY(!castedThis)) {
+    if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
-    if (UNLIKELY(!callFrame->argumentCount())) {
+    if (!callFrame->argumentCount()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Missing argument"_s);
         return {};
     }
@@ -275,7 +275,7 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
 
     JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(!array)) {
+    if (!array) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }
@@ -292,7 +292,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
-    if (UNLIKELY(!castedThis)) {
+    if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
     auto& impl = castedThis->wrapped();
@@ -381,7 +381,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersConstructor, (JSGlobalObject * lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSFetchHeadersPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSFetchHeaders::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -393,7 +393,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_appendBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -429,7 +429,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_deleteBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -451,7 +451,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_getBody(JSC::J
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -473,7 +473,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_hasBody(JSC::J
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto* nameString = argument0.value().toString(lexicalGlobalObject);
@@ -495,7 +495,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_setBody(JSC::J
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());

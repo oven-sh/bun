@@ -92,7 +92,7 @@ bool IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<E
 static bool removeListenerFromVector(SimpleEventListenerVector& listeners, EventListener& listener)
 {
     size_t indexOfRemovedListener = findListener(listeners, listener);
-    if (UNLIKELY(indexOfRemovedListener == notFound))
+    if (indexOfRemovedListener == notFound) [[unlikely]]
         return false;
 
     listeners[indexOfRemovedListener]->markAsRemoved();

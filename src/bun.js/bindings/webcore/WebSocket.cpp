@@ -419,7 +419,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     Vector<ZigString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTFMove(headersInit));
-    if (UNLIKELY(headersOrException.hasException())) {
+    if (headersOrException.hasException()) [[unlikely]] {
         m_state = CLOSED;
         updateHasPendingActivity();
         return headersOrException.releaseException();
@@ -1041,7 +1041,7 @@ void WebSocket::didReceiveMessage(String&& message)
     if (m_state != OPEN)
         return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
     //         auto utf8Message = message.utf8();
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(utf8Message.dataAsUInt8Ptr(), utf8Message.length(), WebSocketFrame::OpCode::OpCodeText));
@@ -1075,7 +1075,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     if (m_state != OPEN)
         return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector())
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
@@ -1113,7 +1113,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             auto scope = DECLARE_CATCH_SCOPE(scriptExecutionContext()->vm());
             JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
-            if (UNLIKELY(!buffer || scope.exception())) {
+            if (!buffer || scope.exception()) [[unlikely]] {
                 scope.clearExceptionExceptTermination();
 
                 ErrorEvent::Init errorInit;
@@ -1216,7 +1216,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // if (!m_channel)
     //     return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
     //         WebSocketFrame closingFrame(WebSocketFrame::OpCodeClose, true, false, false);
     //         inspector->didReceiveWebSocketFrame(closingFrame);

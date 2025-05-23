@@ -58,7 +58,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (UNLIKELY(!isNullOrUndefined && !object)) {
+    if (!isNullOrUndefined && !object) [[unlikely]] {
         Bun::throwError(&lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
             "The \"options\" argument must be of type object."_s);
         return {};
@@ -164,7 +164,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstruc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSCustomEventDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
@@ -253,7 +253,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCustomEventConstructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSCustomEventPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCustomEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -276,7 +276,7 @@ static inline JSC::EncodedJSValue jsCustomEventPrototypeFunction_initCustomEvent
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());

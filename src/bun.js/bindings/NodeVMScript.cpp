@@ -629,12 +629,14 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
 
         if (JSValue breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s))) {
             RETURN_IF_EXCEPTION(scope, false);
-            if (!breakOnSigintOpt.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
-                return false;
+            if (!breakOnSigintOpt.isUndefined()) {
+                if (!breakOnSigintOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
+                    return false;
+                }
+                this->breakOnSigint = breakOnSigintOpt.asBoolean();
+                any = true;
             }
-            this->breakOnSigint = breakOnSigintOpt.asBoolean();
-            any = true;
         }
     }
 

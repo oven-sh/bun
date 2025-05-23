@@ -4,7 +4,7 @@ import { writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
-var registry = new VerdaccioRegistry();
+const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
   await registry.start();

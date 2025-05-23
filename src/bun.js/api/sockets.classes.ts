@@ -8,7 +8,6 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     memoryCost: true,
-    inspectCustom: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",

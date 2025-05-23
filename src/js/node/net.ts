@@ -95,7 +95,6 @@ const owner_symbol = Symbol("owner_symbol");
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
-const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
@@ -507,6 +506,7 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+// TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
 const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
   open(socket) {
     $debug("Bun.Socket open");
@@ -648,7 +648,7 @@ function kConnectTcp(self, addressType, req, address, port) {
     data: { self, req },
     socket: self[khandlers],
   });
-  promise.catch(reason => {
+  promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
   });
@@ -665,7 +665,7 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
-  promise.catch(reason => {
+  promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
   });
@@ -1051,7 +1051,6 @@ Socket.prototype.connect = function connect(...args) {
   }
 
   const [options, cb] = $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
-  const connectListener = cb;
 
   if (typeof this[bunTlsSymbol] === "function" && cb !== null) {
     this.once("secureConnect", cb);
@@ -1222,7 +1221,7 @@ Socket.prototype._read = function _read(size) {
 };
 
 Socket.prototype._reset = function _reset() {
-  $debug("reset connection");
+  $debug("Socket.prototype._reset");
   this.resetAndClosing = true;
   return this.destroy();
 };
@@ -1297,7 +1296,6 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {
-    // if (!(this._handle instanceof TCP)) throw new ERR_INVALID_HANDLE_TYPE();
     if (this.connecting) {
       this.once("connect", () => this._reset());
     } else {
@@ -1676,8 +1674,6 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
 
 function internalConnect(self, options, path);
 function internalConnect(self, options, address, port, addressType, localAddress, localPort, flags?) {
-  // TODO return promise from Socket.prototype.connect which wraps _connectReq.
-
   $assert(self.connecting);
 
   let err;

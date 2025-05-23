@@ -95,10 +95,6 @@ class NodeAggregateError extends AggregateError {
 
 class ErrnoException extends Error {
   constructor(err, syscall, original) {
-    // TODO(joyeecheung): We have to use the type-checked
-    // getSystemErrorName(err) to guard against invalid arguments from users.
-    // This can be replaced with [ code ] = errmap.get(err) when this method
-    // is no longer exposed to user land.
     util ??= require("node:util");
     const code = util.getSystemErrorName(err);
     const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;

@@ -2398,23 +2398,23 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn inc(this: *PosixLoop) void {
-        log("inc {*} {d} + 1 = {d}", .{ this, this.num_polls, this.num_polls + 1 });
+        log("inc {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
     }
 
     pub fn dec(this: *PosixLoop) void {
-        log("dec {*} {d} - 1 = {d}", .{ this, this.num_polls, this.num_polls - 1 });
+        log("dec {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
     }
 
     pub fn ref(this: *PosixLoop) void {
-        log("ref {*} {d} + 1 = {d} | {d} + 1 = {d}", .{ this, this.num_polls, this.num_polls + 1, this.active, this.active + 1 });
+        log("ref {d} + 1 = {d} | {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1, this.active, this.active + 1 });
         this.num_polls += 1;
         this.active += 1;
     }
 
     pub fn unref(this: *PosixLoop) void {
-        log("unref {*} {d} - 1 = {d} | {d} - 1 = {d}", .{ this, this.num_polls, this.num_polls - 1, this.active, this.active -| 1 });
+        log("unref {d} - 1 = {d} | {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1, this.active, this.active -| 1 });
         this.num_polls -= 1;
         this.active -|= 1;
     }

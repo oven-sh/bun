@@ -195,12 +195,8 @@ pub const PackageManagerCommand = struct {
             Output.println("{s}", .{username});
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "view")) {
-            if (pm.options.positionals.len < 2) {
-                Output.errGeneric("missing package specifier", .{});
-                Global.exit(1);
-            }
             const property_path = if (pm.options.positionals.len > 2) pm.options.positionals[2] else null;
-            try PmViewCommand.view(ctx.allocator, pm, pm.options.positionals[1], property_path, pm.options.json_output);
+            try PmViewCommand.view(ctx.allocator, pm, if (pm.options.positionals.len > 1) pm.options.positionals[1] else "", property_path, pm.options.json_output);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));

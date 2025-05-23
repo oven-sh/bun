@@ -2681,6 +2681,9 @@ pub const PackageManager = struct {
     subcommand: Subcommand,
     update_requests: []UpdateRequest = &[_]UpdateRequest{},
 
+    /// Only set in `bun pm`
+    root_package_json_name_at_time_of_init: []const u8 = "",
+
     root_package_json_file: std.fs.File,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
@@ -8774,6 +8777,7 @@ pub const PackageManager = struct {
         };
 
         var workspace_name_hash: ?PackageNameHash = null;
+        var root_package_json_name_at_time_of_init: []const u8 = "";
 
         // Step 1. Find the nearest package.json directory
         //
@@ -8880,6 +8884,12 @@ pub const PackageManager = struct {
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
                         const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        if (subcommand == .pm) {
+                            if (json.getStringCloned(ctx.allocator, "name") catch null) |name| {
+                                root_package_json_name_at_time_of_init = name;
+                            }
+                        }
+
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -9037,6 +9047,7 @@ pub const PackageManager = struct {
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
+            .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
         };
         manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);

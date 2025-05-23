@@ -13,17 +13,38 @@ const http = bun.http;
 const Semver = bun.Semver;
 const PackageManifest = @import("../install/npm.zig").PackageManifest;
 
-pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string, property_path: ?string, json_output: bool) !void {
-    var name = spec;
-    var version: ?string = null;
-    if (strings.lastIndexOfChar(spec, '@')) |idx| {
-        if (idx != 0) {
-            if (spec[0] != '@' or if (strings.indexOfChar(spec, '/')) |slash| idx > slash else true) {
-                name = spec[0..idx];
-                version = spec[idx + 1 ..];
+pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: string, property_path: ?string, json_output: bool) !void {
+    const name, var version = bun.install.Dependency.splitNameAndVersionOrLatest(brk: {
+        // Extremely best effort.
+        if (bun.strings.eqlComptime(spec_, ".") or bun.strings.eqlComptime(spec_, "")) {
+            if (bun.strings.isNPMPackageName(manager.root_package_json_name_at_time_of_init)) {
+                break :brk manager.root_package_json_name_at_time_of_init;
             }
+
+            // Try our best to get the package.json name they meant
+            if (manager.root_dir.hasComptimeQuery("package.json")) from_package_json: {
+                if (manager.root_dir.fd.isValid()) {
+                    switch (bun.sys.File.readFrom(manager.root_dir.fd, "package.json", allocator)) {
+                        .err => {},
+                        .result => |str| {
+                            const source = logger.Source.initPathString("package.json", str);
+                            var log = logger.Log.init(allocator);
+                            const json = JSON.parse(&source, &log, allocator, false) catch break :from_package_json;
+                            if (json.getStringCloned(allocator, "name") catch null) |name| {
+                                if (name.len > 0) {
+                                    break :brk name;
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+
+            break :brk std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir);
         }
-    }
+
+        break :brk spec_;
+    });
 
     const scope = manager.scopeForPackageName(name);
 
@@ -74,7 +95,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     };
 
     if (res.status_code >= 400) {
-        try @import("../install/npm.zig").responseError(allocator, &req, &res, if (version) |v| .{ name, v } else null, &response_buf, false);
+        try @import("../install/npm.zig").responseError(allocator, &req, &res, .{ name, version }, &response_buf, false);
     }
 
     var log = logger.Log.init(allocator);
@@ -112,66 +133,43 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     var versions_len: usize = 1;
 
     version, manifest = brk: {
-        if (json.getObject("versions")) |versions_obj| {
-            versions_len = versions_obj.data.e_object.properties.len;
+        if (json.getObject("versions")) |versions_obj| from_versions: {
+            // Find the version string from JSON that matches the resolved version
+            const versions = versions_obj.data.e_object.properties.slice();
+            versions_len = versions.len;
 
-            if (version) |version_spec| {
-                // Use the exact same logic as outdated_command.zig
-                var wanted_version: ?Semver.Version = null;
-
+            const wanted_version: Semver.Version = brk2: {
                 // First try dist-tag lookup (like "latest", "beta", etc.)
-                if (parsed_manifest.findByDistTag(version_spec)) |result| {
-                    wanted_version = result.version;
+                if (parsed_manifest.findByDistTag(version)) |result| {
+                    break :brk2 result.version;
                 } else {
                     // Parse as semver query and find best version - exactly like outdated_command.zig line 325
-                    const sliced_literal = Semver.SlicedString.init(version_spec, version_spec);
-                    if (Semver.Query.parse(allocator, version_spec, sliced_literal)) |query| {
-                        defer query.deinit();
-                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
-                            wanted_version = result.version;
-                        }
-                    } else |_| {
-                        // Fallback to latest if parsing fails
-                        if (parsed_manifest.findByDistTag("latest")) |result| {
-                            wanted_version = result.version;
-                        }
+                    const sliced_literal = Semver.SlicedString.init(version, version);
+                    const query = try Semver.Query.parse(allocator, version, sliced_literal);
+                    defer query.deinit();
+                    // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
+                    if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
+                        break :brk2 result.version;
                     }
                 }
 
-                // Find the version string from JSON that matches the resolved version
-                if (wanted_version) |wv| {
-                    const versions = versions_obj.data.e_object.properties.slice();
-                    for (versions) |prop| {
-                        if (prop.key == null) continue;
-                        const version_str = prop.key.?.asString(allocator) orelse continue;
-                        const sliced_version = Semver.SlicedString.init(version_str, version_str);
-                        const parsed_version = Semver.Version.parse(sliced_version);
-                        if (parsed_version.valid and parsed_version.version.max().eql(wv)) {
-                            break :brk .{ version_str, prop.value.? };
-                        }
-                    }
-                }
-            } else {
-                // No version specified - use latest
-                if (parsed_manifest.findByDistTag("latest")) |result| {
-                    const versions = versions_obj.data.e_object.properties.slice();
-                    for (versions) |prop| {
-                        if (prop.key == null) continue;
-                        const version_str = prop.key.?.asString(allocator) orelse continue;
-                        const sliced_version = Semver.SlicedString.init(version_str, version_str);
-                        const parsed_version = Semver.Version.parse(sliced_version);
-                        if (parsed_version.valid and parsed_version.version.max().eql(result.version)) {
-                            break :brk .{ version_str, prop.value.? };
-                        }
-                    }
+                break :from_versions;
+            };
+
+            for (versions) |*prop| {
+                if (prop.key == null) continue;
+                const version_str = prop.key.?.asString(allocator) orelse continue;
+                const sliced_version = Semver.SlicedString.init(version_str, version_str);
+                const parsed_version = Semver.Version.parse(sliced_version);
+                if (parsed_version.valid and parsed_version.version.max().eql(wanted_version)) {
+                    break :brk .{ version_str, prop.value.? };
                 }
             }
         }
 
         if (json_output) {
             Output.print("{{ \"error\": \"No matching version found\", \"version\": {} }}\n", .{
-                bun.fmt.formatJSONStringUTF8(spec, .{
+                bun.fmt.formatJSONStringUTF8(spec_, .{
                     .quote = true,
                 }),
             });
@@ -179,7 +177,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         } else {
             Output.errGeneric("No version of <b>{}<r> satisfying <b>{}<r> found", .{
                 bun.fmt.quote(name),
-                bun.fmt.quote(version orelse "latest"),
+                bun.fmt.quote(version),
             });
 
             const max_versions_to_display = 5;
@@ -230,7 +228,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         } else {
             if (json_output) {
                 Output.print("{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n", .{
-                    bun.fmt.formatJSONStringUTF8(spec, .{
+                    bun.fmt.formatJSONStringUTF8(spec_, .{
                         .quote = true,
                     }),
                     bun.fmt.formatJSONStringUTF8(prop_path, .{
@@ -270,10 +268,11 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     }
 
     const pkg_name = manifest.getStringCloned(allocator, "name") catch null orelse name;
-    const pkg_version = manifest.getStringCloned(allocator, "version") catch null orelse version orelse "";
+    const pkg_version = manifest.getStringCloned(allocator, "version") catch null orelse version;
     const license = manifest.getStringCloned(allocator, "license") catch null orelse "";
     var dep_count: usize = 0;
-    if (manifest.getObject("dependencies")) |deps| {
+    const dependencies_object = manifest.getObject("dependencies");
+    if (dependencies_object) |*deps| {
         dep_count = deps.data.e_object.properties.len;
     }
 
@@ -309,7 +308,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     }
 
     // Display dependencies if they exist
-    if (manifest.getObject("dependencies")) |deps| {
+    if (dependencies_object) |*deps| {
         const dependencies = deps.data.e_object.properties.slice();
         if (dependencies.len > 0) {
             Output.prettyln("\n<d>.<r><b>dependencies<r><d> ({d}):<r>", .{dependencies.len});
@@ -324,18 +323,18 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
     }
 
     if (manifest.getObject("dist")) |dist| {
-        Output.prettyln("\n<d>.<r><b>dist<r>", .{});
+        Output.prettyln("\n<d><r><b>dist<r>", .{});
         if (dist.getStringCloned(allocator, "tarball") catch null) |t| {
-            Output.prettyln(" <d>tarball<d>:<r> {s}", .{t});
+            Output.prettyln(" <d>.<r>tarball<d>:<r> {s}", .{t});
         }
         if (dist.getStringCloned(allocator, "shasum") catch null) |s| {
-            Output.prettyln(" <d>shasum<d>:<r> <green>{s}<r>", .{s});
+            Output.prettyln(" <d>.<r>shasum<r><d>:<r> <green>{s}<r>", .{s});
         }
         if (dist.getStringCloned(allocator, "integrity") catch null) |i| {
-            Output.prettyln(" <d>integrity<d>:<r> <green>{s}<r>", .{i});
+            Output.prettyln(" <d>.<r>integrity<r><d>:<r> <green>{s}<r>", .{i});
         }
         if (dist.getNumber("unpackedSize")) |u| {
-            Output.prettyln(" <d>unpackedSize<d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
+            Output.prettyln(" <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
         }
     }
 
@@ -375,6 +374,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
 
     // Add published date information
     if (json.getObject("time")) |time_obj| {
+        // TODO: use a relative time formatter
         if (time_obj.getStringCloned(allocator, pkg_version) catch null) |published_time| {
             Output.prettyln("\n<b>Published<r><d>:<r> {s}", .{published_time});
         } else if (time_obj.getStringCloned(allocator, "modified") catch null) |modified_time| {

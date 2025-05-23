@@ -225,12 +225,12 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
         JSC::MarkedArgumentBuffer arguments;
         appendForEachArguments<JSIterator>(lexicalGlobalObject, *thisObject.globalObject(), arguments, value);
         arguments.append(&thisObject);
-        if (UNLIKELY(arguments.hasOverflowed())) {
+        if (arguments.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
         JSC::profiledCall(&lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             break;
     }
     return JSC::jsUndefined();

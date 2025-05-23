@@ -79,7 +79,16 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return ptr;
     }
 
-    ModuleProgramExecutable* executable = ModuleProgramExecutable::create(globalObject, ptr->sourceCode());
+    ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
+    if (!executable) {
+        // If an exception is already being thrown, don't throw another one.
+        // ModuleProgramExecutable::tryCreate() sometimes throws on failure, but sometimes it doesn't.
+        if (!scope.exception()) {
+            throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
+        }
+        return nullptr;
+    }
+
     ptr->m_cachedExecutable.set(vm, ptr, executable);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
@@ -395,9 +404,19 @@ JSValue NodeVMSourceTextModule::evaluate(JSGlobalObject* globalObject, uint32_t 
 
 RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (!m_bytecode) {
         if (!m_cachedExecutable) {
-            m_cachedExecutable.set(globalObject->vm(), this, JSC::ModuleProgramExecutable::create(globalObject, m_sourceCode));
+            ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
+            if (!executable) {
+                if (!scope.exception()) {
+                    throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
+                }
+                return nullptr;
+            }
+            m_cachedExecutable.set(vm, this, executable);
         }
         m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
     }

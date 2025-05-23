@@ -210,12 +210,12 @@ pub const ThreadPool = struct {
     }
 
     pub fn usesIOPool(_: *const ThreadPool) bool {
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_IO_POOL)) {
             // For testing.
             return true;
         }
 
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IO_POOL)) {
             // For testing.
             return false;
         }

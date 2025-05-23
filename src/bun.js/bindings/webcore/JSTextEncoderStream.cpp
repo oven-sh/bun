@@ -155,7 +155,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamConstructor, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSTextEncoderStreamPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTextEncoderStream::getConstructor(vm, prototype->globalObject()));
 }

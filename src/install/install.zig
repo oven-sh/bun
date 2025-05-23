@@ -65,7 +65,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
-pub const TextLockfile = @import("./bun.lock.zig");
+pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -478,7 +478,7 @@ const NetworkTask = struct {
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
+        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
             this.unsafe_http_client.client.flags.force_last_modified = true;
             this.unsafe_http_client.client.if_modified_since = last_modified;
         }
@@ -2681,6 +2681,9 @@ pub const PackageManager = struct {
     subcommand: Subcommand,
     update_requests: []UpdateRequest = &[_]UpdateRequest{},
 
+    /// Only set in `bun pm`
+    root_package_json_name_at_time_of_init: []const u8 = "",
+
     root_package_json_file: std.fs.File,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
@@ -2843,7 +2846,7 @@ pub const PackageManager = struct {
     pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
         const log_level = this.options.log_level;
         if (log_level == .silent) return;
-        if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
             return;
         }
 
@@ -7213,7 +7216,7 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_filename: string = "",
         pack_gzip_level: ?string = null,
-        // json_output: bool = false,
+        json_output: bool = false,
 
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
@@ -7627,7 +7630,7 @@ pub const PackageManager = struct {
                 this.pack_destination = cli.pack_destination;
                 this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
+                this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -8774,6 +8777,7 @@ pub const PackageManager = struct {
         };
 
         var workspace_name_hash: ?PackageNameHash = null;
+        var root_package_json_name_at_time_of_init: []const u8 = "";
 
         // Step 1. Find the nearest package.json directory
         //
@@ -8880,6 +8884,12 @@ pub const PackageManager = struct {
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
                         const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        if (subcommand == .pm) {
+                            if (json.getStringCloned(ctx.allocator, "name") catch null) |name| {
+                                root_package_json_name_at_time_of_init = name;
+                            }
+                        }
+
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -8891,8 +8901,7 @@ pub const PackageManager = struct {
                             };
                             var log = logger.Log.init(ctx.allocator);
                             defer log.deinit();
-                            _ = Package.processWorkspaceNamesArray(
-                                &workspace_names,
+                            _ = workspace_names.processNamesArray(
                                 ctx.allocator,
                                 &workspace_package_json_cache,
                                 &log,
@@ -9037,6 +9046,7 @@ pub const PackageManager = struct {
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
+            .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
         };
         manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -9694,6 +9704,7 @@ pub const PackageManager = struct {
 
     pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
+        clap.parseParam("--json                              Output in JSON format") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
@@ -9736,7 +9747,7 @@ pub const PackageManager = struct {
     });
 
     const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+        clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
         clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
@@ -9785,7 +9796,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        // json_output: bool = false,
+        json_output: bool = false,
         filters: []const string = &.{},
 
         pack_destination: string = "",
@@ -10203,10 +10214,13 @@ pub const PackageManager = struct {
             if (comptime subcommand == .outdated) {
                 // fake --dry-run, we don't actually resolve+clean the lockfile
                 cli.dry_run = true;
-                // cli.json_output = args.flag("--json");
+                cli.json_output = args.flag("--json");
             }
 
             if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
+                if (comptime subcommand == .pm) {
+                    cli.json_output = args.flag("--json");
+                }
                 if (comptime subcommand != .publish) {
                     if (args.option("--destination")) |dest| {
                         cli.pack_destination = dest;

@@ -31,6 +31,7 @@ namespace Bun {
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
 class JSNextTickQueue;
+class Process;
 } // namespace Bun
 
 namespace v8 {
@@ -310,7 +311,7 @@ public:
 
     RefPtr<WebCore::Performance> performance();
 
-    JSC::JSObject* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
+    Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
@@ -599,7 +600,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processObject)                                         \
+    V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_ServerRouteListStructure)                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \

@@ -79,7 +79,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
-    if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
+    if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
@@ -332,7 +332,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     script->setSigintReceived(false);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -350,7 +350,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -394,7 +394,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     script->setSigintReceived(false);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -412,7 +412,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -426,7 +426,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -443,7 +443,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -456,7 +456,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -477,7 +477,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -492,7 +492,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -524,7 +524,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         contextObjectValue = JSC::constructEmptyObject(globalObject);
     }
 
-    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }

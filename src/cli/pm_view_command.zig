@@ -277,7 +277,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         dep_count = deps.data.e_object.properties.len;
     }
 
-    Output.prettyln("<b><green>{s}<r>@<b>{s}<r> <d>|<r> <cyan>{s}<r> <d>|<r> deps<d>:<r> {d} <d>|<r> versions<d>:<r> {d}", .{
+    Output.prettyln("<b><blue><u>{s}<r><d>@<r><blue><b><u>{s}<r> <d>|<r> <cyan>{s}<r> <d>|<r> deps<d>:<r> {d} <d>|<r> versions<d>:<r> {d}", .{
         pkg_name,
         pkg_version,
         license,
@@ -308,33 +308,34 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
         }
     }
 
-    if (manifest.getObject(".dist")) |dist| {
-        Output.prettyln("\n<d>.<r><b>dist<r>", .{});
-        if (dist.getStringCloned(allocator, "tarball") catch null) |t| {
-            Output.prettyln("<d>.<r>tarball<d>:<r> {s}", .{t});
+    // Display dependencies if they exist
+    if (manifest.getObject("dependencies")) |deps| {
+        const dependencies = deps.data.e_object.properties.slice();
+        if (dependencies.len > 0) {
+            Output.prettyln("\n<d>.<r><b>dependencies<r><d> ({d}):<r>", .{dependencies.len});
         }
-        if (dist.getStringCloned(allocator, ".shasum") catch null) |s| {
-            Output.prettyln("<d>.<r>shasum<d>:<r> {s}", .{s});
-        }
-        if (dist.getStringCloned(allocator, ".integrity") catch null) |i| {
-            Output.prettyln("<d>.<r>integrity<d>:<r> {s}", .{i});
-        }
-        if (dist.getNumber(".unpackedSize")) |u| {
-            Output.prettyln("<d>.<r>unpackedSize<d>:<r> {d} bytes", .{@as(u64, @intFromFloat(u[0]))});
+
+        for (dependencies) |prop| {
+            if (prop.key == null or prop.value == null) continue;
+            const dep_name = prop.key.?.asString(allocator) orelse continue;
+            const dep_version = prop.value.?.asString(allocator) orelse continue;
+            Output.prettyln("- <cyan>{s}<r><d>:<r> {s}", .{ dep_name, dep_version });
         }
     }
 
-    if (json.getArray("maintainers")) |maint_iter| {
-        Output.prettyln("\n<b>maintainers<r><d>:<r>", .{});
-        var iter = maint_iter;
-        while (iter.next()) |m| {
-            const nm = m.getStringCloned(allocator, "name") catch null orelse "";
-            const em = m.getStringCloned(allocator, "email") catch null orelse "";
-            if (em.len > 0) {
-                Output.prettyln("- {s} <d>\\<{s}\\><r>", .{ nm, em });
-            } else if (nm.len > 0) {
-                Output.prettyln("- {s}", .{nm});
-            }
+    if (manifest.getObject("dist")) |dist| {
+        Output.prettyln("\n<d>.<r><b>dist<r>", .{});
+        if (dist.getStringCloned(allocator, "tarball") catch null) |t| {
+            Output.prettyln(" <d>tarball<d>:<r> {s}", .{t});
+        }
+        if (dist.getStringCloned(allocator, "shasum") catch null) |s| {
+            Output.prettyln(" <d>shasum<d>:<r> <g>{s}<r>", .{s});
+        }
+        if (dist.getStringCloned(allocator, "integrity") catch null) |i| {
+            Output.prettyln(" <d>integrity<d>:<r> <g>{s}<r>", .{i});
+        }
+        if (dist.getNumber("unpackedSize")) |u| {
+            Output.prettyln(" <d>unpackedSize<d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
         }
     }
 
@@ -354,6 +355,20 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec: string
                         Output.prettyln("<magenta>{s}<r><d>:<r> {s}", .{ tag, val });
                     }
                 }
+            }
+        }
+    }
+
+    if (json.getArray("maintainers")) |maint_iter| {
+        Output.prettyln("\nmaintainers<r><d>:<r>", .{});
+        var iter = maint_iter;
+        while (iter.next()) |m| {
+            const nm = m.getStringCloned(allocator, "name") catch null orelse "";
+            const em = m.getStringCloned(allocator, "email") catch null orelse "";
+            if (em.len > 0) {
+                Output.prettyln("<d>-<r> {s} <d>\\<{s}\\><r>", .{ nm, em });
+            } else if (nm.len > 0) {
+                Output.prettyln("<d>-<r> {s}", .{nm});
             }
         }
     }

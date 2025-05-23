@@ -34,7 +34,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
         ArgList argumentsList = ArgList(callFrame, 2);
         auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!args)) {
+        if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -43,7 +43,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
     }
 
-    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
+    if (!job.isObject() || !job.getObject()->isCallable()) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout expects a function"_s);
         return {};
     }
@@ -90,7 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         ArgList argumentsList = ArgList(callFrame, 2);
         auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!args)) {
+        if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -99,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
     }
 
-    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
+    if (!job.isObject() || !job.getObject()->isCallable()) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval expects a function"_s);
         return {};
     }
@@ -152,7 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
         ArgList argumentsList = ArgList(callFrame, 1);
         auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!args)) {
+        if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return {};
         }

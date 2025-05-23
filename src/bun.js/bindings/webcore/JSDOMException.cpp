@@ -271,7 +271,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSDOMExceptionPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMException::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

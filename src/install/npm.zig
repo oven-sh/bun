@@ -16,6 +16,7 @@ const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = bun.logger;
 const Output = bun.Output;
+const Global = bun.Global;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
@@ -35,7 +36,6 @@ const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const Global = bun.Global;
 const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
@@ -1559,7 +1559,7 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    fn parse(
+    pub fn parse(
         allocator: std.mem.Allocator,
         scope: *const Registry.Scope,
         log: *logger.Log,

@@ -48,6 +48,7 @@
       "src/bun.js/bindings/v8/shim/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
+      "src/vm/*.cpp",
       "packages/bun-usockets/src/crypto/*.cpp"
     ]
   },

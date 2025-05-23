@@ -311,7 +311,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     if (dependencies_object) |*deps| {
         const dependencies = deps.data.e_object.properties.slice();
         if (dependencies.len > 0) {
-            Output.prettyln("\n<d>.<r><b>dependencies<r><d> ({d}):<r>", .{dependencies.len});
+            Output.prettyln("\n<b>dependencies<r><d> ({d}):<r>", .{dependencies.len});
         }
 
         for (dependencies) |prop| {

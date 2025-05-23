@@ -28,76 +28,68 @@ const DependencyPath = struct {
     }
 };
 
-fn findDependencyPaths(lockfile: *Lockfile, target_pkg_id: PackageID, target_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(DependencyPath) {
-    const dependencies = lockfile.buffers.dependencies.items;
+fn findDependencyPaths(lockfile: *Lockfile, target_pkg_id: PackageID, allocator: std.mem.Allocator) !std.ArrayList(DependencyPath) {
     const resolutions = lockfile.buffers.resolutions.items;
     const pkgs = lockfile.packages.slice();
-    const string_bytes = lockfile.buffers.string_bytes.items;
 
     var paths = std.ArrayList(DependencyPath).init(allocator);
-    var visited = std.AutoHashMap(PackageID, void).init(allocator);
-    defer visited.deinit();
 
+    const Queue = std.fifo.LinearFifo(DependencyPath, .Dynamic);
     // BFS to find all paths from root to target
-    var queue = std.ArrayList(DependencyPath).init(allocator);
-    defer {
-        for (queue.items) |*path| {
-            path.deinit();
-        }
-        queue.deinit();
-    }
+    var queue: Queue = Queue.init(allocator);
+    defer queue.deinit();
 
     // Start with root package
     var root_path = DependencyPath.init(allocator);
+    // Assuming 0 is the root package ID as per common convention in this codebase.
+    // If Lockfile.root_package_id or similar exists, it should be used.
     try root_path.packages.append(0);
-    try queue.append(root_path);
+    try queue.writeItem(root_path);
 
-    while (queue.items.len > 0) {
-        var current_path = queue.orderedRemove(0);
-        const current_pkg = current_path.packages.items[current_path.packages.items.len - 1];
+    while (queue.readItem()) |current_path_| {
+        var current_path = current_path_;
+        const current_pkg_id = current_path.packages.items[current_path.packages.items.len - 1];
 
-        // Check if current package depends on our target
-        const pkg_deps = pkgs.items(.dependencies)[current_pkg];
-        for (0..pkg_deps.len) |i| {
-            const dep_id = @as(DependencyID, @truncate(pkg_deps.off + i));
-            const dep = dependencies[dep_id];
-            const dep_name = dep.name.slice(string_bytes);
+        // Iterate over dependencies of the current package
+        const pkg_deps_slice = pkgs.items(.dependencies)[current_pkg_id];
+        var dep_idx: usize = 0;
+        while (dep_idx < pkg_deps_slice.len) : (dep_idx += 1) {
+            const dep_id = @as(DependencyID, @truncate(pkg_deps_slice.off + dep_idx));
+            const resolved_pkg_id = resolutions[dep_id];
 
-            if (strings.eqlLong(dep_name, target_name, true) and resolutions[dep_id] == target_pkg_id) {
-                // Found a path! Add target to current path
+            if (resolved_pkg_id == target_pkg_id) {
+                // Found a path to the target package
                 var complete_path = DependencyPath.init(allocator);
-                for (current_path.packages.items) |pkg_id| {
-                    try complete_path.packages.append(pkg_id);
-                }
+                try complete_path.packages.appendSlice(current_path.packages.items);
                 try complete_path.packages.append(target_pkg_id);
-                complete_path.depth = complete_path.packages.items.len - 1;
+                complete_path.depth = complete_path.packages.items.len - 1; // Depth is number of edges
                 try paths.append(complete_path);
-                continue;
-            }
+                // Continue checking other dependencies of current_pkg_id,
+                // as there might be multiple ways current_pkg_id depends on target_pkg_id
+                // or other dependencies to explore.
+                // The original code had `continue` here which would skip to the next dependency.
+            } else if (resolved_pkg_id < lockfile.packages.len) { // Check if resolved_pkg_id is a valid package index
+                // Continue exploring if this dependency leads to another package (not the target)
 
-            // Continue exploring if this leads to another package
-            const resolved_pkg = resolutions[dep_id];
-            if (resolved_pkg < lockfile.packages.len and resolved_pkg != target_pkg_id) {
-                // Avoid cycles
+                // Avoid cycles within the current path
                 var has_cycle = false;
-                for (current_path.packages.items) |visited_pkg| {
-                    if (visited_pkg == resolved_pkg) {
+                for (current_path.packages.items) |visited_pkg_in_path| {
+                    if (visited_pkg_in_path == resolved_pkg_id) {
                         has_cycle = true;
                         break;
                     }
                 }
 
-                if (!has_cycle and current_path.packages.items.len < 10) { // Limit depth
+                // Limit search depth to avoid excessively long paths or performance issues
+                // Max depth of 9 means paths of length 10 (10 packages, 9 edges)
+                if (!has_cycle and current_path.packages.items.len < 10) {
                     var new_path = DependencyPath.init(allocator);
-                    for (current_path.packages.items) |pkg_id| {
-                        try new_path.packages.append(pkg_id);
-                    }
-                    try new_path.packages.append(resolved_pkg);
-                    try queue.append(new_path);
+                    try new_path.packages.appendSlice(current_path.packages.items);
+                    try new_path.packages.append(resolved_pkg_id);
+                    try queue.writeItem(new_path);
                 }
             }
         }
-
         current_path.deinit();
     }
 
@@ -105,7 +97,7 @@ fn findDependencyPaths(lockfile: *Lockfile, target_pkg_id: PackageID, target_nam
 }
 
 pub const WhyCommand = struct {
-    pub fn exec(lockfile: *Lockfile, pm: *PackageManager, query: []const u8, json_output: bool) !void {
+    pub fn exec(lockfile: *Lockfile, _: *PackageManager, query: []const u8, json_output: bool) !void {
         const string_bytes = lockfile.buffers.string_bytes.items;
         const pkgs = lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
@@ -137,29 +129,20 @@ pub const WhyCommand = struct {
             Output.prettyln("Legend: production dependency, <magenta>optional only<r>, <yellow>dev only<r>", .{});
             Output.prettyln("", .{});
 
-            // Get root package info from lockfile
-            const root_name, const root_version_str = brk: {
-                if (lockfile.rootPackage()) |root_pkg| {
-                    break :brk .{ root_pkg.name.slice(string_bytes), root_pkg.version.slice(string_bytes) };
-                }
-
-                break :brk .{ std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir), "" };
-            };
-
-            Output.prettyln("<b>{s}@{s}<r> {s}", .{ root_name, root_version_str, bun.fs.FileSystem.instance.top_level_dir });
-            Output.prettyln("", .{});
-            Output.prettyln("dependencies:", .{});
+            if (lockfile.rootPackage()) |root_pkg| {
+                Output.prettyln("<b>{s}@{s}<r> {s}", .{ root_pkg.name.slice(string_bytes), root_pkg.resolution.fmt(string_bytes, .auto), bun.fs.FileSystem.instance.top_level_dir });
+            } else {
+                Output.prettyln("<b>{s}@{s}<r> {s}", .{ std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir), "", bun.fs.FileSystem.instance.top_level_dir });
+            }
         }
 
         for (matching_package_ids.items) |target_pkg_id| {
             found = true;
 
-            var version_buf: [512]u8 = undefined;
-            const version_str = try std.fmt.bufPrint(&version_buf, "{}", .{pkg_resolutions[target_pkg_id].fmt(string_bytes, .auto)});
             const target_name = pkg_names[target_pkg_id].slice(string_bytes);
 
             // Find all dependency paths
-            var paths = try findDependencyPaths(lockfile, target_pkg_id, target_name, lockfile.allocator);
+            var paths = try findDependencyPaths(lockfile, target_pkg_id, lockfile.allocator);
             defer {
                 for (paths.items) |*path| {
                     path.deinit();
@@ -173,7 +156,7 @@ pub const WhyCommand = struct {
                 Output.println("  \"dependencies\": [", .{});
                 Output.println("    {{", .{});
                 Output.println("      \"name\": \"{s}\",", .{target_name});
-                Output.println("      \"version\": \"{s}\",", .{version_str});
+                Output.println("      \"version\": \"{s}\",", .{pkg_resolutions[target_pkg_id].fmt(string_bytes, .auto)});
                 Output.println("      \"hops\": {d},", .{if (paths.items.len > 0) paths.items[0].depth else 0});
                 Output.println("      \"dependencyChain\": [", .{});
 
@@ -188,8 +171,7 @@ pub const WhyCommand = struct {
                     const first_path = paths.items[0];
                     for (first_path.packages.items, 0..) |pkg_id, step| {
                         const pkg_name = pkg_names[pkg_id].slice(string_bytes);
-                        var pkg_version_buf: [512]u8 = undefined;
-                        const pkg_version_str = std.fmt.bufPrint(&pkg_version_buf, "{}", .{pkg_resolutions[pkg_id].fmt(string_bytes, .auto)}) catch continue;
+                        const pkg_version_str = pkg_resolutions[pkg_id].fmt(string_bytes, .auto);
 
                         const from_name = if (step == 0) "root" else pkg_name;
                         const comma = if (step == first_path.packages.items.len - 1) "" else ",";
@@ -215,9 +197,9 @@ pub const WhyCommand = struct {
                     string_bytes: @TypeOf(string_bytes),
 
                     fn lessThan(ctx: @This(), a: DependencyPath, b: DependencyPath) bool {
-                        if (a.packages.items.len != b.packages.items.len) {
-                            return a.packages.items.len < b.packages.items.len;
-                        }
+                        if (a.depth < b.depth) return true;
+                        if (a.depth > b.depth) return false;
+
                         // If same depth, sort by first dependency name
                         if (a.packages.items.len > 1 and b.packages.items.len > 1) {
                             const a_name = ctx.pkg_names[a.packages.items[1]].slice(ctx.string_bytes);
@@ -236,6 +218,9 @@ pub const WhyCommand = struct {
                 // Build a complete dependency tree showing all paths to target
                 const dependencies = lockfile.buffers.dependencies.items;
                 const resolutions = lockfile.buffers.resolutions.items;
+
+                Output.prettyln("", .{});
+                Output.prettyln("dependencies:", .{});
 
                 // Group paths by their unique package chains
                 for (paths.items) |path| {
@@ -276,8 +261,8 @@ pub const WhyCommand = struct {
                         var indent_len: usize = 0;
                         for (0..depth) |_| {
                             if (indent_len < 60) {
-                                @memcpy(indent_buf[indent_len .. indent_len + 4], "    ");
-                                indent_len += 4;
+                                @memcpy(indent_buf[indent_len .. indent_len + 1], " ");
+                                indent_len += 1;
                             }
                         }
                         const indent = indent_buf[0..indent_len];

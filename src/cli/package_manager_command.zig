@@ -323,7 +323,7 @@ pub const PackageManagerCommand = struct {
             const lockfile = load_lockfile.ok.lockfile;
 
             const name = pm.options.positionals[1];
-            try WhyCommand.exec(lockfile, pm, name);
+            try WhyCommand.exec(lockfile, pm, name, pm.options.json_output);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);

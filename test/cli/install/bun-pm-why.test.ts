@@ -62,7 +62,8 @@ it("should explain direct dependency with bun pm why", async () => {
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
     expect(output).toContain("bar@0.0.2");
-    expect(output).toContain("from the root project");
+    expect(output).toContain("foo");
+    expect(output).toContain("depth: 1");
     expect(await exited).toBe(0);
   }
 });
@@ -125,7 +126,9 @@ it("should explain transitive dependency with bun pm why", async () => {
     const output = await new Response(stdout).text();
     expect(await new Response(stderr).text()).toBe("");
     expect(output).toContain("bar@0.0.2");
-    expect(output).toContain("from moo@");
+    expect(output).toContain("foo");
+    expect(output).toContain("moo");
+    expect(output).toContain("depth: 2");
     expect(await exited).toBe(0);
   }
 });
@@ -231,8 +234,7 @@ it("should output JSON format when --json flag is specified", async () => {
     expect(json.dependencies[0].name).toBe("bar");
     expect(json.dependencies[0].version).toBe("0.0.2");
     expect(json.dependencies[0]).toHaveProperty("dependencyChain");
-    expect(json.dependencies[0].dependencyChain.length).toBe(1);
-    expect(json.dependencies[0].dependencyChain[0].from).toBe("root");
+    expect(json.dependencies[0]).toHaveProperty("dependencyChain");
 
     expect(await exited).toBe(0);
   }

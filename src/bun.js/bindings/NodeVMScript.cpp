@@ -612,12 +612,14 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
 
         if (JSValue displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s))) {
             RETURN_IF_EXCEPTION(scope, false);
-            if (!displayErrorsOpt.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
-                return false;
+            if (!displayErrorsOpt.isUndefined()) {
+                if (!displayErrorsOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
+                    return false;
+                }
+                this->displayErrors = displayErrorsOpt.asBoolean();
+                any = true;
             }
-            this->displayErrors = displayErrorsOpt.asBoolean();
-            any = true;
         }
 
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {

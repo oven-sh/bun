@@ -34,13 +34,13 @@ const PackageInfo = struct {
 };
 
 const AuditResult = struct {
-    vulnerable_packages: std.StringHashMap(PackageInfo),
+    vulnerable_packages: bun.StringHashMap(PackageInfo),
     all_vulnerabilities: std.ArrayList(VulnerabilityInfo),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) AuditResult {
         return AuditResult{
-            .vulnerable_packages = std.StringHashMap(PackageInfo).init(allocator),
+            .vulnerable_packages = bun.StringHashMap(PackageInfo).init(allocator),
             .all_vulnerabilities = std.ArrayList(VulnerabilityInfo).init(allocator),
             .allocator = allocator,
         };
@@ -96,8 +96,10 @@ pub const AuditCommand = struct {
     }
 };
 
-fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!std.StringHashMap(std.ArrayList([]const u8)) {
-    var dependency_tree = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!bun.StringHashMap(std.ArrayList([]const u8)) {
+    // Create a REVERSE dependency map: package_name -> [list of packages that depend on it]
+    // This allows us to trace backwards from vulnerable packages to their dependents
+    var dependency_tree = bun.StringHashMap(std.ArrayList([]const u8)).init(allocator);
 
     const packages = pm.lockfile.packages.slice();
     const pkg_names = packages.items(.name);
@@ -311,7 +313,7 @@ fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vu
 fn findDependencyPaths(
     allocator: std.mem.Allocator,
     target_package: []const u8,
-    dependency_tree: *const std.StringHashMap(std.ArrayList([]const u8)),
+    dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
     pm: *PackageManager,
 ) bun.OOM!std.ArrayList(PackageInfo.DependencyPath) {
     var paths = std.ArrayList(PackageInfo.DependencyPath).init(allocator);
@@ -338,9 +340,9 @@ fn findDependencyPaths(
 
     var queue = std.ArrayList([]const u8).init(allocator);
     defer queue.deinit();
-    var visited = std.StringHashMap(void).init(allocator);
+    var visited = bun.StringHashMap(void).init(allocator);
     defer visited.deinit();
-    var parent_map = std.StringHashMap([]const u8).init(allocator);
+    var parent_map = bun.StringHashMap([]const u8).init(allocator);
     defer parent_map.deinit();
 
     if (dependency_tree.get(target_package)) |dependents| {
@@ -401,7 +403,7 @@ fn printEnhancedAuditReport(
     allocator: std.mem.Allocator,
     response_text: []const u8,
     pm: *PackageManager,
-    dependency_tree: *const std.StringHashMap(std.ArrayList([]const u8)),
+    dependency_tree: *const bun.StringHashMap(std.ArrayList([]const u8)),
 ) bun.OOM!void {
     const source = logger.Source.initPathString("audit-response.json", response_text);
     var log = logger.Log.init(allocator);

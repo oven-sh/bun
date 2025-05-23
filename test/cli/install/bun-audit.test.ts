@@ -5,7 +5,13 @@ import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
 
-function fixture(folder: "express@3" | "vuln-with-only-dev-dependencies" | "safe-is-number@7") {
+function fixture(
+  folder:
+    | "express@3"
+    | "vuln-with-only-dev-dependencies"
+    | "safe-is-number@7"
+    | "mix-of-safe-and-vulnerable-dependencies",
+) {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
@@ -139,6 +145,25 @@ describe("`bun pm audit`", () => {
       files: fixture("vuln-with-only-dev-dependencies"),
       fn: async ({ stdout }) => {
         expect(await stdout).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
+      },
+    },
+  );
+
+  doAuditTest(
+    "when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies",
+    {
+      exitCode: 1,
+      files: fixture("mix-of-safe-and-vulnerable-dependencies"),
+      fn: async ({ stdout }) => {
+        // this fixture is using a safe version of is-number and an unsafe version of ms
+        // so we want to check that `is-number` is not included in the output and that `ms` is
+
+        const out = await stdout;
+
+        expect(out).toContain("ms");
+        expect(out).not.toContain("is-number");
+
+        expect(out).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
       },
     },
   );

@@ -424,3 +424,20 @@ To update all dependencies to the latest versions (including breaking changes):
 
 "
 `;
+
+exports[`\`bun pm audit\` when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies: bun-audit-expect-vulnerabilities-found 1`] = `
+"ms  <2.0.0
+  (direct dependency)
+  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
+  high: Regular Expression Denial of Service in ms - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg
+
+2 vulnerabilities (1 high, 1 moderate)
+
+To update all dependencies to the latest compatible versions:
+  bun update
+
+To update all dependencies to the latest versions (including breaking changes):
+  bun update --latest
+
+"
+`;

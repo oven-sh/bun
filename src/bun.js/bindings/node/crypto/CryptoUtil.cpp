@@ -69,7 +69,7 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    if (UNLIKELY(!bytes.size() and encoding != BufferEncodingType::buffer)) {
+    if (!bytes.size() and encoding != BufferEncodingType::buffer) [[unlikely]] {
         return JSValue::encode(jsEmptyString(vm));
     }
 
@@ -110,7 +110,7 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     JSString* paddedHex = hex.length() % 2
         ? jsString(vm, tryMakeString('0', hex))
         : jsString(vm, hex);
-    if (UNLIKELY(!paddedHex)) {
+    if (!paddedHex) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, scope);
         return {};
     }

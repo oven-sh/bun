@@ -167,7 +167,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObje
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSReadableStreamDefaultReaderPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStreamDefaultReader::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

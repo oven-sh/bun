@@ -832,7 +832,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -874,7 +874,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     WTF::NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(globalObject, source, globalObject, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, throwScope)) {
             return {};
         }
@@ -1093,7 +1093,7 @@ const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (UNLIKELY(!thisObject->m_sandbox)) {
+    if (!thisObject->m_sandbox) [[unlikely]] {
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 

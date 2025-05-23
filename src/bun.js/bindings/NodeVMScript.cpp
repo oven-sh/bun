@@ -1,11 +1,13 @@
-#include "Completion.h"
+#include "NodeVMScript.h"
+
 #include "ErrorCode.h"
+
+#include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "NodeVMScript.h"
 
 #include "../vm/SigintWatcher.h"
 

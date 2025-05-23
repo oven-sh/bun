@@ -59,7 +59,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     bool hadException = false;
 
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         scope.clearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -77,7 +77,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
-    if (UNLIKELY(vm.hasPendingTerminationException())) {
+    if (vm.hasPendingTerminationException()) [[unlikely]] {
         return true;
     }
 

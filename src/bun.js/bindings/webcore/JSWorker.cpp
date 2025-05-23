@@ -122,10 +122,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     auto* castedThis = jsCast<JSWorkerDOMConstructor*>(callFrame->jsCallee());
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     ASSERT(castedThis);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     String scriptUrl;
@@ -344,7 +344,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if (nodeWorkerObject) {
         workerToEmit = nodeWorkerObject;
     }
-    auto* process = jsCast<Bun::Process*>(globalObject->processObject());
+    auto* process = globalObject->processObject();
     process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
     RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -371,7 +371,7 @@ template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto* castedThis = jsDynamicCast<JSWorker*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!castedThis))
+    if (!castedThis) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
@@ -437,7 +437,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWorkerPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWorker::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -659,7 +659,7 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
     auto* jsWorker = jsCast<JSWorker*>(handle.slot()->asCell());
     auto& wrapped = jsWorker->wrapped();
     if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }

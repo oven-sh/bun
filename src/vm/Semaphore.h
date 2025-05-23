@@ -1,5 +1,7 @@
 #pragma once
 
+#include "root.h"
+
 #if OS(WINDOWS)
 #include <uv.h>
 #elif OS(DARWIN)

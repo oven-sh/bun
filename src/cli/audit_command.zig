@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const URL = @import("../url.zig").URL;
 const logger = bun.logger;
 const semver = @import("../semver.zig");
+const libdeflate = @import("../deps/libdeflate.zig");
 
 const VulnerabilityInfo = struct {
     severity: []const u8,
@@ -222,9 +223,21 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bu
 }
 
 fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []const u8) bun.OOM![]u8 {
+    libdeflate.load();
+    var compressor = libdeflate.Compressor.alloc(6) orelse return error.OutOfMemory;
+    defer compressor.deinit();
+
+    const max_compressed_size = compressor.maxBytesNeeded(body, .gzip);
+    const compressed_body = try allocator.alloc(u8, max_compressed_size);
+    defer allocator.free(compressed_body);
+
+    const compression_result = compressor.gzip(body, compressed_body);
+    const final_compressed_body = compressed_body[0..compression_result.written];
+
     var headers: HeaderBuilder = .{};
     headers.count("accept", "application/json");
     headers.count("content-type", "application/json");
+    headers.count("content-encoding", "gzip");
     if (pm.options.scope.token.len > 0) {
         headers.count("authorization", "");
         headers.content.cap += "Bearer ".len + pm.options.scope.token.len;
@@ -235,6 +248,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
     try headers.allocate(allocator);
     headers.append("accept", "application/json");
     headers.append("content-type", "application/json");
+    headers.append("content-encoding", "gzip");
     if (pm.options.scope.token.len > 0) {
         headers.appendFmt("authorization", "Bearer {s}", .{pm.options.scope.token});
     } else if (pm.options.scope.auth.len > 0) {
@@ -253,7 +267,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.entries,
         headers.content.ptr.?[0..headers.content.len],
         &response_buf,
-        body,
+        final_compressed_body,
         null,
         null,
         .follow,

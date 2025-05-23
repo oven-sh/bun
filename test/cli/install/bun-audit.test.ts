@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
 
-function fixture(folder: "express@3" | "vuln-with-only-dev-dependencies") {
+function fixture(folder: "express@3" | "vuln-with-only-dev-dependencies" | "safe-is-number@7") {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
@@ -78,6 +78,37 @@ describe("`bun pm audit`", () => {
     },
     fn: async ({ stderr }) => {
       expect(await stderr).toContain("error: Lockfile not found");
+    },
+  });
+
+  doAuditTest("should exit 0 when there are no dependencies in package.json", {
+    exitCode: 0,
+    files: {
+      // i deemed this small enough to justify not needing a fixture
+      "package.json": JSON.stringify({
+        name: "empty-package",
+        version: "1.0.0",
+      }),
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "empty-package",
+          },
+        },
+        "packages": {},
+      }),
+    },
+    fn: async ({ stdout }) => {
+      expect(await stdout).toBe("No vulnerabilities found.\n");
+    },
+  });
+
+  doAuditTest("should exit 0 when there are no vulnerabilities", {
+    exitCode: 0,
+    files: fixture("safe-is-number@7"),
+    fn: async ({ stdout }) => {
+      expect(await stdout).toBe("No vulnerabilities found.\n");
     },
   });
 

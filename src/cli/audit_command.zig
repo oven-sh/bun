@@ -520,7 +520,7 @@ fn printEnhancedAuditReport(
                         Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
                         has_fix_available = true;
                     } else {
-                        const vuln_pkg_path = std.mem.join(allocator, "/", path.path.items);
+                        const vuln_pkg_path = try std.mem.join(allocator, "/", path.path.items) catch bun.outOfMemory();
                         defer allocator.free(vuln_pkg_path);
 
                         var i = path.path.items.len;

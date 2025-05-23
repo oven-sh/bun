@@ -488,13 +488,21 @@ fn printEnhancedAuditReport(
             if (package_info.vulnerabilities.items.len > 0) {
                 const main_vuln = package_info.vulnerabilities.items[0];
 
+                const is_direct_dependency: bool = brk: {
+                    for (package_info.dependents.items) |path| {
+                        if (path.is_direct) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+
                 if (main_vuln.vulnerable_versions.len > 0) {
                     Output.prettyln("<red>{s}<r>  {s}", .{ main_vuln.package_name, main_vuln.vulnerable_versions });
                 } else {
                     Output.prettyln("<red>{s}<r>", .{main_vuln.package_name});
                 }
-
-                var is_direct_dependency = false;
 
                 for (package_info.dependents.items) |path| {
                     if (path.path.items.len > 1) {
@@ -508,11 +516,9 @@ fn printEnhancedAuditReport(
                         const vuln_pkg_path = try std.mem.join(allocator, " › ", reversed_items.items);
                         defer allocator.free(vuln_pkg_path);
 
-                        Output.prettyln("  📦 <d>{s} › <red>{s}<r>", .{ vuln_pkg_path, vulnerable_pkg });
-                    }
-
-                    if (path.is_direct) {
-                        is_direct_dependency = true;
+                        Output.prettyln("  <d>{s} › <red>{s}<r>", .{ vuln_pkg_path, vulnerable_pkg });
+                    } else {
+                        Output.prettyln("  <d>(direct dependency)<r>", .{});
                     }
                 }
 

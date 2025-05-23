@@ -65,7 +65,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
-pub const TextLockfile = @import("./bun.lock.zig");
+pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
@@ -8891,8 +8891,7 @@ pub const PackageManager = struct {
                             };
                             var log = logger.Log.init(ctx.allocator);
                             defer log.deinit();
-                            _ = Package.processWorkspaceNamesArray(
-                                &workspace_names,
+                            _ = workspace_names.processNamesArray(
                                 ctx.allocator,
                                 &workspace_package_json_cache,
                                 &log,

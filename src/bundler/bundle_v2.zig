@@ -1286,16 +1286,23 @@ pub const BundleV2 = struct {
                 },
                 .dev_server => {
                     for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
-                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch |err| {
+
+                        // Ensure we have the proper conditions set for client-side entrypoints.
+                        const transpiler = if (flags.client and !flags.server and !flags.ssr)
+                            this.transpilerForTarget(.browser)
+                        else
+                            this.transpiler;
+
+                        const resolved = transpiler.resolveEntryPoint(abs_path) catch |err| {
                             const dev = this.transpiler.options.dev_server orelse unreachable;
                             dev.handleParseTaskFailure(
                                 err,
                                 if (flags.client) .client else .server,
                                 abs_path,
-                                this.transpiler.log,
+                                transpiler.log,
                                 this,
                             ) catch bun.outOfMemory();
-                            this.transpiler.log.reset();
+                            transpiler.log.reset();
                             continue;
                         };
 

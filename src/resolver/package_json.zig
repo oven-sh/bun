@@ -100,7 +100,7 @@ pub const PackageJSON = struct {
 
     side_effects: SideEffects = .unspecified,
 
-    // Present if the "browser" field is present. This field is intended to be
+    // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
     // modules that don't work in the browser to other modules that shim that
     // functionality. That way you don't have to rewrite the code for those 3rd-
@@ -701,8 +701,11 @@ pub const PackageJSON = struct {
             }
         }
 
-        // Read the "browser" property, but only when targeting the browser
-        if (r.opts.target == .browser) {
+        // Read the "browser" property
+        // Since we cache parsed package.json in-memory, we have to read the "browser" field
+        // including when `target` is not `browser` since the developer may later
+        // run a build for the browser in the same process (like the DevServer).
+        {
             // We both want the ability to have the option of CJS vs. ESM and the
             // option of having node vs. browser. The way to do this is to use the
             // object literal form of the "browser" field like this:
@@ -746,7 +749,9 @@ pub const PackageJSON = struct {
                                     }
                                 },
                                 else => {
-                                    r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
+                                    // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
+                                    if (!json_source.path.isNodeModule())
+                                        r.log.addWarning(&json_source, value.loc, "Each \"browser\" mapping must be a string or boolean") catch unreachable;
                                 },
                             }
                         }

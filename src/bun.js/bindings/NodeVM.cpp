@@ -748,7 +748,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
-    if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
+    if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
@@ -868,7 +868,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, throwScope)) {
             return {};
         }
@@ -896,7 +896,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -911,7 +911,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -947,7 +947,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(throwScope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -969,7 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, throwScope)) {
             return {};
         }
@@ -987,7 +987,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -1001,7 +1001,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -1018,7 +1018,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -1031,7 +1031,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -1094,7 +1094,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -1135,7 +1135,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     WTF::NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, source, globalObject, exception);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, throwScope)) {
             return {};
         }
@@ -1258,7 +1258,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         contextObjectValue = JSC::constructEmptyObject(globalObject);
     }
 
-    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
@@ -1590,7 +1590,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
 {
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (UNLIKELY(!thisObject->m_sandbox)) {
+    if (!thisObject->m_sandbox) [[unlikely]] {
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
@@ -1737,7 +1737,7 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         program = tryMakeString("(function () {"_s, body, "})"_s);
         *outOffset = "(function () {"_s.length();
 
-        if (UNLIKELY(!program)) {
+        if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -1762,7 +1762,7 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
         *outOffset = "(function ("_s.length() + paramString.length() + ") {"_s.length();
 
-        if (UNLIKELY(!program)) {
+        if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -1797,7 +1797,7 @@ static JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, JSC::S
     RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, executable, source);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(!bytecode)) {
+    if (!bytecode) [[unlikely]] {
         return throwVMError(globalObject, scope, "createCachedData failed"_s);
     }
 

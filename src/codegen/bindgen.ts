@@ -593,7 +593,7 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
   cpp.line(`bool isNullOrUndefined = value.isUndefinedOrNull();`);
   cpp.line(`auto* object = isNullOrUndefined ? nullptr : value.getObject();`);
-  cpp.line(`if (UNLIKELY(!isNullOrUndefined && !object)) {`);
+  cpp.line(`if (!isNullOrUndefined && !object) [[unlikely]] {`);
   cpp.line(`    throwTypeError(global, throwScope);`);
   cpp.line(`    return false;`);
   cpp.line(`}`);
@@ -761,7 +761,7 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   }
   w.line(`    };`);
   w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
-  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))`);
+  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
   w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);
   w.line(`}`);

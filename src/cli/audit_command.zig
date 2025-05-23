@@ -520,9 +520,6 @@ fn printEnhancedAuditReport(
                         Output.prettyln("   Fix available via <green>`bun update`<r>", .{});
                         has_fix_available = true;
                     } else {
-                        const vuln_pkg_path = try std.mem.join(allocator, "/", path.path.items) catch bun.outOfMemory();
-                        defer allocator.free(vuln_pkg_path);
-
                         var i = path.path.items.len;
                         while (i > 0) {
                             i -= 1;
@@ -536,8 +533,6 @@ fn printEnhancedAuditReport(
                                 Output.prettyln("       └─> {s}", .{pkg_name});
                             }
                         }
-
-                        Output.prettyln("   Located at: <d>node_modules/{s}<r>", .{vuln_pkg_path});
 
                         if (!has_fix_available) {
                             Output.prettyln("   Fix available via <green>`bun update --latest`<r>", .{});

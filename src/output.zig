@@ -877,6 +877,43 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "bggreen", CSI ++ "42m" },
 });
 const RESET: string = "\x1b[0m";
+pub const ColorCode = enum {
+    magenta,
+    blue,
+    orange,
+    red,
+    pink,
+    green,
+    yellow,
+    cyan,
+    white,
+    black,
+    gray,
+    reset,
+    bold,
+    pub fn color(this: ColorCode) []const u8 {
+        return switch (this) {
+            .magenta => "\x1b[35m",
+            .blue => "\x1b[34m",
+            .orange => "\x1b[33m",
+            .red => "\x1b[31m",
+            // light pink
+            .pink => "\x1b[38;5;206m",
+            .green => "\x1b[32m",
+            .yellow => "\x1b[33m",
+            .cyan => "\x1b[36m",
+            .white => "\x1b[37m",
+            .black => "\x1b[30m",
+            .gray => "\x1b[37m",
+            .reset => "\x1b[0m",
+            .bold => "\x1b[1m",
+        };
+    }
+
+    pub fn format(this: ColorCode, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+        try w.writeAll(this.color());
+    }
+};
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
         return fmt ++ "\x00";

@@ -105,29 +105,14 @@ fn findDependencyPaths(lockfile: *Lockfile, target_pkg_id: PackageID, target_nam
 }
 
 pub const WhyCommand = struct {
-    pub fn exec(lockfile: *Lockfile, pm: *PackageManager, query: []const u8) !void {
+    pub fn exec(lockfile: *Lockfile, pm: *PackageManager, query: []const u8, json_output: bool) !void {
         const string_bytes = lockfile.buffers.string_bytes.items;
         const pkgs = lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
         const pkg_resolutions = pkgs.items(.resolution);
 
         var found = false;
-        // Check for --json flag - it might be in positionals or we can check all CLI args
-        var json_output = strings.leftHasAnyInRight(pm.options.positionals, &.{"--json"});
 
-        // Also check if --json appears anywhere in the full command line
-        if (!json_output) {
-            var arg_it = std.process.argsWithAllocator(lockfile.allocator) catch return;
-            defer arg_it.deinit();
-            while (arg_it.next()) |arg| {
-                if (strings.eql(arg, "--json")) {
-                    json_output = true;
-                    break;
-                }
-            }
-        }
-
-        // Find all packages that match the query name
         var matching_package_ids = std.ArrayList(PackageID).init(lockfile.allocator);
         defer matching_package_ids.deinit();
 
@@ -140,30 +125,28 @@ pub const WhyCommand = struct {
 
         if (matching_package_ids.items.len == 0) {
             if (json_output) {
-                Output.println("{{\"error\": \"package not found\"}}", .{});
+                Output.print("{{\"error\": \"package not found\"}}", .{});
             } else {
-                // In test environment, error messages go to stdout
-                Output.println("error: package '{s}' not found", .{query});
+                Output.errGeneric("Package <b>{}<r> not found", .{bun.fmt.quote(query)});
             }
+            Global.exit(1);
             return;
         }
 
-        // Show legend and header once for non-JSON output
         if (!json_output) {
-            Output.prettyln("DEBUG: Showing header", .{});
-            Output.prettyln("Legend: <green>production dependency<r>, <blue>optional only<r>, <yellow>dev only<r>", .{});
+            Output.prettyln("Legend: production dependency, <magenta>optional only<r>, <yellow>dev only<r>", .{});
             Output.prettyln("", .{});
 
-            // Get root package info
-            const root_name = pkg_names[0].slice(string_bytes);
-            var root_version_buf: [512]u8 = undefined;
-            const root_version_str = std.fmt.bufPrint(&root_version_buf, "{}", .{pkg_resolutions[0].fmt(string_bytes, .auto)}) catch "unknown";
-            
-            // Try to get current working directory for display
-            var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const cwd = std.process.getCwd(&cwd_buf) catch "/unknown";
-            
-            Output.prettyln("{s} {s} {s}", .{ root_name, root_version_str, cwd });
+            // Get root package info from lockfile
+            const root_name, const root_version_str = brk: {
+                if (lockfile.rootPackage()) |root_pkg| {
+                    break :brk .{ root_pkg.name.slice(string_bytes), root_pkg.version.slice(string_bytes) };
+                }
+
+                break :brk .{ std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir), "" };
+            };
+
+            Output.prettyln("<b>{s}@{s}<r> {s}", .{ root_name, root_version_str, bun.fs.FileSystem.instance.top_level_dir });
             Output.prettyln("", .{});
             Output.prettyln("dependencies:", .{});
         }
@@ -196,7 +179,7 @@ pub const WhyCommand = struct {
 
                 if (paths.items.len > 0) {
                     // Sort paths by depth first
-                    std.sort.pdq(DependencyPath, paths.items, {}, struct {
+                    std.sort.insertion(DependencyPath, paths.items, {}, struct {
                         fn lessThan(_: void, a: DependencyPath, b: DependencyPath) bool {
                             return a.depth < b.depth;
                         }
@@ -221,108 +204,119 @@ pub const WhyCommand = struct {
             } else {
                 // pnpm-style output
                 if (paths.items.len == 0) {
-                    Output.prettyln("Package \"{s}\" not found", .{target_name});
+                    Output.errGeneric("Dependency <b>{}<r> not found", .{bun.fmt.quote(target_name)});
+                    Global.exit(1);
                     return;
                 }
 
-
                 // Sort paths by depth (shortest first) and group by direct dependency
-                std.sort.pdq(DependencyPath, paths.items, {}, struct {
-                    fn lessThan(_: void, a: DependencyPath, b: DependencyPath) bool {
+                const SortContext = struct {
+                    pkg_names: @TypeOf(pkg_names),
+                    string_bytes: @TypeOf(string_bytes),
+
+                    fn lessThan(ctx: @This(), a: DependencyPath, b: DependencyPath) bool {
                         if (a.packages.items.len != b.packages.items.len) {
                             return a.packages.items.len < b.packages.items.len;
                         }
                         // If same depth, sort by first dependency name
                         if (a.packages.items.len > 1 and b.packages.items.len > 1) {
-                            const a_name = pkg_names[a.packages.items[1]].slice(string_bytes);
-                            const b_name = pkg_names[b.packages.items[1]].slice(string_bytes);
+                            const a_name = ctx.pkg_names[a.packages.items[1]].slice(ctx.string_bytes);
+                            const b_name = ctx.pkg_names[b.packages.items[1]].slice(ctx.string_bytes);
                             return strings.order(a_name, b_name) == .lt;
                         }
                         return false;
                     }
-                }.lessThan);
+                };
 
-                // Show each dependency path
+                std.sort.insertion(DependencyPath, paths.items, SortContext{
+                    .pkg_names = pkg_names,
+                    .string_bytes = string_bytes,
+                }, SortContext.lessThan);
+
+                // Build a complete dependency tree showing all paths to target
+                const dependencies = lockfile.buffers.dependencies.items;
+                const resolutions = lockfile.buffers.resolutions.items;
+
+                // Group paths by their unique package chains
                 for (paths.items) |path| {
                     if (path.packages.items.len < 2) continue;
 
-                    // Get direct dependency (first after root)
-                    const direct_dep_id = path.packages.items[1];
-                    const direct_dep_name = pkg_names[direct_dep_id].slice(string_bytes);
-                    var direct_dep_version_buf: [512]u8 = undefined;
-                    const direct_dep_version_str = std.fmt.bufPrint(&direct_dep_version_buf, "{}", .{pkg_resolutions[direct_dep_id].fmt(string_bytes, .auto)}) catch continue;
+                    // Build the complete tree for this path
+                    for (path.packages.items[1..], 0..) |pkg_id, depth| {
+                        const pkg_name = pkg_names[pkg_id].slice(string_bytes);
+                        var pkg_version_buf: [512]u8 = undefined;
+                        const pkg_version_str = std.fmt.bufPrint(&pkg_version_buf, "{}", .{pkg_resolutions[pkg_id].fmt(string_bytes, .auto)}) catch continue;
 
-                    // Get dependency type for direct dependency
-                    var direct_dep_type_suffix: []const u8 = "";
-                    const root_deps = pkgs.items(.dependencies)[0];
-                    const dependencies = lockfile.buffers.dependencies.items;
-                    const resolutions = lockfile.buffers.resolutions.items;
-                    
-                    for (0..root_deps.len) |i| {
-                        const dep_id = @as(DependencyID, @truncate(root_deps.off + i));
-                        if (resolutions[dep_id] == direct_dep_id) {
-                            const dep = dependencies[dep_id];
-                            if (dep.behavior.isDev()) {
-                                direct_dep_type_suffix = " <yellow>dev<r>";
-                            } else if (dep.behavior.isOptional()) {
-                                direct_dep_type_suffix = " <blue>optional<r>";
-                            } else if (dep.behavior.isPeer()) {
-                                direct_dep_type_suffix = " <cyan>peer<r>";
-                            }
-                            break;
-                        }
-                    }
+                        // Get dependency type
+                        var dep_color: ?Output.ColorCode = null;
+                        var dep_suffix: []const u8 = "";
+                        const parent_pkg_id = path.packages.items[depth];
+                        const parent_deps = pkgs.items(.dependencies)[parent_pkg_id];
 
-                    // Show the direct dependency
-                    const is_direct_target = direct_dep_id == target_pkg_id;
-                    if (is_direct_target) {
-                        Output.prettyln("<b>{s}<r> <d>{s}<r>{s}", .{ direct_dep_name, direct_dep_version_str, direct_dep_type_suffix });
-                    } else {
-                        Output.prettyln("{s} <d>{s}<r>{s}", .{ direct_dep_name, direct_dep_version_str, direct_dep_type_suffix });
-                    }
-
-                    // Show the path to target if it's not the direct dependency
-                    if (!is_direct_target and path.packages.items.len > 2) {
-                        for (path.packages.items[2..], 0..) |pkg_id, depth| {
-                            const pkg_name = pkg_names[pkg_id].slice(string_bytes);
-                            var pkg_version_buf: [512]u8 = undefined;
-                            const pkg_version_str = std.fmt.bufPrint(&pkg_version_buf, "{}", .{pkg_resolutions[pkg_id].fmt(string_bytes, .auto)}) catch continue;
-
-                            // Determine if this is our target package
-                            const is_target = pkg_id == target_pkg_id;
-                            
-                            // Get dependency type for this level
-                            var dep_type_suffix: []const u8 = "";
-                            const parent_pkg_id = path.packages.items[depth + 1];
-                            const parent_deps = pkgs.items(.dependencies)[parent_pkg_id];
-                            
-                            for (0..parent_deps.len) |i| {
-                                const dep_id = @as(DependencyID, @truncate(parent_deps.off + i));
-                                if (resolutions[dep_id] == pkg_id) {
-                                    const dep = dependencies[dep_id];
-                                    if (dep.behavior.isDev()) {
-                                        dep_type_suffix = " <yellow>dev<r>";
-                                    } else if (dep.behavior.isOptional()) {
-                                        dep_type_suffix = " <blue>optional<r>";
-                                    } else if (dep.behavior.isPeer()) {
-                                        dep_type_suffix = " <cyan>peer<r>";
-                                    }
-                                    break;
+                        for (0..parent_deps.len) |i| {
+                            const dep_id = @as(DependencyID, @truncate(parent_deps.off + i));
+                            if (resolutions[dep_id] == pkg_id) {
+                                const dep = dependencies[dep_id];
+                                if (dep.behavior.isDev() and !dep.behavior.isWorkspace() and !dep.behavior.isBundled() and !dep.behavior.isOptional()) {
+                                    dep_color = Output.ColorCode.yellow;
+                                    dep_suffix = " dev";
+                                } else if (dep.behavior.isOptional()) {
+                                    dep_color = Output.ColorCode.magenta;
+                                    dep_suffix = " optional";
+                                } else if (dep.behavior.isPeer()) {
+                                    dep_color = Output.ColorCode.cyan;
+                                    dep_suffix = " peer";
                                 }
-                            }
-
-                            // Show the tree structure
-                            const is_last = depth == path.packages.items.len - 3;
-                            const tree_char = if (is_last) "└──" else "├──";
-                            
-                            if (is_target) {
-                                // Emphasize target package name
-                                Output.prettyln("{s} <b>{s}<r> <d>{s}<r>{s}", .{ tree_char, pkg_name, pkg_version_str, dep_type_suffix });
-                            } else {
-                                // Normal nested dependency
-                                Output.prettyln("{s} {s} <d>{s}<r>{s}", .{ tree_char, pkg_name, pkg_version_str, dep_type_suffix });
+                                break;
                             }
                         }
+
+                        // Create indentation
+                        var indent_buf: [64]u8 = undefined;
+                        var indent_len: usize = 0;
+                        for (0..depth) |_| {
+                            if (indent_len < 60) {
+                                @memcpy(indent_buf[indent_len .. indent_len + 4], "    ");
+                                indent_len += 4;
+                            }
+                        }
+                        const indent = indent_buf[0..indent_len];
+
+                        // Determine tree character based on position
+                        const is_last = depth == path.packages.items.len - 2;
+                        const is_first = depth == 0;
+
+                        const tree_char = if (is_first and is_last) "└──" else if (is_first) "├──" else if (is_last) "└──" else "├──";
+
+                        const writer = Output.writer();
+                        try writer.writeAll(indent);
+                        try writer.writeAll(tree_char);
+                        try writer.writeAll(" ");
+                        if (dep_color) |color| {
+                            if (Output.enable_ansi_colors_stdout) {
+                                try writer.writeAll(color.color());
+                            }
+                        }
+                        if (Output.enable_ansi_colors_stdout and pkg_id == target_pkg_id) {
+                            try writer.writeAll(Output.ColorCode.bold.color());
+                        }
+
+                        try writer.writeAll(pkg_name);
+                        try writer.writeAll(" ");
+
+                        if (pkg_id != target_pkg_id) {
+                            if (Output.enable_ansi_colors_stdout) {
+                                try writer.writeAll(Output.ColorCode.reset.color());
+                            }
+                        }
+
+                        try writer.writeAll(pkg_version_str);
+                        try writer.writeAll(dep_suffix);
+                        if (Output.enable_ansi_colors_stdout) {
+                            try writer.writeAll(Output.ColorCode.reset.color());
+                        }
+
+                        try writer.writeAll("\n");
                     }
                 }
             }

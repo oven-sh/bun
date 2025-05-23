@@ -7213,7 +7213,7 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_filename: string = "",
         pack_gzip_level: ?string = null,
-        // json_output: bool = false,
+        json_output: bool = false,
 
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
@@ -7627,7 +7627,7 @@ pub const PackageManager = struct {
                 this.pack_destination = cli.pack_destination;
                 this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
+                this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -9693,6 +9693,7 @@ pub const PackageManager = struct {
     });
 
     pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
+        clap.parseParam("--json                                Output in JSON format") catch unreachable,
         clap.parseParam("-a, --all") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -9785,7 +9786,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        // json_output: bool = false,
+        json_output: bool = false,
         filters: []const string = &.{},
 
         pack_destination: string = "",

@@ -108,8 +108,6 @@ private:
     uint32_t m_refCount = 0;
 
     bool signalAll();
-
-    static SigintWatcher* s_instance;
 };
 
 } // namespace Bun

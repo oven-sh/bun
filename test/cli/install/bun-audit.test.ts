@@ -19,6 +19,7 @@ afterAll(() => registry.stop());
 function doAuditTest(
   label: string,
   options: {
+    args?: string[];
     exitCode: number;
     files: DirectoryTree | string;
     fn: (std: { stdout: PromiseLike<string>; stderr: PromiseLike<string>; dir: string }) => Promise<void>;
@@ -28,7 +29,7 @@ function doAuditTest(
     const dir = tempDirWithFiles("bun-test-pm-audit", options.files);
 
     const proc = spawn({
-      cmd: [bunExe(), "pm", "audit"],
+      cmd: [bunExe(), "pm", "audit", ...(options.args ?? [])],
       stdout: "pipe",
       stderr: "pipe",
       cwd: dir,
@@ -40,9 +41,8 @@ function doAuditTest(
 
     const exitCode = await proc.exited;
 
-    expect(exitCode).toBe(options.exitCode);
-
     try {
+      expect(exitCode).toBe(options.exitCode);
       await options.fn({ stdout, stderr, dir });
     } catch (e) {
       const out = await stdout;
@@ -90,6 +90,18 @@ describe("bun pm audit", async () => {
     files: auditFixture("express3"),
     fn: async ({ stdout }) => {
       expect(await stdout).toContain("Vulnerabilities found");
+    },
+  });
+
+  doAuditTest("should print valid JSON only when --json is passed", {
+    exitCode: 0,
+    files: auditFixture("express3"),
+    args: ["--json"],
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      const json = JSON.parse(out);
+
+      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout");
     },
   });
 });

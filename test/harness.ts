@@ -1689,9 +1689,14 @@ export async function readdirSorted(path: string): Promise<string[]> {
  * @returns A promise-like object that will evaluate the function when `then` is called.
  */
 export function lazyPromiseLike<T>(fn: () => Promise<T>): PromiseLike<T> {
+  let p: Promise<T>;
+
   return {
     then(onfulfilled, onrejected) {
-      return fn().then(onfulfilled, onrejected);
+      if (!p) {
+        p = fn();
+      }
+      return p.then(onfulfilled, onrejected);
     },
   };
 }

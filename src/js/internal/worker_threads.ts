@@ -23,8 +23,11 @@ class WritableWorkerStdio extends Writable {
     this.#fd = fd;
   }
 
-  _write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+  _write(chunk: unknown, encoding: string, callback: (error?: Error | null) => void): void {
+    $assert(chunk instanceof Buffer);
+    $assert(encoding === "buffer");
     pushStdioToParent(this.#fd, chunk);
+    callback();
   }
 }
 

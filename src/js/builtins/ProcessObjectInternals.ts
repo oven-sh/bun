@@ -440,10 +440,18 @@ export function getChannel() {
 }
 
 export function emitWorkerStdioInParent(worker: Worker, fd: number, data: Uint8Array) {
-  const { webWorkerToNodeWorker } = require("internal/worker_threads");
-  const nodeWorker = webWorkerToNodeWorker.get(worker);
-  if (nodeWorker) {
-    nodeWorker.stdout.write(data);
+  // const { webWorkerToNodeWorker } = require("internal/worker_threads");
+  // const nodeWorker = webWorkerToNodeWorker.get(worker);
+  // if (nodeWorker) {
+  //   nodeWorker.stdout.write(data);
+  // }
+  $assert(fd === 1 || fd === 2);
+  switch (fd) {
+    case 1:
+      process.stdout.write(data);
+      break;
+    case 2:
+      process.stderr.write(data);
+      break;
   }
-  process.stdout.write(data);
 }

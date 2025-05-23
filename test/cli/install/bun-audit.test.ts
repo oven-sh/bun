@@ -5,12 +5,8 @@ import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
 
-function auditFixture(folder: "express3") {
+function fixture(folder: "express@3") {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
-}
-
-function fileFromAuditFixture(folder: "express3", path: string) {
-  return Bun.file(join(auditFixture(folder), path));
 }
 
 beforeAll(async () => await registry.start());
@@ -87,15 +83,15 @@ describe("bun pm audit", async () => {
 
   doAuditTest("Should exit code 1 when there are vulnerabilities", {
     exitCode: 1,
-    files: auditFixture("express3"),
+    files: fixture("express@3"),
     fn: async ({ stdout }) => {
-      expect(await stdout).toContain("21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)");
+      expect(await stdout).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
     },
   });
 
   doAuditTest("should print valid JSON only when --json is passed", {
     exitCode: 0,
-    files: auditFixture("express3"),
+    files: fixture("express@3"),
     args: ["--json"],
     fn: async ({ stdout }) => {
       const out = await stdout;

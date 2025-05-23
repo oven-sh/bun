@@ -2,6 +2,7 @@ import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { duplexPair, Readable, Writable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -420,4 +421,101 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
   });
+});
+
+describe("stdio", () => {
+  function readToEnd(stream: Readable): Promise<string> {
+    let data = "";
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    stream.on("error", reject);
+    stream.on("data", chunk => {
+      expect(typeof chunk == "string" || chunk instanceof Buffer).toBeTrue();
+      data += chunk.toString("utf8");
+    });
+    stream.on("end", () => resolve(data));
+    return promise;
+  }
+
+  function captureProcessStdio<S extends "stdout" | "stderr">(
+    stream: S,
+  ): Disposable & { data: Promise<string>; end: () => void } {
+    const originalStream = process[stream];
+    const [streamToInstall, streamToObserve] = duplexPair();
+
+    // streamToInstall is missing the `fd` property that the real process streams have, but we
+    // don't need it
+    // @ts-expect-error
+    process[stream] = streamToInstall;
+
+    return {
+      [Symbol.dispose]() {
+        process[stream] = originalStream;
+      },
+      data: readToEnd(streamToObserve),
+      end: () => streamToInstall.end(),
+    };
+  }
+
+  it.each<"stdout" | "stderr">(["stdout", "stderr"])(
+    "process.%s written in worker writes to parent process",
+    async stream => {
+      using capture = captureProcessStdio(stream);
+      const worker = new Worker(
+        String.raw/* js */ `
+          import assert from "node:assert";
+          process.${stream}.write("hello", (err) => {
+            assert.strictEqual(err, null);
+            process.${stream}.write("\ncallback 1");
+          });
+          // " world"
+          process.${stream}.write(new Uint16Array([0x7720, 0x726f, 0x646c]), (err) => {
+            assert.strictEqual(err, null);
+            process.${stream}.write("\ncallback 2");
+          });
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      capture.end();
+      expect(await capture.data).toBe("hello world\ncallback 1\ncallback 2");
+    },
+  );
+
+  it.each<"stdout" | "stderr">(["stdout", "stderr"])(
+    "process.%s written in worker writes to worker property in parent",
+    async stream => {
+      const worker = new Worker(`process.${stream}.write("hello");`, { eval: true });
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      expect(await readToEnd(worker[stream])).toBe("hello");
+    },
+  );
+
+  it.each<[string, "stdout" | "stderr"]>([
+    ["log", "stdout"],
+    ["error", "stderr"],
+  ])("console.%s in worker writes to process.%s in parent", async (consoleFunction, stream) => {
+    using capture = captureProcessStdio(stream);
+    const worker = new Worker(`console.${consoleFunction}("hello");`, { eval: true });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    capture.end();
+    expect(await capture.data).toBe("hello\n");
+  });
+
+  describe("with [stream]: true option", () => {
+    it.each<"stdout" | "stderr">(["stdout", "stderr"])("writes to worker.%s but not process", async stream => {
+      using capture = captureProcessStdio(stream);
+      const worker = new Worker(`process.${stream}.write("hello");`, { eval: true, [stream]: true });
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      capture.end();
+      expect(await capture.data).toBe("");
+      expect(await readToEnd(worker[stream])).toBe("hello");
+    });
+  });
+
+  it.todo("ignores errors thrown by parent _write() implementation", () => {});
+  it.todo("doesn't wait for parent _write() to complete", () => {});
 });

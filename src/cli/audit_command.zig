@@ -514,7 +514,7 @@ fn printEnhancedAuditReport(
 
                 for (package_info.dependents.items) |path| {
                     if (path.is_direct) {
-                        Output.prettyln("fix available via <green>`bun update`<r>", .{});
+                        Output.prettyln("Fix available via <green>`bun update`<r>", .{});
                         has_fix_available = true;
                     } else {
                         const vulnerable_pkg = path.path.items[0];

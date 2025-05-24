@@ -559,15 +559,10 @@ JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObj
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         auto* process = jsCast<Bun::Process*>(parentGlobalObject->processObject());
-        auto arraybuffer = ArrayBuffer::tryCreate(vec.span());
-        if (!arraybuffer) {
-            throwTypeError(parentGlobalObject, scope, "Failed to create ArrayBuffer"_s);
-            RETURN_IF_EXCEPTION(scope, parentGlobalObject->reportUncaughtExceptionAtEventLoop(parentGlobalObject, scope.exception()));
-        }
-        auto jsWorker = jsDynamicCast<JSWorker*>(WebCore::toJS(parentGlobalObject, parentGlobalObject, sourceWorker));
-        auto array = JSUint8Array::create(parentGlobalObject, parentGlobalObject->typedArrayStructure(TypeUint8, false), WTFMove(arraybuffer), 0, vec.size());
+        auto* buffer = WebCore::createBuffer(parentGlobalObject, vec.span());
+        auto* jsWorker = jsCast<JSWorker*>(WebCore::toJS(parentGlobalObject, parentGlobalObject, sourceWorker));
 
-        process->emitWorkerStdioInParent(jsWorker, fd, array);
+        process->emitWorkerStdioInParent(jsWorker, fd, buffer);
         RETURN_IF_EXCEPTION(scope, parentGlobalObject->reportUncaughtExceptionAtEventLoop(parentGlobalObject, scope.exception()));
     });
 

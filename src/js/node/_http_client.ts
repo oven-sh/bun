@@ -33,7 +33,6 @@ const {
   kEmitState,
   ClientRequestEmitState,
   kSignal,
-  kEmptyObject,
   getIsNextIncomingMessageHTTPS,
   setIsNextIncomingMessageHTTPS,
   typeSymbol,
@@ -42,9 +41,12 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   ConnResetException,
+  NODE_HTTP_WARNING,
 } = require("internal/http");
 
-const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { kEmptyObject } = require("internal/shared");
+
+const Agent = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 

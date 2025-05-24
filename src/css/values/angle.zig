@@ -81,7 +81,17 @@ pub const Angle = union(Tag) {
         const value, const unit = switch (this.*) {
             .deg => |val| .{ val, "deg" },
             .grad => |val| .{ val, "grad" },
-            .rad => |val| .{ val, "rad" },
+            .rad => |val| brk: {
+                const deg = this.toDegrees();
+
+                // We print 5 digits of precision by default.
+                // Switch to degrees if length is smaller than rad.
+                if (css.f32_length_with_5_digits(deg) < css.f32_length_with_5_digits(val)) {
+                    break :brk .{ deg, "deg" };
+                } else {
+                    break :brk .{ val, "rad" };
+                }
+            },
             .turn => |val| .{ val, "turn" },
         };
         css.serializer.serializeDimension(value, unit, W, dest) catch return dest.addFmtError();

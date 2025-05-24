@@ -1378,7 +1378,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+template<bool append>
+EncodedJSValue jsHTTPSetOrAppendHeader(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1408,7 +1409,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    if constexpr (append) {
+                        impl->append(name, value);
+                    } else {
+                        impl->set(name, value);
+                    }
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -1426,13 +1431,27 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            if constexpr (append) {
+                impl->append(name, value);
+            } else {
+                impl->set(name, value);
+            }
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }
     }
 
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return jsHTTPSetOrAppendHeader<false>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsHTTPAppendHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return jsHTTPSetOrAppendHeader<true>(globalObject, callFrame);
 }
 
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
@@ -1442,6 +1461,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
         JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "appendHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 3, "appendHeader"_s, jsHTTPAppendHeader, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), 0);

@@ -9,6 +9,8 @@ console.log(
 
         const fixture = resolveBulkAdvisoryFixture(body);
 
+        console.log("FIXTURE", fixture);
+
         if (!fixture) {
           return new Response("No fixture found", { status: 404 });
         }

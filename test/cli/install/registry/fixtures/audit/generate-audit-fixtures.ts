@@ -1,5 +1,5 @@
-import { $ } from "bun";
-import { gunzipJsonRequest, tempDirWithFiles } from "harness";
+import { $, readableStreamToText, spawn } from "bun";
+import { bunEnv, bunExe, gunzipJsonRequest, tempDirWithFiles } from "harness";
 import * as path from "node:path";
 
 const output = path.join(import.meta.dirname, "audit-fixtures.json");
@@ -52,9 +52,21 @@ for (const packageJsonPath of absolutes) {
 
   const body = await requestBodyPromise;
 
-  const expectedNpmOutput = await $`npm audit --json`.cwd(tmp).nothrow();
+  const { stdout, exited } = spawn({
+    cmd: [bunExe(), "pm", "audit", "--json"],
+    cwd: tmp,
+    stdout: "pipe",
+    stderr: "ignore",
+    env: bunEnv,
+  });
 
-  result[body] = JSON.parse(expectedNpmOutput.stdout.toString());
+  await exited;
+
+  const text = await readableStreamToText(stdout);
+
+  console.log(text);
+
+  result[body] = JSON.parse(text);
 }
 
 await Bun.file(output).write(JSON.stringify(result, null, "\t"));

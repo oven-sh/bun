@@ -937,7 +937,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue contextArg = callFrame->argument(0);
-    if (contextArg.isUndefinedOrNull()) {
+    if (contextArg.isUndefined()) {
         contextArg = JSC::constructEmptyObject(globalObject);
     }
 

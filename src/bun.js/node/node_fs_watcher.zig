@@ -167,6 +167,7 @@ pub const FSWatcher = struct {
         pub fn dupe(event: Event) !Event {
             return switch (event) {
                 inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
+                .@"error" => |err| @unionInit(Event, @tagName(.@"error"), try err.clone(bun.default_allocator)),
                 inline else => |value, t| @unionInit(Event, @tagName(t), value),
             };
         }
@@ -177,6 +178,7 @@ pub const FSWatcher = struct {
                     else => bun.default_allocator.free(path.*),
                     .windows => path.deinit(),
                 },
+                .@"error" => |*err| err.deinit(),
                 else => {},
             }
         }
@@ -624,7 +626,7 @@ pub const FSWatcher = struct {
 
         if (this.persistent) {
             this.persistent = false;
-            this.poll_ref.unref(this.ctx);
+            this.poll_ref.disable();
         }
 
         if (this.signal) |signal| {
@@ -641,29 +643,33 @@ pub const FSWatcher = struct {
     }
 
     pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
-        var buf: bun.PathBuffer = undefined;
-        var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
-        }
+        var joined_buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(joined_buf);
+        const file_path = brk: {
+            var buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
 
-        var parts = [_]string{
-            slice,
+            var slice = args.path.slice();
+            if (bun.strings.startsWith(slice, "file://")) {
+                slice = slice[6..];
+            }
+
+            var parts = [_]string{
+                slice,
+            };
+
+            const cwd = switch (bun.sys.getcwd(buf)) {
+                .result => |r| r,
+                .err => |err| return .{ .err = err },
+            };
+            buf[cwd.len] = std.fs.path.sep;
+            break :brk Path.joinAbsStringBuf(
+                buf[0 .. cwd.len + 1],
+                joined_buf,
+                &parts,
+                .auto,
+            );
         };
-
-        const cwd = switch (bun.sys.getcwd(&buf)) {
-            .result => |r| r,
-            .err => |err| return .{ .err = err },
-        };
-        buf[cwd.len] = std.fs.path.sep;
-
-        var joined_buf: bun.PathBuffer = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .auto,
-        );
 
         joined_buf[file_path.len] = 0;
         const file_path_z = joined_buf[0..file_path.len :0];
@@ -692,6 +698,8 @@ pub const FSWatcher = struct {
             switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
                 .result => |r| r,
                 .err => |err| {
+                    var err2 = err;
+                    defer err2.deinit();
                     ctx.deinit();
                     return .{ .err = .{
                         .errno = err.errno,

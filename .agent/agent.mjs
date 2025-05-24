@@ -56,10 +56,11 @@ try {
     prompt = prompt + extraArgsContext;
   }
 
-  const claudeArgs = [prompt, "--allowedTools=Edit,Write,Search,Bash(*)", "--output-format=json"];
-  if (!process.env.CI) {
-    claudeArgs.unshift("--dangerously-skip-permissions");
-  }
+  const claudeArgs = [
+    prompt,
+    "--allowedTools=Edit,Write,Search,Bash(gh:*),Bash(curl:*),Bash(grep:*)",
+    "--output-format=json",
+  ];
   if (!values.interactive) {
     claudeArgs.unshift("--print");
   }

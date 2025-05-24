@@ -1,0 +1,39 @@
+name: Triage Agent
+
+on:
+  issues:
+    types: [opened, reopened, edited, assigned]
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+env:
+  BUN_VERSION: "1.2.11"
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Bun
+        # our internal version doesn't work with global PATH installs?
+        uses: oven-sh/setup-bun@v2
+        with:
+          version: ${{ env.BUN_VERSION }}
+
+      - name: Install Claude
+        run: |
+          bun install -g @anthropic-ai/claude-code
+
+      - name: Run Agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bun .agent/agent.mjs triage ${{ github.event.issue.number }}

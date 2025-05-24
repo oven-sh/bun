@@ -251,6 +251,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_USE_AFTER_CLOSE", Error],
   ["ERR_WASI_NOT_STARTED", Error],
   ["ERR_WORKER_INIT_FAILED", Error],
+  ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],

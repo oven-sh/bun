@@ -520,7 +520,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
+    if (contextObjectValue.isUndefined()) {
         contextObjectValue = JSC::constructEmptyObject(globalObject);
     }
 

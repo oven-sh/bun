@@ -59,9 +59,6 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-public:
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
-
 protected:
     JSEvent(JSC::Structure*, JSDOMGlobalObject&, Ref<Event>&&);
 

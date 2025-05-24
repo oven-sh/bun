@@ -12,6 +12,7 @@ let $debug_log_enabled = ((env) => (
   || (env.BUN_DEBUG_${pathToUpperSnakeCase(publicName)})
   || (env.DEBUG_${pathToUpperSnakeCase(filepath)})
 ))(Bun.env);
+${publicName === "http" || publicName === "http2" ? `if ($debug_log_enabled) process.emitWarning("Setting the BUN_DEBUG_JS environment variable to '${publicName.toLowerCase()}' can expose sensitive data (such as passwords, tokens and authentication headers) in the resulting log.");` : ""}
 let $debug_pid_prefix = Bun.env.SHOW_PID === '1';
 let $debug_log = $debug_log_enabled ? (...args) => {
   // warn goes to stderr without colorizing

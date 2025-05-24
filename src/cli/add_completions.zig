@@ -10,7 +10,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const zstd = bun.zstd;
-const Environment = bun.Environment;
 
 pub const FirstLetter = enum(u8) {
     a = 'a',

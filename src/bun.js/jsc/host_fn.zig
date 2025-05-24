@@ -110,7 +110,6 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
     };
 }
 
-const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);

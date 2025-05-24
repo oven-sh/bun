@@ -3304,6 +3304,8 @@ declare module "bun" {
   interface BunRequest<T extends string = string> extends Request {
     params: RouterTypes.ExtractRouteParams<T>;
     readonly cookies: CookieMap;
+
+    clone(): BunRequest<T>;
   }
 
   interface GenericServeOptions {

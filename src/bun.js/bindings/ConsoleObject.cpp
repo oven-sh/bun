@@ -49,7 +49,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    if (UNLIKELY(type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType))) {
+    if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;

@@ -31,6 +31,7 @@ namespace Bun {
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
 class JSNextTickQueue;
+class Process;
 } // namespace Bun
 
 namespace v8 {
@@ -188,10 +189,10 @@ public:
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
-    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue keyValue, JSC::JSValue referrerValue, JSC::JSValue);
-    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue);
-    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
-    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, JSC::JSValue origin);
+    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
+    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -249,6 +250,14 @@ public:
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* NodeVMSourceTextModuleStructure() const { return m_NodeVMSourceTextModuleClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMSourceTextModule() const { return m_NodeVMSourceTextModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMSourceTextModulePrototype() const { return m_NodeVMSourceTextModuleClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* NodeVMSyntheticModuleStructure() const { return m_NodeVMSyntheticModuleClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -302,7 +311,7 @@ public:
 
     RefPtr<WebCore::Performance> performance();
 
-    JSC::JSObject* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
+    Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
     JSC::JSObject* processEnvObject() const { return m_processEnvObject.getInitializedOnMainThread(this); }
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
@@ -518,6 +527,8 @@ public:
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
+    V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
+    V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
@@ -589,7 +600,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_processObject)                                         \
+    V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_ServerRouteListStructure)                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \

@@ -16,6 +16,7 @@ const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
 const logger = bun.logger;
 const Output = bun.Output;
+const Global = bun.Global;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
@@ -24,19 +25,13 @@ const HTTPClient = bun.http;
 const JSON = bun.JSON;
 const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const Global = bun.Global;
-const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
 const Npm = @This();
@@ -510,7 +505,6 @@ pub const Registry = struct {
     }
 };
 
-const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
 const DistTagMap = extern struct {
     tags: ExternalStringList = ExternalStringList{},
     versions: VersionSlice = VersionSlice{},
@@ -1559,7 +1553,7 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    fn parse(
+    pub fn parse(
         allocator: std.mem.Allocator,
         scope: *const Registry.Scope,
         log: *logger.Log,
@@ -2457,4 +2451,3 @@ pub const PackageManifest = struct {
     }
 };
 
-const assert = bun.assert;

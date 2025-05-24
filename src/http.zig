@@ -18,26 +18,21 @@ const URL = @import("./url.zig").URL;
 const PercentEncoding = @import("./url.zig").PercentEncoding;
 pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
-const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
 const zstd = bun.zstd;
 const StringBuilder = bun.StringBuilder;
 const ThreadPool = bun.ThreadPool;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
-const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const Blob = bun.webcore.Blob;
 const FetchHeaders = bun.webcore.FetchHeaders;
-const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
@@ -1067,8 +1062,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
 const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 const Queue = UnboundedQueue(AsyncHTTP, .next);
-const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
-const RequestWriteQueue = UnboundedQueue(AsyncHTTP, .next);
 
 pub const HTTPThread = struct {
     loop: *JSC.MiniEventLoop,
@@ -1732,17 +1725,16 @@ pub fn onClose(
         return;
     }
     if (in_progress) {
-        // if the peer closed after a full chunk, treat this
-        // as if the transfer had complete, browsers appear to ignore
-        // a missing 0\r\n chunk
         if (client.state.isChunkedEncoding()) {
-            if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-                const buf = client.state.getBodyBuffer();
-                if (buf.list.items.len > 0) {
+            switch (client.state.chunked_decoder._state) {
+                .CHUNKED_IN_TRAILERS_LINE_HEAD, .CHUNKED_IN_TRAILERS_LINE_MIDDLE => {
+                    // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
                     client.state.flags.received_last_chunk = true;
                     client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
                     return;
-                }
+                },
+                // here we are in the middle of a chunk so ECONNRESET is expected
+                else => {},
             }
         } else if (client.state.content_length == null and client.state.response_stage == .body) {
             // no content length informed so we are done here

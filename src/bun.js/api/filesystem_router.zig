@@ -1,5 +1,4 @@
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
@@ -7,7 +6,6 @@ const string = bun.string;
 const JSC = bun.JSC;
 const WebCore = JSC.WebCore;
 const Transpiler = bun.transpiler;
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
 const JSObject = JSC.JSObject;

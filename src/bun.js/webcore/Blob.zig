@@ -4709,54 +4709,37 @@ pub fn FileCloser(comptime This: type) type {
 }
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
 const MimeType = http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
 const http = bun.http;
 const JSC = bun.JSC;
 const io = bun.io;
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = bun.webcore.FetchHeaders;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 const JSError = bun.JSError;
 const assert = bun.assert;
 const streams = bun.webcore.streams;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
 const StringJoiner = bun.StringJoiner;
-const uws = bun.uws;
 
 const invalid_fd = bun.invalid_fd;
 const Response = JSC.WebCore.Response;
-const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 
 const libuv = bun.windows.libuv;
 
 const S3 = bun.S3;
 const S3File = @import("S3File.zig");
-const S3Credentials = S3.S3Credentials;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const PathLike = JSC.Node.PathLike;
 const WriteFilePromise = write_file.WriteFilePromise;
 const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;

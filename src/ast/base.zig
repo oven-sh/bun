@@ -1,6 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const unicode = std.unicode;
 
 const js_ast = bun.JSAst;
 

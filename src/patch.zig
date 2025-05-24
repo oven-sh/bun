@@ -1,5 +1,4 @@
 const Output = bun.Output;
-const Global = bun.Global;
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;

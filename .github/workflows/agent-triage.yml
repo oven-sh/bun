@@ -4,16 +4,17 @@ on:
   issues:
     types: [opened, reopened, edited, assigned]
 
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
 env:
   BUN_VERSION: "1.2.11"
 
 jobs:
   triage:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,5 +34,6 @@ jobs:
       - name: Run Agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bun .agent/agent.mjs triage ${{ github.event.issue.number }}

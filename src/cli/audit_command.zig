@@ -441,13 +441,13 @@ fn findDependencyPaths(
     }
 
     while (queue.readItem()) |*current| {
-        if (visited.contains(current)) continue;
-        try visited.put(current, {});
+        if (visited.contains(current.*)) continue;
+        try visited.put(current.*, {});
 
         var is_root_dep = false;
         for (dep_slice) |*dependency| {
             const dep_name = dependency.name.slice(buf);
-            if (bun.strings.eql(dep_name, current)) {
+            if (bun.strings.eql(dep_name, current.*)) {
                 is_root_dep = true;
                 break;
             }
@@ -460,7 +460,7 @@ fn findDependencyPaths(
             const workspace_dep_slice = workspace_deps.get(dependencies);
             for (workspace_dep_slice) |*dependency| {
                 const dep_name = dependency.name.slice(buf);
-                if (std.mem.eql(u8, dep_name, current)) {
+                if (bun.strings.eql(dep_name, current.*)) {
                     workspace_name_for_dep = pkg_name.slice(buf);
                     break;
                 }
@@ -476,7 +476,7 @@ fn findDependencyPaths(
 
             var trace = current;
             while (true) {
-                try path.path.insert(0, try allocator.dupe(u8, trace));
+                try path.path.insert(0, try allocator.dupe(u8, trace.*));
                 if (parent_map.get(trace)) |parent| {
                     trace = parent;
                 } else {
@@ -491,11 +491,11 @@ fn findDependencyPaths(
 
             try paths.append(path);
         } else {
-            if (dependency_tree.get(current)) |dependents| {
+            if (dependency_tree.get(current.*)) |dependents| {
                 for (dependents.items) |dependent| {
                     if (!visited.contains(dependent)) {
                         try queue.writeItem(dependent);
-                        try parent_map.put(dependent, current);
+                        try parent_map.put(dependent, current.*);
                     }
                 }
             }

@@ -1,8 +1,6 @@
 const std = @import("std");
 
-const builtin = @import("builtin");
 const debug = std.debug;
-const heap = std.heap;
 const mem = std.mem;
 const process = std.process;
 const testing = std.testing;

@@ -9,21 +9,16 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const JSON = bun.JSON;
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
-const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
 
 pub const InitCommand = struct {
     pub fn prompt(
@@ -372,6 +367,9 @@ pub const InitCommand = struct {
         var auto_yes = false;
         var parse_flags = true;
         var initialize_in_folder: ?[]const u8 = null;
+
+        var template: Template = .blank;
+        var prev_flag_was_react = false;
         for (init_args) |arg_| {
             const arg = bun.span(arg_);
             if (parse_flags and arg.len > 0 and arg[0] == '-') {
@@ -380,12 +378,27 @@ pub const InitCommand = struct {
                     Global.exit(0);
                 } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
                     minimal = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
                     auto_yes = true;
+                    prev_flag_was_react = false;
                 } else if (strings.eqlComptime(arg, "--")) {
                     parse_flags = false;
+                    prev_flag_was_react = false;
+                } else if (strings.eqlComptime(arg, "--react") or strings.eqlComptime(arg, "-r")) {
+                    template = .react_blank;
+                    prev_flag_was_react = true;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "tailwind") or strings.eqlComptime(arg, "--react=tailwind")) or strings.eqlComptime(arg, "r=tailwind")) {
+                    template = .react_tailwind;
+                    prev_flag_was_react = false;
+                    auto_yes = true;
+                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "shadcn") or strings.eqlComptime(arg, "--react=shadcn")) or strings.eqlComptime(arg, "r=shadcn")) {
+                    template = .react_tailwind_shadcn;
+                    prev_flag_was_react = false;
+                    auto_yes = true;
                 } else {
-                    // invalid flag; ignore
+                    prev_flag_was_react = false;
                 }
             } else {
                 if (initialize_in_folder == null) {
@@ -540,8 +553,6 @@ pub const InitCommand = struct {
                 logger.Loc.Empty,
             ).data.e_object;
         }
-
-        var template: Template = .blank;
 
         if (!auto_yes) {
             if (!did_load_package_json) {

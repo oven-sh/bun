@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION eda8b0fb4fb1aa23db9c2b00933df8b58bcdd289)
+  set(WEBKIT_VERSION 754692aa9c30218d1e81444670f5e4649426b157)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -39,14 +39,6 @@ if(WEBKIT_LOCAL)
 
   # After this point, only prebuilt WebKit is supported
   return()
-endif()
-
-if(EXISTS ${WEBKIT_PATH}/package.json)
-  file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
-
-  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
-    return()
-  endif()
 endif()
 
 if(WIN32)
@@ -86,9 +78,17 @@ if(ENABLE_ASAN)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 
-set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
+setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+
+if(EXISTS ${WEBKIT_PATH}/package.json)
+  file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
+
+  if(WEBKIT_PACKAGE_JSON MATCHES ${WEBKIT_VERSION})
+    return()
+  endif()
+endif()
 
 file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)

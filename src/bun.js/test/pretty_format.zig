@@ -10,8 +10,6 @@ const ZigString = JSC.ZigString;
 const strings = bun.strings;
 const string = bun.string;
 const JSLexer = bun.js_lexer;
-const JSPrinter = bun.js_printer;
-const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
 const JSPromise = JSC.JSPromise;
 const expect = @import("./expect.zig");
 

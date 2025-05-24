@@ -10,26 +10,21 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const PathString = bun.PathString;
 const HashedString = bun.HashedString;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
-const allocators = @import("./allocators.zig");
 const URLPath = @import("./http/url_path.zig");
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
 const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));
-const arbitrary_max_route = 4096;
 
 pub const Param = struct {
     name: string,

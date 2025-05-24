@@ -131,7 +131,7 @@ bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& lis
 static bool removeListenerFromVector(EventListenerVector& listeners, EventListener& listener, bool useCapture)
 {
     size_t indexOfRemovedListener = findListener(listeners, listener, useCapture);
-    if (UNLIKELY(indexOfRemovedListener == notFound))
+    if (indexOfRemovedListener == notFound) [[unlikely]]
         return false;
 
     listeners[indexOfRemovedListener]->markAsRemoved();

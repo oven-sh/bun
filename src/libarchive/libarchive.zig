@@ -4,17 +4,14 @@ pub const lib = @import("./libarchive-bindings.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FileDescriptorType = bun.FileDescriptor;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const c = bun.c;
 const std = @import("std");
 const Archive = lib.Archive;
-const JSC = bun.JSC;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
     current = std.posix.SEEK_CUR,
@@ -186,7 +183,6 @@ pub const BufferReadStream = struct {
     // }
 };
 
-const Kind = std.fs.File.Kind;
 
 pub const Archiver = struct {
     // impl: *lib.archive = undefined,

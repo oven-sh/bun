@@ -13,10 +13,6 @@ const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
-const JSType = JSValue.JSType;
-const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;
 const Environment = bun.Environment;
@@ -42,7 +38,6 @@ pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
 
-const log = bun.Output.scoped(.expect, false);
 
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
@@ -2099,7 +2094,7 @@ pub const Expect = struct {
             return .undefined;
         }
 
-        const expected_diff = std.math.pow(f64, 10, -precision) / 2;
+        const expected_diff = bun.pow(10, -precision) / 2;
         const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
@@ -2318,7 +2313,6 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
-
                 try result.fastGet(globalThis, .message)
             else
                 JSValue.fromCell(try result.toJSString(globalThis));

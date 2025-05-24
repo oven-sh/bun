@@ -11,7 +11,6 @@ const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
-const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -441,7 +440,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .memory_visualizer_timer = .initPaused(.DevServerMemoryVisualizerTick),
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
-                bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
+                bun.getRuntimeFeatureFlag(.BUN_DUMP_STATE_ON_CRASH),
         .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
@@ -471,7 +470,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             else
                 true
         else
-            bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
+            bun.getRuntimeFeatureFlag(.BUN_ASSUME_PERFECT_INCREMENTAL),
         .relative_path_buf_lock = .unlocked,
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
@@ -1432,12 +1431,13 @@ fn deferRequest(
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
+    const method = bun.http.Method.which(req.method()) orelse .POST;
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .handler = switch (kind) {
-            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = bun.http.Method.which(req.method()) orelse .POST } },
+            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
             .server_handler => .{
-                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global) orelse return,
+                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse return,
             },
         },
     };
@@ -7288,10 +7288,12 @@ pub const EntryPointList = struct {
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
 const HTMLRouter = struct {
-    map: bun.StringHashMapUnmanaged(*HTMLBundle.HTMLBundleRoute),
+    map: Map,
+
     /// If a catch-all route exists, it is not stored in map, but here.
     fallback: ?*HTMLBundle.HTMLBundleRoute,
 
+    pub const Map = bun.StringHashMapUnmanaged(*HTMLBundle.HTMLBundleRoute);
     pub const empty: HTMLRouter = .{
         .map = .empty,
         .fallback = null,
@@ -8494,7 +8496,6 @@ const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
 
-const Define = bun.options.Define;
 
 const uws = bun.uws;
 const AnyWebSocket = uws.AnyWebSocket;
@@ -8506,8 +8507,6 @@ const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
-const JSModuleLoader = JSC.JSModuleLoader;
-const EventLoopHandle = JSC.EventLoopHandle;
 const HTMLBundle = JSC.API.HTMLBundle;
 const Plugin = JSC.API.JSBundler.Plugin;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;

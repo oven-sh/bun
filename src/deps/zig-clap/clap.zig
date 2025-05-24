@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 
-const debug = std.debug;
 const heap = std.heap;
 const io = std.io;
 const mem = std.mem;

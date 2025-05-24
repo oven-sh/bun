@@ -1,38 +1,25 @@
 const bun = @import("bun");
-const Async = bun.Async;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const uws = bun.uws;
 const JSC = bun.JSC;
-const WaiterThread = JSC.Subprocess.WaiterThread;
 const OOM = bun.OOM;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
 const clap = bun.clap;
 const CLI = bun.CLI;
 const Arguments = CLI.Arguments;
 const Command = CLI.Command;
 
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const transpiler = bun.transpiler;
 
 const DotEnv = @import("../env_loader.zig");
@@ -49,12 +36,8 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const PosixSpawn = bun.posix.spawn;
 
-const PackageManager = @import("../install/install.zig").PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
 
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
 const windows = std.os.windows;
 

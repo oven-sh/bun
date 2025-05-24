@@ -1719,6 +1719,7 @@ pub const Error = enum(i32) {
                 globalThis: *JSC.JSGlobalObject,
                 pub fn callback(context: *@This()) void {
                     context.deferred.reject(context.globalThis);
+                    bun.default_allocator.destroy(context);
                 }
             };
 

@@ -7,9 +7,7 @@ const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
 
 const JSC = bun.JSC;
-const RareData = JSC.RareData;
 const strings = bun.strings;
-const DotEnv = bun.DotEnv;
 
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});

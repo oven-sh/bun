@@ -16,23 +16,23 @@ extern "C" JSInternalPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalO
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 
     JSValue htmlModule = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalHtml);
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         return promise->rejectWithCaughtException(globalObject, scope);
     }
 
     JSObject* htmlModuleObject = htmlModule.getObject();
-    if (UNLIKELY(!htmlModuleObject)) {
+    if (!htmlModuleObject) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }
 
     MarkedArgumentBuffer args;
     JSValue result = JSC::call(globalObject, htmlModuleObject, args, "Failed to load HTML entry point"_s);
-    if (UNLIKELY(scope.exception())) {
+    if (scope.exception()) [[unlikely]] {
         return promise->rejectWithCaughtException(globalObject, scope);
     }
 
     promise = jsDynamicCast<JSInternalPromise*>(result);
-    if (UNLIKELY(!promise)) {
+    if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }
     return promise;

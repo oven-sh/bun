@@ -1,22 +1,14 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.14",
+  "version": "1.2.15",
   "workspaces": [
-    "./packages/bun-types"
+    "./packages/bun-types",
+    "./packages/@types/bun"
   ],
   "devDependencies": {
-    "@mdn/browser-compat-data": "~5.5.28",
-    "@types/bun": "*",
     "@types/react": "^18.3.3",
-    "@typescript-eslint/eslint-plugin": "^7.11.0",
-    "@typescript-eslint/parser": "^7.11.0",
-    "@vscode/debugadapter": "^1.65.0",
-    "autoprefixer": "^10.4.19",
-    "caniuse-lite": "^1.0.30001620",
     "esbuild": "^0.21.4",
-    "eslint": "^9.4.0",
-    "eslint-config-prettier": "^9.1.0",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
     "prettier": "^3.5.3",
@@ -27,13 +19,15 @@
     "typescript": "^5.7.2"
   },
   "resolutions": {
-    "bun-types": "workspace:packages/bun-types"
+    "bun-types": "workspace:packages/bun-types",
+    "@types/bun": "workspace:packages/@types/bun"
   },
   "scripts": {
     "build": "bun run build:debug",
     "watch": "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
     "watch-windows": "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
-    "bd": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
+    "bd:v": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
+    "bd": "BUN_DEBUG_QUIET_LOGS=1 bun bd:v",
     "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
     "build:debug:asan": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON -B build/debug-asan",
     "build:valgrind": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_BASELINE=ON -ENABLE_VALGRIND=ON -B build/debug-valgrind",
@@ -48,6 +42,7 @@
     "build:release:local": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DWEBKIT_LOCAL=ON -B build/release-local",
     "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
+    "run:linux": "docker run --rm  -v \"$PWD:/root/bun/\" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image",
     "css-properties": "bun run src/css/properties/generate_properties.ts",
     "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
@@ -81,6 +76,7 @@
     "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
     "prettier": "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
-    "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true"
+    "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
+    "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   }
 }

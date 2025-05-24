@@ -183,6 +183,9 @@ export default {
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
+    }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),

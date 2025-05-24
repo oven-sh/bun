@@ -3689,7 +3689,7 @@ declare module "bun" {
      * usually necessary. This should be used carefully if at all! Value is
      * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
      */
-    secureOptions?: number; // Value is a numeric bitmask of the `SSL_OP_*` options
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
     keyFile?: string;
 

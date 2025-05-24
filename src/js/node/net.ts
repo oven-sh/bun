@@ -1673,7 +1673,7 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
 }
 
 function internalConnect(self, options, path);
-function internalConnect(self, options, address, port, addressType, localAddress, localPort, flags?) {
+function internalConnect(self, options, address, port, addressType, localAddress, localPort, _flags?) {
   $assert(self.connecting);
 
   let err;
@@ -1801,7 +1801,7 @@ function internalConnectMultiple(context, canceled?) {
     self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
   }
 
-  const { localPort, port, flags } = context;
+  const { localPort, port, _flags } = context;
   const { address, family: addressType } = context.addresses[current];
   let localAddress;
   let err;

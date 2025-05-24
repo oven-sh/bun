@@ -1627,6 +1627,7 @@ pub const Api = struct {
             .{ "warn", .warn },
             .{ "none", .none },
             .{ "warn-with-error-code", .warn_with_error_code },
+            .{ "bun", .bun },
         });
     };
 
@@ -1727,7 +1728,7 @@ pub const Api = struct {
 
         // from --no-addons. null == true
         allow_addons: ?bool = null,
-        /// from --unhandled-rejections, default is 'throw'
+        /// from --unhandled-rejections, default is 'bun'
         unhandled_rejections: ?UnhandledRejections = null,
 
         bunfig_path: []const u8,

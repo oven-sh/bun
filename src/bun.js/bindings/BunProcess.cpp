@@ -1134,6 +1134,7 @@ enum UnhandledRejectionsMode : uint8_t {
     UnhandledRejectionsMode_warn = 2,
     UnhandledRejectionsMode_none = 3,
     UnhandledRejectionsMode_warn_with_error_code = 4,
+    UnhandledRejectionsMode_bun = 5,
 };
 extern "C" UnhandledRejectionsMode Bun__VM__unhandledRejectionsMode(void* bunVM);
 
@@ -1156,6 +1157,9 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     }
 
     auto unhandledRejectionsMode = Bun__VM__unhandledRejectionsMode(globalObject->bunVM());
+    if (unhandledRejectionsMode == UnhandledRejectionsMode_bun) {
+        return false; // Bun default behavior
+    }
     if (unhandledRejectionsMode == UnhandledRejectionsMode_none) {
         return true; // mark the rejection as handled in order to not print it
     }

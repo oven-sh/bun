@@ -198,7 +198,7 @@ pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
     return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) callconv(.C) Api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse .throw;
+    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*Body.Value.HiveRef {

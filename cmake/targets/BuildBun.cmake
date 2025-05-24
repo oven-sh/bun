@@ -966,7 +966,6 @@ if(LINUX)
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro
     # enable string tail merging
@@ -980,6 +979,12 @@ if(LINUX)
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
+  if(RELEASE)
+    target_link_options(${bun} PUBLIC
+      -Wl,--emit-relocs
+      -Wl,-q
+    )
+  endif()
 endif()
 
 # --- Symbols list ---

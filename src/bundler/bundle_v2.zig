@@ -45,11 +45,9 @@ const Transpiler = bun.Transpiler;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
@@ -60,7 +58,6 @@ const Logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
 const Part = js_ast.Part;
-const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
@@ -68,8 +65,6 @@ const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const Define = @import("../defines.zig").Define;
-const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
@@ -81,27 +76,18 @@ const sync = bun.ThreadPool;
 const ImportRecord = bun.ImportRecord;
 const ImportKind = bun.ImportKind;
 const allocators = @import("../allocators.zig");
-const MimeType = @import("../http/mime_type.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const runtime = @import("../runtime.zig");
 const Timer = @import("../system_timer.zig");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const DebugLogs = _resolver.DebugLogs;
 const OOM = bun.OOM;
 
 const HTMLScanner = @import("../HTMLScanner.zig");
-const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
-const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
-const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
-const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
-const EntryPoints = bun.transpiler.EntryPoints;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
@@ -129,7 +115,6 @@ const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
 const lol = bun.LOLHTML;
-const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 const DataURL = @import("../resolver/resolver.zig").DataURL;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -210,12 +195,12 @@ pub const ThreadPool = struct {
     }
 
     pub fn usesIOPool(_: *const ThreadPool) bool {
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_IO_POOL)) {
             // For testing.
             return true;
         }
 
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IO_POOL)) {
             // For testing.
             return false;
         }
@@ -1286,16 +1271,23 @@ pub const BundleV2 = struct {
                 },
                 .dev_server => {
                     for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
-                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch |err| {
+
+                        // Ensure we have the proper conditions set for client-side entrypoints.
+                        const transpiler = if (flags.client and !flags.server and !flags.ssr)
+                            this.transpilerForTarget(.browser)
+                        else
+                            this.transpiler;
+
+                        const resolved = transpiler.resolveEntryPoint(abs_path) catch |err| {
                             const dev = this.transpiler.options.dev_server orelse unreachable;
                             dev.handleParseTaskFailure(
                                 err,
                                 if (flags.client) .client else .server,
                                 abs_path,
-                                this.transpiler.log,
+                                transpiler.log,
                                 this,
                             ) catch bun.outOfMemory();
-                            this.transpiler.log.reset();
+                            transpiler.log.reset();
                             continue;
                         };
 
@@ -5553,7 +5545,6 @@ pub const ServerComponentParseTask = struct {
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
-const RefVoidMapManaged = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
 pub const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;

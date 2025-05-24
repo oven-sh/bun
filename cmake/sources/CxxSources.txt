@@ -153,6 +153,9 @@ src/bun.js/bindings/NodeTLS.cpp
 src/bun.js/bindings/NodeURL.cpp
 src/bun.js/bindings/NodeValidator.cpp
 src/bun.js/bindings/NodeVM.cpp
+src/bun.js/bindings/NodeVMModule.cpp
+src/bun.js/bindings/NodeVMScript.cpp
+src/bun.js/bindings/NodeVMSourceTextModule.cpp
 src/bun.js/bindings/NoOpForTesting.cpp
 src/bun.js/bindings/ObjectBindings.cpp
 src/bun.js/bindings/objects.cpp
@@ -408,8 +411,8 @@ src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA1.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA224.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA256.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA384.cpp
-src/bun.js/bindings/webcrypto/CryptoAlgorithmX25519.cpp
 src/bun.js/bindings/webcrypto/CryptoAlgorithmSHA512.cpp
+src/bun.js/bindings/webcrypto/CryptoAlgorithmX25519.cpp
 src/bun.js/bindings/webcrypto/CryptoDigest.cpp
 src/bun.js/bindings/webcrypto/CryptoKey.cpp
 src/bun.js/bindings/webcrypto/CryptoKeyAES.cpp
@@ -443,7 +446,6 @@ src/bun.js/bindings/webcrypto/JSHkdfParams.cpp
 src/bun.js/bindings/webcrypto/JSHmacKeyParams.cpp
 src/bun.js/bindings/webcrypto/JSJsonWebKey.cpp
 src/bun.js/bindings/webcrypto/JSPbkdf2Params.cpp
-src/bun.js/bindings/webcrypto/JSX25519Params.cpp
 src/bun.js/bindings/webcrypto/JSRsaHashedImportParams.cpp
 src/bun.js/bindings/webcrypto/JSRsaHashedKeyGenParams.cpp
 src/bun.js/bindings/webcrypto/JSRsaKeyGenParams.cpp
@@ -451,6 +453,7 @@ src/bun.js/bindings/webcrypto/JSRsaOaepParams.cpp
 src/bun.js/bindings/webcrypto/JSRsaOtherPrimesInfo.cpp
 src/bun.js/bindings/webcrypto/JSRsaPssParams.cpp
 src/bun.js/bindings/webcrypto/JSSubtleCrypto.cpp
+src/bun.js/bindings/webcrypto/JSX25519Params.cpp
 src/bun.js/bindings/webcrypto/OpenSSLUtilities.cpp
 src/bun.js/bindings/webcrypto/PhonyWorkQueue.cpp
 src/bun.js/bindings/webcrypto/SerializedCryptoKeyWrapOpenSSL.cpp
@@ -466,3 +469,5 @@ src/bun.js/modules/NodeUtilTypesModule.cpp
 src/bun.js/modules/ObjectModule.cpp
 src/deps/libuwsockets.cpp
 src/io/io_darwin.cpp
+src/vm/Semaphore.cpp
+src/vm/SigintWatcher.cpp

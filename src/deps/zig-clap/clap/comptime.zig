@@ -3,9 +3,7 @@ const bun = @import("bun");
 const std = @import("std");
 
 const debug = std.debug;
-const heap = std.heap;
 const mem = std.mem;
-const testing = std.testing;
 
 /// Deprecated: Use `parseEx` instead
 pub fn ComptimeClap(

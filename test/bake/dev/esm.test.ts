@@ -357,3 +357,38 @@ devTest("function that is assigned to should become a live binding", {
     await c.expectMessage("PASS");
   },
 });
+
+devTest("browser field is used", {
+  files: {
+    // Ensure the package.json gets parsed before the HTML is bundled.
+    "bunfig.toml": `
+      preload = [
+        "axios/lib/utils.js",
+      ]
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "node_modules/axios/package.json": JSON.stringify({
+      name: "axios",
+      version: "1.0.0",
+      browser: {
+        "./lib/utils.js": "./lib/utils.browser.js",
+      },
+    }),
+    "node_modules/axios/lib/utils.js": `
+      export default "FAIL";
+    `,
+    "node_modules/axios/lib/utils.browser.js": `
+      export default "PASS";
+    `,
+    "index.ts": `
+      import axios from "axios/lib/utils.js";
+      console.log(axios);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});

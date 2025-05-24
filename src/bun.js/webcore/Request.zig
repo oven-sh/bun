@@ -66,7 +66,12 @@ pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
+pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) *Request {
+    return this.clone(bun.default_allocator, globalThis);
+}
+
 comptime {
+    _ = Request__clone;
     _ = Request__getUWSRequest;
     _ = Request__setInternalEventCallback;
     _ = Request__setTimeout;
@@ -932,42 +937,26 @@ pub fn setTimeout(
 }
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
 const MimeType = bun.http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = bun.NullableAllocator;
 
-const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
-const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.Blob.Inline;
-const AnyBlob = JSC.WebCore.Blob.Any;
 const InternalBlob = JSC.WebCore.Blob.Internal;
 const BodyMixin = JSC.WebCore.Body.Mixin;
 const Body = JSC.WebCore.Body;

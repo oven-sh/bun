@@ -26,7 +26,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bun = @import("bun");
 const assert = bun.assert;
-const testing = std.testing;
 const Thread = std.Thread;
 const Futex = bun.Futex;
 

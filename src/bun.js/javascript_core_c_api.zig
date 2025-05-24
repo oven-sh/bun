@@ -5,7 +5,6 @@
 /// Otherwise, use `JSC.JSValue`.
 /// ************************************
 const bun = @import("bun");
-const std = @import("std");
 const JSC = bun.JSC;
 const generic = opaque {
     pub fn value(this: *const generic) JSC.JSValue {

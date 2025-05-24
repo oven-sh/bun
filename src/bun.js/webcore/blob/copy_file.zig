@@ -881,7 +881,7 @@ pub const CopyFileWindows = struct {
 
     fn copyfile(this: *CopyFileWindows) void {
         // This is for making it easier for us to test this code path
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE)) {
             this.prepareReadWriteLoop();
             return;
         }

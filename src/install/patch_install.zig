@@ -5,9 +5,6 @@ const string = bun.string;
 const stringZ = bun.stringZ;
 const Output = bun.Output;
 const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
 const Progress = bun.Progress;
 const String = bun.Semver.String;
 

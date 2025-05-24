@@ -2,7 +2,6 @@ const fs = bun.fs;
 const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
-const Ref = @import("ast/base.zig").Ref;
 const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 

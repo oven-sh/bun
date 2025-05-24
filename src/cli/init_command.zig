@@ -9,21 +9,16 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const JSON = bun.JSON;
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
-const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
 
 pub const InitCommand = struct {
     pub fn prompt(

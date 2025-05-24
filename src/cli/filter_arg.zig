@@ -7,7 +7,6 @@ const strings = bun.strings;
 const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
 
-const Package = @import("../install/lockfile.zig").Package;
 
 const SKIP_LIST = .{
     // skip hidden directories

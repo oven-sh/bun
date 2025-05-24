@@ -3,12 +3,10 @@ const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
 const PackageManager = Install.PackageManager;
-const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = @import("./repository.zig").Repository;
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const std = @import("std");
@@ -277,6 +275,14 @@ pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     }
 
     return .{ str, null };
+}
+
+pub fn splitNameAndVersionOrLatest(str: string) struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse "latest",
+    };
 }
 
 pub fn splitNameAndVersion(str: string) error{MissingVersion}!struct { string, string } {

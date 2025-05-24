@@ -1,19 +1,14 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
-const debug = bun.Output.scoped(.CssModules, false);
 
 pub const CssModule = struct {
     config: *const Config,

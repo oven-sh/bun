@@ -142,12 +142,12 @@ if (require.main === module) {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.log("Usage: bun remove-unreferenced-imports.ts <file1.zig> [file2.zig] [directory]...");
+    console.log("Usage: bun zig-remove-unreferenced-top-level-decls.ts <file1.zig> [file2.zig] [directory]...");
     console.log("");
     console.log("Examples:");
-    console.log("  bun remove-unreferenced-imports.ts file.zig");
-    console.log("  bun remove-unreferenced-imports.ts src/");
-    console.log("  bun remove-unreferenced-imports.ts file1.zig file2.zig src/");
+    console.log("  bun zig-remove-unreferenced-top-level-decls.ts file.zig");
+    console.log("  bun zig-remove-unreferenced-top-level-decls.ts src/");
+    console.log("  bun zig-remove-unreferenced-top-level-decls.ts file1.zig file2.zig src/");
     process.exit(1);
   }
 

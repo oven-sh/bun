@@ -97,12 +97,12 @@ public:
     }
 
 private:
-    std::thread m_thread;
+    RefPtr<WTF::Thread> m_thread;
     std::atomic_bool m_installed = false;
     std::atomic_flag m_waiting {};
     Semaphore m_semaphore;
-    std::mutex m_globalObjectsMutex;
-    std::mutex m_receiversMutex;
+    WTF::Lock m_globalObjectsMutex;
+    WTF::Lock m_receiversMutex;
     WTF::Vector<JSC::JSGlobalObject*> m_globalObjects;
     WTF::Vector<SigintReceiver*> m_receivers;
     uint32_t m_refCount = 0;

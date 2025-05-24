@@ -11,7 +11,6 @@ const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 pub const mapLog = bun.Output.scoped(.SourceMapStore, false);
-const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -8497,7 +8496,6 @@ const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
 
-const Define = bun.options.Define;
 
 const uws = bun.uws;
 const AnyWebSocket = uws.AnyWebSocket;
@@ -8509,8 +8507,6 @@ const MimeType = bun.http.MimeType;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
-const JSModuleLoader = JSC.JSModuleLoader;
-const EventLoopHandle = JSC.EventLoopHandle;
 const HTMLBundle = JSC.API.HTMLBundle;
 const Plugin = JSC.API.JSBundler.Plugin;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;

@@ -1,11 +1,5 @@
-const std = @import("std");
 const bun = @import("bun");
-const C = bun.c;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const validators = @import("./util/validators.zig");
 
 //

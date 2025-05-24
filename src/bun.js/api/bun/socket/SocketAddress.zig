@@ -5,7 +5,6 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();
-const validators = @import("./../../../node/util/validators.zig");
 pub const js = JSC.Codegen.JSSocketAddress;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -658,15 +657,12 @@ const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;
 const string = bun.string;
-const Output = bun.Output;
 
 const JSC = bun.JSC;
-const ZigString = JSC.ZigString;
 const CallFrame = JSC.CallFrame;
 const JSValue = JSC.JSValue;
 
 const isDebug = bun.Environment.isDebug;
-const allow_assert = bun.Environment.allow_assert;
 
 pub const inet = if (bun.Environment.isWindows)
 win: {

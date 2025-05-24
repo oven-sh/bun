@@ -1283,16 +1283,11 @@ extern "c" fn Bun__callNodeHTTPServerSocketOnClose(JSC.JSValue) void;
 const ServerWebSocket = @This();
 
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const bun = @import("bun");
 const string = []const u8;
-const Bun = JSC.API.Bun;
-const max_addressable_memory = bun.max_addressable_memory;
-const Environment = bun.Environment;
 const std = @import("std");
-const assert = bun.assert;
 const ZigString = JSC.ZigString;
 const WebSocketServer = @import("../server.zig").WebSocketServer;
 const uws = bun.uws;

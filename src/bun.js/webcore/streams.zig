@@ -1740,46 +1740,25 @@ pub const AutoSizer = struct {
 };
 
 const std = @import("std");
-const Api = @import("../../api/schema.zig").Api;
 const bun = @import("bun");
-const MimeType = HTTPClient.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const JSC = bun.JSC;
 
-const Method = @import("../../http/method.zig").Method;
-const FetchHeaders = WebCore.FetchHeaders;
-const ObjectPool = @import("../../pool.zig").ObjectPool;
-const SystemError = JSC.SystemError;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = JSC.ArrayBuffer;
-const Async = bun.Async;
 
-const Environment = bun.Environment;
-const ZigString = JSC.ZigString;
-const IdentityContext = bun.IdentityContext;
-const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const E = bun.sys.E;
 const VirtualMachine = JSC.VirtualMachine;
-const Task = JSC.Task;
-const JSPrinter = bun.js_printer;
-const picohttp = bun.picohttp;
-const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Blob = bun.webcore.Blob;
 const Response = JSC.WebCore.Response;
-const Request = JSC.WebCore.Request;
 const assert = bun.assert;
 const Syscall = bun.sys;
-const uv = bun.windows.libuv;
 const WebCore = JSC.WebCore;
 const Sink = WebCore.Sink;
 const AutoFlusher = WebCore.AutoFlusher;

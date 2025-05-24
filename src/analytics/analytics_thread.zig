@@ -1,24 +1,9 @@
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
 
-const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = bun.http;
 
-const URL = @import("../url.zig").URL;
-const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
-const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = bun.http.Headers;
-const Futex = @import("../futex.zig");
 const Semver = bun.Semver;
 
 /// Enables analytics. This is used by:
@@ -274,7 +259,6 @@ pub const EventName = enum(u8) {
 };
 
 var random: std.rand.DefaultPrng = undefined;
-const DotEnv = @import("../env_loader.zig");
 
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 

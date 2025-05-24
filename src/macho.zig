@@ -1,7 +1,5 @@
 const std = @import("std");
 const mem = std.mem;
-const fs = std.fs;
-const io = std.io;
 const macho = std.macho;
 const Allocator = mem.Allocator;
 const bun = @import("bun");
@@ -585,6 +583,5 @@ const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 const SuperBlob = std.macho.SuperBlob;
-const Blob = std.macho.GenericBlob;
 const CodeDirectory = std.macho.CodeDirectory;
 const BlobIndex = std.macho.BlobIndex;

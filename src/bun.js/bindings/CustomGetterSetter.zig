@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
 
 pub const CustomGetterSetter = opaque {
     pub fn isGetterNull(this: *CustomGetterSetter) bool {

@@ -25,18 +25,13 @@ const HTTPClient = bun.http;
 const JSON = bun.JSON;
 const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Dependency = @import("./dependency.zig");
-const VersionedURL = @import("./versioned_url.zig");
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const http = bun.http;
 const OOM = bun.OOM;
-const PublishCommand = bun.CLI.PublishCommand;
 const File = bun.sys.File;
 
 const Npm = @This();
@@ -510,7 +505,6 @@ pub const Registry = struct {
     }
 };
 
-const VersionMap = std.ArrayHashMapUnmanaged(Semver.Version, PackageVersion, Semver.Version.HashContext, false);
 const DistTagMap = extern struct {
     tags: ExternalStringList = ExternalStringList{},
     versions: VersionSlice = VersionSlice{},
@@ -2457,4 +2451,3 @@ pub const PackageManifest = struct {
     }
 };
 
-const assert = bun.assert;

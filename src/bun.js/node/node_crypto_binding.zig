@@ -1,13 +1,9 @@
 const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const Crypto = JSC.API.Bun.Crypto;
 const BoringSSL = bun.BoringSSL.c;
-const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
@@ -18,7 +14,6 @@ const String = bun.String;
 const UUID = bun.UUID;
 const Async = bun.Async;
 const Node = JSC.Node;
-const OOM = bun.OOM;
 
 fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {

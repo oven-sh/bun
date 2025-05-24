@@ -7,7 +7,6 @@ const PostgresInt32 = postgres.PostgresInt32;
 const PostgresShort = postgres.PostgresShort;
 const String = bun.String;
 const debug = postgres.debug;
-const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const short = postgres.short;

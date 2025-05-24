@@ -1,7 +1,6 @@
 const std = @import("std");
 const JSC = bun.JSC;
 const bun = @import("bun");
-const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.encoding;
 const Mutex = bun.Mutex;
@@ -12,7 +11,6 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);

@@ -1,7 +1,5 @@
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
-const Global = bun.Global;
-const json_parser = bun.JSON;
 const logger = bun.logger;
 const Output = bun.Output;
 const FileSystem = @import("../fs.zig").FileSystem;
@@ -15,9 +13,7 @@ const Semver = bun.Semver;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
-const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
-const w = std.os.windows;
 const OOM = bun.OOM;
 
 const ExtractTarball = @This();

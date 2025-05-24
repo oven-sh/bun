@@ -6,7 +6,6 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const default_allocator = bun.default_allocator;
 
@@ -14,15 +13,9 @@ const js_ast = bun.JSAst;
 const logger = bun.logger;
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
-const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
-const sync = @import("sync.zig");
-
-const import_record = @import("./import_record.zig");
-
-const ImportRecord = import_record.ImportRecord;
 
 pub const Set = struct {
     js: JavaScript,

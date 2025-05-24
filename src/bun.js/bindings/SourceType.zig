@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
 
 // From SourceProvider.h
 pub const SourceType = enum(u8) {

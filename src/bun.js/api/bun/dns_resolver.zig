@@ -1,4 +1,3 @@
-const Bun = @This();
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -7,7 +6,6 @@ const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;

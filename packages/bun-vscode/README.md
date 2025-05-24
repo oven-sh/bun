@@ -97,7 +97,7 @@ You can use the following configurations to debug JavaScript and TypeScript file
       "url": "ws://localhost:6499/",
       // Optional path mapping for remote debugging
       "localRoot": "${workspaceFolder}",
-      "remoteRoot": "/app"
+      "remoteRoot": "/app",
     },
   ],
 }

@@ -1,7 +1,7 @@
 import { DebugSession, OutputEvent } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import * as path from "node:path";
+import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,

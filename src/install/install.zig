@@ -9702,6 +9702,7 @@ pub const PackageManager = struct {
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+        clap.parseParam("--json") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
@@ -10158,6 +10159,9 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            if (comptime subcommand == .pm or subcommand == .outdated) {
+                cli.json_output = args.flag("--json");
+            }
             cli.ca = args.options("--ca");
             cli.lockfile_only = args.flag("--lockfile-only");
 

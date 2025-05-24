@@ -726,24 +726,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         };
     };
 
-    const ColorCode = enum {
-        magenta,
-        blue,
-        orange,
-        red,
-        pink,
-
-        pub fn color(this: ColorCode) []const u8 {
-            return switch (this) {
-                .magenta => "\x1b[35m",
-                .blue => "\x1b[34m",
-                .orange => "\x1b[33m",
-                .red => "\x1b[31m",
-                // light pink
-                .pink => "\x1b[38;5;206m",
-            };
-        }
-    };
+    const ColorCode = Output.ColorCode;
 
     pub const Keyword = enum {
         abstract,

@@ -25,6 +25,7 @@ const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+const WhyCommand = @import("./why_command.zig").WhyCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
 const File = bun.sys.File;
@@ -126,6 +127,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>-g<r>                      print the <b>global<r> path to bin folder
             \\  <b><green>bun pm<r> <blue>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                   list the entire dependency tree according to the current lockfile
+            \\  <b><green>bun pm<r> <blue>why<r> <d>pkg<r>          explain why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>             print the current npm username
             \\  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
@@ -316,6 +318,18 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "trust")) {
             try TrustCommand.exec(ctx, pm, args);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "why")) {
+            if (pm.options.positionals.len <= 1) {
+                Output.prettyErrorln("<r><red>error<r>: missing package name", .{});
+                Global.exit(1);
+            }
+            const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
+            handleLoadLockfileErrors(load_lockfile, pm);
+            const lockfile = load_lockfile.ok.lockfile;
+
+            const name = pm.options.positionals[1];
+            try WhyCommand.exec(lockfile, pm, name, pm.options.json_output);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
@@ -567,4 +581,11 @@ fn printNodeModulesFolderStructure(
         const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
+}
+
+fn behaviorPrefix(behavior: Dependency.Behavior) []const u8 {
+    if (behavior.isDev()) return "dev ";
+    if (behavior.isOptional()) return "optional ";
+    if (behavior.isPeer()) return "peer ";
+    return "";
 }

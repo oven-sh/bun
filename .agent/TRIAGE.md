@@ -11,7 +11,7 @@
 # Instructions
 
 - Do NOT do any work unless explicitly asked, just wait for instructions.
-- If your context contains `GITHUB_EVENT`, read the file, and that is your explicit instructions.
+- If your context contains `GITHUB_EVENT_PATH`, read that file, and that is your explicit instructions.
 
 ## Assign labels
 

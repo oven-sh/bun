@@ -21,7 +21,8 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Bun
-        uses: ./.github/actions/setup-bun
+        # our internal version doesn't work with global PATH installs?
+        uses: oven-sh/setup-bun@v2
         with:
           version: ${{ env.BUN_VERSION }}
 

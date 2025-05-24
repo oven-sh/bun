@@ -596,6 +596,30 @@ declare module "bun" {
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
     getex(key: string | ArrayBufferView | Blob): Promise<string | null>;
+
+    /**
+     * Increment the integer value of a key by the given number
+     * @param key The key to increment
+     * @param count The amount to increment by
+     * @returns Promise that resolves with the new value
+     */
+    incrby(key: string | ArrayBufferView | Blob, count: string | number): Promise<number>;
+
+    /**
+     * Decrement the integer value of a key by the given number
+     * @param key The key to decrement
+     * @param count The amount to decrement by
+     * @returns Promise that resolves with the new value
+     */
+    decrby(key: string | ArrayBufferView | Blob, count: string | number): Promise<number>;
+
+    /**
+     * Increment the float value of a key by the given amount
+     * @param key The key to increment
+     * @param count The amount to increment by (float or integer)
+     * @returns Promise that resolves with the new value as a string
+     */
+    incrbyfloat(key: string | ArrayBufferView | Blob, count: string | number): Promise<string>;
   }
 
   /**

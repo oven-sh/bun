@@ -546,6 +546,81 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe
     return promise.toJS();
 }
 
+pub fn incrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send INCRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBY command", err);
+    };
+    return promise.toJS();
+}
+
+pub fn decrby(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send DECRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "DECRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send DECRBY command", err);
+    };
+    return promise.toJS();
+}
+
+pub fn incrbyfloat(this: *JSValkeyClient, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send INCRBYFLOAT command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBYFLOAT",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBYFLOAT command", err);
+    };
+    return promise.toJS();
+}
+
 pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call;
 pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key").call;
 pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call;

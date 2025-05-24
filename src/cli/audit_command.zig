@@ -385,6 +385,9 @@ fn findDependencyPaths(
     const root_deps = packages.items(.dependencies)[root_id];
     const dependencies = pm.lockfile.buffers.dependencies.items;
     const buf = pm.lockfile.buffers.string_bytes.items;
+    const pkg_names = packages.items(.name);
+    const pkg_resolutions = packages.items(.resolution);
+    const pkg_deps = packages.items(.dependencies);
 
     const dep_slice = root_deps.get(dependencies);
     for (dep_slice) |dependency| {
@@ -397,6 +400,29 @@ fn findDependencyPaths(
             try direct_path.path.append(try allocator.dupe(u8, target_package));
             try paths.append(direct_path);
             break;
+        }
+    }
+
+    for (pkg_resolutions, pkg_deps, pkg_names) |resolution, workspace_deps, pkg_name| {
+        if (resolution.tag != .workspace) continue;
+
+        const workspace_name = pkg_name.slice(buf);
+        const workspace_dep_slice = workspace_deps.get(dependencies);
+
+        for (workspace_dep_slice) |dependency| {
+            const dep_name = dependency.name.slice(buf);
+            if (std.mem.eql(u8, dep_name, target_package)) {
+                var workspace_path = PackageInfo.DependencyPath{
+                    .path = std.ArrayList([]const u8).init(allocator),
+                    .is_direct = false,
+                };
+
+                const workspace_prefix = try std.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
+                try workspace_path.path.append(workspace_prefix);
+                try workspace_path.path.append(try allocator.dupe(u8, target_package));
+                try paths.append(workspace_path);
+                break;
+            }
         }
     }
 
@@ -429,7 +455,22 @@ fn findDependencyPaths(
             }
         }
 
-        if (is_root_dep) {
+        var workspace_name_for_dep: ?[]const u8 = null;
+        for (pkg_resolutions, pkg_deps, pkg_names) |resolution, workspace_deps, pkg_name| {
+            if (resolution.tag != .workspace) continue;
+
+            const workspace_dep_slice = workspace_deps.get(dependencies);
+            for (workspace_dep_slice) |dependency| {
+                const dep_name = dependency.name.slice(buf);
+                if (std.mem.eql(u8, dep_name, current)) {
+                    workspace_name_for_dep = pkg_name.slice(buf);
+                    break;
+                }
+            }
+            if (workspace_name_for_dep != null) break;
+        }
+
+        if (is_root_dep or workspace_name_for_dep != null) {
             var path = PackageInfo.DependencyPath{
                 .path = std.ArrayList([]const u8).init(allocator),
                 .is_direct = false,
@@ -443,6 +484,11 @@ fn findDependencyPaths(
                 } else {
                     break;
                 }
+            }
+
+            if (workspace_name_for_dep) |workspace_name| {
+                const workspace_prefix = try std.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
+                try path.path.insert(0, workspace_prefix);
             }
 
             try paths.append(path);

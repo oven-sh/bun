@@ -980,6 +980,12 @@ if(LINUX)
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
+  if(RELEASE)
+    target_link_options(${bun} PUBLIC
+      -Wl,--emit-relocs
+      -Wl,-q
+    )
+  endif()
 endif()
 
 # --- Symbols list ---

@@ -67,7 +67,6 @@ function emitError(emitter, args) {
 
 function addCatch(emitter, promise, type, args) {
   promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
     queueMicrotask(() => emitUnhandledRejectionOrErr(emitter, err, type, args));
   });
 }

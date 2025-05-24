@@ -8,7 +8,7 @@ const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Path = bun.path;
 const JSON = bun.JSON;
 const OOM = bun.OOM;
@@ -96,6 +96,13 @@ pub const Resolution = extern struct {
             .workspace => error.UnexpectedResolution,
             .symlink => error.UnexpectedResolution,
             .folder => error.UnexpectedResolution,
+
+            // even though it's a dependency type, it's not
+            // possible for 'catalog:' to be written to the
+            // lockfile for any resolution because the install
+            // will fail it it's not successfully replaced by
+            // a version
+            .catalog => error.UnexpectedResolution,
 
             // should not happen
             .dist_tag => error.UnexpectedResolution,

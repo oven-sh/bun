@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -186,8 +186,7 @@ pub fn migrateNPMLockfile(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
-                &workspaces,
+            const workspace_packages_count = try workspaces.processNamesArray(
                 allocator,
                 &manager.workspace_package_json_cache,
                 log,
@@ -825,6 +824,10 @@ pub fn migrateNPMLockfile(
 
                                     break :resolved switch (res_version.tag) {
                                         .uninitialized => std.debug.panic("Version string {s} resolved to `.uninitialized`", .{version_bytes}),
+
+                                        // npm does not support catalogs
+                                        .catalog => return error.InvalidNPMLockfile,
+
                                         .npm, .dist_tag => res: {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
                                             // an npm dependency, but that case is so convoluted that it is not worth handling.

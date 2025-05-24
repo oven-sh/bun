@@ -14,19 +14,26 @@ using namespace WebCore;
 
 class JSMockFunction;
 
+// Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:
     static uint64_t s_nextInvocationId;
     static uint64_t nextInvocationId() { return ++s_nextInvocationId; }
 
-    LazyProperty<JSC::JSGlobalObject, Structure> mockFunctionStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> mockResultStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> mockImplementationStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> mockObjectStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> mockModuleStructure;
-    LazyProperty<JSC::JSGlobalObject, Structure> activeSpySetStructure;
-    LazyProperty<JSC::JSGlobalObject, JSFunction> withImplementationCleanupFunction;
-    LazyProperty<JSC::JSGlobalObject, JSC::Structure> mockWithImplementationCleanupDataStructure;
+#define FOR_EACH_JSMOCKMODULE_GC_MEMBER(V)           \
+    V(Structure, mockFunctionStructure)              \
+    V(Structure, mockResultStructure)                \
+    V(Structure, mockImplementationStructure)        \
+    V(Structure, mockObjectStructure)                \
+    V(Structure, mockModuleStructure)                \
+    V(Structure, activeSpySetStructure)              \
+    V(JSFunction, withImplementationCleanupFunction) \
+    V(JSC::Structure, mockWithImplementationCleanupDataStructure)
+
+#define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \
+    LazyProperty<JSGlobalObject, T> name;
+    FOR_EACH_JSMOCKMODULE_GC_MEMBER(DECLARE_JSMOCKMODULE_GC_MEMBER)
+#undef DECLARE_JSMOCKMODULE_GC_MEMBER
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
@@ -38,6 +45,10 @@ public:
     // This is useful for iterating through every non-GC'd mock function
     // This list includes activeSpies
     JSC::Strong<JSC::Unknown> activeMocks;
+
+    // Called by Zig::GlobalObject::visitChildren
+    template<typename Visitor>
+    void visit(Visitor& visitor);
 };
 
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {

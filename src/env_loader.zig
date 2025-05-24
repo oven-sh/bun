@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = bun.logger;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -10,7 +10,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const CodePoint = bun.CodePoint;
-const C = bun.C;
+
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
@@ -139,6 +139,7 @@ pub const Loader = struct {
             session_token = token;
         }
         this.aws_credentials = .{
+            .ref_count = .init(),
             .accessKeyId = accessKeyId,
             .secretAccessKey = secretAccessKey,
             .region = region,
@@ -173,6 +174,10 @@ pub const Loader = struct {
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
         return this.getHttpProxy(url.isHTTP(), url.hostname);
+    }
+
+    pub fn hasHTTPProxy(this: *const Loader) bool {
+        return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
     pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {

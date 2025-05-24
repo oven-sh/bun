@@ -183,6 +183,9 @@ export default {
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
+    }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
@@ -344,6 +347,9 @@ export default {
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
+    page("api/redis", "Redis client", {
+      description: `Bun provides a fast, native Redis client with automatic command pipelining for better performance.`,
+    }),
     page("api/import-meta", "import.meta", {
       description: `Module-scoped metadata and utilities`,
     }), // "`bun:sqlite`"),

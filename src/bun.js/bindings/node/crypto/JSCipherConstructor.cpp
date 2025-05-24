@@ -10,6 +10,7 @@
 #include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
+#include "KeyObject.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -121,9 +122,10 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         }
     }
 
-    WTF::Vector<uint8_t> keyData;
-    prepareSecretKey(globalObject, scope, keyData, keyValue, encodingValue);
+    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    auto keyData = keyObject.symmetricKey().span();
 
     JSArrayBufferView* ivView = nullptr;
     if (!ivValue.isNull()) {
@@ -149,13 +151,13 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     WTF::String cipherString = cipherValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    if (UNLIKELY(keyData.size() > INT_MAX)) {
+    if (keyData.size() > INT_MAX) [[unlikely]] {
         return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s, 0, INT_MAX, jsNumber(keyData.size()));
     }
 
     int32_t ivLen = 0;
     if (ivView) {
-        if (UNLIKELY(ivView->byteLength() > INT_MAX)) {
+        if (ivView->byteLength() > INT_MAX) [[unlikely]] {
             return ERR::OUT_OF_RANGE(scope, globalObject, "iv is too big"_s, 0, INT_MAX, jsNumber(ivView->byteLength()));
         }
         ivLen = ivView->byteLength();

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -8,7 +8,6 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
@@ -79,7 +78,7 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+    pub var builtin_modules = std.enums.EnumSet(bun.jsc.ModuleLoader.HardcodedModule).initEmpty();
 
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
@@ -128,6 +127,7 @@ pub const Features = struct {
     pub var process_dlopen: usize = 0;
     pub var postgres_connections: usize = 0;
     pub var s3: usize = 0;
+    pub var valkey: usize = 0;
     pub var csrf_verify: usize = 0;
     pub var csrf_generate: usize = 0;
     pub var unsupported_uv_function: usize = 0;

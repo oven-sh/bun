@@ -1,7 +1,7 @@
-import { $, spawnSync } from "bun";
-import { readFileSync, writeFileSync } from "fs";
+import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, tempDirWithFiles } from "harness";
+import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, DirectoryTree, isDebug, tempDirWithFiles } from "harness";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -185,7 +185,7 @@ class SnapshotTester {
     contents: string,
     opts: { shouldNotError?: boolean; shouldGrow?: boolean; skipSnapshot?: boolean } = {},
   ) {
-    test(label, async () => await this.update(contents, opts));
+    test(label, async () => await this.update(contents, opts), isDebug ? 100_000 : 5_000);
   }
   async update(
     contents: string,
@@ -845,6 +845,21 @@ indentation"
 \``)});
         });
       `,
+    );
+  });
+  it("#16403", () => {
+    tester.test(v =>
+      v(
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "ab",\n\t\t    "cd",\n\t\t  ]\n\t\t`);\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "C2",\n\t\t    "B2",\n\t\t  ]\n\t\t`);\n\t});\n',
+      ),
+    );
+    tester.testUpdateOnly(v =>
+      v(
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "ab",\n\t\t\t  "cd",\n\t\t\t]\n\t\t`);\n\t});\n',
+        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "C2",\n\t\t\t  "B2",\n\t\t\t]\n\t\t`);\n\t});\n',
+      ),
     );
   });
 });

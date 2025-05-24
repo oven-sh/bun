@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -8,8 +8,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
-const root = @import("root");
+
 const std = @import("std");
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -78,7 +77,7 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
-pub const debug_flags = if (Environment.isDebug) struct {
+pub const debug_flags = if (Environment.show_crash_trace) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
     var print_breakpoints: []const []const u8 = &.{};
 
@@ -184,7 +183,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
+    const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -245,7 +244,9 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -334,7 +335,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -681,7 +682,12 @@ pub const Arguments = struct {
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-            const preloads = args.options("--preload");
+            var preloads = args.options("--preload");
+            if (preloads.len == 0) {
+                if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
+                    preloads = bun.default_allocator.dupe([]const u8, &.{preload}) catch unreachable;
+                }
+            }
             const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
@@ -704,6 +710,16 @@ pub const Arguments = struct {
 
             if (args.option("--origin")) |origin| {
                 opts.origin = origin;
+            }
+
+            if (args.flag("--redis-preconnect")) {
+                ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -1271,7 +1287,7 @@ pub const Arguments = struct {
             }
         }
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
             debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
@@ -1529,6 +1545,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        redis_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -1621,9 +1638,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }
@@ -1677,9 +1694,9 @@ pub const Command = struct {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
-                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
+                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
                     return .AddCommand;
-                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
+                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
                     return .ExecCommand;
                 }
             }
@@ -2413,10 +2430,15 @@ pub const Command = struct {
                         \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>              Accept all default options
                         \\  <cyan>-m, --minimal<r>          Only initialize type definitions
+                        \\  <cyan>-r, --react<r>            Initialize a React project
+                        \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+                        \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
                         \\  <b><green>bun init<r> <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--react<r>
+                        \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});

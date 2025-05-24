@@ -1,6 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
@@ -62,7 +62,7 @@ pub const ContainerSizeFeatureId = enum {
     /// The [orientation](https://w3c.github.io/csswg-drafts/css-contain-3/#orientation) size container feature.
     orientation,
 
-    pub usingnamespace css.DeriveValueType(@This(), ValueTypeMap);
+    pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
 
     pub const ValueTypeMap = .{
         .width = css.MediaFeatureType.length,
@@ -334,7 +334,7 @@ pub fn ContainerRule(comptime R: type) type {
 
             // Don't downlevel range syntax in container queries.
             const exclude = dest.targets.exclude;
-            dest.targets.exclude.insert(css.targets.Features.media_queries);
+            bun.bits.insert(css.targets.Features, &dest.targets.exclude, .media_queries);
             try this.condition.toCss(W, dest);
             dest.targets.exclude = exclude;
 

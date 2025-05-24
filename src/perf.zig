@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 
 pub const Ctx = union(enum) {
@@ -22,13 +22,13 @@ pub const Ctx = union(enum) {
 var is_enabled_once = std.once(isEnabledOnce);
 var is_enabled = std.atomic.Value(bool).init(false);
 fn isEnabledOnMacOSOnce() void {
-    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag("BUN_INSTRUMENTS")) {
+    if (bun.getenvZ("DYLD_ROOT_PATH") != null or bun.getRuntimeFeatureFlag(.BUN_INSTRUMENTS)) {
         is_enabled.store(true, .seq_cst);
     }
 }
 
 fn isEnabledOnLinuxOnce() void {
-    if (bun.getRuntimeFeatureFlag("BUN_TRACE")) {
+    if (bun.getRuntimeFeatureFlag(.BUN_TRACE)) {
         is_enabled.store(true, .seq_cst);
     }
 }
@@ -97,7 +97,7 @@ pub fn trace(comptime name: [:0]const u8) Ctx {
 }
 
 pub const Darwin = struct {
-    const OSLog = bun.C.OSLog;
+    const OSLog = bun.darwin.OSLog;
     interval: OSLog.Signpost.Interval,
 
     pub fn init(comptime name: i32) @This() {

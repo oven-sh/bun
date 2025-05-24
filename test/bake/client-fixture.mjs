@@ -2,6 +2,7 @@
 // - https://github.com/oven-sh/bun/issues/16363
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
+import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
@@ -16,6 +17,7 @@ url = new URL(url, "http://localhost:3000");
 const storeHotChunks = args.includes("--store-hot-chunks");
 const expectErrors = args.includes("--expect-errors");
 const verboseWebSockets = args.includes("--verbose-web-sockets");
+const allowUnlimitedReloads = args.includes("--allow-unlimited-reloads");
 
 // Create a new window instance
 let window;
@@ -25,6 +27,8 @@ let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
 let isUpdating = null;
+let objectURLRegistry = new Map();
+let internalAPIs;
 
 function reset() {
   if (isUpdating !== null) {
@@ -60,6 +64,10 @@ function createWindow(windowUrl) {
     width: 1024,
     height: 768,
   });
+
+  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+    window.internal = internal;
+  };
 
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -99,6 +107,50 @@ function createWindow(windowUrl) {
       webSockets = webSockets.filter(ws => ws !== this);
     }
   };
+
+  // The method of loading code via object URLs is not supported by happy-dom.
+  // Instead, it is emulated.
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  URL.createObjectURL = function (blob) {
+    const url = originalCreateObjectURL.call(URL, blob);
+    objectURLRegistry.set(url, blob);
+    return url;
+  };
+  URL.revokeObjectURL = function (url) {
+    originalRevokeObjectURL.call(URL, url);
+    objectURLRegistry.delete(url);
+  };
+  const originalDocumentCreateElement = window.document.createElement;
+  const originalElementAppendChild = window.document.head.appendChild;
+  class ScriptTag {
+    src;
+    constructor() {}
+    remove() {}
+  }
+  window.document.createElement = function (tagName) {
+    if (tagName === "script") {
+      return new ScriptTag();
+    }
+    return originalDocumentCreateElement.call(window.document, tagName);
+  };
+  Object.defineProperty(window.document.head.__proto__, "appendChild", {
+    configurable: true,
+    enumerable: true,
+    value: function (element) {
+      if (element instanceof ScriptTag) {
+        assert(element.src.startsWith("blob:"));
+        const blob = objectURLRegistry.get(element.src);
+        assert(blob);
+        blob.arrayBuffer().then(buffer => {
+          const code = new TextDecoder().decode(buffer);
+          (0, window.eval)(code);
+        });
+        return;
+      }
+      return originalElementAppendChild.call(document.head, element);
+    },
+  });
 
   // Intercept console messages
   const originalConsole = window.console;
@@ -205,6 +257,10 @@ function createWindow(windowUrl) {
 
   window.location.reload = async () => {
     reset();
+    if (allowUnlimitedReloads) {
+      handleReload();
+      return;
+    }
     if (expectingReload) {
       // Permission already granted, proceed with reload
       handleReload();

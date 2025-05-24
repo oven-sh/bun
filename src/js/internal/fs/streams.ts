@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
-const { open, read, write, fsync, writev } = fs;
+const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
@@ -41,8 +41,6 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 // `new Response(Bun.file("path.txt"))`.
 // This makes an idomatic Node.js pattern much faster.
 const kReadStreamFastPath = Symbol("kReadStreamFastPath");
-const kWriteStreamFastPathClosed = Symbol("kWriteStreamFastPathClosed");
-const kWriteFastSimpleBuffering = Symbol("writeFastSimpleBuffering");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");

@@ -31,7 +31,14 @@ const {
       cipher: 'aes-128-cbc',
       passphrase: 'secret'
     }
-  }, common.mustSucceed((publicKey, privateKey) => {
+  }, common.mustCall((err, publicKey, privateKey) => {
+    if (common.openSSLIsBoringSSL) {
+      // BoringSSL does not support 'explicit' param encoding.
+      assert.strictEqual(err.message, 'error:06000085:public key routines:OPENSSL_internal:INVALID_PARAMETERS')
+      return;
+    }
+
+    assert.ifError(err);
     assert.strictEqual(typeof publicKey, 'string');
     assert.match(publicKey, spkiExp);
     assert.strictEqual(typeof privateKey, 'string');

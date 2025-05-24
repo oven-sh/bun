@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const uws = bun.uws;
 const std = @import("std");
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Async = bun.Async;
 const JSC = bun.JSC;
@@ -17,10 +17,11 @@ const posix = std.posix;
 pub const OutKind = enum {
     stdout,
     stderr,
+
     pub fn toFd(this: OutKind) bun.FileDescriptor {
         return switch (this) {
-            .stdout => bun.STDOUT_FD,
-            .stderr => bun.STDERR_FD,
+            .stdout => .stdout(),
+            .stderr => .stderr(),
         };
     }
 };

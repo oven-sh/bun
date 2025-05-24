@@ -3,12 +3,14 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(MD4) \
     macro(MD5) \
+    macro(S3Client) \
     macro(SHA1) \
     macro(SHA224) \
     macro(SHA256) \
@@ -17,31 +19,33 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(Transpiler) \
+    macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
     macro(cwd) \
+    macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
     macro(main) \
     macro(origin) \
+    macro(s3) \
+    macro(semver) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
     macro(unsafe) \
-    macro(semver) \
-    macro(embeddedFiles) \
-    macro(S3Client) \
-    macro(s3) \
-    macro(CSRF) \
+    macro(valkey) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
     macro(braces) \
     macro(build) \
-    macro(connect) \
     macro(color) \
+    macro(connect) \
+    macro(createParsedShellScript) \
+    macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
     macro(fs) \
@@ -53,7 +57,6 @@
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(udpSocket) \
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \
@@ -62,16 +65,19 @@
     macro(resolveSync) \
     macro(serve) \
     macro(sha) \
+    macro(shellEscape) \
     macro(shrink) \
     macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
+    macro(stringWidth) \
+    macro(udpSocket) \
     macro(which) \
     macro(write) \
-    macro(stringWidth) \
-    macro(shellEscape) \
-    macro(createShellInterpreter) \
-    macro(createParsedShellScript) \
+    macro(zstdCompressSync) \
+    macro(zstdDecompressSync) \
+    macro(zstdCompress) \
+    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

@@ -215,11 +215,9 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
     log("task done: 0x{x} {d}", .{ @intFromPtr(task), this.state.exec.tasks_count });
     this.state.exec.tasks_count -= 1;
 
-    const err_ = task.err;
-
     if (comptime bun.Environment.isWindows) {
-        if (err_) |err| {
-            if (err == .sys and
+        if (task.err) |*err| {
+            if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
                 (task.tgt_absolute != null and
                     err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
@@ -248,7 +246,6 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
     // Deinitialize this task as we are starting a new one
     defer task.deinit();
 
-    const err_ = task.err;
     var output = task.takeOutput();
 
     const output_task: *ShellCpOutputTask = bun.new(ShellCpOutputTask, .{
@@ -256,9 +253,9 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
         .output = .{ .arrlist = output.moveToUnmanaged() },
         .state = .waiting_write_err,
     });
-    if (err_) |err| {
+    if (bun.take(&task.err)) |err| {
         this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.cp, err);
+        const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
         output_task.start(error_string);
         return;
     }
@@ -330,7 +327,7 @@ pub const ShellCpTask = struct {
     fn deinit(this: *ShellCpTask) void {
         debug("deinit", .{});
         this.verbose_output.deinit();
-        if (this.err) |e| {
+        if (this.err) |*e| {
             e.deinit(bun.default_allocator);
         }
         if (this.src_absolute) |sc| {
@@ -374,7 +371,7 @@ pub const ShellCpTask = struct {
         return out;
     }
 
-    pub fn ensureDest(nodefs: *JSC.Node.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
+    pub fn ensureDest(nodefs: *JSC.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
         return switch (nodefs.mkdirRecursiveOSPath(dest, JSC.Node.Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| Maybe(void){ .err = err },
             .result => Maybe(void).success,
@@ -395,7 +392,7 @@ pub const ShellCpTask = struct {
         if (bun.Environment.isWindows) {
             const attributes = bun.sys.getFileAttributes(path[0..path.len]) orelse {
                 const err: Syscall.Error = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.ENOENT),
                     .syscall = .copyfile,
                     .path = path,
                 };
@@ -490,7 +487,7 @@ pub const ShellCpTask = struct {
         const tgt_is_dir: bool, const tgt_exists: bool = switch (this.isDir(tgt)) {
             .result => |is_dir| .{ is_dir, true },
             .err => |e| brk: {
-                if (e.getErrno() == bun.C.E.NOENT) {
+                if (e.getErrno() == .NOENT) {
                     // If it has a trailing directory separator, its a directory
                     const is_dir = hasTrailingSep(tgt);
                     break :brk .{ is_dir, false };
@@ -542,7 +539,7 @@ pub const ShellCpTask = struct {
         this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
         this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
 
-        const args = JSC.Node.Arguments.Cp{
+        const args = JSC.Node.fs.Arguments.Cp{
             .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
             .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
             .flags = .{
@@ -558,7 +555,7 @@ pub const ShellCpTask = struct {
         if (this.event_loop == .js) {
             const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
             debug("Yoops", .{});
-            _ = JSC.Node.ShellAsyncCpTask.createWithShellTask(
+            _ = bun.api.node.fs.ShellAsyncCpTask.createWithShellTask(
                 vm.global,
                 args,
                 vm,
@@ -567,7 +564,7 @@ pub const ShellCpTask = struct {
                 false,
             );
         } else {
-            _ = JSC.Node.ShellAsyncCpTask.createMini(
+            _ = bun.api.node.fs.ShellAsyncCpTask.createMini(
                 args,
                 this.event_loop.mini,
                 bun.ArenaAllocator.init(bun.default_allocator),
@@ -618,7 +615,7 @@ pub const ShellCpTask = struct {
     }
 };
 
-const Opts = packed struct {
+const Opts = packed struct(u16) {
     /// -f
     ///
     /// If the destination file cannot be opened, remove it and create a
@@ -684,6 +681,8 @@ const Opts = packed struct {
     /// Do not overwrite an existing file.  (The -n option overrides any previous -f or -i options.)
     overwrite_existing_file: bool = true,
 
+    _padding: u7 = 0,
+
     const Parse = FlagParser(*@This());
 
     pub fn parse(opts: *Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
@@ -742,7 +741,7 @@ const Opts = packed struct {
 const log = bun.Output.scoped(.cp, true);
 const ArrayList = std.ArrayList;
 const Syscall = bun.sys;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

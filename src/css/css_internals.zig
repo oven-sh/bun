@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const builtin = @import("builtin");
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
@@ -56,7 +56,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(3);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
     };
@@ -169,9 +169,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
                 const str = bunstr.toUTF8(bun.default_allocator);
                 defer str.deinit();
                 if (std.mem.eql(u8, str.slice(), "DEEP_SELECTOR_COMBINATOR")) {
-                    opts.flags.insert(bun.css.ParserFlags{
-                        .deep_selector_combinator = true,
-                    });
+                    opts.flags.deep_selector_combinator = true;
                 } else {
                     return globalThis.throw("invalid flag: {s}", .{str.slice()});
                 }
@@ -269,7 +267,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(4);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
     };

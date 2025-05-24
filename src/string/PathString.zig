@@ -1,14 +1,18 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
+const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
+const use_small_path_string_ = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
+
+const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
 
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
-pub const PathString = packed struct {
-    const PathIntLen = std.math.IntFittingRange(0, bun.MAX_PATH_BYTES);
-    pub const use_small_path_string = @bitSizeOf(usize) - @bitSizeOf(PathIntLen) >= 53;
-    pub const PathInt = if (use_small_path_string) PathIntLen else usize;
-    pub const PointerIntType = if (use_small_path_string) u53 else usize;
+pub const PathString = packed struct(PathStringBackingIntType) {
+    pub const PathInt = if (use_small_path_string_) PathIntLen else usize;
+    pub const PointerIntType = if (use_small_path_string_) u53 else usize;
+    pub const use_small_path_string = use_small_path_string_;
+
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
@@ -28,6 +32,7 @@ pub const PathString = packed struct {
         return @as([*:0]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len :0];
     }
 
+    /// Create a PathString from a borrowed slice. No allocation occurs.
     pub inline fn init(str: []const u8) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 

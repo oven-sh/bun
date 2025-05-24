@@ -112,7 +112,6 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
     defer task.deinit(true);
     this.state.exec.tasks_done += 1;
     var output = task.takeOutput();
-    const err_ = task.err;
 
     // TODO: Reuse the *ShellLsTask allocation
     const output_task: *ShellLsOutputTask = bun.new(ShellLsOutputTask, .{
@@ -121,9 +120,10 @@ pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
         .state = .waiting_write_err,
     });
 
-    if (err_) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.ls, err);
+    if (task.err) |*err| {
+        this.state.exec.err = err.*;
+        task.err = null;
+        const error_string = this.bltn().taskErrorToString(.ls, this.state.exec.err.?);
         output_task.start(error_string);
         return;
     }
@@ -247,10 +247,10 @@ pub const ShellLsTask = struct {
         const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
             .err => |e| {
                 switch (e.getErrno()) {
-                    bun.C.E.NOENT => {
+                    .NOENT => {
                         this.err = this.errorWithPath(e, this.path);
                     },
-                    bun.C.E.NOTDIR => {
+                    .NOTDIR => {
                         this.result_kind = .file;
                         this.addEntry(this.path);
                     },
@@ -264,7 +264,7 @@ pub const ShellLsTask = struct {
         };
 
         defer {
-            _ = Syscall.close(fd);
+            fd.close();
             debug("run done", .{});
         }
 
@@ -274,7 +274,7 @@ pub const ShellLsTask = struct {
                 std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
             }
 
-            var iterator = DirIterator.iterate(fd.asDir(), .u8);
+            var iterator = DirIterator.iterate(fd.stdDir(), .u8);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -779,7 +779,7 @@ pub inline fn bltn(this: *Ls) *Builtin {
 
 const Ls = @This();
 const log = bun.Output.scoped(.ls, true);
-const bun = @import("root").bun;
+const bun = @import("bun");
 const shell = bun.shell;
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;

@@ -147,7 +147,7 @@ struct BufferSourceConverter {
             object = WrapperType::toWrappedAllowShared(vm, value);
         else
             object = WrapperType::toWrapped(vm, value);
-        if (UNLIKELY(!object))
+        if (!object) [[unlikely]]
             exceptionThrower(lexicalGlobalObject, scope);
         return object;
     }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
 const strings = @import("./string_immutable.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
@@ -405,6 +405,57 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len + @sizeOf(Int));
             @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
             this.len += @sizeOf(Int);
+        }
+    };
+}
+
+pub fn OffsetList(comptime Type: type) type {
+    return struct {
+        head: u32 = 0,
+        byte_list: List = .{},
+
+        const List = BabyList(Type);
+        const ThisList = @This();
+
+        pub fn init(head: u32, byte_list: List) ThisList {
+            return .{
+                .head = head,
+                .byte_list = byte_list,
+            };
+        }
+
+        pub fn write(self: *ThisList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+            _ = try self.byte_list.write(allocator, bytes);
+        }
+
+        pub fn slice(this: *ThisList) []u8 {
+            return this.byte_list.slice()[0..this.head];
+        }
+
+        pub fn remaining(this: *ThisList) []u8 {
+            return this.byte_list.slice()[this.head..];
+        }
+
+        pub fn consume(self: *ThisList, bytes: u32) void {
+            self.head +|= bytes;
+            if (self.head >= self.byte_list.len) {
+                self.head = 0;
+                self.byte_list.len = 0;
+            }
+        }
+
+        pub fn len(self: *const ThisList) u32 {
+            return self.byte_list.len - self.head;
+        }
+
+        pub fn clear(self: *ThisList) void {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+
+        pub fn deinit(self: *ThisList, allocator: std.mem.Allocator) void {
+            self.byte_list.deinitWithAllocator(allocator);
+            self.* = .{};
         }
     };
 }

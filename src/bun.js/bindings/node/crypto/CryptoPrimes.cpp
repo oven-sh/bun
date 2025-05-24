@@ -1,9 +1,13 @@
 #include "CryptoPrimes.h"
-#include "KeyObject.h"
 #include "ErrorCode.h"
 #include "helpers.h"
 #include "CryptoUtil.h"
 #include "NodeValidator.h"
+
+namespace Bun {
+
+using namespace ncrypto;
+using namespace JSC;
 
 CheckPrimeJobCtx::CheckPrimeJobCtx(ncrypto::BignumPointer candidate, int32_t checks)
     : m_candidate(WTFMove(candidate))
@@ -79,7 +83,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    auto* candidateView = getArrayBufferOrView(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
+    auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue optionsValue = callFrame->argument(1);
@@ -100,7 +104,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         }
     }
 
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(candidateView->vector()), candidateView->byteLength());
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
         return JSValue::encode({});
@@ -125,10 +129,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
     }
 
-    auto* candidateView = jsDynamicCast<JSC::JSArrayBufferView*>(candidateValue);
-    if (!candidateView) {
-        return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "candidate"_s, "ArrayBuffer, TypedArray, Buffer, DataView, or bigint"_s, candidateValue);
-    }
+    auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     JSValue optionsValue = callFrame->argument(1);
     JSValue callback = callFrame->argument(2);
@@ -157,7 +159,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
         }
     }
 
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(candidateView->vector()), candidateView->byteLength());
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
         return JSValue::encode({});
@@ -198,42 +200,31 @@ extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JS
 {
     ctx->runFromJS(lexicalGlobalObject, JSValue::decode(callback));
 }
-void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callback)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_bigint) {
-        ncrypto::DataPointer primeHex = m_prime.toHex();
-        if (!primeHex) {
-            JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
-        }
-
-        JSValue result = JSBigInt::parseInt(lexicalGlobalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
-        if (result.isEmpty()) {
-            JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
-        }
-
-        Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(result));
+    JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
+    ASSERT(result.isEmpty() == !!scope.exception());
+    if (scope.exception()) {
+        auto* err = scope.exception();
+        scope.clearException();
+        Bun__EventLoop__runCallback1(
+            globalObject,
+            JSValue::encode(callback),
+            JSValue::encode(jsUndefined()),
+            JSValue::encode(err));
         return;
     }
 
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    JSC::JSUint8Array* result = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), m_prime.byteLength());
-    if (!result) {
-        JSObject* err = createOutOfMemoryError(lexicalGlobalObject);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
-    }
-
-    ncrypto::BignumPointer::EncodePaddedInto(m_prime.get(), reinterpret_cast<uint8_t*>(result->vector()), result->byteLength());
-
-    Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(result));
+    Bun__EventLoop__runCallback2(
+        globalObject,
+        JSValue::encode(callback),
+        JSValue::encode(jsUndefined()),
+        JSValue::encode(jsUndefined()),
+        JSValue::encode(result));
+    return;
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__deinit(GeneratePrimeJobCtx* ctx)
@@ -263,6 +254,39 @@ void GeneratePrimeJob::createAndSchedule(JSGlobalObject* globalObject, int32_t s
 {
     GeneratePrimeJobCtx* ctx = new GeneratePrimeJobCtx(size, safe, WTFMove(prime), WTFMove(add), WTFMove(rem), bigint);
     Bun__GeneratePrimeJob__createAndSchedule(globalObject, ctx, JSValue::encode(callback));
+}
+
+JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& scope, const ncrypto::BignumPointer& prime, bool bigint)
+{
+    VM& vm = globalObject->vm();
+
+    if (bigint) {
+        ncrypto::DataPointer primeHex = prime.toHex();
+        if (!primeHex) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+
+        JSValue result = JSBigInt::parseInt(globalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        if (result.isEmpty()) {
+            ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
+            return {};
+        }
+
+        return result;
+    }
+
+    ArrayBufferContents contents;
+
+    auto buf = ArrayBuffer::tryCreateUninitialized(prime.byteLength(), 1);
+    if (!buf) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    BignumPointer::EncodePaddedInto(prime.get(), reinterpret_cast<uint8_t*>(buf->data()), buf->byteLength());
+
+    return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(buf));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -353,12 +377,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     if (add) {
-        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
+        if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
             return JSValue::encode({});
         }
 
-        if (UNLIKELY(rem && add <= rem)) {
+        if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
             return JSValue::encode({});
         }
@@ -454,12 +478,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
     }
 
     if (add) {
-        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
+        if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
             return JSValue::encode({});
         }
 
-        if (UNLIKELY(rem && add <= rem)) {
+        if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
             return JSValue::encode({});
         }
@@ -470,31 +494,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
     }
 
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
     prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [](int32_t a, int32_t b) -> bool {
         // TODO(dylan-conway): ideally we check for !vm->isShuttingDown() here
         return true;
     });
 
-    if (bigint) {
-        ncrypto::DataPointer primeHex = prime.toHex();
-        if (!primeHex) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
-            return JSValue::encode({});
-        }
-
-        return JSValue::encode(JSBigInt::parseInt(lexicalGlobalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::ThrowExceptions,
-            JSBigInt::ParseIntSign::Unsigned));
-    }
-
-    JSC::JSUint8Array* result = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), prime.byteLength());
-    if (!result) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
-        return JSValue::encode({});
-    }
-
-    ncrypto::BignumPointer::EncodePaddedInto(prime.get(), reinterpret_cast<uint8_t*>(result->vector()), result->byteLength());
-
-    return JSValue::encode(result);
+    return JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint));
 }
+
+} // namespace Bun

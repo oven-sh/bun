@@ -83,6 +83,14 @@ Workspaces have a couple major benefits.
 - **Dependencies can be de-duplicated.** If `a` and `b` share a common dependency, it will be _hoisted_ to the root `node_modules` directory. This reduces redundant disk usage and minimizes "dependency hell" issues associated with having multiple versions of a package installed simultaneously.
 - **Run scripts in multiple packages.** You can use the [`--filter` flag](https://bun.sh/docs/cli/filter) to easily run `package.json` scripts in multiple packages in your workspace.
 
+## Share versions with Catalogs
+
+When many packages need the same dependency versions, catalogs let you define
+those versions once in the root `package.json` and reference them from your
+workspaces using the `catalog:` protocol. Updating the catalog automatically
+updates every package that references it. See
+[Catalogs](https://bun.sh/docs/install/catalogs) for details.
+
 {% callout %}
 ⚡️ **Speed** — Installs are fast, even for big monorepos. Bun installs the [Remix](https://github.com/remix-run/remix) monorepo in about `500ms` on Linux.
 

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const options = @import("../options.zig");
 const logger = bun.logger;
@@ -27,6 +27,9 @@ fn FlagSet(comptime Type: type) type {
 const JSXFieldSet = FlagSet(options.JSX.Pragma);
 
 pub const TSConfigJSON = struct {
+    pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
+
     abs_path: string,
 
     // The absolute path of "compilerOptions.baseUrl"
@@ -57,7 +60,6 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
-    pub usingnamespace bun.New(@This());
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }

@@ -6,7 +6,7 @@
 /// don't want to incur the cost of heap allocating them and refcounting them
 ///
 /// So environment strings can be ref counted or borrowed slices
-pub const EnvStr = packed struct {
+pub const EnvStr = packed struct(u128) {
     ptr: u48,
     tag: Tag = .empty,
     len: usize = 0,
@@ -85,7 +85,7 @@ pub const EnvStr = packed struct {
     }
 };
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const interpreter = @import("./interpreter.zig");
 const shell = bun.shell;
 const RefCountedStr = interpreter.RefCountedStr;

@@ -7,7 +7,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, id: string) {
+export function require(this: JSCommonJSModule, _: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -15,9 +15,9 @@ export function require(this: JSCommonJSModule, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string) {
-  const id = $resolveSync(originalId, this.filename, false);
-  if (id.startsWith('node:')) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
+  if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
@@ -30,7 +30,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
         return existing.exports;
       }
     }
-    
+
     return this.$requireNativeModule(id);
   } else {
     const existing = $requireMap.$get(id);
@@ -73,6 +73,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   const mod = $createCommonJSModule(id, {}, false, this);
   $requireMap.$set(id, mod);
 
+  var out: LoaderModule | -1;
+
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
   //
@@ -82,7 +84,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      var out = this.$require(
+      out = this.$require(
         id,
         mod,
         // did they pass a { type } object?
@@ -96,12 +98,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
       throw E;
     }
   } else {
-    var out = this.$require(
-      id,
-      mod,
-      $argumentCount(),
-      $argument(1),
-    );
+    out = this.$require(id, mod, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.
@@ -146,8 +143,18 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { filename?: string; id?: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.filename ?? this?.id ?? "", false, true);
+export function requireResolve(
+  this: string | { filename?: string; id?: string },
+  id: string,
+  options: { paths?: string[] } = {},
+) {
+  return $resolveSync(
+    id,
+    typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
+    false,
+    true,
+    options ? options.paths : undefined,
+  );
 }
 
 $visibility = "Private";
@@ -160,7 +167,6 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
   $requireMap.$set(id, module);
   return module.exports;
 }
-
 
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string) {
@@ -346,7 +352,7 @@ export function createRequireCache() {
     },
   };
   var proxy = new Proxy(inner, {
-    get(target, key: string) {
+    get(_target, key: string) {
       const entry = $requireMap.$get(key);
       if (entry) return entry;
 
@@ -360,23 +366,23 @@ export function createRequireCache() {
 
       return inner[key];
     },
-    set(target, key: string, value) {
+    set(_target, key: string, value) {
       $requireMap.$set(key, value);
       return true;
     },
 
-    has(target, key: string) {
+    has(_target, key: string) {
       return $requireMap.$has(key) || Boolean(Loader.registry.$get(key)?.evaluated);
     },
 
-    deleteProperty(target, key: string) {
+    deleteProperty(_target, key: string) {
       moduleMap.$delete(key);
       $requireMap.$delete(key);
       Loader.registry.$delete(key);
       return true;
     },
 
-    ownKeys(target) {
+    ownKeys(_target) {
       var array = [...$requireMap.$keys()];
       for (const key of Loader.registry.$keys()) {
         if (!array.includes(key) && Loader.registry.$get(key)?.evaluated) {
@@ -387,11 +393,11 @@ export function createRequireCache() {
     },
 
     // In Node, require.cache has a null prototype
-    getPrototypeOf(target) {
+    getPrototypeOf(_target) {
       return null;
     },
 
-    getOwnPropertyDescriptor(target, key: string) {
+    getOwnPropertyDescriptor(_target, key: string) {
       if ($requireMap.$has(key) || Loader.registry.$get(key)?.evaluated) {
         return {
           configurable: true,
@@ -408,18 +414,18 @@ type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate) {
   const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];
   return new Proxy(wrapper, {
-    set(target, prop, value, receiver) {
-      Reflect.set(target, prop, value, receiver);
+    set(_target, prop, value, receiver) {
+      Reflect.set(wrapper, prop, value, receiver);
       onMutate(wrapper[0], wrapper[1]);
       return true;
     },
-    defineProperty(target, prop, descriptor) {
-      Reflect.defineProperty(target, prop, descriptor);
+    defineProperty(_target, prop, descriptor) {
+      Reflect.defineProperty(wrapper, prop, descriptor);
       onMutate(wrapper[0], wrapper[1]);
       return true;
     },
-    deleteProperty(target, prop) {
-      Reflect.deleteProperty(target, prop);
+    deleteProperty(_target, prop) {
+      Reflect.deleteProperty(wrapper, prop);
       onMutate(wrapper[0], wrapper[1]);
       return true;
     },

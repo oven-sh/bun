@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const debug = std.debug;
 const heap = std.heap;
@@ -9,10 +9,6 @@ const testing = std.testing;
 const Output = @import("../../output.zig");
 
 pub const args = @import("clap/args.zig");
-
-test "clap" {
-    testing.refAllDecls(@This());
-}
 
 pub const ComptimeClap = @import("clap/comptime.zig").ComptimeClap;
 pub const StreamingClap = @import("clap/streaming.zig").StreamingClap;

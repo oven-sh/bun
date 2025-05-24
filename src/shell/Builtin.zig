@@ -92,7 +92,7 @@ pub const Kind = enum {
     }
 
     fn forceEnableOnPosix() bool {
-        return bun.getRuntimeFeatureFlag("BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS");
+        return bun.getRuntimeFeatureFlag(.BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS);
     }
 
     pub fn fromStr(str: []const u8) ?Builtin.Kind {
@@ -150,9 +150,7 @@ pub const BuiltinIO = struct {
 
         pub fn needsIO(this: *Output) ?OutputNeedsIOSafeGuard {
             return switch (this.*) {
-                .fd => OutputNeedsIOSafeGuard{
-                    .__i_know_what_i_am_doing_it_needs_io_yes = 0,
-                },
+                .fd => .output_needs_io,
                 else => null,
             };
         }
@@ -224,11 +222,14 @@ pub const BuiltinIO = struct {
     };
 
     const Blob = struct {
-        ref_count: usize = 1,
-        blob: bun.JSC.WebCore.Blob,
-        pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", @This().deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
 
-        fn _deinit(this: *Blob) void {
+        ref_count: RefCount,
+        blob: bun.webcore.Blob,
+
+        fn deinit(this: *Blob) void {
             this.blob.deinit();
             bun.destroy(this);
         }
@@ -301,7 +302,6 @@ pub fn init(
     cmd_local_env: *EnvMap,
     cwd: bun.FileDescriptor,
     io: *IO,
-    comptime in_cmd_subst: bool,
 ) CoroutineResult {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
         .fd => |fd| .{ .fd = fd.refSelf() },
@@ -354,23 +354,7 @@ pub fn init(
         },
     }
 
-    if (node.redirect_file) |file| brk: {
-        if (comptime in_cmd_subst) {
-            if (node.redirect.stdin) {
-                stdin = .ignore;
-            }
-
-            if (node.redirect.stdout) {
-                stdout = .ignore;
-            }
-
-            if (node.redirect.stderr) {
-                stdout = .ignore;
-            }
-
-            break :brk;
-        }
-
+    if (node.redirect_file) |file| {
         switch (file) {
             .atom => {
                 if (cmd.redirection_file.items.len == 0) {
@@ -411,7 +395,7 @@ pub fn init(
                 if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
                     const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = JSC.ArrayBuffer.Strong{
                         .array_buffer = buf,
-                        .held = JSC.Strong.create(buf.value, globalObject),
+                        .held = .create(buf.value, globalObject),
                     }, .i = 0 };
 
                     if (node.redirect.stdin) {
@@ -439,6 +423,7 @@ pub fn init(
                     defer original_blob.deinit();
 
                     const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
+                        .ref_count = .init(),
                         .blob = original_blob.dupe(),
                     });
 
@@ -463,7 +448,10 @@ pub fn init(
                         return .yield;
                     }
 
-                    const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{ .blob = blob.dupe() });
+                    const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
+                        .ref_count = .init(),
+                        .blob = blob.dupe(),
+                    });
 
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
@@ -517,7 +505,7 @@ pub inline fn parentCmdMut(this: *Builtin) *Cmd {
 
 pub fn done(this: *Builtin, exit_code: anytype) void {
     const code: ExitCode = switch (@TypeOf(exit_code)) {
-        bun.C.E => @intFromEnum(exit_code),
+        bun.sys.E => @intFromEnum(exit_code),
         u1, u8, u16 => exit_code,
         comptime_int => exit_code,
         else => @compileError("Invalid type: " ++ @typeName(@TypeOf(exit_code))),
@@ -604,7 +592,7 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
         },
         .arraybuf => {
             if (io.arraybuf.i >= io.arraybuf.buf.array_buffer.byte_len) {
-                return Maybe(usize).initErr(Syscall.Error.fromCode(bun.C.E.NOSPC, .write));
+                return Maybe(usize).initErr(bun.sys.Error.fromCode(bun.sys.E.NOSPC, .write));
             }
 
             const len = buf.len;
@@ -684,7 +672,7 @@ pub const Mv = @import("./builtin/mv.zig");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const shell = bun.shell;
 const Interpreter = shell.interpret.Interpreter;

@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const ZigStackFrame = JSC.ZigStackFrame;
 const ZigURL = @import("../../url.zig").URL;

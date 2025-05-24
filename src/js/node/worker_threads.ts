@@ -4,15 +4,39 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { Readable } = require("node:stream");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 
-const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
+const {
+  MessageChannel,
+  BroadcastChannel,
+  Worker: WebWorker,
+} = globalThis as typeof globalThis & {
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
+};
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
+const {
+  0: _workerData,
+  1: _threadId,
+  2: _receiveMessageOnPort,
+  3: environmentData,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
+  unknown,
+  number,
+  (port: unknown) => unknown,
+  Map<unknown, unknown>,
+];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
+
+// Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
+// after their Worker exits
+let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -127,7 +151,7 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return postMessage(...args);
+      return postMessage.$apply(null, args);
     },
   });
 
@@ -179,12 +203,16 @@ function fakeParentPort() {
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
-function getEnvironmentData() {
-  return process.env;
+function getEnvironmentData(key: unknown): unknown {
+  return environmentData.get(key);
 }
 
-function setEnvironmentData(env: any) {
-  process.env = env;
+function setEnvironmentData(key: unknown, value: unknown): void {
+  if (value === undefined) {
+    environmentData.delete(key);
+  } else {
+    environmentData.set(key, value);
+  }
 }
 
 function markAsUntransferable() {
@@ -217,6 +245,8 @@ class Worker extends EventEmitter {
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
       if (options[builtinsGeneratorHatesEval]) {
+        // TODO: consider doing this step in native code and letting the Blob be cleaned up by the
+        // C++ Worker object's destructor
         const blob = new Blob([filename], { type: "" });
         this.#urlToRevoke = filename = URL.createObjectURL(blob);
       } else {
@@ -224,10 +254,9 @@ class Worker extends EventEmitter {
         // we convert the code to a blob, it will succeed.
         this.#urlToRevoke = filename;
       }
-      delete options[builtinsGeneratorHatesEval];
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
@@ -241,10 +270,12 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
     if (this.#urlToRevoke) {
-      const url = this.#urlToRevoke;
-      new FinalizationRegistry(url => {
-        URL.revokeObjectURL(url);
-      }).register(this.#worker, url);
+      if (!urlRevokeRegistry) {
+        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
+          URL.revokeObjectURL(url);
+        });
+      }
+      urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
   }
 
@@ -288,7 +319,16 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate() {
+  terminate(callback: unknown) {
+    if (typeof callback === "function") {
+      process.emitWarning(
+        "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
+        "DeprecationWarning",
+        "DEP0132",
+      );
+      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+    }
+
     const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
@@ -308,7 +348,12 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
-    return this.#worker.postMessage(...args);
+    return this.#worker.postMessage.$apply(this.#worker, args);
+  }
+
+  getHeapSnapshot(options: unknown) {
+    const stringPromise = this.#worker.getHeapSnapshot(options);
+    return stringPromise.then(s => new HeapSnapshotStream(s));
   }
 
   #onClose(e) {
@@ -318,7 +363,9 @@ class Worker extends EventEmitter {
 
   #onError(event: ErrorEvent) {
     let error = event?.error;
-    if (!error) {
+    // if the thrown value serialized successfully, the message will be empty
+    // if not the message is the actual error
+    if (event.message !== "") {
       error = new Error(event.message, { cause: event });
       const stack = event?.stack;
       if (stack) {
@@ -341,9 +388,22 @@ class Worker extends EventEmitter {
   #onOpen() {
     this.emit("online");
   }
+}
 
-  async getHeapSnapshot() {
-    throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
+class HeapSnapshotStream extends Readable {
+  #json: string | undefined;
+
+  constructor(json: string) {
+    super();
+    this.#json = json;
+  }
+
+  _read() {
+    if (this.#json !== undefined) {
+      this.push(this.#json);
+      this.push(null);
+      this.#json = undefined;
+    }
   }
 }
 

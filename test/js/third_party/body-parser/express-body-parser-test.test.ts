@@ -4,7 +4,7 @@
 import { json } from "body-parser";
 import { expect, test } from "bun:test";
 import express, { Application, Request, Response } from "express";
-
+import net from "net";
 // Express uses iconv-lite
 test("iconv works", () => {
   var iconv = require("iconv-lite");
@@ -72,4 +72,75 @@ test("httpServer", async () => {
   expect(resp.status).toBe(200);
 
   expect(reached).toBe(true);
+});
+
+test("GET with body-parser", async () => {
+  const app = express();
+
+  app.use(express.json());
+  app.get("/", (req, res) => {
+    expect(req.body).toEqual({ "name": "John Doe", "email": "john.doe@example.com" });
+    req.res.send("Hello World!");
+  });
+
+  function doGet(hostname, port) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = net.createConnection(port, hostname);
+    const payload = Buffer.from(JSON.stringify({ "name": "John Doe", "email": "john.doe@example.com" }));
+    socket.write(`GET / HTTP/1.1\r\n`);
+    socket.write(`Host: ${hostname}\r\n`);
+    socket.write(`Content-Length: ${payload.byteLength}\r\n`);
+    socket.write(`Content-Type: application/json\r\n`);
+    socket.write(`Connection: close\r\n`);
+    socket.write(`\r\n`);
+    socket.write(payload);
+    const body = [];
+    socket.on("data", data => {
+      body.push(data);
+    });
+    socket.on("end", () => {
+      const response = Buffer.concat(body).toString();
+
+      const parts = response.split("\r\n\r\n");
+      const headers = parts[0]
+        ?.trim()
+        ?.split("\r\n")
+        ?.reduce((acc, line, index) => {
+          if (index === 0) {
+            acc["status"] = Number(line.split(" ")[1]);
+          } else {
+            const [key, value] = line.split(": ");
+            acc[key?.toLowerCase()] = value;
+          }
+          return acc;
+        }, {});
+
+      resolve({ headers, body: parts[1] });
+      socket.end();
+    });
+    socket.on("error", reject);
+    return promise;
+  }
+
+  const { promise: listening, resolve, reject } = Promise.withResolvers();
+
+  const server = app.listen(0, async (...args) => {
+    const [err, hostname, port] = args;
+    if (err) {
+      reject(err);
+      return;
+    }
+    resolve({ hostname, port });
+  });
+
+  try {
+    const { hostname, port } = await listening;
+
+    const { headers, body } = await doGet(hostname, port);
+    expect(headers["status"]).toBe(200);
+    expect(headers["content-length"]).toBe("12");
+    expect(body).toBe("Hello World!");
+  } finally {
+    server.close();
+  }
 });

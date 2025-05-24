@@ -50,9 +50,14 @@ jobs:
             exit 1
           fi
 
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/c-ares/c-ares/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/c-ares/c-ares/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
+          if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+            exit 1
+          fi
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/c-ares/c-ares/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
             exit 1
           fi
 

@@ -1,3 +1,10 @@
+/**
+ * This file is loaded in every test file in the repository.
+ *
+ * Avoid adding external dependencies here so that we can still run some tests
+ * without always needing to run `bun install` in development.
+ */
+
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { fork, ChildProcess } from "child_process";
@@ -6,7 +13,6 @@ import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import detectLibc from "detect-libc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -19,7 +25,14 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
-export const libcFamily = detectLibc.familySync() as "glibc" | "musl";
+export const libcFamily: "glibc" | "musl" =
+  process.platform !== "linux"
+    ? "glibc"
+    : // process.report.getReport() has incorrect type definitions.
+      (process.report.getReport() as any).header.glibcVersionRuntime
+      ? "glibc"
+      : "musl";
+
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
@@ -31,6 +44,7 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
+export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -48,6 +62,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
 };
 
 const ciEnv = { ...bunEnv };
+
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+}
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
@@ -187,6 +205,28 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+export function makeTreeSync(base: string, tree: DirectoryTree) {
+  const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
+    typeof value === "object" && value && typeof value?.byteLength === "undefined";
+
+  for (const [name, raw_contents] of Object.entries(tree)) {
+    const contents = (typeof raw_contents === "function" ? raw_contents({ root: base }) : raw_contents) as string;
+    const joined = join(base, name);
+    if (name.includes("/")) {
+      const dir = dirname(name);
+      if (dir !== name && dir !== ".") {
+        fs.mkdirSync(join(base, dir), { recursive: true });
+      }
+    }
+    if (isDirectoryTree(contents)) {
+      fs.mkdirSync(joined);
+      makeTreeSync(joined, contents);
+      continue;
+    }
+    fs.writeFileSync(joined, contents);
+  }
+}
+
 /**
  * Recursively create files within a new temporary directory.
  *
@@ -206,11 +246,11 @@ export async function makeTree(base: string, tree: DirectoryTree) {
  */
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTree(base, files);
+  makeTreeSync(base, files);
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string>) {
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -875,6 +915,7 @@ export function osSlashes(path: string) {
 }
 
 import * as child_process from "node:child_process";
+import { basename } from "node:path";
 
 class WriteBlockedError extends Error {
   constructor(time) {
@@ -1495,7 +1536,7 @@ export class VerdaccioRegistry {
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun") || bunExe(),
+      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
     });
 
     this.process.stderr?.on("data", data => {

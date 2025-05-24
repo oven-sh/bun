@@ -233,7 +233,11 @@ describe("`bun pm audit`", () => {
             "@foo/baz": ["@foo/baz@1.0.0", "", {}, fakeIntegrity],
           },
         }),
-        ".npmrc": [`registry=https://registry.npmjs.org`, `@foo:registry=https://my-registry.example.com`].join("\n"),
+        //prettier-ignore
+        ".npmrc": [
+          `registry=https://registry.npmjs.org`,
+          `@foo:registry=https://my-registry.example.com`,
+        ].join("\n"),
       },
       fn: async ({ stdout }) => {
         const out = await stdout;

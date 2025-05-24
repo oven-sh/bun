@@ -118,13 +118,19 @@ pub const AuditCommand = struct {
 
 fn printSkippedPackages(skipped_packages: std.ArrayList([]const u8)) void {
     if (skipped_packages.items.len > 0) {
-        Output.prettyln("", .{});
-        Output.pretty("Skipping ", .{});
+        Output.pretty("<d>Skipped<r> ", .{});
         for (skipped_packages.items, 0..) |package_name, i| {
             if (i > 0) Output.pretty(", ", .{});
             Output.pretty("{s}", .{package_name});
         }
-        Output.prettyln(" because they do not come from the default registry", .{});
+
+        if (skipped_packages.items.len > 1) {
+            Output.prettyln(" <d>because they do not come from the default registry<r>", .{});
+        } else {
+            Output.prettyln(" <d>because it does not come from the default registry<r>", .{});
+        }
+
+        Output.prettyln("", .{});
     }
 }
 
@@ -194,11 +200,8 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bu
 
         const name_slice = name.slice(buf);
 
-        // Check if this package comes from the default registry
         const package_scope = pm.scopeForPackageName(name_slice);
-        const Registry = @import("../install/npm.zig").Registry;
-        if (package_scope.url_hash != Registry.default_url_hash) {
-            // This package comes from an external registry, skip it
+        if (package_scope.url_hash != pm.options.scope.url_hash) {
             try skipped_packages.append(try allocator.dupe(u8, name_slice));
             continue;
         }

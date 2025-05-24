@@ -247,4 +247,44 @@ describe("`bun pm audit`", () => {
       },
     },
   );
+
+  doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {
+    exitCode: 1,
+    files: {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        workspaces: ["a"],
+      }),
+
+      "a/package.json": JSON.stringify({
+        "name": "a",
+        "dependencies": {
+          "ms": "0.7.0",
+        },
+      }),
+
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "bun-audit-playground",
+          },
+          "a": {
+            "name": "a",
+            "dependencies": {
+              "ms": "0.7.0",
+            },
+          },
+        },
+        "packages": {
+          "a": ["a@workspace:a"],
+          "ms": ["ms@0.7.0", "", {}, fakeIntegrity],
+        },
+      }),
+    },
+    fn: async ({ stdout }) => {
+      expect(await stdout).toInclude("workspace:a › ms");
+    },
+  });
 });

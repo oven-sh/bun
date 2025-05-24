@@ -242,7 +242,7 @@ describe("`bun pm audit`", () => {
       fn: async ({ stdout }) => {
         const out = await stdout;
 
-        expect(out).toContain("Skipping @foo/bar, @foo/baz because they do not come from the default registry");
+        expect(out).toContain("Skipped @foo/bar, @foo/baz because they do not come from the default registry");
         expect(out).toContain("No vulnerabilities found");
       },
     },

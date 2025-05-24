@@ -477,7 +477,7 @@ fn findDependencyPaths(
             var trace = current;
             while (true) {
                 try path.path.insert(0, try allocator.dupe(u8, trace.*));
-                if (parent_map.get(trace)) |parent| {
+                if (parent_map.get(trace.*)) |parent| {
                     trace = parent;
                 } else {
                     break;

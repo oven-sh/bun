@@ -24,6 +24,7 @@ beforeAll(() => {
       const fixture = resolveBulkAdvisoryFixture(body);
 
       if (!fixture) {
+        console.log("No fixture found for", body);
         return new Response("No fixture found", { status: 404 });
       }
 
@@ -47,8 +48,6 @@ function doAuditTest(
 ) {
   test(label, async () => {
     const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
-
-    console.log("DIR", dir);
 
     const cmd = [bunExe(), "pm", "audit", ...(options.args ?? [])];
 
@@ -154,15 +153,25 @@ describe("`bun pm audit`", () => {
     },
   });
 
-  doAuditTest("should print valid JSON only when --json is passed", {
+  doAuditTest("should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities", {
+    exitCode: 0,
+    files: fixture("safe-is-number@7"),
+    args: ["--json"],
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      const json = JSON.parse(out); // this would throw making the test fail if the JSON was invalid
+      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout-report-no-vulnerabilities");
+    },
+  });
+
+  doAuditTest("should print valid JSON and exit 0 when --json is passed and there are vulnerabilities", {
     exitCode: 0,
     files: fixture("express@3"),
     args: ["--json"],
     fn: async ({ stdout }) => {
       const out = await stdout;
       const json = JSON.parse(out); // this would throw making the test fail if the JSON was invalid
-
-      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout");
+      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout-report-vulnerabilities");
     },
   });
 

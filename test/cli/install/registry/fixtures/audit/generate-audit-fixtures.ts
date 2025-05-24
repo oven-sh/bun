@@ -12,7 +12,9 @@ const packages = await Array.fromAsync(
 
 const absolutes = packages.map(p => path.resolve(import.meta.dirname, p));
 
-const result: Record<string, string> = {};
+const result: Record<string, unknown> = {
+  "{}": {},
+};
 
 for (const packageJsonPath of absolutes) {
   const directory = path.dirname(packageJsonPath);

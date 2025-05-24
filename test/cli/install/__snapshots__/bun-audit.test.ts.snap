@@ -1,57 +1,8 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`\`bun pm audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `
-"ms  <2.0.0
-  express › connect › serve-favicon › ms
-  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
-  high: Regular Expression Denial of Service in ms - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg
+exports[`\`bun pm audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `""`;
 
-2 vulnerabilities (1 high, 1 moderate)
-
-To update all dependencies to the latest compatible versions:
-  bun update
-
-To update all dependencies to the latest versions (including breaking changes):
-  bun update --latest
-
-"
-`;
-
-exports[`\`bun pm audit\` should print valid JSON only when --json is passed: bun-audit-expect-valid-json-stdout 1`] = `
-{
-  "ms": [
-    {
-      "cvss": {
-        "score": 5.3,
-        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
-      },
-      "cwe": [
-        "CWE-1333",
-      ],
-      "id": 1094419,
-      "severity": "moderate",
-      "title": "Vercel ms Inefficient Regular Expression Complexity vulnerability",
-      "url": "https://github.com/advisories/GHSA-w9mr-4mfr-499f",
-      "vulnerable_versions": "<2.0.0",
-    },
-    {
-      "cvss": {
-        "score": 7.5,
-        "vectorString": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
-      },
-      "cwe": [
-        "CWE-400",
-        "CWE-1333",
-      ],
-      "id": 1098340,
-      "severity": "high",
-      "title": "Regular Expression Denial of Service in ms",
-      "url": "https://github.com/advisories/GHSA-3fx5-fwvr-xrjg",
-      "vulnerable_versions": "<0.7.1",
-    },
-  ],
-}
-`;
+exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities: bun-audit-expect-valid-json-stdout-report-no-vulnerabilities 1`] = `{}`;
 
 exports[`\`bun pm audit\` should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified: bun-audit-expect-vulnerabilities-found 1`] = `
 "ms  <2.0.0

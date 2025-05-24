@@ -66,7 +66,12 @@ pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
+pub export fn Request__clone(this: *Request, globalThis: *JSC.JSGlobalObject) *Request {
+    return this.clone(bun.default_allocator, globalThis);
+}
+
 comptime {
+    _ = Request__clone;
     _ = Request__getUWSRequest;
     _ = Request__setInternalEventCallback;
     _ = Request__setTimeout;

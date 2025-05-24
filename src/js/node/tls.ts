@@ -309,6 +309,10 @@ function TLSSocket(socket?, options?) {
 
   options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
 
+  if (options.lookup !== undefined && typeof options.lookup !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("options.lookup", "function", options.lookup);
+  }
+
   NetSocket.$call(this, options);
 
   if (typeof options === "object") {

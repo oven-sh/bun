@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import { expectAssignable, expectType } from "./utilities";
 
-// FileBlob
+// BunFile
 expectType<ReadableStream<Uint8Array>>(Bun.file("index.test-d.ts").stream());
 expectType<Promise<ArrayBuffer>>(Bun.file("index.test-d.ts").arrayBuffer());
 expectType<Promise<Uint8Array>>(Bun.file("index.test-d.ts").bytes());

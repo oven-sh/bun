@@ -1,4 +1,4 @@
-import type { BunFile, BunPlugin, FileBlob } from "bun";
+import type { BunFile, BunPlugin } from "bun";
 import * as tsd from "./utilities";
 {
   const _plugin: BunPlugin = {
@@ -32,7 +32,6 @@ import * as tsd from "./utilities";
 {
   const f = Bun.file("asdf");
   tsd.expectType<BunFile>(f);
-  tsd.expectType<FileBlob>(f);
 }
 {
   Bun.spawn(["anything"], {

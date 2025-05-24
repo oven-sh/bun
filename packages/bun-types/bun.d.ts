@@ -14,39 +14,24 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
+  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
+  type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
+  type Transferable = ArrayBuffer | MessagePort;
+  type Encoding = "utf-8" | "windows-1252" | "utf-16";
+  type FormDataEntryValue = File | string;
+  type BlobPart = string | Blob | BufferSource;
+  type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     | NodeJS.TypedArray<TArrayBuffer>
     | DataView<TArrayBuffer>;
-  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
-  type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
-  type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
-  type ReadableStreamDefaultReadResult<T> =
-    | ReadableStreamDefaultReadValueResult<T>
-    | ReadableStreamDefaultReadDoneResult;
-  type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
-  type Transferable = ArrayBuffer | MessagePort;
-  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
-  type Encoding = "utf-8" | "windows-1252" | "utf-16";
-  type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
-  type MultipleResolveType = "resolve" | "reject";
-  type BeforeExitListener = (code: number) => void;
-  type DisconnectListener = () => void;
-  type ExitListener = (code: number) => void;
-  type RejectionHandledListener = (promise: Promise<unknown>) => void;
-  type FormDataEntryValue = File | string;
-  type WarningListener = (warning: Error) => void;
-  type MessageListener = (message: unknown, sendHandle: unknown) => void;
-  type SignalsListener = (signal: NodeJS.Signals) => void;
-  type BlobPart = string | Blob | BufferSource;
-  type TimerHandler = (...args: any[]) => void;
-  type DOMHighResTimeStamp = number;
-  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
-  type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
   namespace __internal {
+    /**
+     * Like regular Omit, but distributes over unions
+     */
+    type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
+
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
     /**
@@ -69,37 +54,6 @@ declare module "bun" {
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
   }
 
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type Platform =
-    | "aix"
-    | "android"
-    | "darwin"
-    | "freebsd"
-    | "haiku"
-    | "linux"
-    | "openbsd"
-    | "sunos"
-    | "win32"
-    | "cygwin"
-    | "netbsd";
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
-
-  /**
-   * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
-   * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
-   *
-   * @deprecated This type is unused in Bun's types and might be removed in the near future
-   */
-  type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
-
   interface ErrorEventInit extends EventInit {
     colno?: number;
     error?: any;
@@ -118,7 +72,7 @@ declare module "bun" {
     data?: T;
     lastEventId?: string;
     origin?: string;
-    source?: Bun.MessageEventSource | null;
+    source?: undefined | null;
   }
 
   interface EventInit {
@@ -145,7 +99,7 @@ declare module "bun" {
     readonly origin: string;
     /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
     readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
-    readonly source: Bun.MessageEventSource | null;
+    readonly source: undefined | null;
   }
 
   type MessageEvent<T = any> = Bun.__internal.UseLibDomIfAvailable<"MessageEvent", BunMessageEvent<T>>;
@@ -321,11 +275,11 @@ declare module "bun" {
   }
 
   interface UnderlyingSourcePullCallback<R> {
-    (controller: ReadableStreamController<R>): void | PromiseLike<void>;
+    (controller: ReadableStreamDefaultController<R>): void | PromiseLike<void>;
   }
 
   interface UnderlyingSourceStartCallback<R> {
-    (controller: ReadableStreamController<R>): any;
+    (controller: ReadableStreamDefaultController<R>): any;
   }
 
   interface GenericTransformStream {
@@ -1177,7 +1131,6 @@ declare module "bun" {
     ttl: number;
   }
 
-  interface FileBlob extends BunFile {}
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
@@ -4114,11 +4067,11 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
    */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })

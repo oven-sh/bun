@@ -27,14 +27,7 @@ beforeAll(() => {
         return new Response("No fixture found", { status: 404 });
       }
 
-      const compressed = Bun.gzipSync(JSON.stringify(fixture));
-      return new Response(compressed, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Encoding": "gzip",
-        },
-      });
+      return Response.json(fixture);
     },
   });
 });
@@ -55,6 +48,8 @@ function doAuditTest(
   test(label, async () => {
     const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
+    console.log("DIR", dir);
+
     const cmd = [bunExe(), "pm", "audit", ...(options.args ?? [])];
 
     const url = server.url.toString().slice(0, -1);
@@ -66,7 +61,7 @@ function doAuditTest(
       cwd: dir,
       env: {
         ...bunEnv,
-        // NPM_CONFIG_REGISTRY: url,
+        NPM_CONFIG_REGISTRY: url,
       },
     });
 

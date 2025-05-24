@@ -1,8 +1,8 @@
-name: Update c-ares
+name: Update zstd
 
 on:
   schedule:
-    - cron: "0 4 * * 0"
+    - cron: "0 1 * * 0"
   workflow_dispatch:
 
 jobs:
@@ -15,22 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check c-ares version
+      - name: Check zstd version
         id: check-version
         run: |
           set -euo pipefail
 
           # Extract the commit hash from the line after COMMIT
-          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildCares.cmake)
+          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildZstd.cmake)
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find COMMIT line in BuildCares.cmake"
+            echo "Error: Could not find COMMIT line in BuildZstd.cmake"
             exit 1
           fi
 
           # Validate that it looks like a git hash
           if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid git hash format in BuildCares.cmake"
+            echo "Error: Invalid git hash format in BuildZstd.cmake"
             echo "Found: $CURRENT_VERSION"
             echo "Expected: 40 character hexadecimal string"
             exit 1
@@ -38,7 +38,7 @@ jobs:
 
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
-          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/c-ares/c-ares/releases/latest)
+          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/facebook/zstd/releases/latest)
           if [ -z "$LATEST_RELEASE" ]; then
             echo "Error: Failed to fetch latest release from GitHub API"
             exit 1
@@ -50,12 +50,12 @@ jobs:
             exit 1
           fi
 
-          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/c-ares/c-ares/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
+          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/facebook/zstd/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
           if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/c-ares/c-ares/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/facebook/zstd/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
           if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
             exit 1
@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           # Handle multi-line format where COMMIT and its value are on separate lines
-          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildCares.cmake
+          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildZstd.cmake
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
@@ -84,16 +84,16 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
-            cmake/targets/BuildCares.cmake
-          commit-message: "deps: update c-ares to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
-          title: "deps: update c-ares to ${{ steps.check-version.outputs.tag }}"
+            cmake/targets/BuildZstd.cmake
+          commit-message: "deps: update zstd to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+          title: "deps: update zstd to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-cares-${{ github.run_number }}
+          branch: deps/update-zstd-${{ github.run_number }}
           body: |
             ## What does this PR do?
 
-            Updates c-ares to version ${{ steps.check-version.outputs.tag }}
+            Updates zstd to version ${{ steps.check-version.outputs.tag }}
 
-            Compare: https://github.com/c-ares/c-ares/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+            Compare: https://github.com/facebook/zstd/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
 
-            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-cares.yml)
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-zstd.yml)

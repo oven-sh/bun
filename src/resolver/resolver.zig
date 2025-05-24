@@ -886,7 +886,7 @@ pub const Resolver = struct {
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
-        if (bun.strings.indexOfChar(import_path, 0) != null) {
+        if (bun.strings.containsChar(import_path, 0)) {
             r.flushDebugLogs(.fail) catch {};
             return .{ .not_found = {} };
         }
@@ -1823,11 +1823,11 @@ pub const Resolver = struct {
                         };
 
                         if (pkg_dir_info.package_json) |package_json| {
-                            if (package_json.exports) |exports_map| {
+                            if (package_json.exports) |*exports_map| {
 
                                 // The condition set is determined by the kind of import
                                 var module_type = package_json.module_type;
-                                var esmodule = ESModule{
+                                const esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
                                         ast.ImportKind.at, ast.ImportKind.at_conditional => r.opts.conditions.style,

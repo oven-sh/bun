@@ -18,7 +18,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 
 var defaultMaxListeners = 10;
 
-// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
+// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
 const EventEmitter = function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
@@ -53,22 +53,21 @@ function emitError(emitter, args) {
   if (!events) throw args[0];
   var errorMonitor = events[kErrorMonitor];
   if (errorMonitor) {
-    for (var handler of ArrayPrototypeSlice.$call(errorMonitor)) {
-      handler.$apply(emitter, args);
+    for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
+      handler.apply(emitter, args);
     }
   }
   var handlers = events.error;
   if (!handlers) throw args[0];
-  for (var handler of ArrayPrototypeSlice.$call(handlers)) {
-    handler.$apply(emitter, args);
+  for (var handler of ArrayPrototypeSlice.call(handlers)) {
+    handler.apply(emitter, args);
   }
   return true;
 }
 
 function addCatch(emitter, promise, type, args) {
   promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+    queueMicrotask(() => emitUnhandledRejectionOrErr(emitter, err, type, args));
   });
 }
 
@@ -105,19 +104,19 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
     // For performance reasons Function.call(...) is used whenever possible.
     switch (args.length) {
       case 0:
-        handler.$call(this);
+        handler.call(this);
         break;
       case 1:
-        handler.$call(this, args[0]);
+        handler.call(this, args[0]);
         break;
       case 2:
-        handler.$call(this, args[0], args[1]);
+        handler.call(this, args[0], args[1]);
         break;
       case 3:
-        handler.$call(this, args[0], args[1], args[2]);
+        handler.call(this, args[0], args[1], args[2]);
         break;
       default:
-        handler.$apply(this, args);
+        handler.apply(this, args);
         break;
     }
   }
@@ -142,22 +141,22 @@ const emitWithRejectionCapture = function emit(type, ...args) {
     // For performance reasons Function.call(...) is used whenever possible.
     switch (args.length) {
       case 0:
-        result = handler.$call(this);
+        result = handler.call(this);
         break;
       case 1:
-        result = handler.$call(this, args[0]);
+        result = handler.call(this, args[0]);
         break;
       case 2:
-        result = handler.$call(this, args[0], args[1]);
+        result = handler.call(this, args[0], args[1]);
         break;
       case 3:
-        result = handler.$call(this, args[0], args[1], args[2]);
+        result = handler.call(this, args[0], args[1], args[2]);
         break;
       default:
-        result = handler.$apply(this, args);
+        result = handler.apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && typeof result?.then === "function" && result.then === Promise.prototype.then) {
       addCatch(this, result, type, args);
     }
   }
@@ -224,12 +223,12 @@ function overflowWarning(emitter, type, handlers) {
   warn.emitter = emitter;
   warn.type = type;
   warn.count = handlers.length;
-  process.emitWarning(warn);
+  console.warn(warn);
 }
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
-  listener.$apply(this, args);
+  listener.apply(this, args);
 }
 
 EventEmitterPrototype.once = function once(type, fn) {

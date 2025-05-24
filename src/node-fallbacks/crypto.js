@@ -1,4 +1,4 @@
-import cryptoBrowserify from "crypto-browserify";
+import * as cryptoBrowserify from "crypto-browserify";
 
 export const prng = cryptoBrowserify.prng;
 export const pseudoRandomBytes = cryptoBrowserify.pseudoRandomBytes;

@@ -686,7 +686,7 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
-              compileArgv && compileArgv.length ? `--compile-argv=${compileArgv.join(" ")}` : [],
+              compileArgv && compileArgv.length ? ["--compile-exec-argv", ...compileArgv] : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

@@ -1023,22 +1023,22 @@ pub const Arguments = struct {
                 }
                 ctx.bundler_options.windows_icon = path;
             }
-            if (args.option("--compile-argv")) |argstr| {
+            if (args.flag("--compile-exec-argv")) {
                 if (!ctx.bundler_options.compile) {
-                    Output.errGeneric("--compile-argv requires --compile", .{});
+                    Output.errGeneric("--compile-exec-argv requires --compile", .{});
                     Global.crash();
                 }
-                var splitter = std.mem.splitScalar(u8, argstr, ' ');
-                var count: usize = 0;
-                while (splitter.next() != null) count += 1;
-                var arr = try allocator.alloc([:0]const u8, count);
-                splitter = std.mem.splitScalar(u8, argstr, ' ');
-                var i: usize = 0;
-                while (splitter.next()) |part| {
-                    arr[i] = try allocator.dupeZ(u8, part);
-                    i += 1;
+                // Parse remaining arguments for compile execution
+                const remaining_args = ctx.passthrough;
+                if (remaining_args.len > 0) {
+                    var arr = try allocator.alloc([:0]const u8, remaining_args.len);
+                    for (remaining_args, 0..) |arg, i| {
+                        arr[i] = try allocator.dupeZ(u8, arg);
+                    }
+                    ctx.bundler_options.compile_argv = arr;
+                    // Clear passthrough args since we consumed them
+                    ctx.passthrough = &.{};
                 }
-                ctx.bundler_options.compile_argv = arr;
             }
 
             if (args.option("--outdir")) |outdir| {

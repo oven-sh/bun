@@ -282,7 +282,7 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
         *outOffset = "(function () {\n"_s.length();
 
-        if (UNLIKELY(!program)) {
+        if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -308,7 +308,7 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
         program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
         *outOffset = "(function ("_s.length() + paramString.length() + ") {\n"_s.length();
 
-        if (UNLIKELY(!program)) {
+        if (!program) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
@@ -358,7 +358,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
     RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, executable, source);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(!bytecode)) {
+    if (!bytecode) [[unlikely]] {
         return throwVMError(globalObject, scope, "createCachedData failed"_s);
     }
 
@@ -1012,7 +1012,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue contextArg = callFrame->argument(0);
-    if (contextArg.isUndefinedOrNull()) {
+    if (contextArg.isUndefined()) {
         contextArg = JSC::constructEmptyObject(globalObject);
     }
 

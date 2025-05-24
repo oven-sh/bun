@@ -4,8 +4,8 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { Readable } = require("node:stream");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
-const { validateObject, validateBoolean } = require("internal/validators");
 
 const {
   MessageChannel,
@@ -233,7 +233,6 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
-  #isRunning = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -321,7 +320,6 @@ class Worker extends EventEmitter {
   }
 
   terminate(callback: unknown) {
-    this.#isRunning = false;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
@@ -353,14 +351,17 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
+  getHeapSnapshot(options: unknown) {
+    const stringPromise = this.#worker.getHeapSnapshot(options);
+    return stringPromise.then(s => new HeapSnapshotStream(s));
+  }
+
   #onClose(e) {
-    this.#isRunning = false;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
-    this.#isRunning = false;
     let error = event?.error;
     // if the thrown value serialized successfully, the message will be empty
     // if not the message is the actual error
@@ -385,23 +386,24 @@ class Worker extends EventEmitter {
   }
 
   #onOpen() {
-    this.#isRunning = true;
     this.emit("online");
   }
+}
 
-  getHeapSnapshot(options: any) {
-    if (options !== undefined) {
-      // These errors must be thrown synchronously.
-      validateObject(options, "options");
-      validateBoolean(options.exposeInternals, "options.exposeInternals");
-      validateBoolean(options.exposeNumericValues, "options.exposeNumericValues");
+class HeapSnapshotStream extends Readable {
+  #json: string | undefined;
+
+  constructor(json: string) {
+    super();
+    this.#json = json;
+  }
+
+  _read() {
+    if (this.#json !== undefined) {
+      this.push(this.#json);
+      this.push(null);
+      this.#json = undefined;
     }
-    if (!this.#isRunning) {
-      const err = new Error("Worker instance not running");
-      err.code = "ERR_WORKER_NOT_RUNNING";
-      return Promise.$reject(err);
-    }
-    throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
   }
 }
 

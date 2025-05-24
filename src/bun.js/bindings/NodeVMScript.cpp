@@ -92,7 +92,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
-    if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
+    if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
@@ -345,7 +345,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     script->setSigintReceived(false);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -363,7 +363,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -407,7 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     script->setSigintReceived(false);
 
-    if (UNLIKELY(exception)) {
+    if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
             return {};
         }
@@ -425,7 +425,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -439,7 +439,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -456,7 +456,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -469,7 +469,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -490,7 +490,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -505,7 +505,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
-    if (UNLIKELY(!script)) {
+    if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
@@ -533,11 +533,11 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    if (!contextObjectValue || contextObjectValue.isUndefinedOrNull()) {
+    if (contextObjectValue.isUndefined()) {
         contextObjectValue = JSC::constructEmptyObject(globalObject);
     }
 
-    if (UNLIKELY(!contextObjectValue || !contextObjectValue.isObject())) {
+    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
@@ -625,12 +625,14 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
 
         if (JSValue displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s))) {
             RETURN_IF_EXCEPTION(scope, false);
-            if (!displayErrorsOpt.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
-                return false;
+            if (!displayErrorsOpt.isUndefined()) {
+                if (!displayErrorsOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.displayErrors"_s, "boolean"_s, displayErrorsOpt);
+                    return false;
+                }
+                this->displayErrors = displayErrorsOpt.asBoolean();
+                any = true;
             }
-            this->displayErrors = displayErrorsOpt.asBoolean();
-            any = true;
         }
 
         if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
@@ -640,12 +642,14 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
 
         if (JSValue breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s))) {
             RETURN_IF_EXCEPTION(scope, false);
-            if (!breakOnSigintOpt.isBoolean()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
-                return false;
+            if (!breakOnSigintOpt.isUndefined()) {
+                if (!breakOnSigintOpt.isBoolean()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.breakOnSigint"_s, "boolean"_s, breakOnSigintOpt);
+                    return false;
+                }
+                this->breakOnSigint = breakOnSigintOpt.asBoolean();
+                any = true;
             }
-            this->breakOnSigint = breakOnSigintOpt.asBoolean();
-            any = true;
         }
     }
 

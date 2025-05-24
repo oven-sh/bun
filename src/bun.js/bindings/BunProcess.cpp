@@ -875,8 +875,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
-static std::optional<HashMap<String, int>> signalNameToNumberMap;
-static std::optional<HashMap<int, String>> signalNumberToNameMap;
+static HashMap<int, String>* signalNumberToNameMap = nullptr;
+static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
 struct SignalHandleValue {
@@ -931,7 +931,7 @@ static void loadSignalNumberMap()
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
-        signalNameToNumberMap.emplace();
+        signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
         // libuv supported signals
@@ -1172,7 +1172,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
             auto signalNames = getSignalNames();
-            signalNumberToNameMap.emplace();
+            signalNumberToNameMap = new HashMap<int, String>();
             signalNumberToNameMap->reserveInitialCapacity(31);
             signalNumberToNameMap->add(SIGHUP, signalNames[0]);
             signalNumberToNameMap->add(SIGINT, signalNames[1]);

@@ -120,7 +120,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 `SocketAddress` class not exposed (but implemented). `BlockList` exists but is a no-op.
+🟢 Fully implemented.
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 

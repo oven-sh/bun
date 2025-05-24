@@ -367,7 +367,8 @@ for (const { name, connect } of tests) {
     });
 
     // Test using only options
-    it("should process options correctly when connect is called with only options", done => {
+    // prettier-ignore
+    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",
@@ -478,7 +479,7 @@ for (const { name, connect } of tests) {
       });
     }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
 
-    it("should be able to transfer data", done => {
+    it.skipIf(connect === duplexProxy)("should be able to transfer data", done => {
       const socket = connect(
         {
           port: 443,

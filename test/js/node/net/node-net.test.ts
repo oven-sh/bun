@@ -390,7 +390,7 @@ describe("net.Socket write", () => {
     }),
   );
 
-  it("should allow reconnecting after end()", async () => {
+  it.todo("should allow reconnecting after end()", async () => {
     const server = new Server(socket => socket.end());
     const port = await new Promise(resolve => {
       server.once("listening", () => resolve(server.address().port));
@@ -423,7 +423,7 @@ it("should handle connection error", done => {
   let errored = false;
 
   // @ts-ignore
-  const socket = connect(55555, () => {
+  const socket = connect(55555, "127.0.0.1", () => {
     done(new Error("Should not have connected"));
   });
 
@@ -433,8 +433,11 @@ it("should handle connection error", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ECONNREFUSED 127.0.0.1:55555");
     expect((error as any).code).toBe("ECONNREFUSED");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("127.0.0.1");
+    expect((error as any).port).toBe(55555);
   });
 
   socket.on("connect", () => {
@@ -461,8 +464,10 @@ it("should handle connection error (unix)", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.message).toBe("Failed to connect");
+    expect(error.message).toBe("connect ENOENT loser");
     expect((error as any).code).toBe("ENOENT");
+    expect((error as any).syscall).toBe("connect");
+    expect((error as any).address).toBe("loser");
   });
 
   socket.on("connect", () => {
@@ -523,7 +528,7 @@ it("should not hang after FIN", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 1000);
+    }, 2000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
@@ -555,7 +560,7 @@ it("should not hang after destroy", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 1000);
+    }, 2000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {

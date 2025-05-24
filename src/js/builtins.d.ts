@@ -787,6 +787,12 @@ declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, invalidIndex: number | -1): TypeError;
+declare function $ERR_VM_MODULE_STATUS(reason: string): Error;
+declare function $ERR_VM_MODULE_ALREADY_LINKED(): Error;
+declare function $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA(): Error;
+declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
+declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
+declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 
 /**
  * Convert a function to a class-like object.

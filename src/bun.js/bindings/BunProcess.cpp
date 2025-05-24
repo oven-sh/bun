@@ -875,8 +875,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
-static HashMap<String, int>* signalNameToNumberMap = nullptr;
 static HashMap<int, String>* signalNumberToNameMap = nullptr;
+static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
 struct SignalHandleValue {
@@ -1143,7 +1143,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 {
     if (Bun__isMainThreadVM()) {
         // IPC handlers
-        if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
+        if (eventName == "message" || eventName == "disconnect") {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);

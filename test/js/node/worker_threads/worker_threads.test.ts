@@ -440,21 +440,26 @@ describe("stdio", () => {
     return promise;
   }
 
+  function overrideProcessStdio<S extends OutputStream>(which: S, stream: Readable): Disposable {
+    const originalStream = process[which];
+    // stream is missing the `fd` property that the real process streams have, but we
+    // don't need it
+    // @ts-expect-error
+    process[which] = stream;
+    return {
+      [Symbol.dispose]() {
+        process[which] = originalStream;
+      },
+    };
+  }
+
   function captureProcessStdio<S extends OutputStream>(
     stream: S,
   ): Disposable & { data: Promise<string>; end: () => void } {
-    const originalStream = process[stream];
     const [streamToInstall, streamToObserve] = duplexPair();
 
-    // streamToInstall is missing the `fd` property that the real process streams have, but we
-    // don't need it
-    // @ts-expect-error
-    process[stream] = streamToInstall;
-
     return {
-      [Symbol.dispose]() {
-        process[stream] = originalStream;
-      },
+      ...overrideProcessStdio(stream, streamToInstall),
       data: readToEnd(streamToObserve),
       end: () => streamToInstall.end(),
     };

@@ -46,8 +46,8 @@ export const isFlaky = isCI;
 export const isBroken = isCI;
 export const isASAN = basename(process.execPath).includes("bun-asan");
 
-export const bunEnv: NodeJS.ProcessEnv = {
-  ...process.env,
+export const bunEnv: NodeJS.Dict<string> = {
+  ...(process.env as NodeJS.Dict<string>),
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",

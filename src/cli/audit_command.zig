@@ -426,7 +426,7 @@ fn findDependencyPaths(
         }
     }
 
-    var queue = std.ArrayList([]const u8).init(allocator);
+    var queue: std.fifo.LinearFifo([]const u8, .Dynamic) = std.fifo.LinearFifo([]const u8, .Dynamic).init(allocator);
     defer queue.deinit();
     var visited = bun.StringHashMap(void).init(allocator);
     defer visited.deinit();
@@ -435,21 +435,19 @@ fn findDependencyPaths(
 
     if (dependency_tree.get(target_package)) |dependents| {
         for (dependents.items) |dependent| {
-            try queue.append(dependent);
+            try queue.writeItem(dependent);
             try parent_map.put(dependent, target_package);
         }
     }
 
-    while (queue.items.len > 0) {
-        const current = queue.orderedRemove(0);
-
+    while (queue.readItem()) |*current| {
         if (visited.contains(current)) continue;
         try visited.put(current, {});
 
         var is_root_dep = false;
-        for (dep_slice) |dependency| {
+        for (dep_slice) |*dependency| {
             const dep_name = dependency.name.slice(buf);
-            if (std.mem.eql(u8, dep_name, current)) {
+            if (bun.strings.eql(dep_name, current)) {
                 is_root_dep = true;
                 break;
             }
@@ -460,7 +458,7 @@ fn findDependencyPaths(
             if (resolution.tag != .workspace) continue;
 
             const workspace_dep_slice = workspace_deps.get(dependencies);
-            for (workspace_dep_slice) |dependency| {
+            for (workspace_dep_slice) |*dependency| {
                 const dep_name = dependency.name.slice(buf);
                 if (std.mem.eql(u8, dep_name, current)) {
                     workspace_name_for_dep = pkg_name.slice(buf);
@@ -496,7 +494,7 @@ fn findDependencyPaths(
             if (dependency_tree.get(current)) |dependents| {
                 for (dependents.items) |dependent| {
                     if (!visited.contains(dependent)) {
-                        try queue.append(dependent);
+                        try queue.writeItem(dependent);
                         try parent_map.put(dependent, current);
                     }
                 }

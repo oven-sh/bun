@@ -25,6 +25,10 @@ jobs:
         with:
           version: ${{ env.BUN_VERSION }}
 
+      - name: Install Claude
+        run: |
+          bun install -g @anthropic-ai/claude-code
+
       - name: Run Agent
         run: |
           bun .agent/agent.mjs triage ${{ github.event.issue.number }}

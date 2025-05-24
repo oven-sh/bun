@@ -14,7 +14,7 @@ const assert = require('assert');
   const server = createServer();
   server.listen(0, mustCall(() => {
     const port = server.address().port;
-    const url = `http://localhost:${port}`;
+    const url = `http://127.0.0.1:${port}`;
     const client = connect(url, mustCall(() => {
       const request = client.request();
       request.resume();
@@ -51,7 +51,7 @@ const assert = require('assert');
   const server = createServer();
   server.listen(0, mustCall(() => {
     const port = server.address().port;
-    const url = `http://localhost:${port}`;
+    const url = `http://127.0.0.1:${port}`;
     const client = connect(url, mustCall(() => {
       const request = client.request();
       request.resume();

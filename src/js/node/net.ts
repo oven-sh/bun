@@ -699,6 +699,8 @@ Socket.prototype.connect = function connect(...args) {
   if (socket) {
     connection = socket;
   }
+  this.connecting = true;
+
   if (fd) {
     bunConnect({
       data: this,
@@ -706,6 +708,7 @@ Socket.prototype.connect = function connect(...args) {
       socket: this[khandlers],
       allowHalfOpen: this.allowHalfOpen,
     }).catch(error => {
+      this.connecting = false;
       if (!this.destroyed) {
         this.emit("error", error);
         this.emit("close");
@@ -717,7 +720,6 @@ Socket.prototype.connect = function connect(...args) {
     process.nextTick(() => {
       this.resume();
     });
-    this.connecting = true;
   }
   if (fd) {
     return this;

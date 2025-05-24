@@ -6,9 +6,6 @@
 #include "SigintReceiver.h"
 
 #include <atomic>
-#include <mutex>
-#include <thread>
-#include <vector>
 
 namespace Bun {
 

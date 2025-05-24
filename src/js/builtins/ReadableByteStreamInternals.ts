@@ -96,9 +96,7 @@ export function isReadableByteStreamController(controller) {
 export function isReadableStreamBYOBRequest(byobRequest) {
   // Same test mechanism as in isReadableStreamDefaultController (ReadableStreamInternals.js).
   // See corresponding function for explanations.
-  return (
-    $isObject(byobRequest) && $getByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController") !== undefined
-  );
+  return $isObject(byobRequest) && !!$getByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController");
 }
 
 export function isReadableStreamBYOBReader(reader) {
@@ -371,7 +369,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
   if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
-  if (firstDescriptor!.byteLength < view.byteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
+  if (firstDescriptor!.byteLength !== view.byteLength) throw new RangeError("Invalid value for view.byteLength");
 
   firstDescriptor!.buffer = view.buffer;
   $readableByteStreamControllerRespondInternal(controller, view.byteLength);
@@ -538,7 +536,7 @@ export function readableByteStreamControllerShiftPendingDescriptor(controller): 
 export function readableByteStreamControllerInvalidateBYOBRequest(controller) {
   if ($getByIdDirectPrivate(controller, "byobRequest") === undefined) return;
   const byobRequest = $getByIdDirectPrivate(controller, "byobRequest");
-  $putByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController", null);
+  $putByIdDirectPrivate(byobRequest, "associatedReadableByteStreamController", undefined);
   $putByIdDirectPrivate(byobRequest, "view", undefined);
   $putByIdDirectPrivate(controller, "byobRequest", undefined);
 }

@@ -204,4 +204,43 @@ describe("`bun pm audit`", () => {
       },
     },
   );
+
+  const fakeIntegrity = // this is just random/fake data as the integrity check is not important for this test
+    "sha512-V8E0l1jyyeSSS9R+J9oljx5eq2rqzClInuwaPcyuv0Mm3ViI/3/rcc4rCEO8i4eQ4I0O0FAGYDA2i5xWHHPhzg==";
+
+  doAuditTest(
+    "packages that come from non-default registries should be ignored from the audit, however they should get surfaced at the bottom of the output that they got skipped",
+    {
+      exitCode: 0,
+      files: {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          dependencies: {
+            "@foo/bar": "1.0.0",
+            "@foo/baz": "1.0.0",
+          },
+        }),
+        "bun.lock": JSON.stringify({
+          "lockfileVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "test",
+            },
+          },
+          "packages": {
+            "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity],
+            "@foo/baz": ["@foo/baz@1.0.0", "", {}, fakeIntegrity],
+          },
+        }),
+        ".npmrc": [`registry=https://registry.npmjs.org`, `@foo:registry=https://my-registry.example.com`].join("\n"),
+      },
+      fn: async ({ stdout }) => {
+        const out = await stdout;
+
+        expect(out).toContain("Skipping @foo/bar, @foo/baz because they do not come from the default registry");
+        expect(out).toContain("No vulnerabilities found");
+      },
+    },
+  );
 });

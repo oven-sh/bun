@@ -84,10 +84,16 @@ pub const AuditCommand = struct {
         var dependency_tree = try buildDependencyTree(ctx.allocator, pm);
         defer dependency_tree.deinit();
 
-        const packages_json = try collectPackagesForAudit(ctx.allocator, pm);
-        defer ctx.allocator.free(packages_json);
+        const packages_result = try collectPackagesForAudit(ctx.allocator, pm);
+        defer ctx.allocator.free(packages_result.audit_body);
+        defer {
+            for (packages_result.skipped_packages.items) |package_name| {
+                ctx.allocator.free(package_name);
+            }
+            packages_result.skipped_packages.deinit();
+        }
 
-        const response_text = try sendAuditRequest(ctx.allocator, pm, packages_json);
+        const response_text = try sendAuditRequest(ctx.allocator, pm, packages_result.audit_body);
         defer ctx.allocator.free(response_text);
 
         if (json_output) {
@@ -95,13 +101,32 @@ pub const AuditCommand = struct {
             Output.writer().writeByte('\n') catch {};
             return 0;
         } else if (response_text.len > 0) {
-            return try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
+            const exit_code = try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);
+
+            printSkippedPackages(packages_result.skipped_packages);
+
+            return exit_code;
         } else {
             Output.prettyln("<green>No vulnerabilities found<r>", .{});
+
+            printSkippedPackages(packages_result.skipped_packages);
+
             return 0;
         }
     }
 };
+
+fn printSkippedPackages(skipped_packages: std.ArrayList([]const u8)) void {
+    if (skipped_packages.items.len > 0) {
+        Output.prettyln("", .{});
+        Output.pretty("Skipping ", .{});
+        for (skipped_packages.items, 0..) |package_name, i| {
+            if (i > 0) Output.pretty(", ", .{});
+            Output.pretty("{s}", .{package_name});
+        }
+        Output.prettyln(" because they do not come from the default registry", .{});
+    }
+}
 
 fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!bun.StringHashMap(std.ArrayList([]const u8)) {
     var dependency_tree = bun.StringHashMap(std.ArrayList([]const u8)).init(allocator);
@@ -139,7 +164,7 @@ fn buildDependencyTree(allocator: std.mem.Allocator, pm: *PackageManager) bun.OO
     return dependency_tree;
 }
 
-fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM![]u8 {
+fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bun.OOM!struct { audit_body: []u8, skipped_packages: std.ArrayList([]const u8) } {
     const packages = pm.lockfile.packages.slice();
     const pkg_names = packages.items(.name);
     const pkg_resolutions = packages.items(.resolution);
@@ -161,11 +186,23 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bu
         packages_list.deinit();
     }
 
+    var skipped_packages = std.ArrayList([]const u8).init(allocator);
+
     for (pkg_names, pkg_resolutions, 0..) |name, res, idx| {
         if (idx == root_id) continue;
         if (res.tag != .npm) continue;
 
         const name_slice = name.slice(buf);
+
+        // Check if this package comes from the default registry
+        const package_scope = pm.scopeForPackageName(name_slice);
+        const Registry = @import("../install/npm.zig").Registry;
+        if (package_scope.url_hash != Registry.default_url_hash) {
+            // This package comes from an external registry, skip it
+            try skipped_packages.append(try allocator.dupe(u8, name_slice));
+            continue;
+        }
+
         const ver_str = try std.fmt.allocPrint(allocator, "{}", .{res.value.npm.version.fmt(buf)});
 
         var found_package: ?*@TypeOf(packages_list.items[0]) = null;
@@ -219,7 +256,10 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager) bu
     }
     body.appendChar('}') catch {};
 
-    return try allocator.dupe(u8, body.slice());
+    return .{
+        .audit_body = try allocator.dupe(u8, body.slice()),
+        .skipped_packages = skipped_packages,
+    };
 }
 
 fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []const u8) bun.OOM![]u8 {

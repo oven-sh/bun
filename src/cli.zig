@@ -138,6 +138,7 @@ pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCo
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {

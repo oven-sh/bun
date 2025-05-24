@@ -236,6 +236,7 @@ src/ci_info.zig
 src/cli.zig
 src/cli/add_command.zig
 src/cli/add_completions.zig
+src/cli/audit_command.zig
 src/cli/build_command.zig
 src/cli/bunx_command.zig
 src/cli/colon_list_type.zig

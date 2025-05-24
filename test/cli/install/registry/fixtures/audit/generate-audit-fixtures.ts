@@ -36,21 +36,16 @@ for (const packageJsonPath of absolutes) {
     },
   });
 
-  console.log(server.url.toString());
+  await $`bun i`.cwd(tmp);
 
-  await $`npm i`.cwd(tmp).nothrow();
-
-  const p = await $`npm audit`
-    .env({
-      ...(process.env as NodeJS.Dict<string>),
+  await spawn({
+    cmd: [bunExe(), "pm", "audit"],
+    cwd: tmp,
+    env: {
+      ...bunEnv,
       NPM_CONFIG_REGISTRY: server.url.toString(),
-    })
-    .nothrow()
-    .cwd(tmp);
-
-  console.log(`exited with ${p.exitCode}`);
-  console.log(p.stdout.toString());
-  console.log(p.stderr.toString());
+    },
+  }).exited;
 
   const body = await requestBodyPromise;
 
@@ -65,8 +60,6 @@ for (const packageJsonPath of absolutes) {
   await exited;
 
   const text = await readableStreamToText(stdout);
-
-  console.log(text);
 
   result[body] = JSON.parse(text);
 }

@@ -8,7 +8,7 @@ const fixtures = Object.entries(auditFixturesJson).map(
 
 export function resolveBulkAdvisoryFixture(request: Record<string, string[]>) {
   for (const [body, response] of fixtures) {
-    if (isSameJson(body, request)) {
+    if (isSameJSON(body, request)) {
       return response;
     }
   }
@@ -16,28 +16,25 @@ export function resolveBulkAdvisoryFixture(request: Record<string, string[]>) {
   return undefined;
 }
 
-type JsonPrimitive = string | number | boolean | null;
-type JsonArray = JsonValue[];
-type JsonObject = { [key: string]: JsonValue };
-type JsonValue = JsonPrimitive | JsonArray | JsonObject;
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key in string]: JsonValue };
 
-function isSameJson<T extends JsonValue>(a: T, b: T) {
-  return stringify(a) === stringify(b);
+function isSameJSON<T extends JsonValue>(a: T, b: T) {
+  return sortedObjectHash(a) === sortedObjectHash(b);
 }
 
-function stringify(obj: JsonValue): string {
+function sortedObjectHash(obj: JsonValue): string {
   if (typeof obj === "string") {
     return JSON.stringify(obj);
   }
 
   if (Array.isArray(obj)) {
-    const elements = obj.map(stringify);
+    const elements = obj.map(sortedObjectHash);
     return `[${elements.join(",")}]`;
   }
 
   if (typeof obj === "object" && obj !== null) {
     const sortedKeys = Object.keys(obj).sort();
-    const pairs = sortedKeys.map(key => `${JSON.stringify(key)}:${stringify(obj[key])}`);
+    const pairs = sortedKeys.map(key => `${JSON.stringify(key)}:${sortedObjectHash(obj[key])}`);
     return `{${pairs.join(",")}}`;
   }
 

@@ -6937,7 +6937,6 @@ const Environment = bun.Environment;
 const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FD = bun.FD;
@@ -6946,14 +6945,11 @@ const AbortSignal = bun.webcore.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const builtin = @import("builtin");
 const posix = std.posix;
-const darwin = std.os.darwin;
 const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
-const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
@@ -6964,6 +6960,5 @@ const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
-const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
 const SystemErrno = bun.sys.SystemErrno;

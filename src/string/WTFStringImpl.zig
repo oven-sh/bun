@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const OOM = bun.OOM;
 
 pub const WTFStringImpl = *WTFStringImplStruct;
 const ZigString = bun.JSC.ZigString;

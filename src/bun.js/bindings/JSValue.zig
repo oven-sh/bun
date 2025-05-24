@@ -2779,10 +2779,7 @@ const JSC = bun.JSC;
 
 const MutableString = bun.MutableString;
 const String = bun.String;
-const strings = bun.strings;
-const ErrorableString = JSC.ErrorableString;
 const JSError = bun.JSError;
-const napi = @import("../../napi/napi.zig");
 
 const ZigString = JSC.ZigString;
 const VM = JSC.VM;
@@ -2791,7 +2788,6 @@ const JSPromise = JSC.JSPromise;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSObject = JSC.JSObject;
-const JSMap = JSC.JSMap;
 const JSArrayIterator = JSC.JSArrayIterator;
 const JSFunction = JSC.JSFunction;
 const JSCell = JSC.JSCell;
@@ -2803,7 +2799,6 @@ const JSInternalPromise = JSC.JSInternalPromise;
 const ZigException = JSC.ZigException;
 const ArrayBuffer = JSC.ArrayBuffer;
 const toJSHostFunction = JSC.toJSHostFn;
-const JSHostFunctionType = JSC.JSHostFn;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 const FetchHeaders = bun.webcore.FetchHeaders;

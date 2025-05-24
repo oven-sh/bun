@@ -557,7 +557,6 @@ pub fn load(
 const Allocator = std.mem.Allocator;
 const Dependency = install.Dependency;
 const Environment = bun.Environment;
-const IdentityContext = bun.IdentityContext;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
 const PackageIndex = Lockfile.PackageIndex;

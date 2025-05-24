@@ -623,21 +623,15 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.CLI.Command;
 const Example = @import("../cli/create_command.zig").Example;
@@ -707,7 +701,6 @@ const shared_client_tsx = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_
 const shared_html = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html");
 const shared_package_json = @embedFile("projects/react-shadcn-spa/package.json");
 const shared_bunfig_toml = @embedFile("projects/react-shadcn-spa/bunfig.toml");
-const shared_index_tsx = @embedFile("projects/react-spa/index.tsx");
 
 // Template for basic React project
 const ReactSpa = struct {

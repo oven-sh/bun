@@ -3,10 +3,8 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = bun.Semver.String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;

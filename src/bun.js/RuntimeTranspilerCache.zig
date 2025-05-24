@@ -15,7 +15,6 @@ const expected_version = 13;
 const bun = @import("bun");
 const std = @import("std");
 const Output = bun.Output;
-const JSC = bun.JSC;
 
 const debug = Output.scoped(.cache, false);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

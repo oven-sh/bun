@@ -611,7 +611,6 @@ pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;
 // zscore(key: RedisKey, member: RedisValue)
 
 // cluster(subcommand: "KEYSLOT", key: RedisKey)
-const JSFunction = fn (*JSValkeyClient, *JSC.JSGlobalObject, *JSC.CallFrame) bun.JSError!JSValue;
 
 const compile = struct {
     pub fn @"(key: RedisKey)"(

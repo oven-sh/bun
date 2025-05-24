@@ -8,7 +8,6 @@ const BunString = bun.String;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
-const StringDiffList = MyersDiff.DiffList([]const u8);
 
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`.

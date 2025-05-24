@@ -1,16 +1,12 @@
 const bun = @import("bun");
 const Lockfile = @import("./lockfile.zig");
 const std = @import("std");
-const Async = bun.Async;
-const PosixSpawn = bun.posix.spawn;
 const PackageManager = @import("./install.zig").PackageManager;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Global = bun.Global;
 const JSC = bun.JSC;
-const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
-const String = bun.Semver.String;
 const string = bun.string;
 
 const Process = bun.spawn.Process;

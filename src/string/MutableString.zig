@@ -5,8 +5,6 @@ const Allocator = std.mem.Allocator;
 const strings = bun.strings;
 const js_lexer = bun.js_lexer;
 const string = bun.string;
-const stringZ = bun.stringZ;
-const CodePoint = bun.CodePoint;
 
 const MutableString = @This();
 

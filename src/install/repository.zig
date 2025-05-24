@@ -1,5 +1,4 @@
 const bun = @import("bun");
-const Global = bun.Global;
 const logger = bun.logger;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
@@ -9,7 +8,6 @@ const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;

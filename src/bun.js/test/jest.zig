@@ -1,11 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const Api = @import("../../api/schema.zig").Api;
-const MimeType = bun.http.MimeType;
-const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = bun.http;
 const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -13,31 +7,23 @@ const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
 
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 
 const JSC = bun.JSC;
 
 const logger = bun.logger;
-const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 
 const Output = bun.Output;
 const MutableString = bun.MutableString;
-const strings = bun.strings;
 const string = bun.string;
 const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-const ArrayBuffer = JSC.ArrayBuffer;
 const RegularExpression = bun.RegularExpression;
 
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
-const JSType = JSValue.JSType;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;

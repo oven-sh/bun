@@ -9,7 +9,6 @@ const generic = css.generic;
 const Delimiters = css.Delimiters;
 const PrintErr = css.PrintErr;
 const Allocator = std.mem.Allocator;
-const implementEql = css.implementEql;
 const TextShadow = css.css_properties.text.TextShadow;
 
 /// This is a type whose items can either be heap-allocated (essentially the

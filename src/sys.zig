@@ -56,7 +56,6 @@ const windows = bun.windows;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const PathString = bun.PathString;
 const SystemError = JSC.SystemError;
 
 const linux = syscall;

@@ -19,6 +19,7 @@ pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
+    argv: []const [:0]const u8 = &.{},
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -267,6 +268,8 @@ pub const StandaloneModuleGraph = struct {
         byte_count: usize = 0,
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
+        argv_ptr: bun.StringPointer = .{},
+        argv_count: u32 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -306,10 +309,21 @@ pub const StandaloneModuleGraph = struct {
 
         modules.lockPointers(); // make the pointers stable forever
 
+        var argv_list = try allocator.alloc([:0]const u8, offsets.argv_count);
+        if (offsets.argv_count > 0) {
+            const argv_bytes = sliceTo(raw_bytes, offsets.argv_ptr);
+            const argv_ptrs: []align(1) const StringPointer = std.mem.bytesAsSlice(StringPointer, argv_bytes);
+            var i: usize = 0;
+            while (i < argv_ptrs.len) : (i += 1) {
+                argv_list[i] = sliceToZ(raw_bytes, argv_ptrs[i]);
+            }
+        }
+
         return StandaloneModuleGraph{
             .bytes = raw_bytes[0..offsets.byte_count],
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
+            .argv = argv_list,
         };
     }
 
@@ -325,7 +339,13 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format) ![]u8 {
+    pub fn toBytes(
+        allocator: std.mem.Allocator,
+        prefix: []const u8,
+        output_files: []const bun.options.OutputFile,
+        output_format: bun.options.Format,
+        argv: []const [:0]const u8,
+    ) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -358,9 +378,14 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
+        for (argv) |arg| {
+            string_builder.countZ(arg);
+        }
+
         if (module_count == 0 or entry_point_id == null) return &[_]u8{};
 
         string_builder.cap += @sizeOf(CompiledModuleGraphFile) * output_files.len;
+        string_builder.cap += @sizeOf(StringPointer) * argv.len;
         string_builder.cap += trailer.len;
         string_builder.cap += 16;
         string_builder.cap += @sizeOf(Offsets);
@@ -441,9 +466,16 @@ pub const StandaloneModuleGraph = struct {
             modules.appendAssumeCapacity(module);
         }
 
+        var argv_ptrs = try std.ArrayList(StringPointer).initCapacity(allocator, argv.len);
+        for (argv) |arg| {
+            argv_ptrs.appendAssumeCapacity(string_builder.appendCountZ(arg));
+        }
+
         const offsets = Offsets{
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
+            .argv_ptr = string_builder.appendCount(std.mem.sliceAsBytes(argv_ptrs.items)),
+            .argv_count = @as(u32, @truncate(argv_ptrs.items.len)),
             .byte_count = string_builder.len,
         };
 
@@ -772,8 +804,9 @@ pub const StandaloneModuleGraph = struct {
         output_format: bun.options.Format,
         windows_hide_console: bool,
         windows_icon: ?[]const u8,
+        argv: []const [:0]const u8,
     ) !void {
-        const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
+        const bytes = try toBytes(allocator, module_prefix, output_files, output_format, argv);
         if (bytes.len == 0) return;
 
         const fd = inject(

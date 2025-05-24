@@ -10,7 +10,6 @@ const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = @import("../url.zig").URL;
 const logger = bun.logger;
-const semver = @import("../semver.zig");
 const libdeflate = @import("../deps/libdeflate.zig");
 
 const VulnerabilityInfo = struct {

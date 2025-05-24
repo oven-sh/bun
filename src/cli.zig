@@ -267,6 +267,7 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+        clap.parseParam("--compile-argv <STR>             Arguments to embed in the compiled executable that will be prepended to process.argv") catch unreachable,
         clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -1022,6 +1023,23 @@ pub const Arguments = struct {
                 }
                 ctx.bundler_options.windows_icon = path;
             }
+            if (args.flag("--compile-exec-argv")) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                    Global.crash();
+                }
+                // Parse remaining arguments for compile execution
+                const remaining_args = ctx.passthrough;
+                if (remaining_args.len > 0) {
+                    var arr = try allocator.alloc([:0]const u8, remaining_args.len);
+                    for (remaining_args, 0..) |arg, i| {
+                        arr[i] = try allocator.dupeZ(u8, arg);
+                    }
+                    ctx.bundler_options.compile_argv = arr;
+                    // Clear passthrough args since we consumed them
+                    ctx.passthrough = &.{};
+                }
+            }
 
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
@@ -1610,6 +1628,7 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             windows_hide_console: bool = false,
             windows_icon: ?[]const u8 = null,
+            compile_argv: []const [:0]const u8 = &.{},
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1814,6 +1833,17 @@ pub const Command = struct {
 
         // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            if (graph.argv.len > 0) {
+                var new_argv = try bun.default_allocator.alloc([:0]const u8, bun.argv.len + graph.argv.len);
+                new_argv[0] = bun.argv[0];
+                for (graph.argv, 0..) |a, i| {
+                    new_argv[1 + i] = a;
+                }
+                for (bun.argv[1..], 0..) |a, i| {
+                    new_argv[1 + graph.argv.len + i] = a;
+                }
+                bun.argv = new_argv;
+            }
             context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,

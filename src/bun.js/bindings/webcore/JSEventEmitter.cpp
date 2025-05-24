@@ -37,6 +37,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "JSEventTarget.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -224,7 +225,7 @@ void JSEventEmitter::finishCreation(VM& vm)
 
 JSObject* JSEventEmitter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSEventEmitterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    auto* structure = JSEventEmitterPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
     structure->setMayBePrototype(true);
     return JSEventEmitterPrototype::create(vm, &globalObject, structure);
 }

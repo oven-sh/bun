@@ -53,6 +53,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "JSEventEmitter.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -158,7 +159,7 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
+    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, JSEventEmitter::prototype(vm, globalObject));
     structure->setMayBePrototype(true);
     return JSMessagePortPrototype::create(vm, &globalObject, structure);
 }
@@ -298,6 +299,17 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
         if (distinguishingArg.isObject())
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
     }
+
+    if (argsCount >= 2) {
+        JSValue distinguishingTransferArg = callFrame->uncheckedArgument(1);
+        bool hasIterator = hasIteratorMethod(lexicalGlobalObject, distinguishingTransferArg);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!distinguishingTransferArg.isUndefinedOrNull() && !distinguishingTransferArg.isObject() && !hasIterator) {
+            return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "Optional transferList argument must be an iterable"_s);
+        }
+    }
+
     return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }
 

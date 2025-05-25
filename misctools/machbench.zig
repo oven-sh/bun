@@ -42,7 +42,7 @@ pub fn machMain(runs: usize) anyerror!void {
     defer Output.flush();
     waker = try bun.Async.Waker.init(bun.default_allocator);
 
-    var args = try std.process.argsAlloc(bun.default_allocator);
+    const args = try std.process.argsAlloc(bun.default_allocator);
     const count = std.fmt.parseInt(usize, args[args.len - 1], 10) catch 1024;
     var elapsed: u64 = 0;
 
@@ -86,7 +86,7 @@ pub fn userMain(runs: usize) anyerror!void {
     defer Output.flush();
     user_waker = try bun.Async.UserFilterWaker.init(bun.default_allocator);
 
-    var args = try std.process.argsAlloc(bun.default_allocator);
+    const args = try std.process.argsAlloc(bun.default_allocator);
     const count = std.fmt.parseInt(usize, args[args.len - 1], 10) catch 1024;
     var remaining_runs = runs;
     var elapsed: u64 = 0;
@@ -116,12 +116,12 @@ pub fn userMain(runs: usize) anyerror!void {
 }
 
 pub fn main() anyerror!void {
-    var stdout_ = std.io.getStdOut();
-    var stderr_ = std.io.getStdErr();
+    const stdout_ = std.io.getStdOut();
+    const stderr_ = std.io.getStdErr();
     var output_source = Output.Source.init(stdout_, stderr_);
     Output.Source.set(&output_source);
 
-    var args = try std.process.argsAlloc(bun.default_allocator);
+    const args = try std.process.argsAlloc(bun.default_allocator);
     const count = std.fmt.parseInt(usize, args[args.len - 1], 10) catch 1024;
     Output.prettyErrorln("For {d} messages and {d} threads:", .{ count, thread_count });
     Output.flush();

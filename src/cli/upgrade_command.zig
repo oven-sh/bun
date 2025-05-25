@@ -13,7 +13,7 @@ const Progress = bun.Progress;
 const logger = bun.logger;
 
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
+const linker = @import("../old_linker.zig");
 
 const Command = @import("../cli.zig").Command;
 

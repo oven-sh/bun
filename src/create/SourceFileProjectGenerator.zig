@@ -630,7 +630,7 @@ const std = @import("std");
 const logger = bun.logger;
 
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
+const linker = @import("../old_linker.zig");
 
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Command = bun.CLI.Command;

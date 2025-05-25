@@ -229,7 +229,11 @@ src/bun.js/webcore/TextEncoderStreamEncoder.zig
 src/bun.js/WTFTimer.zig
 src/bun.zig
 src/bundler/bundle_v2.zig
+src/bundler/Chunk.zig
 src/bundler/entry_points.zig
+src/bundler/linker.zig
+src/bundler/LinkerGraph.zig
+src/bundler/ParseTask.zig
 src/bunfig.zig
 src/cache.zig
 src/ci_info.zig
@@ -481,7 +485,6 @@ src/json_parser.zig
 src/libarchive/libarchive-bindings.zig
 src/libarchive/libarchive.zig
 src/linear_fifo.zig
-src/linker.zig
 src/linux.zig
 src/logger.zig
 src/macho.zig
@@ -493,6 +496,7 @@ src/multi_array_list.zig
 src/Mutex.zig
 src/napi/napi.zig
 src/node_fallbacks.zig
+src/old_linker.zig
 src/open.zig
 src/options.zig
 src/output.zig

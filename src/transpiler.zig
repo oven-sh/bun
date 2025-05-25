@@ -16,7 +16,7 @@ const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
+const linker = @import("old_linker.zig");
 const Ref = @import("ast/base.zig").Ref;
 
 const Fs = @import("fs.zig");

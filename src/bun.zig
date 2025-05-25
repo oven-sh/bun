@@ -1190,6 +1190,7 @@ pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
 pub const JSON = @import("./json_parser.zig");
+pub const TOML = @import("./toml/toml_parser.zig").TOML;
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./bit_set.zig");
 

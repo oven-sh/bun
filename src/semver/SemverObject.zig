@@ -45,8 +45,8 @@ pub fn order(
     const left_arg = arguments[0];
     const right_arg = arguments[1];
 
-    const left_string = left_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
-    const right_string = right_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+    const left_string = try left_arg.toJSString(globalThis);
+    const right_string = try right_arg.toJSString(globalThis);
 
     const left = left_string.toSlice(globalThis, allocator);
     defer left.deinit();
@@ -91,8 +91,8 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
     const left_arg = arguments[0];
     const right_arg = arguments[1];
 
-    const left_string = left_arg.toStringOrNull(globalThis) orelse return .zero;
-    const right_string = right_arg.toStringOrNull(globalThis) orelse return .zero;
+    const left_string = try left_arg.toJSString(globalThis);
+    const right_string = try right_arg.toJSString(globalThis);
 
     const left = left_string.toSlice(globalThis, allocator);
     defer left.deinit();
@@ -126,27 +126,13 @@ pub fn satisfies(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun
 }
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const JSC = bun.JSC;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const Lockfile = bun.install.Lockfile;
-const ExternalString = bun.Semver.ExternalString;
 const SlicedString = bun.Semver.SlicedString;
-const String = bun.Semver.String;
 
 const Query = bun.Semver.Query;
-const assert = bun.assert;
 const Version = bun.Semver.Version;
 const SemverObject = @This();

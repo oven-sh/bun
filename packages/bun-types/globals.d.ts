@@ -955,13 +955,6 @@ interface ErrorConstructor {
   captureStackTrace(targetObject: object, constructorOpt?: Function): void;
 
   /**
-   * Optional override for formatting stack traces
-   *
-   * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-   */
-  prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
-
-  /**
    * The maximum number of stack frames to capture.
    */
   stackTraceLimit: number;

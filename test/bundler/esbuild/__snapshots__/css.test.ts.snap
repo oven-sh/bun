@@ -1434,3 +1434,28 @@ exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /d.c
 "@import "./shared.css";
 body { color: blue }"
 `;
+
+exports[`bundler css/ComposesWithSharedPropertiesError 1`] = `
+"// styles.module.css
+var styles_module_default = {
+  button: "otherButton_NlEjJA button_-MSaAA"
+};
+
+// entry.js
+console.log(styles_module_default);
+"
+`;
+
+exports[`bundler css/ComposesWithSharedPropertiesError 2`] = `
+"/* other.module.css */
+.otherButton_NlEjJA {
+  color: red;
+  font-size: 16px;
+}
+
+/* styles.module.css */
+.button_-MSaAA {
+  color: #00f;
+}
+"
+`;

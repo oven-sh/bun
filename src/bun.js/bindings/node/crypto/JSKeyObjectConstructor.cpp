@@ -93,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     WebCore::CryptoKey& wrappedKey = cryptoKey->wrapped();
 
     auto keyObjectResult = KeyObject::create(wrappedKey);
-    if (UNLIKELY(keyObjectResult.hasException())) {
+    if (keyObjectResult.hasException()) [[unlikely]] {
         WebCore::propagateException(*lexicalGlobalObject, scope, keyObjectResult.releaseException());
         return JSValue::encode({});
     }

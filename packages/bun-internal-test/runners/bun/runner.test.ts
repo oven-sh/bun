@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FindTestOptions, ParseTestResult, RunTestResult } from "./runner";
-import { bunSpawn, nodeSpawn, findTests, runTest, runTests } from "./runner";
+import { bunSpawn, findTests, nodeSpawn, runTest, runTests } from "./runner";
 
 describe("runTests()", () => {
   const cwd = createFs({

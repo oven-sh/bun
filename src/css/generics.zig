@@ -2,7 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const logger = bun.logger;
-const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 

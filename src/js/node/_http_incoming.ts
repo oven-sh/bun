@@ -328,7 +328,7 @@ const IncomingMessagePrototype = {
         stream?.cancel?.().catch(nop);
       }
 
-      const socket = this[fakeSocketSymbol];
+      const socket = this.socket;
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
@@ -345,7 +345,7 @@ const IncomingMessagePrototype = {
     this[abortedSymbol] = value;
   },
   get connection() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket());
+    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },
   get statusCode() {
     return this[statusCodeSymbol];
@@ -403,7 +403,7 @@ const IncomingMessagePrototype = {
     return this;
   },
   get socket() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket());
+    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },
   set socket(value) {
     this[fakeSocketSymbol] = value;

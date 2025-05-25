@@ -98,7 +98,6 @@ fn fromNow() TimeLike {
 
 const std = @import("std");
 const bun = @import("bun");
-const sys = bun.sys;
 const Environment = bun.Environment;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

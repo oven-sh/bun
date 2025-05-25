@@ -15,15 +15,15 @@
  *
  */
 
-import assert from "node:assert";
-import * as protoLoader from "@grpc/proto-loader";
 import grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import assert from "node:assert";
 
 import { ProtoGrpcType } from "@grpc/grpc-js/build/src/generated/channelz";
 import { ChannelzClient } from "@grpc/grpc-js/build/src/generated/grpc/channelz/v1/Channelz";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "bun:test";
 import { loadProtoFile } from "./common";
-import { afterAll, beforeAll, describe, it, beforeEach, afterEach } from "bun:test";
 
 const loadedChannelzProto = protoLoader.loadSync("channelz.proto", {
   keepCase: true,

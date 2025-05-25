@@ -2,13 +2,11 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
 const string = bun.string;
-const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
-const JSC = bun.JSC;
 const OOM = bun.OOM;
 
 /// memmem is provided by libc on posix, but implemented in zig for windows.
@@ -1255,11 +1253,11 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
-pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) OOM![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
-pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) ![:0]u8 {
+pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) OOM![:0]u8 {
     var list = std.ArrayList(u8).init(allocator);
     try toUTF8AppendToList(&list, js);
     try list.append(0);
@@ -1451,7 +1449,7 @@ pub const BOM = enum {
 
     /// If an allocation is needed, free the input and the caller will
     /// replace it with the new return
-    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) ![]u8 {
+    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) OOM![]u8 {
         switch (bom) {
             .utf8 => {
                 _ = bun.c.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
@@ -2218,7 +2216,7 @@ pub fn toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(allocator: std.mem.Alloca
     return list.items;
 }
 
-pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
+pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) OOM![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         // add 16 bytes of padding for SIMDUTF
@@ -3765,8 +3763,7 @@ pub fn wtf8Sequence(code_point: u32) [4]u8 {
 
 pub inline fn wtf8ByteSequenceLength(first_byte: u8) u8 {
     return switch (first_byte) {
-        0 => 0,
-        1...0x80 - 1 => 1,
+        0...0x80 - 1 => 1,
         else => if ((first_byte & 0xE0) == 0xC0)
             2
         else if ((first_byte & 0xF0) == 0xE0)
@@ -3821,6 +3818,9 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T
     }
 
     const s3 = p[3];
+
+    if ((s3 & 0xC0) != 0x80) return zero;
+
     {
         const cp = (@as(T, p[0] & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
         if (cp < 0x10000 or cp > 0x10FFFF) return zero;
@@ -4686,9 +4686,6 @@ pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
     return order(a, b) == .gt;
 }
-
-const sort_asc = std.sort.asc(u8);
-const sort_desc = std.sort.desc(u8);
 
 /// Every time you read a non^2 sized integer, Zig masks off the extra bits.
 /// This is a meaningful performance difference, including in release builds.

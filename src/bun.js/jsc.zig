@@ -65,6 +65,7 @@ pub const JSPromiseRejectionOperation = @import("bindings/JSPromiseRejectionOper
 pub const JSRef = @import("bindings/JSRef.zig").JSRef;
 pub const JSString = @import("bindings/JSString.zig").JSString;
 pub const JSUint8Array = @import("bindings/JSUint8Array.zig").JSUint8Array;
+pub const JSBigInt = @import("bindings/JSBigInt.zig").JSBigInt;
 pub const RefString = @import("jsc/RefString.zig");
 pub const ScriptExecutionStatus = @import("bindings/ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const SourceType = @import("bindings/SourceType.zig").SourceType;
@@ -277,3 +278,10 @@ fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
 
 const bun = @import("bun");
 const std = @import("std");
+
+pub const math = struct {
+    extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;
+    pub fn pow(x: f64, y: f64) f64 {
+        return Bun__JSC__operationMathPow(x, y);
+    }
+};

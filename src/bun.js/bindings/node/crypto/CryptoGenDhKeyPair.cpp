@@ -155,7 +155,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
 
         if (JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(primeValue)) {
             prime = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength());
-            if (UNLIKELY(!prime)) {
+            if (!prime) [[unlikely]] {
                 ERR::OUT_OF_RANGE(scope, globalObject, "prime is too big"_s);
                 return std::nullopt;
             }
@@ -164,7 +164,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
         } else if (JSArrayBuffer* buffer = jsDynamicCast<JSArrayBuffer*>(primeValue)) {
             auto impl = buffer->impl();
             prime = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(impl->data()), impl->byteLength());
-            if (UNLIKELY(!prime)) {
+            if (!prime) [[unlikely]] {
                 ERR::OUT_OF_RANGE(scope, globalObject, "prime is too big"_s);
                 return std::nullopt;
             }

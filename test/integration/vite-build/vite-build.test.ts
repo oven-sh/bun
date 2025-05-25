@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { tmpdirSync, bunExe, bunEnv as env, runBunInstall } from "harness";
+import { expect, test } from "bun:test";
 import fs from "fs";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import path from "path";
 
 test("vite build works", async () => {

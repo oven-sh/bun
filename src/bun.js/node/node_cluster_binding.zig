@@ -7,7 +7,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
@@ -65,9 +64,9 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         }
     };
 
-    const good = ipc_instance.data.serializeAndSendInternal(globalThis, message);
+    const good = ipc_instance.data.serializeAndSend(globalThis, message, .internal, .null, null);
 
-    if (!good) {
+    if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
         ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
@@ -75,7 +74,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return .false;
     }
 
-    return .true;
+    return if (good == .success) .true else .false;
 }
 
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -210,10 +209,8 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
-    const success = ipc_data.serializeAndSendInternal(globalThis, message);
-    if (!success) return .false;
-
-    return .true;
+    const success = ipc_data.serializeAndSend(globalThis, message, .internal, .null, null);
+    return if (success == .success) .true else .false;
 }
 
 pub fn onInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {

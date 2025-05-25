@@ -2,13 +2,9 @@ const std = @import("std");
 const bun = @import("bun");
 const windows = bun.windows;
 const uv = windows.libuv;
-const Path = @import("../../resolver/resolve_path.zig");
-const Fs = @import("../../fs.zig");
-const Mutex = bun.Mutex;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
 const Watcher = bun.Watcher;
 

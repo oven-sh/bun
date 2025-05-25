@@ -198,8 +198,8 @@ pub fn indexOfNeedsEscapeForJavaScriptString(slice: string, quote_char: u8) ?u32
 
     if (comptime Environment.isDebug) {
         const haystack_char = slice[result];
-        if (!(haystack_char > 127 or haystack_char < 0x20 or haystack_char == '\\' or haystack_char == quote_char or haystack_char == '$' or haystack_char == '\r' or haystack_char == '\n')) {
-            @panic("Invalid character found in indexOfNeedsEscapeForJavaScriptString");
+        if (!(haystack_char >= 127 or haystack_char < 0x20 or haystack_char == '\\' or haystack_char == quote_char or haystack_char == '$' or haystack_char == '\r' or haystack_char == '\n')) {
+            std.debug.panic("Invalid character found in indexOfNeedsEscapeForJavaScriptString: U+{x}. Full string: '{'}'", .{ haystack_char, std.zig.fmtEscapes(slice) });
         }
     }
 

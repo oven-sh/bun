@@ -22,19 +22,23 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const {
-  SocketAddress,
-  addServerName,
-  upgradeDuplexToTLS,
-  isNamedPipeSocket,
-  normalizedArgsSymbol,
-  getBufferedAmount,
-} = require("internal/net");
+const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
+  "socket.zig",
+  "createNodeTLSBinding",
+);
+const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
-import type { SocketListener, SocketHandler } from "bun";
+import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+
+const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
+const BlockList = $zig("node_net_binding.zig", "BlockList");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1328,12 +1332,17 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (typeof port === "string") {
+    const numPort = Number(port);
+    if (!Number.isNaN(numPort)) port = numPort;
+  }
   let backlog;
   let path;
   let exclusive = false;
   let allowHalfOpen = false;
   let reusePort = false;
   let ipv6Only = false;
+  let fd;
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -1369,6 +1378,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
+
+      if (typeof options.fd === "number" && options.fd >= 0) {
+        fd = options.fd;
+        port = 0;
+      }
 
       const isLinux = process.platform === "linux";
 
@@ -1416,6 +1430,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (typeof port === "number" && (port < 0 || port >= 65536)) {
+    throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
+  }
+
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
@@ -1448,7 +1466,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port,
       4,
       backlog,
-      undefined,
+      fd,
       exclusive,
       ipv6Only,
       allowHalfOpen,
@@ -1478,10 +1496,22 @@ Server.prototype[kRealListen] = function (
   tls,
   contexts,
   _onListen,
+  fd,
 ) {
   if (path) {
     this._handle = Bun.listen({
       unix: path,
+      tls,
+      allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+      reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
+      ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
+      exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      socket: ServerHandlers,
+    });
+  } else if (fd != null) {
+    this._handle = Bun.listen({
+      fd,
+      hostname,
       tls,
       allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
@@ -1504,6 +1534,12 @@ Server.prototype[kRealListen] = function (
 
   //make this instance available on handlers
   this._handle.data = this;
+
+  const addr = this.address();
+  if (addr && typeof addr === "object") {
+    const familyLast = String(addr.family).slice(-1);
+    this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  }
 
   if (contexts) {
     for (const [name, context] of contexts) {
@@ -1593,7 +1629,19 @@ function listenInCluster(
   if (cluster === undefined) cluster = require("node:cluster");
 
   if (cluster.isPrimary || exclusive) {
-    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
+    server[kRealListen](
+      path,
+      port,
+      hostname,
+      exclusive,
+      ipv6Only,
+      allowHalfOpen,
+      reusePort,
+      tls,
+      contexts,
+      onListen,
+      fd,
+    );
     return;
   }
 
@@ -1611,7 +1659,19 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    server[kRealListen](path, port, hostname, exclusive, ipv6Only, allowHalfOpen, reusePort, tls, contexts, onListen);
+    server[kRealListen](
+      path,
+      port,
+      hostname,
+      exclusive,
+      ipv6Only,
+      allowHalfOpen,
+      reusePort,
+      tls,
+      contexts,
+      onListen,
+      fd,
+    );
   });
 }
 
@@ -1675,17 +1735,6 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// TODO:
-class BlockList {
-  constructor() {}
-
-  addSubnet(_net, _prefix, _type) {}
-
-  check(_address, _type) {
-    return false;
-  }
-}
-
 export default {
   createServer,
   Server,
@@ -1697,10 +1746,10 @@ export default {
   Socket,
   _normalizeArgs: normalizeArgs,
 
-  getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
-  setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
-  getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
-  setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
+  getDefaultAutoSelectFamily,
+  setDefaultAutoSelectFamily,
+  getDefaultAutoSelectFamilyAttemptTimeout,
+  setDefaultAutoSelectFamilyAttemptTimeout,
 
   BlockList,
   SocketAddress,

@@ -25,8 +25,20 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @as(f64, @floatCast((@as(f64, @floatFromInt(vm.origin_timestamp)) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0));
 }
 
+pub export fn Bun__GlobalObject__connectedIPC(global: *JSGlobalObject) bool {
+    if (global.bunVM().ipc) |ipc| {
+        if (ipc == .initialized) {
+            return ipc.initialized.data.isConnected();
+        }
+        return true;
+    }
+    return false;
+}
 pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
-    return global.bunVM().ipc != null;
+    if (global.bunVM().ipc != null) {
+        return true;
+    }
+    return false;
 }
 
 export fn Bun__VirtualMachine__exitDuringUncaughtException(this: *JSC.VirtualMachine) void {
@@ -39,65 +51,9 @@ comptime {
 }
 pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
-
-    if (handle.isFunction()) {
-        callback = handle;
-        handle = .undefined;
-        options_ = .undefined;
-    } else if (options_.isFunction()) {
-        callback = options_;
-        options_ = .undefined;
-    } else if (!options_.isUndefined()) {
-        try globalObject.validateObject("options", options_, .{});
-    }
-
-    const S = struct {
-        fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-            const arguments_ = callframe.arguments_old(1).slice();
-            const ex = arguments_[0];
-            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-            return .undefined;
-        }
-    };
 
     const vm = globalObject.bunVM();
-    const ipc_instance = vm.getIPCInstance() orelse {
-        const ex = globalObject.ERR(.IPC_CHANNEL_CLOSED, "Channel closed.", .{}).toJS();
-        if (callback.isFunction()) {
-            callback.callNextTick(globalObject, .{ex});
-        } else {
-            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            fnvalue.callNextTick(globalObject, .{ex});
-        }
-        return .false;
-    };
-
-    if (message.isUndefined()) {
-        return globalObject.throwMissingArgumentsValue(&.{"message"});
-    }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
-        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
-    }
-
-    const good = ipc_instance.data.serializeAndSend(globalObject, message);
-
-    if (good) {
-        if (callback.isFunction()) {
-            callback.callNextTick(globalObject, .{.null});
-        }
-    } else {
-        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
-        if (callback.isFunction()) {
-            callback.callNextTick(globalObject, .{ex});
-        } else {
-            const fnvalue = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-            fnvalue.callNextTick(globalObject, .{ex});
-        }
-    }
-
-    return .true;
+    return IPC.doSend(if (vm.getIPCInstance()) |i| &i.data else null, globalObject, callFrame, .process);
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
@@ -131,8 +87,10 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     JSC.markBinding(@src());
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
-    const jsc_vm = JSC.VirtualMachine.get();
-    _ = jsc_vm.uncaughtException(globalObject, value, false);
+    const vm = JSC.VirtualMachine.get();
+    if (!value.isTerminationException(vm.jsc)) {
+        _ = vm.uncaughtException(globalObject, value, false);
+    }
     return .undefined;
 }
 
@@ -157,7 +115,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    _ = jsc_vm.unhandledRejection(global, result, promise.asValue(global));
+    _ = jsc_vm.unhandledRejection(global, result, promise.toJS());
     jsc_vm.autoGarbageCollect();
 }
 
@@ -235,3 +193,4 @@ const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const PluginRunner = bun.transpiler.PluginRunner;
+const IPC = @import("ipc.zig");

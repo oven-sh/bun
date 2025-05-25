@@ -1,14 +1,27 @@
-import { describe, it, expect } from "bun:test";
-import { bunRun, runBunInstall, bunEnv } from "harness";
+import { describe, expect, it } from "bun:test";
+import { cpSync } from "fs";
+import { bunEnv, bunRun, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 describe("next-auth", () => {
   it("should be able to call server action multiple times using auth middleware #18977", async () => {
-    await runBunInstall(bunEnv, join(import.meta.dir, "fixture"), {
-      allowWarnings: true,
-      allowErrors: true,
-      savesLockfile: false,
+    const testDir = tmpdirSync("next-auth");
+
+    cpSync(join(import.meta.dir, "fixture"), testDir, {
+      recursive: true,
+      filter: src => {
+        if (src.includes("node_modules")) {
+          return false;
+        }
+        if (src.startsWith(".next")) {
+          return false;
+        }
+        return true;
+      },
     });
-    const result = bunRun(join(import.meta.dir, "fixture", "server.js"), {
+
+    await runBunInstall(bunEnv, testDir, { savesLockfile: false });
+
+    const result = bunRun(join(testDir, "server.js"), {
       AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",
     });
     expect(result.stderr).toBe("");

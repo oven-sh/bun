@@ -1,4 +1,4 @@
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {

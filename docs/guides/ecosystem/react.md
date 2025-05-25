@@ -1,5 +1,5 @@
 ---
-name: Use React and JSX
+name: Build a React app with Bun
 ---
 
 Bun supports `.jsx` and `.tsx` files out of the box. React just works with Bun.

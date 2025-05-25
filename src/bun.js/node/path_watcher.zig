@@ -62,10 +62,17 @@ pub const PathWatcherManager = struct {
     fn unrefPendingTask(this: *PathWatcherManager) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        this.pending_tasks -= 1;
-        if (this.deinit_on_last_task and this.pending_tasks == 0) {
+
+        const pending_task_count = this.pending_tasks;
+        bun.debugAssert(pending_task_count > 0);
+        this.pending_tasks = pending_task_count - 1;
+
+        if (pending_task_count == 1) {
             this.has_pending_tasks.store(false, .release);
-            this.deinit();
+
+            if (this.deinit_on_last_task) {
+                this.deinit();
+            }
         }
     }
 
@@ -324,7 +331,7 @@ pub const PathWatcherManager = struct {
             const watchers = this.watchers.slice();
             const timestamp = std.time.milliTimestamp();
 
-            // stop all watchers
+            // stop all JS watchers by emitting the error
             for (watchers) |w| {
                 if (w) |watcher| {
                     log("[watch] error: {}", .{err});
@@ -433,75 +440,72 @@ pub const PathWatcherManager = struct {
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
-            var iter = fd.stdDir().iterate();
+            var iter = bun.DirIterator.iterate(fd.stdDir(), .u8);
 
             // now we iterate over all files and directories
-            while (iter.next() catch |err| {
-                return .{
-                    .err = .{
-                        .errno = @truncate(@intFromEnum(switch (err) {
-                            error.AccessDenied => bun.sys.E.ACCES,
-                            error.SystemResources => bun.sys.E.NOMEM,
-                            error.Unexpected,
-                            error.InvalidUtf8,
-                            => bun.sys.E.INVAL,
-                        })),
-                        .syscall = .watch,
+            while (true) {
+                const iteration = iter.next();
+                switch (iteration) {
+                    .err => |err| {
+                        var err2 = err;
+                        err2.syscall = .watch;
+                        return .{ .err = err2 };
                     },
-                };
-            }) |entry| {
-                var parts = [2]string{ path.path, entry.name };
-                const entry_path = Path.joinAbsStringBuf(
-                    Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
-                    buf,
-                    &parts,
-                    .auto,
-                );
+                    .result => |entry_or_eof| if (entry_or_eof) |entry| {
+                        var parts = [2]string{ path.path, entry.name.slice() };
+                        const entry_path = Path.joinAbsStringBuf(
+                            Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                            buf,
+                            &parts,
+                            .auto,
+                        );
 
-                buf[entry_path.len] = 0;
-                const entry_path_z = buf[0..entry_path.len :0];
+                        buf[entry_path.len] = 0;
+                        const entry_path_z = buf[0..entry_path.len :0];
 
-                const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
-                    .result => |result| result,
-                    .err => |e| return .{ .err = e },
-                };
-
-                {
-                    watcher.mutex.lock();
-                    defer watcher.mutex.unlock();
-                    watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
-                        manager._decrementPathRef(entry_path_z);
-                        return switch (err) {
-                            error.OutOfMemory => .{ .err = .{
-                                .errno = @truncate(@intFromEnum(bun.sys.E.NOMEM)),
-                                .syscall = .watch,
-                            } },
+                        const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
+                            .result => |result| result,
+                            .err => |e| return .{ .err = e },
                         };
-                    };
-                }
 
-                // we need to call this unlocked
-                if (child_path.is_file) {
-                    switch (manager.main_watcher.addFile(
-                        child_path.fd,
-                        child_path.path,
-                        child_path.hash,
-                        options.Loader.file,
-                        .invalid,
-                        null,
-                        false,
-                    )) {
-                        .err => |err| return .{ .err = err },
-                        .result => {},
-                    }
-                } else {
-                    if (watcher.recursive and !watcher.isClosed()) {
-                        // this may trigger another thread with is desired when available to watch long trees
-                        switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err },
-                            .result => {},
+                        {
+                            watcher.mutex.lock();
+                            defer watcher.mutex.unlock();
+                            watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
+                                manager._decrementPathRef(entry_path_z);
+                                return switch (err) {
+                                    error.OutOfMemory => .{ .err = .{
+                                        .errno = @truncate(@intFromEnum(bun.sys.E.NOMEM)),
+                                        .syscall = .watch,
+                                    } },
+                                };
+                            };
                         }
-                    }
+
+                        // we need to call this unlocked
+                        if (child_path.is_file) {
+                            switch (manager.main_watcher.addFile(
+                                child_path.fd,
+                                child_path.path,
+                                child_path.hash,
+                                options.Loader.file,
+                                .invalid,
+                                null,
+                                false,
+                            )) {
+                                .err => |err| return .{ .err = err.clone(bun.default_allocator) catch bun.outOfMemory() },
+                                .result => {},
+                            }
+                        } else {
+                            if (watcher.recursive and !watcher.isClosed()) {
+                                // this may trigger another thread with is desired when available to watch long trees
+                                switch (manager._addDirectory(watcher, child_path)) {
+                                    .err => |err| return .{ .err = err },
+                                    .result => {},
+                                }
+                            }
+                        }
+                    },
                 }
             }
             return .{ .result = {} };
@@ -512,13 +516,15 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: bun.PathBuffer = undefined;
-
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
-                switch (this.processWatcher(watcher, &buf)) {
+                const buf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf);
+                switch (this.processWatcher(watcher, buf)) {
                     .err => |err| {
                         log("[watch] error registering directory: {s}", .{err});
+                        var err2 = err.clone(bun.default_allocator) catch bun.outOfMemory();
+                        defer err2.deinit();
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                         watcher.flush();
                     },
@@ -761,8 +767,9 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: bun.PathBuffer = undefined;
-                const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
+                const buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const resolved_path_temp = bun.sys.getFdPath(path.fd, buffer).unwrap() catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
                 };
@@ -964,7 +971,7 @@ pub fn watch(
         .err => |_err| {
             var err = _err;
             err.syscall = .watch;
-            return .{ .err = err };
+            return .{ .err = err.clone(bun.default_allocator) catch bun.outOfMemory() };
         },
     };
 

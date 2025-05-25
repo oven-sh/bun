@@ -1398,7 +1398,11 @@ pub const RunCommand = struct {
                 RunCommand.printHelp(package_json);
             } else {
                 RunCommand.printHelp(null);
-                Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                if (ctx.log.hasErrors()) {
+                    try ctx.log.print(Output.errorWriter());
+                } else {
+                    Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                }
                 Output.flush();
             }
 

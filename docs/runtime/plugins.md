@@ -170,7 +170,7 @@ In this case we're using `"object"`—a built-in loader (intended for use by plu
 
 - `wasm`
 - `.wasm`
-- Import a native Node.js addon
+- Import a WebAssemby module
 
 ---
 

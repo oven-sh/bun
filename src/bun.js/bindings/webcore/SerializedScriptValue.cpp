@@ -5182,7 +5182,7 @@ private:
         case Bun__KeyObjectTag:
             return readKeyObject();
 
-        // case Bun__NodePerformanceHooksHistogramTag:
+            // case Bun__NodePerformanceHooksHistogramTag:
             // ?
 
         default:

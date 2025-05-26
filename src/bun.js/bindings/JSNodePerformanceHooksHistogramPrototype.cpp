@@ -242,8 +242,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentilesB
     return JSValue::encode(map);
 }
 
-// MARK: Property getters
-
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();

@@ -109,16 +109,19 @@ JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JS
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-// MARK: JS-exposed methods/properties
-
 bool JSNodePerformanceHooksHistogram::record(int64_t value)
 {
     if (!m_histogramData.histogram) return false;
 
+    // hdr_record_value returns false if the value cannot be recorded
+    // (e.g., if it's outside the trackable range)
     bool recorded = hdr_record_value(m_histogramData.histogram, value);
-    if (recorded && value > m_histogramData.histogram->highest_trackable_value) {
+    
+    // If the value couldn't be recorded, it means it exceeded the histogram's range
+    if (!recorded) {
         m_histogramData.exceedsCount++;
     }
+    
     return recorded;
 }
 
@@ -182,6 +185,7 @@ size_t JSNodePerformanceHooksHistogram::getExceeds() const
 
 uint64_t JSNodePerformanceHooksHistogram::getCount() const
 {
+    if (!m_histogramData.histogram) return 0;
     return m_histogramData.histogram->total_count;
 }
 
@@ -189,12 +193,12 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 {
     if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
 
+    size_t originalExceeds = m_histogramData.exceedsCount;
+    
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 
-    // Update exceeds count - this is a simplified approach
-    // In a full implementation, we'd need to recalculate based on the merged histogram
-    m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
+    m_histogramData.exceedsCount = originalExceeds + other->m_histogramData.exceedsCount + static_cast<size_t>(dropped);
 
     return dropped;
 }

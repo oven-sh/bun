@@ -37,7 +37,7 @@ static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[
     { "exceedsBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_exceedsBigInt, 0 } },
 };
 
-const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "Histogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramPrototype) };
+const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramPrototype) };
 
 void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
 {

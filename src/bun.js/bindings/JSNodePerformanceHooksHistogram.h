@@ -48,34 +48,37 @@ JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentiles
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 
-struct HDRHistogramDeleter {
-    void operator()(hdr_histogram* histogram) {
-        if (histogram)
-            hdr_close(histogram);
-    }
-};
-using HDRHistogramPointer = std::unique_ptr<hdr_histogram, HDRHistogramDeleter>;
 
-struct HistogramData {
-    HDRHistogramPointer histogram;
+
+class HistogramData {
+public:
+    hdr_histogram* histogram;
     uint64_t prevDeltaTime = 0;
     size_t exceedsCount = 0;
 
-    WTF::Lock mutex;
-
-    HistogramData(int64_t lowest, int64_t highest, int figures)
+    HistogramData(hdr_histogram* histogram)
+        : histogram(histogram)
     {
-        hdr_histogram* h = nullptr;
-        // hdr_init returns 0 on success, non-zero on error (e.g., EINVAL, ENOMEM)
-        if (hdr_init(lowest, highest, figures, &h) == 0) {
-            histogram = HDRHistogramPointer(h);
-        } else {
-            // how to handle error? histogram remains null if init fails
+    }
+
+    ~HistogramData()
+    {
+        if (histogram) {
+            hdr_close(histogram);
         }
     }
 
-    HistogramData() = default;
-    ~HistogramData() = default;
+    // Move constructor (does not call destructor)
+    HistogramData(HistogramData&& other) noexcept
+        : histogram(other.histogram)
+        , prevDeltaTime(other.prevDeltaTime)
+        , exceedsCount(other.exceedsCount)
+    {
+        // Invalidate other's histogram pointer to avoid double free
+        other.histogram = nullptr;
+        other.prevDeltaTime = 0;
+        other.exceedsCount = 0;
+    }
 };
 
 class JSNodePerformanceHooksHistogram final : public JSC::JSDestructibleObject {
@@ -84,7 +87,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
-    std::shared_ptr<HistogramData> m_histogramData;
+    HistogramData m_histogramData;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -100,7 +103,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSGlobalObject* globalObject,
-        std::shared_ptr<HistogramData> existingHistogramData);
+        HistogramData&& existingHistogramData);
 
     void finishCreation(JSC::VM& vm);
     static void destroy(JSC::JSCell*);
@@ -127,14 +130,14 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); });
     }
 
-    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
+    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)
+        : Base(vm, structure), m_histogramData(std::move(histogramData))
     {
     }
 
     ~JSNodePerformanceHooksHistogram();
 
-    hdr_histogram* histogram() const { return m_histogramData->histogram.get(); }
+    hdr_histogram& histogram() { return *m_histogramData.histogram; }
 
     bool record(int64_t value);
     uint64_t recordDelta(JSGlobalObject* globalObject);

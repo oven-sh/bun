@@ -49,20 +49,20 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
     JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure);
     ptr->m_histogramData = WTFMove(histogramData);
     ptr->finishCreation(vm);
-    if (ptr->m_histogramData->histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData->histogram.get());
+    if (ptr->m_histogramData.histogram) {
+        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram.get());
         vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
     }
     return ptr;
 }
 
-JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, std::shared_ptr<HistogramData> existingHistogramData)
+JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, HistogramData&& existingHistogramData)
 {
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure);
+    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, existingHistogramData);
     ptr->m_histogramData = WTFMove(existingHistogramData);
     ptr->finishCreation(vm);
-    if (ptr->m_histogramData->histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData->histogram.get());
+    if (ptr->m_histogramData.histogram) {
+        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
         vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
     }
     return ptr;
@@ -87,7 +87,7 @@ void JSNodePerformanceHooksHistogram::visitChildrenImpl(JSCell* cell, Visitor& v
     Base::visitChildren(thisObject, visitor);
 
     // Report memory usage for the histogram
-    if (thisObject->m_histogramData && thisObject->m_histogramData->histogram) {
+    if (!thisObject->m_histogramData.histogram) {
         visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
     }
 }
@@ -115,99 +115,88 @@ JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JS
 
 bool JSNodePerformanceHooksHistogram::record(int64_t value)
 {
-    if (!m_histogramData->histogram) return false;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    bool recorded = hdr_record_value(m_histogramData->histogram.get(), value);
-    if (recorded && value > m_histogramData->histogram->highest_trackable_value) {
-        m_histogramData->exceedsCount++;
+    if (!m_histogramData.histogram) return false;
+
+    bool recorded = hdr_record_value(m_histogramData.histogram, value);
+    if (recorded && value > m_histogramData.histogram->highest_trackable_value) {
+        m_histogramData.exceedsCount++;
     }
     return recorded;
 }
 
 uint64_t JSNodePerformanceHooksHistogram::recordDelta(JSGlobalObject* globalObject)
 {
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
     // Use high-resolution monotonic time in nanoseconds
     auto now = std::chrono::steady_clock::now();
     uint64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
     
     uint64_t delta = 0;
-    if (m_histogramData->prevDeltaTime != 0) {
-        delta = nowNs - m_histogramData->prevDeltaTime;
+    if (m_histogramData.prevDeltaTime != 0) {
+        delta = nowNs - m_histogramData.prevDeltaTime;
         record(delta);
     }
-    m_histogramData->prevDeltaTime = nowNs;
+    m_histogramData.prevDeltaTime = nowNs;
     return delta;
 }
 
 void JSNodePerformanceHooksHistogram::reset()
 {
-    if (!m_histogramData->histogram) return;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    hdr_reset(m_histogramData->histogram.get());
-    m_histogramData->prevDeltaTime = 0;
-    m_histogramData->exceedsCount = 0;
+    if (!m_histogramData.histogram) return;
+    hdr_reset(m_histogramData.histogram);
+    m_histogramData.prevDeltaTime = 0;
+    m_histogramData.exceedsCount = 0;
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
-    if (!m_histogramData->histogram) return 0;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return hdr_min(m_histogramData->histogram.get());
+    if (!m_histogramData.histogram) return 0;
+    return hdr_min(m_histogramData.histogram);
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMax() const
 {
-    if (!m_histogramData->histogram) return 0;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return hdr_max(m_histogramData->histogram.get());
+    if (!m_histogramData.histogram) return 0;
+    return hdr_max(m_histogramData.histogram);
 }
 
 double JSNodePerformanceHooksHistogram::getMean() const
 {
-    if (!m_histogramData->histogram) return NAN;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return hdr_mean(m_histogramData->histogram.get());
+    if (!m_histogramData.histogram) return NAN;
+    return hdr_mean(m_histogramData.histogram);
 }
 
 double JSNodePerformanceHooksHistogram::getStddev() const
 {
-    if (!m_histogramData->histogram) return NAN;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return hdr_stddev(m_histogramData->histogram.get());
+    if (!m_histogramData.histogram) return NAN;
+    return hdr_stddev(m_histogramData.histogram);
 }
 
 int64_t JSNodePerformanceHooksHistogram::getPercentile(double percentile) const
 {
-    if (!m_histogramData->histogram) return 0;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return hdr_value_at_percentile(m_histogramData->histogram.get(), percentile);
+    if (!m_histogramData.histogram) return 0;
+    return hdr_value_at_percentile(m_histogramData.histogram, percentile);
 }
 
 size_t JSNodePerformanceHooksHistogram::getExceeds() const
 {
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return m_histogramData->exceedsCount;
+    return m_histogramData.exceedsCount;
 }
 
 uint64_t JSNodePerformanceHooksHistogram::getCount() const
 {
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
-    return m_histogramData->histogram ? m_histogramData->histogram->total_count : 0;
+    return m_histogramData.histogram->total_count;
 }
 
 double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* other)
 {
-    if (!m_histogramData->histogram || !other || !other->m_histogramData->histogram) return 0;
-    Locker<WTF::Lock> selfLocker(m_histogramData->mutex);
-    Locker<WTF::Lock> otherLocker(other->m_histogramData->mutex);
+    if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
 
     // hdr_add returns number of dropped values
-    double dropped = hdr_add(m_histogramData->histogram.get(), other->m_histogramData->histogram.get());
+    double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
     
     // Update exceeds count - this is a simplified approach
     // In a full implementation, we'd need to recalculate based on the merged histogram
-    m_histogramData->exceedsCount += other->m_histogramData->exceedsCount;
+    m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
 
     return dropped;
 }
@@ -217,11 +206,10 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_histogramData->histogram) return;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
+    if (!m_histogramData.histogram) return;
 
     struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData->histogram.get(), 1.0);
+    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
@@ -238,11 +226,10 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_histogramData->histogram) return;
-    Locker<WTF::Lock> locker(m_histogramData->mutex);
+    if (!m_histogramData.histogram) return;
 
     struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData->histogram.get(), 1.0);
+    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;

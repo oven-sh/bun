@@ -43,4 +43,4 @@ private:
     void finishCreation(JSC::VM& vm);
 };
 
-} // namespace Bun 
+} // namespace Bun

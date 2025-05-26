@@ -49,8 +49,8 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
         auto* bigInt = jsCast<JSBigInt*>(lowestVal);
         lowest = JSBigInt::toBigInt64(bigInt);
         if (lowest < 1) {
-             Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.lowest"_s, ">= 1"_s, lowestVal);
-             return nullptr;
+            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.lowest"_s, ">= 1"_s, lowestVal);
+            return nullptr;
         }
     } else if (!lowestVal.isUndefined()) {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lowest"_s, "number or bigint"_s, lowestVal);
@@ -131,4 +131,4 @@ void setupJSNodePerformanceHooksHistogramClassStructure(LazyClassStructure::Init
     init.setConstructor(constructor);
 }
 
-} // namespace Bun 
+} // namespace Bun

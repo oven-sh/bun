@@ -127,7 +127,7 @@ uint64_t JSNodePerformanceHooksHistogram::recordDelta(JSGlobalObject* globalObje
     // Use high-resolution monotonic time in nanoseconds
     auto now = std::chrono::steady_clock::now();
     uint64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
-    
+
     uint64_t delta = 0;
     if (m_histogramData.prevDeltaTime != 0) {
         delta = nowNs - m_histogramData.prevDeltaTime;
@@ -191,7 +191,7 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
-    
+
     // Update exceeds count - this is a simplified approach
     // In a full implementation, we'd need to recalculate based on the merged histogram
     m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
@@ -598,7 +598,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt, (J
 }
 
 // JSC Host function wrapper for creating histogram from JavaScript
-JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -642,9 +642,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject* globalObje
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
     RETURN_IF_EXCEPTION(scope, {});
-    
+
     return JSValue::encode(histogram);
 }
 
 } // namespace Bun
- 

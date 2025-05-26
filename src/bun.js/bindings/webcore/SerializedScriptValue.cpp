@@ -2036,36 +2036,25 @@ private:
             }
 
             if (auto* histogram = jsDynamicCast<Bun::JSNodePerformanceHooksHistogram*>(obj)) {
-                write(Bun__NodePerformanceHooksHistogramTag);
+                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage) {
+                    // Don't allow cloning of histograms if it's not a simple .postMessage().
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
 
                 // Serialize histogram configuration
                 hdr_histogram* hdr = histogram->m_histogramData.histogram;
                 if (!hdr) {
-                    // Write a flag indicating no histogram data
-                    write(static_cast<uint8_t>(0));
+                    // Histogram is not initialized
+                    code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
 
-                // Write a flag indicating histogram data is present
-                write(static_cast<uint8_t>(1));
-
-                // Write histogram configuration
-                write(static_cast<uint64_t>(hdr->lowest_discernible_value));
-                write(static_cast<uint64_t>(hdr->highest_trackable_value));
-                write(static_cast<uint32_t>(hdr->significant_figures));
-
-                // Write histogram struct data (without the counts pointer)
-                write(static_cast<uint64_t>(sizeof(hdr_histogram)));
-                write(reinterpret_cast<const uint8_t*>(hdr), sizeof(hdr_histogram));
-                
-                // Write counts array separately
-                size_t countsSize = hdr->counts_len * sizeof(int64_t);
-                write(static_cast<uint64_t>(countsSize));
-                write(reinterpret_cast<const uint8_t*>(hdr->counts), countsSize);
-
-                // Write additional metadata
-                write(histogram->m_histogramData.prevDeltaTime);
-                write(static_cast<uint64_t>(histogram->m_histogramData.exceedsCount));
+                write(Bun__NodePerformanceHooksHistogramTag);
+                // TODO: write the index into the histograms vector on SerializedScriptValue
+                // make it ThreadSafeRefCounted
+                // and then we can just write the index
+                code = SerializationReturnCode::DataCloneError;
 
                 return true;
             }
@@ -4629,101 +4618,6 @@ private:
         }
     }
 
-    JSValue readNodePerformanceHooksHistogram()
-    {
-        VM& vm = m_globalObject->vm();
-        auto* globalObject = defaultGlobalObject(m_globalObject);
-
-        // Read the presence flag
-        uint8_t hasData;
-        if (!read(hasData)) {
-            fail();
-            return JSValue();
-        }
-
-        if (!hasData) {
-            Structure* structure = globalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(globalObject);
-            return Bun::JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, 1, std::numeric_limits<int64_t>::max(), 3);
-        }
-
-        uint64_t lowest, highest;
-        uint32_t figures;
-        if (!read(lowest) || !read(highest) || !read(figures)) {
-            fail();
-            return JSValue();
-        }
-
-        // Read histogram struct size
-        uint64_t structSize;
-        if (!read(structSize)) {
-            fail();
-            return JSValue();
-        }
-
-        // Validate struct size
-        if (m_ptr + structSize > m_end || structSize != sizeof(hdr_histogram)) {
-            fail();
-            return JSValue();
-        }
-
-        // Create new histogram with same configuration
-        hdr_histogram* newHistogram = nullptr;
-        int result = hdr_init(lowest, highest, figures, &newHistogram);
-        if (result != 0 || !newHistogram) {
-            fail();
-            return JSValue();
-        }
-
-        // Save the original counts pointer
-        int64_t* originalCounts = newHistogram->counts;
-
-        // Copy the serialized struct data to the new histogram
-        memcpy(newHistogram, m_ptr, structSize);
-        m_ptr += structSize;
-
-        // Restore the counts pointer
-        newHistogram->counts = originalCounts;
-
-        // Read counts array size
-        uint64_t countsSize;
-        if (!read(countsSize)) {
-            hdr_close(newHistogram);
-            fail();
-            return JSValue();
-        }
-
-        // Validate counts size
-        if (m_ptr + countsSize > m_end || countsSize != newHistogram->counts_len * sizeof(int64_t)) {
-            hdr_close(newHistogram);
-            fail();
-            return JSValue();
-        }
-
-        // Copy the counts array
-        memcpy(newHistogram->counts, m_ptr, countsSize);
-        m_ptr += countsSize;
-
-        // Read additional metadata
-        uint64_t prevDeltaTime, exceedsCount;
-        if (!read(prevDeltaTime) || !read(exceedsCount)) {
-            hdr_close(newHistogram);
-            fail();
-            return JSValue();
-        }
-
-        // Create HistogramData with the deserialized histogram
-        Bun::HistogramData histogramData(newHistogram);
-        histogramData.prevDeltaTime = prevDeltaTime;
-        histogramData.exceedsCount = static_cast<size_t>(exceedsCount);
-
-        // Create the JS object
-        Structure* structure = globalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(globalObject);
-        auto* histogramObj = Bun::JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, std::move(histogramData));
-        m_gcBuffer.appendWithCrashOnOverflow(histogramObj);
-
-        return histogramObj;
-    }
-
     JSValue readDOMException()
     {
         CachedStringRef message;
@@ -5288,8 +5182,8 @@ private:
         case Bun__KeyObjectTag:
             return readKeyObject();
 
-        case Bun__NodePerformanceHooksHistogramTag:
-            return readNodePerformanceHooksHistogram();
+        // case Bun__NodePerformanceHooksHistogramTag:
+            // ?
 
         default:
             m_ptr--; // Push the tag back

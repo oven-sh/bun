@@ -199,33 +199,33 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     return dropped;
 }
 
-std::shared_ptr<HistogramData> JSNodePerformanceHooksHistogram::getHistogramDataForCloning() const
-{
-    if (!m_histogramData.histogram) {
-        return nullptr;
-    }
+// std::shared_ptr<HistogramData> JSNodePerformanceHooksHistogram::getHistogramDataForCloning() const
+// {
+//     if (!m_histogramData.histogram) {
+//         return nullptr;
+//     }
 
-    hdr_histogram* clonedHistogram = nullptr;
-    int result = hdr_init(
-        m_histogramData.histogram->lowest_discernible_value,
-        m_histogramData.histogram->highest_trackable_value,
-        m_histogramData.histogram->significant_figures,
-        &clonedHistogram
-    );
+//     hdr_histogram* clonedHistogram = nullptr;
+//     int result = hdr_init(
+//         m_histogramData.histogram->lowest_discernible_value,
+//         m_histogramData.histogram->highest_trackable_value,
+//         m_histogramData.histogram->significant_figures,
+//         &clonedHistogram
+//     );
     
-    if (result != 0 || !clonedHistogram) {
-        return nullptr;
-    }
+//     if (result != 0 || !clonedHistogram) {
+//         return nullptr;
+//     }
 
-    size_t dataSize = hdr_get_memory_size(m_histogramData.histogram);
-    memcpy(clonedHistogram, m_histogramData.histogram, dataSize);
+//     size_t dataSize = hdr_get_memory_size(m_histogramData.histogram);
+//     memcpy(clonedHistogram, m_histogramData.histogram, dataSize);
 
-    auto clonedData = std::make_shared<HistogramData>(clonedHistogram);
-    clonedData->prevDeltaTime = m_histogramData.prevDeltaTime;
-    clonedData->exceedsCount = m_histogramData.exceedsCount;
+//     auto clonedData = std::make_shared<HistogramData>(clonedHistogram);
+//     clonedData->prevDeltaTime = m_histogramData.prevDeltaTime;
+//     clonedData->exceedsCount = m_histogramData.exceedsCount;
 
-    return clonedData;
-}
+//     return clonedData;
+// }
 
 void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObject, JSC::JSMap* map)
 {

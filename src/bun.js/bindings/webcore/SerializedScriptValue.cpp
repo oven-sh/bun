@@ -2057,7 +2057,7 @@ private:
                 // Write histogram struct data (without the counts pointer)
                 write(static_cast<uint64_t>(sizeof(hdr_histogram)));
                 write(reinterpret_cast<const uint8_t*>(hdr), sizeof(hdr_histogram));
-                
+
                 // Write counts array separately
                 size_t countsSize = hdr->counts_len * sizeof(int64_t);
                 write(static_cast<uint64_t>(countsSize));

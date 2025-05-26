@@ -45,4 +45,4 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);
 };
 
-} // namespace Bun 
+} // namespace Bun

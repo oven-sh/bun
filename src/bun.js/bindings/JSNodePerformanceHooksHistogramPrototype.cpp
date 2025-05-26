@@ -42,4 +42,4 @@ void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-} // namespace Bun 
+} // namespace Bun

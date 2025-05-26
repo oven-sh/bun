@@ -49,8 +49,6 @@ JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentiles
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 
-
-
 class HistogramData {
 public:
     hdr_histogram* histogram;
@@ -132,7 +130,8 @@ public:
     }
 
     JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)
-        : Base(vm, structure), m_histogramData(std::move(histogramData))
+        : Base(vm, structure)
+        , m_histogramData(std::move(histogramData))
     {
     }
 
@@ -162,4 +161,4 @@ private:
 
 void setupJSNodePerformanceHooksHistogramClassStructure(JSC::LazyClassStructure::Initializer& init);
 
-} // namespace Bun 
+} // namespace Bun

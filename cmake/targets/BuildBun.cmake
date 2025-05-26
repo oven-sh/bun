@@ -1049,6 +1049,7 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
+  HdrHistogram
   Highway
   LibDeflate
   LolHtml

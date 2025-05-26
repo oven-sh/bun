@@ -31,7 +31,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+const { validateFunction, validateInt32, validateNumber, validateAbortSignal } = require("internal/validators");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
@@ -493,6 +493,10 @@ function Socket(options?) {
     throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
+  if (options?.fd !== undefined) {
+    validateInt32(options.fd, "options.fd", 0);
+  }
 
   Duplex.$call(this, {
     ...opts,

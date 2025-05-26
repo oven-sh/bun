@@ -1049,7 +1049,6 @@ set(BUN_DEPENDENCIES
   BoringSSL
   Brotli
   Cares
-  HdrHistogram
   Highway
   LibDeflate
   LolHtml
@@ -1058,6 +1057,7 @@ set(BUN_DEPENDENCIES
   TinyCC
   Zlib
   LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
   Zstd
 )
 

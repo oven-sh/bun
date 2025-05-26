@@ -15,3 +15,8 @@ register_cmake_command(
   INCLUDES
     include
 )
+
+# Must be loaded after zlib is defined
+if(TARGET clone-zlib)
+  add_dependencies(hdrhistogram clone-zlib)
+endif()

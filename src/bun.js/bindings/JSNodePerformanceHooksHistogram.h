@@ -41,11 +41,11 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_mean);
 JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_stddev);
 JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceeds);
 JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt);
+JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentiles);
+JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigInt);
 
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt);
-JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentiles);
-JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentilesBigInt);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 
@@ -54,6 +54,7 @@ public:
     hdr_histogram* histogram;
     uint64_t prevDeltaTime = 0;
     size_t exceedsCount = 0;
+    uint64_t totalCount = 0; // Manual count to track all values (Node.js behavior)
 
     HistogramData(hdr_histogram* histogram)
         : histogram(histogram)
@@ -72,11 +73,13 @@ public:
         : histogram(other.histogram)
         , prevDeltaTime(other.prevDeltaTime)
         , exceedsCount(other.exceedsCount)
+        , totalCount(other.totalCount)
     {
         // Invalidate other's histogram pointer to avoid double free
         other.histogram = nullptr;
         other.prevDeltaTime = 0;
         other.exceedsCount = 0;
+        other.totalCount = 0;
     }
 };
 

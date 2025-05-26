@@ -22,8 +22,6 @@ static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[
     { "reset"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncReset, 0 } },
     { "percentile"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentile, 1 } },
     { "percentileBigInt"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt, 1 } },
-    { "percentiles"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncGetPercentiles, 1 } },
-    { "percentilesBigInt"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncGetPercentilesBigInt, 1 } },
 
     { "count"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_count, 0 } },
     { "countBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_countBigInt, 0 } },
@@ -35,6 +33,8 @@ static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[
     { "stddev"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_stddev, 0 } },
     { "exceeds"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_exceeds, 0 } },
     { "exceedsBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_exceedsBigInt, 0 } },
+    { "percentiles"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_percentiles, 0 } },
+    { "percentilesBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_percentilesBigInt, 0 } },
 };
 
 const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogramPrototype) };
@@ -192,56 +192,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
     return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentiles, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentiles"_s);
-        return {};
-    }
-
-    if (callFrame->argumentCount() < 1 || !callFrame->uncheckedArgument(0).isObject()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Map"_s, callFrame->uncheckedArgument(0));
-        return {};
-    }
-    JSMap* map = jsDynamicCast<JSMap*>(callFrame->uncheckedArgument(0));
-    if (!map) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Map"_s, callFrame->uncheckedArgument(0));
-        return {};
-    }
-
-    thisObject->getPercentiles(globalObject, map);
-    return JSValue::encode(map);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentilesBigInt, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentilesBigInt"_s);
-        return {};
-    }
-
-    if (callFrame->argumentCount() < 1 || !callFrame->uncheckedArgument(0).isObject()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Map"_s, callFrame->uncheckedArgument(0));
-        return {};
-    }
-    JSMap* map = jsDynamicCast<JSMap*>(callFrame->uncheckedArgument(0));
-    if (!map) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Map"_s, callFrame->uncheckedArgument(0));
-        return {};
-    }
-
-    thisObject->getPercentilesBigInt(globalObject, map);
-    return JSValue::encode(map);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
@@ -370,6 +320,40 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt, (J
         return {};
     }
     return JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(thisObject->getExceeds())));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentiles, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentiles"_s);
+        return {};
+    }
+
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    thisObject->getPercentiles(globalObject, map);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(map);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigInt, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodePerformanceHooksHistogram* thisObject = jsDynamicCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "percentilesBigInt"_s);
+        return {};
+    }
+
+    JSMap* map = JSMap::create(vm, globalObject->mapStructure());
+    thisObject->getPercentilesBigInt(globalObject, map);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(map);
 }
 
 // JSC Host function wrapper for creating histogram from JavaScript

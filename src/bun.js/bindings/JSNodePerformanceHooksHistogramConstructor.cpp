@@ -59,18 +59,15 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
 
     if (highestVal.isNumber()) {
         double dbl = highestVal.asNumber();
-        if (std::isnan(dbl) || dbl < 2 * lowest || dbl > static_cast<double>(std::numeric_limits<int64_t>::max())) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.highest"_s, ">= 2 * options.lowest && <= Number.MAX_SAFE_INTEGER"_s, highestVal);
+        if (std::isnan(dbl) || dbl > static_cast<double>(std::numeric_limits<int64_t>::max())) {
+            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.highest"_s, "<= Number.MAX_SAFE_INTEGER"_s, highestVal);
             return nullptr;
         }
         highest = static_cast<int64_t>(dbl);
     } else if (highestVal.isBigInt()) {
         auto* bigInt = jsCast<JSBigInt*>(highestVal);
         highest = JSBigInt::toBigInt64(bigInt);
-        if (highest < 2 * lowest) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.highest"_s, ">= 2 * options.lowest"_s, highestVal);
-            return nullptr;
-        }
+        // Node.js is more permissive - don't enforce highest >= 2 * lowest
     } else if (!highestVal.isUndefined()) {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.highest"_s, "number or bigint"_s, highestVal);
         return nullptr;

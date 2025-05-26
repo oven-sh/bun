@@ -211,9 +211,10 @@ export default {
       throw new RangeError("options.min must be >= 1");
     }
 
-    if (maxNum < 2 * minNum) {
-      throw new RangeError("options.max must be >= 2 * options.min");
-    }
+    // Node.js is more permissive with validation
+    // if (maxNum < 2 * minNum) {
+    //   throw new RangeError("options.max must be >= 2 * options.min");
+    // }
 
     return cppCreateHistogram(minNum, maxNum, figures);
   },

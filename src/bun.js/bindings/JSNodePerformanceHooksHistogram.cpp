@@ -212,7 +212,7 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 //         m_histogramData.histogram->significant_figures,
 //         &clonedHistogram
 //     );
-    
+
 //     if (result != 0 || !clonedHistogram) {
 //         return nullptr;
 //     }

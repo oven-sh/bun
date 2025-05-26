@@ -39,18 +39,18 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto histogramData = std::make_shared<HistogramData>(lowest, highest, figures);
-    if (!histogramData->histogram) {
-        // If hdr_init failed, throw an error
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "Histogram creation failed: invalid parameters or out of memory"_s);
+    struct hdr_histogram* raw_histogram = nullptr;
+    int result = hdr_init(lowest, highest, figures, &raw_histogram);
+    if (result != 0 || !raw_histogram) {
+        throwTypeError(globalObject, scope, "Failed to initialize histogram"_s);
         return nullptr;
     }
+    auto histogramData = HistogramData(raw_histogram);
 
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure);
-    ptr->m_histogramData = WTFMove(histogramData);
+    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(histogramData));
     ptr->finishCreation(vm);
     if (ptr->m_histogramData.histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram.get());
+        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
         vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
     }
     return ptr;
@@ -58,8 +58,7 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
 
 JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, HistogramData&& existingHistogramData)
 {
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, existingHistogramData);
-    ptr->m_histogramData = WTFMove(existingHistogramData);
+    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(existingHistogramData));
     ptr->finishCreation(vm);
     if (ptr->m_histogramData.histogram) {
         ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
@@ -86,7 +85,6 @@ void JSNodePerformanceHooksHistogram::visitChildrenImpl(JSCell* cell, Visitor& v
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    // Report memory usage for the histogram
     if (!thisObject->m_histogramData.histogram) {
         visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
     }

@@ -199,7 +199,7 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
 
     size_t originalExceeds = m_histogramData.exceedsCount;
-    
+
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 

@@ -5,9 +5,10 @@
 pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct(u8) {
+pub const ConnectionFlags = packed struct {
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
+    is_selecting_db_internal: bool = false,
     enable_offline_queue: bool = true,
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
@@ -467,7 +468,8 @@ pub const ValkeyClient = struct {
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
-        if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
+        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
+        if (this.write_buffer.remaining().len == 0 and connection_ready) {
             if (this.queue.readableLength() > 0) {
                 // Check the command at the head of the queue
                 const flags = &this.queue.peekItem(0).meta;
@@ -674,6 +676,36 @@ pub const ValkeyClient = struct {
             return;
         }
 
+        // Handle initial SELECT response
+        if (this.flags.is_selecting_db_internal) {
+            this.flags.is_selecting_db_internal = false; // Consume this state
+
+            switch (value.*) {
+                .Error => |err_str| {
+                    this.fail(err_str, protocol.RedisError.InvalidCommand);
+                    return;
+                },
+                .SimpleString => |ok_str| {
+                    if (std.mem.eql(u8, ok_str, "OK")) {
+                        // SELECT was successful.
+                        debug("SELECT {d} successful", .{this.database});
+                        // Connection is now fully ready on the specified database.
+                        // If any commands were queued while waiting for SELECT, try to send them.
+                        this.sendNextCommand();
+                    } else {
+                        // SELECT returned something other than "OK"
+                        this.fail("SELECT command failed with non-OK response", protocol.RedisError.InvalidResponse);
+                        return;
+                    }
+                },
+                else => { // Unexpected response type for SELECT
+                    this.fail("SELECT command received unexpected response type", protocol.RedisError.InvalidResponse);
+                    return;
+                },
+            }
+            return; // SELECT response handled, do not proceed to user command logic
+        }
+
         // For regular commands, get the next command+promise pair from the queue
         var pair = this.in_flight.readItem() orelse {
             debug("Received response but no promise in queue", .{});
@@ -755,6 +787,7 @@ pub const ValkeyClient = struct {
                 this.fail("Failed to write SELECT command", err);
                 return;
             };
+            this.flags.is_selecting_db_internal = true;
         }
     }
 
@@ -792,7 +825,8 @@ pub const ValkeyClient = struct {
         }) catch |err| bun.handleOom(err);
         const data = offline_cmd.serialized_data;
 
-        if (this.flags.is_authenticated and this.write_buffer.remaining().len == 0) {
+        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
+        if (connection_ready and this.write_buffer.remaining().len == 0) {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
@@ -823,6 +857,7 @@ pub const ValkeyClient = struct {
 
     fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
         const can_pipeline = command.meta.supports_auto_pipelining and this.flags.auto_pipelining;
+        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
 
         // For commands that don't support pipelining, we need to wait for the queue to drain completely
         // before sending the command. This ensures proper order of execution for state-changing commands.
@@ -834,7 +869,7 @@ pub const ValkeyClient = struct {
             // With auto pipelining, we can accept commands regardless of in_flight commands
             (!can_pipeline and this.in_flight.readableLength() > 0) or
             // We need authentication before processing commands
-            !this.flags.is_authenticated or
+            !connection_ready or
             // Commands that don't support pipelining must wait for the entire queue to drain
             must_wait_for_queue or
             // If can pipeline, we can accept commands regardless of in_flight commands

@@ -116,12 +116,12 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
     // hdr_record_value returns false if the value cannot be recorded
     // (e.g., if it's outside the trackable range)
     bool recorded = hdr_record_value(m_histogramData.histogram, value);
-    
+
     // If the value couldn't be recorded, it means it exceeded the histogram's range
     if (!recorded) {
         m_histogramData.exceedsCount++;
     }
-    
+
     return recorded;
 }
 
@@ -194,7 +194,7 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
 
     size_t originalExceeds = m_histogramData.exceedsCount;
-    
+
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 

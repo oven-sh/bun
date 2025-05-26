@@ -114,15 +114,20 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
 {
     if (!m_histogramData.histogram) return false;
 
+    if (value > m_histogramData.histogram->highest_trackable_value) {
+        m_histogramData.exceedsCount++;
+        return false;
+    }
+
     // hdr_record_value returns false if the value cannot be recorded
-    // (e.g., if it's outside the trackable range)
+    // (e.g., if it's outside the trackable range or other errors)
     bool recorded = hdr_record_value(m_histogramData.histogram, value);
-    
-    // If the value couldn't be recorded, it means it exceeded the histogram's range
+
+    // If the value couldn't be recorded for other reasons, also count as exceeds
     if (!recorded) {
         m_histogramData.exceedsCount++;
     }
-    
+
     return recorded;
 }
 

@@ -183,30 +183,35 @@ export default {
   // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
   monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
   createHistogram: function createHistogram(options = {}) {
-    const { lowest = 1, highest = Number.MAX_SAFE_INTEGER, figures = 3 } = options;
+    const {
+      min = 1,
+      max = Number.MAX_SAFE_INTEGER,
+      figures = 3,
+    } = options as import("node:perf_hooks").CreateHistogramOptions;
 
     // Validate parameters
-    if (typeof lowest !== "number" && typeof lowest !== "bigint") {
-      throw new TypeError("options.lowest must be a number or bigint");
+    if (typeof min !== "number" && typeof min !== "bigint") {
+      throw new TypeError("options.min must be a number or bigint");
     }
-    if (typeof highest !== "number" && typeof highest !== "bigint") {
-      throw new TypeError("options.highest must be a number or bigint");
+    if (typeof max !== "number" && typeof max !== "bigint") {
+      throw new TypeError("options.max must be a number or bigint");
     }
     if (typeof figures !== "number" || !Number.isInteger(figures) || figures < 1 || figures > 5) {
       throw new RangeError("options.figures must be an integer between 1 and 5");
     }
 
-    const lowestNum = typeof lowest === "bigint" ? Number(lowest) : lowest;
-    const highestNum = typeof highest === "bigint" ? Number(highest) : highest;
+    const minNum = typeof min === "bigint" ? Number(min) : min;
+    const maxNum = typeof max === "bigint" ? Number(max) : max;
 
-    if (lowestNum < 1) {
-      throw new RangeError("options.lowest must be >= 1");
-    }
-    if (highestNum < 2 * lowestNum) {
-      throw new RangeError("options.highest must be >= 2 * options.lowest");
+    if (minNum < 1) {
+      throw new RangeError("options.min must be >= 1");
     }
 
-    return cppCreateHistogram(lowestNum, highestNum, figures);
+    if (maxNum < 2 * minNum) {
+      throw new RangeError("options.max must be >= 2 * options.min");
+    }
+
+    return cppCreateHistogram(minNum, maxNum, figures);
   },
   PerformanceResourceTiming,
 };

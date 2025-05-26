@@ -247,11 +247,12 @@ describe("Histogram", () => {
       h.record(10);
 
       const percentiles = h.percentilesBigInt;
-      // Check what percentilesBigInt actually is in Node.js
+
       console.log("percentilesBigInt type:", typeof percentiles);
       console.log("percentilesBigInt:", percentiles);
-      // For now, just check it exists
+
       assert.ok(percentiles !== undefined);
+      assert.equal(percentiles.size, 4);
     });
   });
 

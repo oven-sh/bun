@@ -40,6 +40,11 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Handle the case where lowest == highest (Node.js allows this, but HDR histogram doesn't)
+    if (highest <= lowest) {
+        highest = lowest + 1;
+    }
+
     struct hdr_histogram* raw_histogram = nullptr;
     int result = hdr_init(lowest, highest, figures, &raw_histogram);
     if (result != 0 || !raw_histogram) {

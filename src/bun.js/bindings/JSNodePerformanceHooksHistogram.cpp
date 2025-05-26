@@ -22,6 +22,7 @@
 #include <JavaScriptCore/PropertyName.h>
 #include <chrono>
 #include <hdr/hdr_histogram.h>
+#include <wtf/MonotonicTime.h>
 
 namespace Bun {
 
@@ -127,9 +128,8 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
 
 uint64_t JSNodePerformanceHooksHistogram::recordDelta(JSGlobalObject* globalObject)
 {
-    // Use high-resolution monotonic time in nanoseconds
-    auto now = std::chrono::steady_clock::now();
-    uint64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    auto now = WTF::MonotonicTime::now();
+    uint64_t nowNs = static_cast<uint64_t>(now.secondsSinceEpoch().milliseconds() * 1000000.0);
 
     uint64_t delta = 0;
     if (m_histogramData.prevDeltaTime != 0) {

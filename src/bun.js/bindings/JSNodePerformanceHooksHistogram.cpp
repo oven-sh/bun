@@ -28,7 +28,7 @@ namespace Bun {
 
 using namespace JSC;
 
-const ClassInfo JSNodePerformanceHooksHistogram::s_info = { "Histogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogram) };
+const ClassInfo JSNodePerformanceHooksHistogram::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogram) };
 
 void JSNodePerformanceHooksHistogram::finishCreation(VM& vm)
 {

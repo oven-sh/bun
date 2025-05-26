@@ -183,6 +183,10 @@ export default {
   // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
   monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
   createHistogram: function createHistogram(options = {}) {
+    if (options !== null && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    }
+
     const {
       min = 1,
       max = Number.MAX_SAFE_INTEGER,

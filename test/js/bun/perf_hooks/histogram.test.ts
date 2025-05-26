@@ -284,14 +284,7 @@ describe("Histogram", () => {
     });
 
     test("histogram with same lowest and highest", () => {
-      const h = createHistogram({ min: 5, max: 5, figures: 1 });
-
-      h.record(5);
-      expect(h.count).toBe(1);
-
-      h.record(6);
-      expect(h.exceeds).toBe(1);
-      expect(h.count).toBe(1);
+      expect(() => createHistogram({ min: 5, max: 5, figures: 1 })).toThrow("options.max must be >= 2 * options.min");
     });
 
     test("multiple add operations", () => {

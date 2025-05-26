@@ -46,6 +46,8 @@ JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigI
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentiles);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncGetPercentilesBigInt);
 
+JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
+
 struct HDRHistogramDeleter {
     void operator()(hdr_histogram* histogram) {
         if (histogram)

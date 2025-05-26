@@ -489,7 +489,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(!globalObject)) {
+    if (!globalObject) [[unlikely]] {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Cannot run mock from a different global context"_s));
         return {};
     }
@@ -783,7 +783,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             continue;
         }
         auto* function = callbacks[i].get();
-        if (UNLIKELY(!function)) {
+        if (!function) [[unlikely]] {
             continue;
         }
 

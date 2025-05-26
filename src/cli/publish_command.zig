@@ -5,7 +5,6 @@ const Output = bun.Output;
 const Global = bun.Global;
 const http = bun.http;
 const OOM = bun.OOM;
-const Headers = http.Headers;
 const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = bun.URL;
@@ -34,7 +33,6 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 const E = bun.JSAst.E;
 const G = bun.JSAst.G;
-const BabyList = bun.BabyList;
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {

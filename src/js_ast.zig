@@ -1,11 +1,9 @@
 const std = @import("std");
 const logger = bun.logger;
-const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -15,17 +13,13 @@ const default_allocator = bun.default_allocator;
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
-const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
-const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
 const Loader = bun.options.Loader;
@@ -3444,6 +3438,100 @@ pub const Expr = struct {
 
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    /// Only use this for pretty-printing JSON. Do not use in transpiler.
+    ///
+    /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
+    pub fn getByIndex(expr: *const Expr, index: u32, index_str: string, allocator: std.mem.Allocator) ?Expr {
+        switch (expr.data) {
+            .e_array => |array| {
+                if (index >= array.items.len) return null;
+                return array.items.slice()[index];
+            },
+            .e_object => |object| {
+                for (object.properties.sliceConst()) |*prop| {
+                    const key = &(prop.key orelse continue);
+                    switch (key.data) {
+                        .e_string => |str| {
+                            if (str.eql(string, index_str)) {
+                                return prop.value;
+                            }
+                        },
+                        .e_number => |num| {
+                            if (num.toU32() == index) {
+                                return prop.value;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                return null;
+            },
+            .e_string => |str| {
+                if (str.len() > index) {
+                    var slice = str.slice(allocator);
+                    // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
+                    // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
+                    if (slice.len > index) {
+                        return Expr.init(E.String, .{ .data = slice[index..][0..1] }, expr.loc);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    /// This supports lookups like:
+    /// - `foo`
+    /// - `foo.bar`
+    /// - `foo[123]`
+    /// - `foo[123].bar`
+    /// - `foo[123].bar[456]`
+    /// - `foo[123].bar[456].baz`
+    /// - `foo[123].bar[456].baz.qux` // etc.
+    ///
+    /// This is not intended for use by the transpiler, instead by pretty printing JSON.
+    pub fn getPathMayBeIndex(expr: *const Expr, name: string) ?Expr {
+        if (name.len == 0) {
+            return null;
+        }
+
+        if (strings.indexOfAny(name, "[.")) |idx| {
+            switch (name[idx]) {
+                '[' => {
+                    const end_idx = strings.indexOfChar(name, ']') orelse return null;
+                    var base_expr = expr;
+                    if (idx > 0) {
+                        const key = name[0..idx];
+                        base_expr = &(base_expr.get(key) orelse return null);
+                    }
+
+                    const index_str = name[idx + 1 .. end_idx];
+                    const index = std.fmt.parseInt(u32, index_str, 10) catch return null;
+                    const rest = if (name.len > end_idx) name[end_idx + 1 ..] else "";
+                    const result = &(base_expr.getByIndex(index, index_str, bun.default_allocator) orelse return null);
+                    if (rest.len > 0) return result.getPathMayBeIndex(rest);
+                    return result.*;
+                },
+                '.' => {
+                    const key = name[0..idx];
+                    const sub_expr = &(expr.get(key) orelse return null);
+                    const subpath = if (name.len > idx) name[idx + 1 ..] else "";
+                    if (subpath.len > 0) {
+                        return sub_expr.getPathMayBeIndex(subpath);
+                    }
+
+                    return sub_expr.*;
+                },
+                else => unreachable,
+            }
+        }
+
+        return expr.get(name);
     }
 
     /// Don't use this if you care about performance.

@@ -8,8 +8,6 @@ const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const use_mimalloc = bun.use_mimalloc;
-const writeStream = std.json.writeStream;
-const WriteStream = std.json.WriteStream;
 const c = bun.c;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -865,6 +863,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "b", CSI ++ "1m" },
     &.{ "d", CSI ++ "2m" },
     &.{ "i", CSI ++ "3m" },
+    &.{ "u", CSI ++ "4m" },
     &.{ "black", CSI ++ "30m" },
     &.{ "red", CSI ++ "31m" },
     &.{ "green", CSI ++ "32m" },

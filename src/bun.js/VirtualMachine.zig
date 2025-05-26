@@ -438,7 +438,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
-    if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER)) {
         this.transpiler_store.enabled = false;
     }
 
@@ -2484,8 +2484,8 @@ pub fn remapZigException(
 ) void {
     error_instance.toZigException(this.global, exception);
     const enable_source_code_preview = allow_source_code_preview and
-        !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+        !(bun.getRuntimeFeatureFlag(.BUN_DISABLE_SOURCE_CODE_PREVIEW) or
+            bun.getRuntimeFeatureFlag(.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW));
 
     defer {
         if (Environment.isDebug) {
@@ -3513,22 +3513,16 @@ const Async = bun.Async;
 const Transpiler = bun.Transpiler;
 const ImportWatcher = JSC.hot_reloader.ImportWatcher;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ErrorableString = JSC.ErrorableString;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Exception = JSC.Exception;
 const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
-const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
-const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
-const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
 const ConsoleObject = JSC.ConsoleObject;
 const Node = JSC.Node;
 const ZigException = JSC.ZigException;
@@ -3537,16 +3531,11 @@ const ErrorableResolvedSource = JSC.ErrorableResolvedSource;
 const ResolvedSource = JSC.ResolvedSource;
 const JSInternalPromise = JSC.JSInternalPromise;
 const JSModuleLoader = JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = JSC.ErrorableZigString;
 const VM = JSC.VM;
-const JSFunction = JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
-const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
 const DNSResolver = @import("api/bun/dns_resolver.zig").DNSResolver;

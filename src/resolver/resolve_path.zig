@@ -1,6 +1,5 @@
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
-const FeatureFlags = @import("../feature_flags.zig");
 const bun = @import("bun");
 const Fs = @import("../fs.zig");
 

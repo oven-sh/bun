@@ -345,7 +345,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterType, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -359,7 +359,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterType, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -385,7 +385,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterSubtype, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -399,7 +399,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterSubtype, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -425,7 +425,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -440,7 +440,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterParams, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -454,7 +454,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSMIMEType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
     }
@@ -543,7 +543,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     JSC::Structure* structure = zigGlobalObject->m_JSMIMETypeClassStructure.get(zigGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSMIMETypeClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSMIMETypeClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor MIMEType cannot be invoked without 'new'"_s);
             return {};

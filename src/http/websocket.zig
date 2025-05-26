@@ -2,16 +2,8 @@
 // Thank you @frmdstryr.
 const std = @import("std");
 
-const posix = std.posix;
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 pub const Opcode = enum(u4) {
     Continue = 0x0,

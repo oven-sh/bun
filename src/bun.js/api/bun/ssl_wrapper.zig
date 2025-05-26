@@ -1,7 +1,6 @@
 const bun = @import("bun");
 
 const BoringSSL = bun.BoringSSL.c;
-const X509 = @import("./x509.zig");
 const JSC = bun.JSC;
 const uws = bun.uws;
 const log = bun.Output.scoped(.SSLWrapper, true);

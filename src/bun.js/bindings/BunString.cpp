@@ -70,7 +70,12 @@ extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
     ASSERT(simdutf::validate_ascii(bytes, length));
     auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
     atom.impl()->ref();
+// Ignore the warning about returning a stack address
+// This is safe because we've ref'd the atom.impl() which will keep it alive
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-stack-address"
     return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+#pragma clang diagnostic pop
 }
 
 extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
@@ -80,7 +85,12 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
         if (atom.isNull())
             return { BunStringTag::Dead, {} };
         atom.impl()->ref();
+        // Ignore the warning about returning a stack address
+// This is safe because we've ref'd the atom.impl() which will keep it alive
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-stack-address"
         return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+#pragma clang diagnostic pop
     }
 
     return { BunStringTag::Dead, {} };
@@ -98,7 +108,7 @@ extern "C" JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* g
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return JSC::EncodedJSValue();
     }
@@ -110,11 +120,11 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead)) {
+    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) [[unlikely]] {
         return JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (LIKELY(bunString->tag == BunStringTag::WTFStringImpl)) {
+    if (bunString->tag == BunStringTag::WTFStringImpl) [[likely]] {
 #if ASSERT_ENABLED
         unsigned refCount = bunString->impl.wtf->refCount();
         ASSERT(refCount > 0 && !bunString->impl.wtf->isEmpty());
@@ -180,10 +190,10 @@ BunString toString(const char* bytes, size_t length)
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { BunStringTag::Dead };
     }
-    if (UNLIKELY(str.length() == 0)) {
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -210,10 +220,10 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { BunStringTag::Dead };
     }
-    if (UNLIKELY(str.length() == 0)) {
+    if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
     }
 
@@ -292,7 +302,7 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     ASSERT(length > 0);
     std::span<UChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -303,7 +313,7 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     ASSERT(length > 0);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
@@ -316,7 +326,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
         std::span<UChar> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
-        if (UNLIKELY(!impl)) {
+        if (!impl) [[unlikely]] {
             return { .tag = BunStringTag::Dead };
         }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
@@ -324,7 +334,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
-    if (UNLIKELY(str.isNull())) {
+    if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     auto impl = str.releaseImpl();
@@ -336,7 +346,7 @@ extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
     ASSERT(length > 0);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length);
@@ -351,7 +361,7 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     size_t outLength = simdutf::latin1_length_from_utf16(length);
     std::span<LChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { BunStringTag::Dead };
     }
 
@@ -365,7 +375,7 @@ extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
     ASSERT(length > 0);
     std::span<UChar> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
-    if (UNLIKELY(!impl)) {
+    if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
     memcpy(ptr.data(), bytes, length * sizeof(char16_t));

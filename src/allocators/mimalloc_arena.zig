@@ -1,5 +1,4 @@
 const mem = @import("std").mem;
-const builtin = @import("std").builtin;
 const std = @import("std");
 
 const mimalloc = @import("./mimalloc.zig");

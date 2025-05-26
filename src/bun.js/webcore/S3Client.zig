@@ -3,8 +3,6 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const ZigString = JSC.ZigString;
-const Method = bun.http.Method;
 const S3File = @import("./S3File.zig");
 const S3Credentials = bun.S3.S3Credentials;
 

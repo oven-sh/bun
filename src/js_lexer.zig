@@ -1,19 +1,15 @@
 const std = @import("std");
 const logger = bun.logger;
 const tables = @import("js_lexer_tables.zig");
-const build_options = @import("build_options");
 const js_ast = bun.JSAst;
 
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const CodePoint = bun.CodePoint;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;

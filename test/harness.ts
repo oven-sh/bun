@@ -7,9 +7,9 @@
 
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { fork, ChildProcess } from "child_process";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFile, readlink, writeFile, readdir, rm } from "fs/promises";
+import { ChildProcess, fork } from "child_process";
+import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -46,8 +46,8 @@ export const isFlaky = isCI;
 export const isBroken = isCI;
 export const isASAN = basename(process.execPath).includes("bun-asan");
 
-export const bunEnv: NodeJS.ProcessEnv = {
-  ...process.env,
+export const bunEnv: NodeJS.Dict<string> = {
+  ...(process.env as NodeJS.Dict<string>),
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -205,7 +205,7 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
-export function makeTreeSync(base: string, tree: DirectoryTree) {
+export function makeTreeSyncFromDirectoryTree(base: string, tree: DirectoryTree) {
   const isDirectoryTree = (value: string | DirectoryTree | Buffer): value is DirectoryTree =>
     typeof value === "object" && value && typeof value?.byteLength === "undefined";
 
@@ -227,11 +227,20 @@ export function makeTreeSync(base: string, tree: DirectoryTree) {
   }
 }
 
+export function makeTreeSync(base: string, filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string) {
+  if (typeof filesOrAbsolutePathToCopyFolderFrom === "string") {
+    fs.cpSync(filesOrAbsolutePathToCopyFolderFrom, base, { recursive: true });
+    return;
+  }
+
+  return makeTreeSyncFromDirectoryTree(base, filesOrAbsolutePathToCopyFolderFrom);
+}
+
 /**
  * Recursively create files within a new temporary directory.
  *
  * @param basename prefix of the new temporary directory
- * @param files directory tree. Each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @param filesOrAbsolutePathToCopyFolderFrom Directory tree or absolute path to a folder to copy. If passing an object each key is a folder or file, and each value is the contents of the file. Use objects for directories.
  * @returns an absolute path to the new temporary directory
  *
  * @example
@@ -244,9 +253,12 @@ export function makeTreeSync(base: string, tree: DirectoryTree) {
  * });
  * ```
  */
-export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+export function tempDirWithFiles(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
-  makeTreeSync(base, files);
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
@@ -1651,4 +1663,47 @@ export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();
   return results;
+}
+
+/**
+ * Helper function for making automatically lazily-executed promises.
+ *
+ * The difference is that the promise has not already started to be evaluated when it is created,
+ * only when you await it does it execute the function.
+ *
+ * @example
+ * ```ts
+ * function createMyFixture() {
+ *   return {
+ *     start: lazyPromiseLike(() => fetch("https://example.com")),
+ *     stop: lazyPromiseLike(() => fetch("https://example.com")),
+ *   }
+ * }
+ *
+ * const { start, stop } = createMyFixture();
+ *
+ * await start; // Calls only the start function
+ * ```
+ *
+ * @param fn A function to make lazily evaluated.
+ * @returns A promise-like object that will evaluate the function when `then` is called.
+ */
+export function lazyPromiseLike<T>(fn: () => Promise<T>): PromiseLike<T> {
+  let p: Promise<T>;
+
+  return {
+    then(onfulfilled, onrejected) {
+      if (!p) {
+        p = fn();
+      }
+      return p.then(onfulfilled, onrejected);
+    },
+  };
+}
+
+export async function gunzipJsonRequest(req: Request) {
+  const buf = await req.arrayBuffer();
+  const inflated = Bun.gunzipSync(buf);
+  const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
+  return body;
 }

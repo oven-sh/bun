@@ -176,7 +176,5 @@ const std = @import("std");
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const CallFrame = JSC.CallFrame;
-const Node = JSC.Node;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const assert = bun.assert;
-const log = bun.Output.scoped(.ParsedShellScript, true);

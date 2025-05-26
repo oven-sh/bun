@@ -2242,7 +2242,7 @@ pub fn spawnMaybeSync(
         !jsc_vm.auto_killer.enabled and
         !jsc_vm.jsc.hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
-        !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH");
+        !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
 
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
@@ -2680,12 +2680,10 @@ const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const CowString = bun.ptr.CowString;
-const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
@@ -2698,14 +2696,11 @@ const IPC = @import("../../ipc.zig");
 const uws = bun.uws;
 const windows = bun.windows;
 const uv = windows.libuv;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const Body = JSC.WebCore.Body;
 const IPClog = Output.scoped(.IPC, false);
 
 const PosixSpawn = bun.spawn;
 const Rusage = bun.spawn.Rusage;
 const Process = bun.spawn.Process;
-const WaiterThread = bun.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
 

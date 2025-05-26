@@ -1,4 +1,3 @@
-const std = @import("std");
 
 const ErrorCodeInt = u16;
 

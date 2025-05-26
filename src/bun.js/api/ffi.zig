@@ -1,8 +1,6 @@
-const Bun = @This();
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;

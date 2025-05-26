@@ -123,6 +123,14 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
     // Increment our manual count first
     m_histogramData.totalCount++;
     
+    // Update manual min/max tracking
+    if (value < m_histogramData.manualMin) {
+        m_histogramData.manualMin = value;
+    }
+    if (value > m_histogramData.manualMax) {
+        m_histogramData.manualMax = value;
+    }
+    
     // Try to record in the HDR histogram (may fail if outside range, but that's OK)
     hdr_record_value(m_histogramData.histogram, value);
     
@@ -150,19 +158,27 @@ void JSNodePerformanceHooksHistogram::reset()
     hdr_reset(m_histogramData.histogram);
     m_histogramData.prevDeltaTime = 0;
     m_histogramData.totalCount = 0; // Reset our manual count
+    m_histogramData.manualMin = std::numeric_limits<int64_t>::max(); // Reset manual min
+    m_histogramData.manualMax = 0; // Reset manual max
     // Node.js doesn't track exceeds, so no need to reset exceedsCount
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
-    if (!m_histogramData.histogram) return 0;
-    return hdr_min(m_histogramData.histogram);
+    if (m_histogramData.totalCount == 0) {
+        // Return the same initial value as Node.js when no values recorded
+        return 9223372036854776000;
+    }
+    return m_histogramData.manualMin;
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMax() const
 {
-    if (!m_histogramData.histogram) return 0;
-    return hdr_max(m_histogramData.histogram);
+    if (m_histogramData.totalCount == 0) {
+        // Return 0 when no values recorded (Node.js behavior)
+        return 0;
+    }
+    return m_histogramData.manualMax;
 }
 
 double JSNodePerformanceHooksHistogram::getMean() const
@@ -202,6 +218,23 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 
     // Add the manual counts
     m_histogramData.totalCount += other->m_histogramData.totalCount;
+    
+    // Update manual min/max from the other histogram
+    if (other->m_histogramData.totalCount > 0) {
+        if (m_histogramData.totalCount == other->m_histogramData.totalCount) {
+            // This was empty, so take the other's values
+            m_histogramData.manualMin = other->m_histogramData.manualMin;
+            m_histogramData.manualMax = other->m_histogramData.manualMax;
+        } else {
+            // Merge min/max values
+            if (other->m_histogramData.manualMin < m_histogramData.manualMin) {
+                m_histogramData.manualMin = other->m_histogramData.manualMin;
+            }
+            if (other->m_histogramData.manualMax > m_histogramData.manualMax) {
+                m_histogramData.manualMax = other->m_histogramData.manualMax;
+            }
+        }
+    }
 
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);

@@ -15,6 +15,7 @@ crypto.getRandomValues(new Uint8Array(1));
 // );
 
 await crypto.subtle.generateKey("HMAC", false, ["sign", "verify"]);
+expectType<CryptoKeyPair>(await crypto.subtle.generateKey("Ed25519", false, ["sign", "verify"]));
 
 declare const key: CryptoKey;
 

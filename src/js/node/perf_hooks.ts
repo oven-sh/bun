@@ -7,6 +7,12 @@ const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
   2,
 );
 
+const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
+  min: number,
+  max: number,
+  figures: number,
+) => import("node:perf_hooks").RecordableHistogram;
+
 var {
   Performance,
   PerformanceEntry,
@@ -176,7 +182,31 @@ export default {
   PerformanceNodeTiming,
   // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
   monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
-  // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
-  createHistogram: createFunctionThatMasqueradesAsUndefined("", 0),
+  createHistogram: function createHistogram(options = {}) {
+    const { lowest = 1, highest = Number.MAX_SAFE_INTEGER, figures = 3 } = options;
+
+    // Validate parameters
+    if (typeof lowest !== "number" && typeof lowest !== "bigint") {
+      throw new TypeError("options.lowest must be a number or bigint");
+    }
+    if (typeof highest !== "number" && typeof highest !== "bigint") {
+      throw new TypeError("options.highest must be a number or bigint");
+    }
+    if (typeof figures !== "number" || !Number.isInteger(figures) || figures < 1 || figures > 5) {
+      throw new RangeError("options.figures must be an integer between 1 and 5");
+    }
+
+    const lowestNum = typeof lowest === "bigint" ? Number(lowest) : lowest;
+    const highestNum = typeof highest === "bigint" ? Number(highest) : highest;
+
+    if (lowestNum < 1) {
+      throw new RangeError("options.lowest must be >= 1");
+    }
+    if (highestNum < 2 * lowestNum) {
+      throw new RangeError("options.highest must be >= 2 * options.lowest");
+    }
+
+    return cppCreateHistogram(lowestNum, highestNum, figures);
+  },
   PerformanceResourceTiming,
 };

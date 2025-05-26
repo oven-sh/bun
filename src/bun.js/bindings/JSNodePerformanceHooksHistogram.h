@@ -15,6 +15,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <hdr/hdr_histogram.h>
 #include <memory>
+#include <limits>
 
 namespace Bun {
 
@@ -152,6 +153,8 @@ public:
     size_t getExceeds() const;
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);
+
+    std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
     uint16_t m_extraMemorySizeForGC = 0;

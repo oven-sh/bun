@@ -8,8 +8,6 @@ const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const use_mimalloc = bun.use_mimalloc;
-const writeStream = std.json.writeStream;
-const WriteStream = std.json.WriteStream;
 const c = bun.c;
 
 const SystemTimer = @import("./system_timer.zig").Timer;

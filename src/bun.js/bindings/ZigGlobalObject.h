@@ -190,10 +190,10 @@ public:
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
-    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue keyValue, JSC::JSValue referrerValue, JSC::JSValue);
-    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue);
-    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
-    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, JSC::JSValue origin);
+    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
+    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -250,6 +250,14 @@ public:
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* NodeVMSourceTextModuleStructure() const { return m_NodeVMSourceTextModuleClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMSourceTextModule() const { return m_NodeVMSourceTextModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMSourceTextModulePrototype() const { return m_NodeVMSourceTextModuleClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* NodeVMSyntheticModuleStructure() const { return m_NodeVMSyntheticModuleClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
@@ -524,6 +532,8 @@ public:
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
+    V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
+    V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
@@ -539,6 +549,7 @@ public:
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
+    V(public, LazyClassStructure, m_JSNodePerformanceHooksHistogramClassStructure)                           \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
@@ -638,21 +649,8 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    void trackFFIFunction(JSC::JSFunction* function)
-    {
-        this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
-    }
-    bool untrackFFIFunction(JSC::JSFunction* function)
-    {
-        for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
-            if (this->m_ffiFunctions[i].get() == function) {
-                this->m_ffiFunctions[i].clear();
-                this->m_ffiFunctions.remove(i);
-                return true;
-            }
-        }
-        return false;
-    }
+    void trackFFIFunction(JSC::JSFunction* function);
+    bool untrackFFIFunction(JSC::JSFunction* function);
 
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};

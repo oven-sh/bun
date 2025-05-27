@@ -67,6 +67,7 @@ public:
     bool wasTerminated() const;
     bool hasPendingActivity() const;
     bool isClosingOrTerminated() const;
+    bool isOnline() const;
     bool updatePtr();
 
     String identifier() const { return m_identifier; }

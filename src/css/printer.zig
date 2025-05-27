@@ -1,13 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
@@ -78,7 +75,6 @@ pub const Targets = css.targets.Targets;
 
 pub const Features = css.targets.Features;
 
-const Browsers = css.targets.Browsers;
 
 pub const ImportInfo = struct {
     import_records: *const bun.BabyList(bun.ImportRecord),

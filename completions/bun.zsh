@@ -260,6 +260,7 @@ _bun_pm_completion() {
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
+            'audit\:"run a security audit of dependencies in Bun\'s lockfile"'
             'cache\:"print the path to the cache folder" '
         )
 

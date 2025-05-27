@@ -5,7 +5,6 @@ const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
 const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;

@@ -445,21 +445,16 @@ pub fn print(
     }
 }
 
-const TreePrinter = @This();
 const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
 const assert = bun.assert;
-const IdentityContext = bun.IdentityContext;
 const install = bun.install;
 const PackageID = install.PackageID;
 const Dependency = install.Dependency;
 const Resolution = install.Resolution;
 const Lockfile = install.Lockfile;
 const Printer = Lockfile.Printer;
-const String = bun.Semver.String;
-const Behavior = Dependency.Behavior;
 const Output = bun.Output;
 const PackageManager = bun.install.PackageManager;
 const Semver = bun.Semver;

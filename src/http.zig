@@ -18,26 +18,21 @@ const URL = @import("./url.zig").URL;
 const PercentEncoding = @import("./url.zig").PercentEncoding;
 pub const Method = @import("./http/method.zig").Method;
 const Api = @import("./api/schema.zig").Api;
-const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
 const zstd = bun.zstd;
 const StringBuilder = bun.StringBuilder;
 const ThreadPool = bun.ThreadPool;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
-const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const Blob = bun.webcore.Blob;
 const FetchHeaders = bun.webcore.FetchHeaders;
-const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
@@ -1067,8 +1062,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
 const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 const Queue = UnboundedQueue(AsyncHTTP, .next);
-const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
-const RequestWriteQueue = UnboundedQueue(AsyncHTTP, .next);
 
 pub const HTTPThread = struct {
     loop: *JSC.MiniEventLoop,

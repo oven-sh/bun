@@ -135,7 +135,7 @@ static bool removeListenerFromVector(EventListenerVector& listeners, EventListen
         return false;
 
     listeners[indexOfRemovedListener]->markAsRemoved();
-    listeners.remove(indexOfRemovedListener);
+    listeners.removeAt(indexOfRemovedListener);
     return true;
 }
 
@@ -147,7 +147,7 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
         if (m_entries[i].first == eventType) {
             bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener, useCapture);
             if (m_entries[i].second.isEmpty())
-                m_entries.remove(i);
+                m_entries.removeAt(i);
             return wasRemoved;
         }
     }
@@ -185,7 +185,7 @@ void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomStrin
         if (m_entries[i].first == eventType) {
             removeFirstListenerCreatedFromMarkup(m_entries[i].second);
             if (m_entries[i].second.isEmpty())
-                m_entries.remove(i);
+                m_entries.removeAt(i);
             return;
         }
     }

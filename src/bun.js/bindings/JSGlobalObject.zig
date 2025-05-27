@@ -897,7 +897,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const C_API = bun.JSC.C;
 const JSC = bun.JSC;
 
 const MutableString = bun.MutableString;
@@ -910,4 +909,3 @@ const napi = @import("../../napi/napi.zig");
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;
 const VM = JSC.VM;
-const JSPromise = JSC.JSPromise;

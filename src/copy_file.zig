@@ -5,7 +5,6 @@ const std = @import("std");
 const posix = std.posix;
 const math = std.math;
 const bun = @import("bun");
-const strings = bun.strings;
 const Environment = bun.Environment;
 
 pub const CopyFileRangeError = error{

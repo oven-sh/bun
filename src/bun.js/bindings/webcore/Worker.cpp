@@ -314,6 +314,11 @@ bool Worker::isClosingOrTerminated() const
     return m_onlineClosingFlags & ClosingFlag;
 }
 
+bool Worker::isOnline() const
+{
+    return m_onlineClosingFlags & OnlineFlag;
+}
+
 void Worker::dispatchEvent(Event& event)
 {
     if (!m_terminationFlags)

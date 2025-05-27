@@ -199,12 +199,36 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         Global.exit(1);
     };
 
+    // Treat versions specially because npm does some normalization on there.
+    if (json.getObject("versions")) |versions_object| {
+        const keys = try allocator.alloc(bun.JSAst.Expr, versions_object.data.e_object.properties.len);
+        for (versions_object.data.e_object.properties.slice(), keys) |*prop, *key| {
+            key.* = prop.key.?;
+        }
+        const versions_array = bun.JSAst.Expr.init(
+            bun.JSAst.E.Array,
+            bun.JSAst.E.Array{
+                .items = .init(keys),
+            },
+            .{ .start = -1 },
+        );
+        try manifest.set(allocator, "versions", versions_array);
+    }
+
     // Handle property lookup if specified
     if (property_path) |prop_path| {
-        if (manifest.getPathMayBeIndex(prop_path)) |*value| {
+
+        // This is similar to what npm does.
+        // `bun pm view react version ` => 1.2.3
+        // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
+        if (manifest.getPathMayBeIndex(prop_path) orelse json.getPathMayBeIndex(prop_path)) |value| {
             if (value.data == .e_string) {
                 const slice = value.data.e_string.slice(allocator);
-                Output.println("{s}", .{slice});
+                if (json_output) {
+                    Output.println("{s}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
+                } else {
+                    Output.println("{s}", .{slice});
+                }
                 Output.flush();
                 return;
             }
@@ -216,15 +240,15 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             _ = try bun.js_printer.printJSON(
                 @TypeOf(&package_json_writer),
                 &package_json_writer,
-                value.*,
+                value,
                 &source,
                 .{
                     .mangled_props = null,
-                    .indent = .{ .count = 2 },
                 },
             );
             Output.print("{s}", .{package_json_writer.ctx.getWritten()});
             Output.flush();
+            Global.exit(0);
         } else {
             if (json_output) {
                 Output.print("{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n", .{
@@ -241,7 +265,6 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             }
         }
         Global.exit(1);
-        return;
     }
 
     if (json_output) {

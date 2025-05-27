@@ -38,7 +38,6 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     int64_t highest = std::numeric_limits<int64_t>::max();
     int figures = 3;
 
-    // Basic sanity checks to prevent crashes - detailed validation is done in TypeScript
     if (lowestVal.isNumber()) {
         double dbl = lowestVal.asNumber();
         if (!std::isnan(dbl)) {

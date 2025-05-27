@@ -230,6 +230,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
     }
 
     int64_t minValue = thisObject->getMin();
+
     // Node.js returns the value as if it were unsigned when converting to double
     // This handles the special case where the initial value is INT64_MIN
     return JSValue::encode(jsNumber(static_cast<double>(static_cast<uint64_t>(minValue))));
@@ -368,18 +369,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigInt
     return JSValue::encode(map);
 }
 
-// JSC Host function wrapper for creating histogram from JavaScript
 JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Default values
     int64_t lowest = 1;
     int64_t highest = std::numeric_limits<int64_t>::max();
     int figures = 3;
 
-    // Parse arguments
     if (callFrame->argumentCount() >= 1) {
         JSValue lowestArg = callFrame->uncheckedArgument(0);
         if (lowestArg.isNumber()) {

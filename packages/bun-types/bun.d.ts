@@ -5900,7 +5900,7 @@ declare module "bun" {
      * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
      * @example
      * ```ts
-     * // send some data and close the write site
+     * // send some data and close the write side
      * socket.end("Goodbye!");
      * // or close write side without sending final data
      * socket.end();

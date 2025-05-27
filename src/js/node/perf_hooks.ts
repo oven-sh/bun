@@ -182,41 +182,58 @@ export default {
   PerformanceNodeTiming,
   // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
   monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
-  createHistogram: function createHistogram(options = {}) {
-    if (options !== null && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  createHistogram: function createHistogram(options?: {
+    lowest?: number | bigint;
+    highest?: number | bigint;
+    figures?: number;
+  }): RecordableHistogram {
+    const opts = options || {};
+
+    let lowest = 1;
+    let highest = Number.MAX_SAFE_INTEGER;
+    let figures = 3;
+
+    if (opts.lowest !== undefined) {
+      if (typeof opts.lowest === "bigint") {
+        lowest = Number(opts.lowest);
+      } else if (typeof opts.lowest === "number") {
+        lowest = opts.lowest;
+      } else {
+        throw new TypeError("The 'lowest' option must be a number or bigint");
+      }
     }
 
-    const {
-      min = 1,
-      max = Number.MAX_SAFE_INTEGER,
-      figures = 3,
-    } = options as import("node:perf_hooks").CreateHistogramOptions;
-
-    // Validate parameters
-    if (typeof min !== "number" && typeof min !== "bigint") {
-      throw new TypeError("options.min must be a number or bigint");
-    }
-    if (typeof max !== "number" && typeof max !== "bigint") {
-      throw new TypeError("options.max must be a number or bigint");
-    }
-    if (typeof figures !== "number" || !Number.isInteger(figures) || figures < 1 || figures > 5) {
-      throw new RangeError("options.figures must be an integer between 1 and 5");
+    if (opts.highest !== undefined) {
+      if (typeof opts.highest === "bigint") {
+        highest = Number(opts.highest);
+      } else if (typeof opts.highest === "number") {
+        highest = opts.highest;
+      } else {
+        throw new TypeError("The 'highest' option must be a number or bigint");
+      }
     }
 
-    const minNum = typeof min === "bigint" ? Number(min) : min;
-    const maxNum = typeof max === "bigint" ? Number(max) : max;
-
-    if (minNum < 1) {
-      throw new RangeError("options.min must be >= 1");
+    if (opts.figures !== undefined) {
+      if (typeof opts.figures !== "number") {
+        throw new TypeError("The 'figures' option must be a number");
+      }
+      if (opts.figures < 1 || opts.figures > 5) {
+        throw new RangeError("The 'figures' option must be between 1 and 5");
+      }
+      figures = opts.figures;
     }
 
-    // Node.js is more permissive with validation
-    // if (maxNum < 2 * minNum) {
-    //   throw new RangeError("options.max must be >= 2 * options.min");
-    // }
+    // Node.js is more permissive with validation - no strict 2x requirement
+    // Just ensure basic sanity
+    if (lowest < 1) {
+      throw new RangeError("The 'lowest' option must be >= 1");
+    }
 
-    return cppCreateHistogram(minNum, maxNum, figures);
+    if (highest < lowest) {
+      throw new RangeError("The 'highest' option must be >= lowest");
+    }
+
+    return cppCreateHistogram(lowest, highest, figures);
   },
   PerformanceResourceTiming,
 };

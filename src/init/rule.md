@@ -51,6 +51,10 @@ Bun.serve({
     close: (ws) => {
       // handle close
     }
+  },
+  development: {
+    hmr: true,
+    console: true,
   }
 })
 ```
@@ -88,7 +92,7 @@ root.render(<Frontend />);
 Then, run index.ts
 
 ```sh
-bun ./index.ts
+bun --hot ./index.ts
 ```
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.

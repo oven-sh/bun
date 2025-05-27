@@ -6020,8 +6020,8 @@ declare module "bun" {
     readonly remotePort: number;
 
     /**
-     * Local IP address connected to the socket
-     * @example "192.168.1.100" | "2001:db8::1"
+     * IP protocol family used for the local endpoint of the socket
+     * @example "IPv4" | "IPv6"
      */
     readonly localFamily: "IPv4" | "IPv6";
 

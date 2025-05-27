@@ -279,6 +279,13 @@ class Worker extends EventEmitter {
 
     this.#stdout = new ReadableWorkerStdio(this.#worker);
     this.#stderr = new ReadableWorkerStdio(this.#worker);
+    // TODO maybe bump max listeners?
+    if (!options.stdout) {
+      this.#stdout.pipe(process.stdout);
+    }
+    if (!options.stderr) {
+      this.#stderr.pipe(process.stderr);
+    }
     webWorkerToStdio.set(this.#worker, { stdout: this.#stdout, stderr: this.#stderr });
   }
 

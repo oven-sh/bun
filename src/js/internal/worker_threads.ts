@@ -14,6 +14,7 @@ const {
   (fd: number, data: Buffer) => void,
 ];
 
+// Class exposed as `process.stdout` and `process.stderr` in Worker threads
 class WritableWorkerStdio extends Writable {
   #fd: number;
 
@@ -30,36 +31,28 @@ class WritableWorkerStdio extends Writable {
   }
 }
 
-let pushToReadableWorkerStdio: (stream: ReadableWorkerStdio, chunk: Buffer) => void;
-
+// Class exposed as `worker.stdout` and `worker.stderr` in the parent thread
 class ReadableWorkerStdio extends Readable {
-  #chunks: Buffer[] = [];
-  #done = false;
-
   constructor(worker: globalThis.Worker) {
     super();
     worker.addEventListener("close", () => {
-      this.#done = true;
+      this.push(null);
     });
   }
 
-  static {
-    pushToReadableWorkerStdio = (stream, chunk) => {
-      stream.#chunks.push(chunk);
-    };
-  }
-
-  _read() {
-    if (this.#chunks.length > 0) {
-      this.push(this.#chunks.shift());
-    } else if (this.#done) {
-      this.push(null);
-    }
-  }
+  _read() {}
 }
 
-// Map to access the stdout and stderr streams from an internal Web Worker object (not a worker_threads Worker)
-const webWorkerToStdio = new WeakMap<globalThis.Worker, { stdout: ReadableWorkerStdio; stderr: ReadableWorkerStdio }>();
+// Map to access stdio-related options from an internal Web Worker object (not a worker_threads Worker)
+const webWorkerToStdio = new WeakMap<
+  globalThis.Worker,
+  {
+    // stdout stream exposed in the parent thread
+    stdout: ReadableWorkerStdio;
+    // stderr stream exposed in the parent thread
+    stderr: ReadableWorkerStdio;
+  }
+>();
 
 export default {
   WritableWorkerStdio,
@@ -70,5 +63,4 @@ export default {
   environmentData,
   pushStdioToParent,
   webWorkerToStdio,
-  pushToReadableWorkerStdio,
 };

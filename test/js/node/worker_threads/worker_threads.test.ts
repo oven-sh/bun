@@ -492,18 +492,19 @@ describe("stdio", () => {
 
     it(`process.${stream} written in worker writes to worker.${stream} in parent`, async () => {
       const worker = new Worker(`process.${stream}.write("hello");`, { eval: true });
+      const resultPromise = readToEnd(worker[stream]);
       const [code] = await once(worker, "exit");
       expect(code).toBe(0);
-      expect(await readToEnd(worker[stream])).toBe("hello");
+      expect(await resultPromise).toBe("hello");
     });
 
     it(`can still receive data on worker.${stream} if you override it later`, async () => {
       const worker = new Worker(`process.${stream}.write("hello");`, { eval: true });
-      const readable = worker[stream];
+      const resultPromise = readToEnd(worker[stream]);
       Object.defineProperty(worker, stream, { value: undefined });
       const [code] = await once(worker, "exit");
       expect(code).toBe(0);
-      expect(await readToEnd(readable)).toBe("hello");
+      expect(await resultPromise).toBe("hello");
     });
 
     const consoleFunction = stream == "stdout" ? "log" : "error";
@@ -517,15 +518,16 @@ describe("stdio", () => {
       expect(await capture.data).toBe("hello\n");
     });
 
-    describe.todo(`with ${stream}: true option`, () => {
+    describe(`with ${stream}: true option`, () => {
       it(`writes to worker.${stream} but not process.${stream}`, async () => {
         using capture = captureProcessStdio(stream);
         const worker = new Worker(`process.${stream}.write("hello");`, { eval: true, [stream]: true });
+        const resultPromise = readToEnd(worker[stream]);
         const [code] = await once(worker, "exit");
         expect(code).toBe(0);
         capture.end();
         expect(await capture.data).toBe("");
-        expect(await readToEnd(worker[stream])).toBe("hello");
+        expect(await resultPromise).toBe("hello");
       });
     });
 

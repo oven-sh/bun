@@ -441,16 +441,14 @@ export function getChannel() {
 
 export function emitWorkerStdioInParent(worker: Worker, fd: number, data: Buffer) {
   $assert(fd === 1 || fd === 2);
-  const { webWorkerToStdio, pushToReadableWorkerStdio } = require("internal/worker_threads");
+  const { webWorkerToStdio } = require("internal/worker_threads");
   const streams = webWorkerToStdio.get(worker);
   switch (fd) {
     case 1:
-      if (streams) pushToReadableWorkerStdio(streams.stdout, data);
-      process.stdout.write(data);
+      streams?.stdout.push(data);
       break;
     case 2:
-      if (streams) pushToReadableWorkerStdio(streams.stderr, data);
-      process.stderr.write(data);
+      streams?.stderr.push(data);
       break;
   }
 }

@@ -27,7 +27,9 @@ class Process : public WebCore::JSEventEmitter {
     // Function that looks up "emit" on "process" and calls it with the provided arguments
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
-    // Function called when a Worker thread sends data from its stdout or stderr stream
+    // Function called when a Worker thread sends data from its stdout or stderr stream, to emit
+    // the data in the main thread on the Worker object and possibly (depending on Worker options)
+    // the process stream
     LazyProperty<Process, JSFunction> m_emitWorkerStdioInParentFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
     WriteBarrier<JSObject> m_nextTickFunction;

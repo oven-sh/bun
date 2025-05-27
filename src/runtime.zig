@@ -1,17 +1,10 @@
-const options = @import("./options.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
-const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = bun.JSAst;

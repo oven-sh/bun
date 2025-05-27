@@ -300,9 +300,9 @@ describe("TextDecoder", () => {
   });
 
   it("should support undefined options", () => {
-      expect(() => {
-          const decoder = new TextDecoder("utf-8", undefined);
-      }).not.toThrow();
+    expect(() => {
+      const decoder = new TextDecoder("utf-8", undefined);
+    }).not.toThrow();
   });
 });
 

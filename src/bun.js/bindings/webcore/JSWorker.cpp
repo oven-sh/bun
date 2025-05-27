@@ -54,6 +54,9 @@
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/HeapProfiler.h>
+#include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -70,6 +73,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
 
 // Attributes
 
@@ -122,10 +126,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     auto* castedThis = jsCast<JSWorkerDOMConstructor*>(callFrame->jsCallee());
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     ASSERT(castedThis);
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     String scriptUrl;
@@ -344,7 +348,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     if (nodeWorkerObject) {
         workerToEmit = nodeWorkerObject;
     }
-    auto* process = jsCast<Bun::Process*>(globalObject->processObject());
+    auto* process = globalObject->processObject();
     process->emitOnNextTick(globalObject, "worker"_s, workerToEmit);
     RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -371,7 +375,7 @@ template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto* castedThis = jsDynamicCast<JSWorker*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!castedThis))
+    if (!castedThis) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
@@ -395,6 +399,7 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_terminate, 0 } },
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
+    { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -437,7 +442,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWorkerPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWorker::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -635,6 +640,63 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexi
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto options = callFrame->argument(0);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& worker = castedThis->wrapped();
+
+    if (!options.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, options, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto exposeInternals = options.get(globalObject, Identifier::fromString(vm, "exposeInternals"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exposeInternals.isUndefined()) {
+            Bun::V::validateBoolean(scope, globalObject, exposeInternals, "options.exposeInternals"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        auto exposeNumericValues = options.get(globalObject, Identifier::fromString(vm, "exposeNumericValues"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exposeNumericValues.isUndefined()) {
+            Bun::V::validateBoolean(scope, globalObject, exposeNumericValues, "options.exposeNumericValues"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    if (!worker.isOnline()) {
+        promise->reject(globalObject,
+            Bun::createError(globalObject,
+                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
+                "Worker instance not running"_s));
+        return JSValue::encode(promise);
+    }
+
+    Strong<JSPromise> strong(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    worker.postTaskToWorkerGlobalScope([strong, parentId](ScriptExecutionContext& workerCtx) {
+        auto& vm = workerCtx.vm();
+        vm.ensureHeapProfiler();
+        auto& heapProfiler = *vm.heapProfiler();
+        heapProfiler.clearSnapshots();
+        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        String snapshot = builder.json();
+
+        ScriptExecutionContext::postTaskTo(parentId,
+            [strong, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+                strong.get()->resolve(parentCtx.globalObject(), jsString(parentCtx.vm(), snapshot));
+            });
+    });
+    return JSValue::encode(promise);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
+}
+
 JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSWorker, UseCustomHeapCellType::No>(
@@ -659,7 +721,7 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
     auto* jsWorker = jsCast<JSWorker*>(handle.slot()->asCell());
     auto& wrapped = jsWorker->wrapped();
     if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }

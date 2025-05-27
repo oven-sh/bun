@@ -18,10 +18,12 @@ async function globSources(output, patterns, excludes = []) {
   }
   total += paths.length;
 
-  const sources = paths
-    .map(path => normalize(relative(root, path)))
-    .sort((a, b) => a.localeCompare(b))
-    .join("\n");
+  const sources =
+    paths
+      .map(path => normalize(relative(root, path)))
+      .sort((a, b) => a.localeCompare(b))
+      .join("\n")
+      .trim() + "\n";
 
   await write(join(root, "cmake", "sources", output), sources);
 }

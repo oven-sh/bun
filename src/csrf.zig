@@ -4,7 +4,6 @@ const JSC = bun.JSC;
 const boring = bun.BoringSSL.c;
 const hmac = @import("hmac.zig");
 const string = @import("string.zig");
-const gen = bun.gen.csrf;
 
 /// CSRF Token implementation for Bun
 /// It provides protection against Cross-Site Request Forgery attacks

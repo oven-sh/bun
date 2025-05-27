@@ -1,5 +1,3 @@
-const headers_string = "headers";
-const method_string = "method";
 
 const JSType = JSC.C.JSType;
 
@@ -2737,7 +2735,6 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const string = bun.string;
-const strings = bun.strings;
 const MutableString = bun.MutableString;
 const ZigString = JSC.ZigString;
 const JSValue = JSC.JSValue;

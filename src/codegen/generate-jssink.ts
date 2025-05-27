@@ -380,7 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->ref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -391,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
-    if (LIKELY(sink)) {
+    if (sink) [[likely]] {
         sink->unref();
     }
     return JSC::JSValue::encode(JSC::jsUndefined());

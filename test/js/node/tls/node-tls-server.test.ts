@@ -540,32 +540,14 @@ describe("tls.createServer events", () => {
       });
   });
 
-  it("should call error", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  it("should error on an invalid port", () => {
+    const server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
-    const server: Server = createServer(COMMON_CERT);
-
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall("error not called")();
-    };
-
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
-
-    server
-      .on(
-        "error",
-        mustCall(err => {
-          server.close();
-          clearTimeout(timeout);
-          expect(err).toBeDefined();
-          done();
-        }),
-      )
-      .listen(123456);
+    expect(() => server.listen(123456)).toThrow(
+      expect.objectContaining({
+        code: "ERR_SOCKET_BAD_PORT",
+      }),
+    );
   });
 
   it("should call abort with signal", done => {

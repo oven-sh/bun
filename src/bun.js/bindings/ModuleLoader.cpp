@@ -39,6 +39,8 @@
 
 #include "JSCommonJSExtensions.h"
 
+#include "BunProcess.h"
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -111,7 +113,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         bool hasDefault = false;
 
         for (auto& entry : properties) {
-            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+            if (entry == vm.propertyNames->defaultKeyword) [[unlikely]] {
                 hasDefault = true;
             }
             exportNames.append(entry);
@@ -219,7 +221,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     JSC::JSObject* object = objectValue.getObject();
-    if (UNLIKELY(!object)) {
+    if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
 
         result.value.error = scope.exception();
@@ -253,7 +255,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(loader == BunLoaderTypeNone)) {
+    if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
         result.value.error = scope.exception();
         return result;
@@ -275,7 +277,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(result.value.sourceText.value.isEmpty())) {
+    if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
         return result;
@@ -532,7 +534,8 @@ JSValue resolveAndFetchBuiltinModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    memset(&res, 0, sizeof(ErrorableResolvedSource));
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
         ASSERT(res.success);
 
@@ -607,7 +610,8 @@ JSValue fetchCommonJSModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
-    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
+    resValue.success = false;
+    memset(&resValue.result, 0, sizeof resValue.result);
 
     ErrorableResolvedSource* res = &resValue;
     ResolvedSourceCodeHolder sourceCodeHolder(res);
@@ -1074,8 +1078,9 @@ using namespace Bun;
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    ErrorableResolvedSource res = {};
+    ErrorableResolvedSource res;
     res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     JSC::JSValue objectResult = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     JSC::JSValue specifierString = pendingModule->internalField(0).get();

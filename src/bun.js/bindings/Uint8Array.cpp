@@ -10,7 +10,7 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
 {
     JSC::JSUint8Array* uint8Array;
 
-    if (LIKELY(length > 0)) {
+    if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
             mi_free(p);
         }));
@@ -28,7 +28,7 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
 
     JSC::JSArrayBuffer* arrayBuffer;
 
-    if (LIKELY(length > 0)) {
+    if (length > 0) [[likely]] {
         RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
             mi_free(p);
         }));

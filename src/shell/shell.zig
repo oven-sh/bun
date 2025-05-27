@@ -1,22 +1,15 @@
 const bun = @import("bun");
 const std = @import("std");
 const builtin = @import("builtin");
-const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
-const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Which = @import("../which.zig");
-const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
-const ResolvePath = @import("../resolver/resolve_path.zig");
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
@@ -170,7 +163,6 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 pub const Pipe = [2]bun.FileDescriptor;
 
 const log = bun.Output.scoped(.SHELL, true);
-const logsys = bun.Output.scoped(.SYS, true);
 
 pub const GlobalJS = struct {
     globalThis: *JSC.JSGlobalObject,

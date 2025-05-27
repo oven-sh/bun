@@ -886,10 +886,6 @@ declare var CryptoKey: {
 };
 
 interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
-declare var CryptoKeyPair: {
-  prototype: CryptoKeyPair;
-  new (): CryptoKeyPair;
-};
 
 interface Position {
   lineText: string;

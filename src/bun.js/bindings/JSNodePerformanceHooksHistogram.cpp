@@ -129,11 +129,10 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
             m_histogramData.manualMax = value;
         }
     } else {
-        // Value was out of range - increment exceeds count
+        // Value was out of range
         m_histogramData.exceedsCount++;
     }
 
-    // Always return true since we always "accept" the value in Node.js style
     return true;
 }
 
@@ -156,10 +155,10 @@ void JSNodePerformanceHooksHistogram::reset()
     if (!m_histogramData.histogram) return;
     hdr_reset(m_histogramData.histogram);
     m_histogramData.prevDeltaTime = 0;
-    m_histogramData.totalCount = 0; // Reset our manual count
-    m_histogramData.manualMin = std::numeric_limits<int64_t>::max(); // Reset manual min
-    m_histogramData.manualMax = 0; // Reset manual max
-    m_histogramData.exceedsCount = 0; // Reset exceeds count
+    m_histogramData.totalCount = 0;
+    m_histogramData.manualMin = std::numeric_limits<int64_t>::max();
+    m_histogramData.manualMax = 0;
+    m_histogramData.exceedsCount = 0;
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMin() const
@@ -238,38 +237,8 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     }
 
     // hdr_add returns number of dropped values
-    double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
-
-    return dropped;
+    return hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 }
-
-// std::shared_ptr<HistogramData> JSNodePerformanceHooksHistogram::getHistogramDataForCloning() const
-// {
-//     if (!m_histogramData.histogram) {
-//         return nullptr;
-//     }
-
-//     hdr_histogram* clonedHistogram = nullptr;
-//     int result = hdr_init(
-//         m_histogramData.histogram->lowest_discernible_value,
-//         m_histogramData.histogram->highest_trackable_value,
-//         m_histogramData.histogram->significant_figures,
-//         &clonedHistogram
-//     );
-
-//     if (result != 0 || !clonedHistogram) {
-//         return nullptr;
-//     }
-
-//     size_t dataSize = hdr_get_memory_size(m_histogramData.histogram);
-//     memcpy(clonedHistogram, m_histogramData.histogram, dataSize);
-
-//     auto clonedData = std::make_shared<HistogramData>(clonedHistogram);
-//     clonedData->prevDeltaTime = m_histogramData.prevDeltaTime;
-//     clonedData->exceedsCount = m_histogramData.exceedsCount;
-
-//     return clonedData;
-// }
 
 void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObject, JSC::JSMap* map)
 {

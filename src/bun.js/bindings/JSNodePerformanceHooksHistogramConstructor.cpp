@@ -67,7 +67,6 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     } else if (highestVal.isBigInt()) {
         auto* bigInt = jsCast<JSBigInt*>(highestVal);
         highest = JSBigInt::toBigInt64(bigInt);
-        // Node.js is more permissive - don't enforce highest >= 2 * lowest
     } else if (!highestVal.isUndefined()) {
         Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.highest"_s, "number or bigint"_s, highestVal);
         return nullptr;

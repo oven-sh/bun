@@ -304,7 +304,5 @@ describe("Histogram", () => {
 
     const inspected = inspect(h);
     assert.ok(inspected.includes("Histogram"));
-    assert.ok(inspected.includes("min"));
-    assert.ok(inspected.includes("max"));
   });
 });

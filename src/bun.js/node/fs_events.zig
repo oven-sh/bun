@@ -1,6 +1,5 @@
 const std = @import("std");
 const bun = @import("bun");
-const Environment = bun.Environment;
 const Mutex = bun.Mutex;
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;

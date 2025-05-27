@@ -403,7 +403,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             view = str->substring(0, 25);
         }
         builder.append("type string ("_s);
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
                 const auto span = view.span<LChar>();
@@ -431,7 +431,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
         } else {
             builder.append('\'');
@@ -2224,6 +2224,26 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
     }
 
+    case Bun::ErrorCode::ERR_VM_MODULE_STATUS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Module status "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_STATUS, message));
+    }
+
+    case Bun::ErrorCode::ERR_VM_MODULE_LINK_FAILURE: {
+        auto arg0 = callFrame->argument(1);
+        auto message = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto cause = callFrame->argument(2);
+        JSObject* error = createError(globalObject, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
+        RETURN_IF_EXCEPTION(scope, {});
+        error->putDirect(vm, Identifier::fromString(vm, "cause"_s), cause);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(error);
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2284,6 +2304,17 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+
+        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
+
+        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
+
+        return JSC::JSValue::encode(err);
+    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:
@@ -2332,6 +2363,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_VM_MODULE_ALREADY_LINKED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module has already been linked"_s));
+    case ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA, "Cached data cannot be created for a module which has been evaluated"_s));
+    case ErrorCode::ERR_VM_MODULE_NOT_MODULE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+    case ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
 
     default: {
         break;

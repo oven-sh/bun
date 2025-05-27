@@ -55,7 +55,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 

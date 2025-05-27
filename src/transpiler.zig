@@ -5,13 +5,11 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
 const std = @import("std");
-const lex = bun.js_lexer;
 const logger = bun.logger;
 pub const options = @import("options.zig");
 const js_parser = bun.js_parser;
@@ -20,31 +18,18 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const Ref = @import("ast/base.zig").Ref;
-const Define = @import("defines.zig").Define;
-const DebugOptions = @import("./cli.zig").Command.DebugOptions;
-const ThreadPoolLib = @import("./thread_pool.zig");
 
 const Fs = @import("fs.zig");
 const schema = @import("api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("./resolver/resolver.zig");
-const sync = @import("sync.zig");
-const ImportRecord = @import("./import_record.zig").ImportRecord;
-const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
 const Router = @import("./router.zig");
-const isPackagePath = _resolver.isPackagePath;
-const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
-const Lock = bun.Mutex;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
-const CacheEntry = @import("./cache.zig").FsCacheEntry;
-const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
@@ -950,7 +935,7 @@ pub const Transpiler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS)) {
             return transpiler.printWithSourceMapMaybe(
                 result.ast,
                 &result.source,

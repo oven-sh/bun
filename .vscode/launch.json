@@ -16,7 +16,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -38,7 +38,7 @@
       "request": "launch",
       "name": "bun test [file] --only",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--only", "${file}"],
+      "args": ["test", "--timeout=3600000", "--only", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -74,7 +74,7 @@
       "request": "launch",
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -96,7 +96,7 @@
       "request": "launch",
       "name": "bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "0",
@@ -118,7 +118,7 @@
       "request": "launch",
       "name": "bun test [file] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--watch", "${file}"],
+      "args": ["test", "--timeout=3600000", "--watch", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -140,7 +140,7 @@
       "request": "launch",
       "name": "bun test [file] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--hot", "${file}"],
+      "args": ["test", "--timeout=3600000", "--hot", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -162,7 +162,7 @@
       "request": "launch",
       "name": "bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -190,7 +190,7 @@
       "request": "launch",
       "name": "bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -386,7 +386,7 @@
       "request": "launch",
       "name": "bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -408,7 +408,7 @@
       "request": "launch",
       "name": "bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -430,7 +430,7 @@
       "request": "launch",
       "name": "bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -452,7 +452,7 @@
       "request": "launch",
       "name": "bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--watch", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -474,7 +474,7 @@
       "request": "launch",
       "name": "bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--hot", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "--hot", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -496,7 +496,7 @@
       "request": "launch",
       "name": "bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -524,7 +524,7 @@
       "request": "launch",
       "name": "bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -690,7 +690,7 @@
       "request": "launch",
       "name": "Windows: bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -715,7 +715,7 @@
       "request": "launch",
       "name": "Windows: bun test --only [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--only", "${file}"],
+      "args": ["test", "--timeout=3600000", "--only", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -740,7 +740,7 @@
       "request": "launch",
       "name": "Windows: bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -765,7 +765,7 @@
       "request": "launch",
       "name": "Windows: bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -790,7 +790,7 @@
       "request": "launch",
       "name": "Windows: bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -824,7 +824,7 @@
       "request": "launch",
       "name": "Windows: bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -991,7 +991,7 @@
       "request": "launch",
       "name": "Windows: bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1016,7 +1016,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1041,7 +1041,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1066,7 +1066,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--watch", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "--watch", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1091,7 +1091,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "--hot", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "--hot", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1116,7 +1116,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {
@@ -1150,7 +1150,7 @@
       "request": "launch",
       "name": "Windows: bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
-      "args": ["test", "${input:testName}"],
+      "args": ["test", "--timeout=3600000", "${input:testName}"],
       "cwd": "${workspaceFolder}",
       "environment": [
         {

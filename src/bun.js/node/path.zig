@@ -72,7 +72,6 @@ const CHAR_STR_BACKWARD_SLASH = "\\";
 const CHAR_STR_FORWARD_SLASH = "/";
 const CHAR_STR_DOT = ".";
 
-const StringBuilder = bun.StringBuilder;
 
 /// Based on Node v21.6.1 path.parse:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919

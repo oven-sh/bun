@@ -1,7 +1,6 @@
 const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
-const strings = bun.strings;
 const String = bun.String;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

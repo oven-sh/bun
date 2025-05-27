@@ -92,11 +92,11 @@ bool IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<E
 static bool removeListenerFromVector(SimpleEventListenerVector& listeners, EventListener& listener)
 {
     size_t indexOfRemovedListener = findListener(listeners, listener);
-    if (UNLIKELY(indexOfRemovedListener == notFound))
+    if (indexOfRemovedListener == notFound) [[unlikely]]
         return false;
 
     listeners[indexOfRemovedListener]->markAsRemoved();
-    listeners.remove(indexOfRemovedListener);
+    listeners.removeAt(indexOfRemovedListener);
     return true;
 }
 
@@ -108,7 +108,7 @@ bool IdentifierEventListenerMap::remove(const JSC::Identifier& eventType, EventL
         if (m_entries[i].first == eventType) {
             bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener);
             if (m_entries[i].second.isEmpty())
-                m_entries.remove(i);
+                m_entries.removeAt(i);
             return wasRemoved;
         }
     }
@@ -122,7 +122,7 @@ bool IdentifierEventListenerMap::removeAll(const JSC::Identifier& eventType)
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
         if (m_entries[i].first == eventType) {
-            m_entries.remove(i);
+            m_entries.removeAt(i);
             return true;
         }
     }

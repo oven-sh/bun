@@ -100,7 +100,7 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     bool didFail = false;
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
-    if (UNLIKELY(catchScope.exception()))
+    if (catchScope.exception()) [[unlikely]]
         deserialized = jsUndefined();
 
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);

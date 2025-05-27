@@ -846,6 +846,13 @@ pub const InitCommand = struct {
                     };
                 }
 
+                if (Template.getCursorRule()) |template_file| {
+                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
+                    result catch {
+                        // No big deal if this fails
+                    };
+                }
+
                 if (fields.entry_point.len > 0 and !did_load_package_json) {
                     Output.pretty("\nTo get started, run:\n\n    ", .{});
 
@@ -854,13 +861,6 @@ pub const InitCommand = struct {
                     } else {
                         Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
-                }
-
-                if (Template.getCursorRule()) |template_file| {
-                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
-                    result catch {
-                        // No big deal if this fails
-                    };
                 }
 
                 Output.flush();

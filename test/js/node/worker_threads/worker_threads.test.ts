@@ -559,7 +559,7 @@ describe("stdio", () => {
           import { workerData } from "node:worker_threads";
           const sharedArray = new Int32Array(workerData);
           import assert from "node:assert";
-          process.stdout.write("hello", "utf8", (err) => {
+          process.${stream}.write("hello", "utf8", (err) => {
             assert.strictEqual(err, null);
             // tell parent that our callback has run
             Atomics.store(sharedArray, 0, 1);

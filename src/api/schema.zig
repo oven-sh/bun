@@ -1612,7 +1612,6 @@ pub const Api = struct {
         }
     };
 
-    /// This enum is mirrored in BunProcess.cpp
     pub const UnhandledRejections = enum(u8) {
         strict = 0,
         throw = 1,

@@ -18,7 +18,6 @@ comptime {
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
     @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
-    @export(&unhandledRejectionsMode, .{ .name = "Bun__VM__unhandledRejectionsMode" });
 }
 
 global: *JSGlobalObject,
@@ -500,6 +499,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
 
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
+extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
 extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
 
 pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
@@ -514,12 +514,33 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
         return true;
     }
 
-    const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
-    if (!handled) {
-        this.unhandled_error_counter += 1;
-        this.onUnhandledRejection(this, globalObject, reason);
+    // trigger unhandledRejection handler if available
+    if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+
+    switch (this.unhandledRejectionsMode()) {
+        .bun => {
+            // continue to default handler
+        },
+        .none => {
+            return true; // ignore the unhandled rejection
+        },
+        .warn => {
+            // TODO: emit warning
+        },
+        .strict => {
+            // TODO: strict
+        },
+        .throw => {
+            const wrapped_reason = Bun__wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;
+        },
+        .warn_with_error_code => {
+            // TODO: warn_with_error_code
+        },
     }
-    return handled;
+    this.unhandled_error_counter += 1;
+    this.onUnhandledRejection(this, globalObject, reason);
+    return false;
 }
 
 pub fn handledPromise(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, promise: JSValue) bool {

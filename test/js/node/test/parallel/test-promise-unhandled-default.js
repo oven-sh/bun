@@ -1,4 +1,6 @@
+// Flags: --unhandled-rejections=throw
 // This test is modified to allow [ERR_UNHANDLED_REJECTION] in the error toString.
+// This test is also modified to specify --unhandled-rejections=throw because bun's default is 'bun'
 'use strict';
 
 const common = require('../common');

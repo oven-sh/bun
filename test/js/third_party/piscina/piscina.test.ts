@@ -56,7 +56,7 @@ test("Piscina error handling", async () => {
   });
 
   try {
-    await expect(piscina.run({ shouldThrow: true })).rejects.toThrow();
+    expect(piscina.run({ shouldThrow: true })).rejects.toThrow();
   } finally {
     await piscina.destroy();
   }

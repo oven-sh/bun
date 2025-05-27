@@ -42,7 +42,7 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
 
     // Handle the case where lowest == highest (Node.js allows this, but HDR histogram doesn't)
     if (highest <= lowest) {
-        highest = lowest + 1;
+        highest = lowest + 1000;
     }
 
     struct hdr_histogram* raw_histogram = nullptr;
@@ -167,7 +167,9 @@ int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
     if (m_histogramData.totalCount == 0) {
         // Return the same initial value as Node.js when no values recorded
-        return 9223372036854776000;
+        // Node.js returns 9223372036854776000 which is 0x8000000000000000
+        // This is exactly INT64_MIN when interpreted as signed
+        return INT64_MIN;
     }
     return m_histogramData.manualMin;
 }

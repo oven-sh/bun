@@ -63,11 +63,11 @@ describe("Histogram", () => {
 
     assert.throws(() => h.record(0), /out of range/);
     assert.throws(() => h.record(-1), /out of range/);
-    assert.throws(() => h.record("invalid" as any), /must be of type number/);
+    assert.throws(() => h.record("invalid"), /must be of type number/);
   });
 
   test("histogram with custom options", () => {
-    const h = createHistogram({ lowest: 1, highest: 11, figures: 1 } as any);
+    const h = createHistogram({ lowest: 1, highest: 11, figures: 1 });
 
     h.record(5);
     assert.strictEqual(h.count, 1);
@@ -128,58 +128,62 @@ describe("Histogram", () => {
 
   describe("exceeds functionality", () => {
     test("basic exceeds counting", () => {
-      const h = createHistogram({ lowest: 1, highest: 100, figures: 3 });
+      const h = createHistogram({ lowest: 1, highest: 10, figures: 1 });
 
       assert.strictEqual(h.exceeds, 0);
 
-      h.record(50);
-      h.record(75);
+      // Record values within range
+      h.record(5);
       assert.strictEqual(h.exceeds, 0);
-      assert.strictEqual(h.count, 2);
+      assert.strictEqual(h.count, 1);
 
-      h.record(150);
-      h.record(200);
-      assert.strictEqual(h.exceeds, 0);
-      assert.strictEqual(h.count, 4);
+      // Record value that's out of range
+      h.record(100); // Way out of range
+      assert.strictEqual(h.exceeds, 1);
+      assert.strictEqual(h.count, 1); // Count should not increase for out-of-range values
+
+      // Min/max should only track in-range values
+      assert.strictEqual(h.min, 5);
+      assert.strictEqual(h.max, 5);
     });
 
     test("exceeds with BigInt", () => {
-      const h = createHistogram({ lowest: 1, highest: 100, figures: 3 });
+      const h = createHistogram({ lowest: 1, highest: 10, figures: 1 });
 
-      h.record(50);
-      h.record(150);
+      h.record(5);
+      h.record(100); // Out of range
 
-      assert.strictEqual(h.exceeds, 0);
-      assert.strictEqual(h.exceedsBigInt, 0n);
-      assert.strictEqual(h.count, 2);
+      assert.strictEqual(h.exceeds, 1);
+      assert.strictEqual(h.exceedsBigInt, 1n);
+      assert.strictEqual(h.count, 1); // Only the in-range value
     });
 
     test("exceeds count in add operation", () => {
-      const h1 = createHistogram({ lowest: 1, highest: 100, figures: 3 });
-      const h2 = createHistogram({ lowest: 1, highest: 100, figures: 3 });
+      const h1 = createHistogram({ lowest: 1, highest: 10, figures: 1 });
+      const h2 = createHistogram({ lowest: 1, highest: 10, figures: 1 });
 
-      h1.record(25);
-      h1.record(150);
-      assert.strictEqual(h1.exceeds, 0);
-      assert.strictEqual(h1.count, 2);
+      h1.record(5); // in range
+      h1.record(100); // out of range
+      assert.strictEqual(h1.exceeds, 1);
+      assert.strictEqual(h1.count, 1);
 
-      h2.record(75);
-      h2.record(200);
-      assert.strictEqual(h2.exceeds, 0);
-      assert.strictEqual(h2.count, 2);
+      h2.record(8); // in range
+      h2.record(200); // out of range
+      assert.strictEqual(h2.exceeds, 1);
+      assert.strictEqual(h2.count, 1);
 
       h1.add(h2);
-      assert.strictEqual(h1.exceeds, 0);
-      assert.strictEqual(h1.count, 4);
+      assert.strictEqual(h1.exceeds, 2); // Should combine exceeds
+      assert.strictEqual(h1.count, 2); // Should combine only in-range counts
     });
 
     test("exceeds count after reset", () => {
-      const h = createHistogram({ lowest: 1, highest: 100, figures: 3 });
+      const h = createHistogram({ lowest: 1, highest: 10, figures: 1 });
 
-      h.record(50);
-      h.record(150);
-      assert.strictEqual(h.exceeds, 0);
-      assert.strictEqual(h.count, 2);
+      h.record(5);
+      h.record(100);
+      assert.strictEqual(h.exceeds, 1);
+      assert.strictEqual(h.count, 1);
 
       h.reset();
       assert.strictEqual(h.exceeds, 0);
@@ -187,17 +191,16 @@ describe("Histogram", () => {
     });
 
     test("exceeds with very small range", () => {
-      const h = createHistogram({ lowest: 1, highest: 10, figures: 1 });
+      const h = createHistogram({ lowest: 1, highest: 2, figures: 1 });
 
-      h.record(5);
-      h.record(15);
-      h.record(20);
-      h.record(8);
+      h.record(1); // in range
+      h.record(50); // out of range
+      h.record(100); // out of range
 
-      assert.strictEqual(h.exceeds, 0);
-      assert.strictEqual(h.count, 4);
-      assert.strictEqual(h.min, 5);
-      assert.strictEqual(h.max, 20);
+      assert.strictEqual(h.exceeds, 2); // 50 and 100 are out of range
+      assert.strictEqual(h.count, 1); // Only 1 is counted
+      assert.strictEqual(h.min, 1); // Only tracks in-range values
+      assert.strictEqual(h.max, 1); // Only tracks in-range values
     });
   });
 
@@ -350,19 +353,19 @@ describe("Histogram", () => {
 
       // Test type validation
       assert.throws(
-        () => createHistogram({ figures: "invalid" as any }),
+        () => createHistogram({ figures: "invalid" }),
         (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.figures");
         },
       );
       assert.throws(
-        () => createHistogram({ lowest: "invalid" as any }),
+        () => createHistogram({ lowest: "invalid" }),
         (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.lowest");
         },
       );
       assert.throws(
-        () => createHistogram({ highest: "invalid" as any }),
+        () => createHistogram({ highest: "invalid" }),
         (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.highest");
         },
@@ -524,8 +527,8 @@ describe("Histogram", () => {
       h.record(20);
       h.record(30);
 
-      if (typeof (h as any).toJSON === "function") {
-        const json = (h as any).toJSON();
+      if (typeof h.toJSON === "function") {
+        const json = h.toJSON();
 
         assert.strictEqual(typeof json, "object");
         assert.strictEqual(json.count, 3);

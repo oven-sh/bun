@@ -11,10 +11,14 @@ register_cmake_command(
   TARGET
     hdrhistogram
   LIBRARIES
-    hdr_histogram
+    hdr_histogram_static
   INCLUDES
     include
+  LIB_PATH
+    src
   ARGS
+    -DHDR_HISTOGRAM_BUILD_SHARED=OFF
+    -DHDR_HISTOGRAM_BUILD_STATIC=ON
     -DHDR_LOG_REQUIRED=DISABLED
     -DHDR_HISTOGRAM_BUILD_PROGRAMS=OFF
 )

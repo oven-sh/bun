@@ -14,8 +14,8 @@ register_cmake_command(
     hdr_histogram
   INCLUDES
     include
-  ARGS
-    -DHDR_LOG_ENABLED=OFF
+  DEFINES
+    HDR_LOG_ENABLED=OFF
 )
 
 # Must be loaded after zlib is defined

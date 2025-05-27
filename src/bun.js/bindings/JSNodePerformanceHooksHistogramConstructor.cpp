@@ -38,50 +38,32 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     int64_t highest = std::numeric_limits<int64_t>::max();
     int figures = 3;
 
+    // Basic sanity checks to prevent crashes - detailed validation is done in TypeScript
     if (lowestVal.isNumber()) {
         double dbl = lowestVal.asNumber();
-        if (std::isnan(dbl) || dbl < 1 || dbl > static_cast<double>(std::numeric_limits<int64_t>::max())) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.lowest"_s, ">= 1 && <= Number.MAX_SAFE_INTEGER"_s, lowestVal);
-            return nullptr;
+        if (!std::isnan(dbl)) {
+            lowest = static_cast<int64_t>(dbl);
         }
-        lowest = static_cast<int64_t>(dbl);
     } else if (lowestVal.isBigInt()) {
         auto* bigInt = jsCast<JSBigInt*>(lowestVal);
         lowest = JSBigInt::toBigInt64(bigInt);
-        if (lowest < 1) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.lowest"_s, ">= 1"_s, lowestVal);
-            return nullptr;
-        }
-    } else if (!lowestVal.isUndefined()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lowest"_s, "number or bigint"_s, lowestVal);
-        return nullptr;
     }
 
     if (highestVal.isNumber()) {
         double dbl = highestVal.asNumber();
-        if (std::isnan(dbl) || dbl > static_cast<double>(std::numeric_limits<int64_t>::max())) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.highest"_s, "<= Number.MAX_SAFE_INTEGER"_s, highestVal);
-            return nullptr;
+        if (!std::isnan(dbl)) {
+            highest = static_cast<int64_t>(dbl);
         }
-        highest = static_cast<int64_t>(dbl);
     } else if (highestVal.isBigInt()) {
         auto* bigInt = jsCast<JSBigInt*>(highestVal);
         highest = JSBigInt::toBigInt64(bigInt);
-    } else if (!highestVal.isUndefined()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.highest"_s, "number or bigint"_s, highestVal);
-        return nullptr;
     }
 
     if (figuresVal.isNumber()) {
         double dbl = figuresVal.asNumber();
-        if (std::isnan(dbl) || dbl < 1 || dbl > 5 || dbl != static_cast<int>(dbl)) {
-            Bun::ERR::OUT_OF_RANGE(scope, globalObject, "options.figures"_s, "integer between 1 and 5"_s, figuresVal);
-            return nullptr;
+        if (!std::isnan(dbl)) {
+            figures = static_cast<int>(dbl);
         }
-        figures = static_cast<int>(dbl);
-    } else if (!figuresVal.isUndefined()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.figures"_s, "integer"_s, figuresVal);
-        return nullptr;
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);

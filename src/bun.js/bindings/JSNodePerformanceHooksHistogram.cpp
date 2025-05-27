@@ -117,7 +117,7 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
     // Node.js records ALL values regardless of range
     // Increment our manual count first
     m_histogramData.totalCount++;
-    
+
     // Update manual min/max tracking
     if (value < m_histogramData.manualMin) {
         m_histogramData.manualMin = value;
@@ -125,10 +125,10 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
     if (value > m_histogramData.manualMax) {
         m_histogramData.manualMax = value;
     }
-    
+
     // Try to record in the HDR histogram (may fail if outside range, but that's OK)
     hdr_record_value(m_histogramData.histogram, value);
-    
+
     // Always return true since we always "record" the value in Node.js style
     return true;
 }
@@ -215,7 +215,7 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 
     // Add the manual counts
     m_histogramData.totalCount += other->m_histogramData.totalCount;
-    
+
     // Update manual min/max from the other histogram
     if (other->m_histogramData.totalCount > 0) {
         if (m_histogramData.totalCount == other->m_histogramData.totalCount) {

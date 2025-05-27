@@ -118,7 +118,7 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 #endif
 
     MessagePortIdentifier remotePort = channel->port1() == port ? channel->port2() : channel->port1();
-    
+
     if (m_openChannels.get(remotePort)) {
         // Notify the remote port about the closure
         MessagePort::notifyPortClosed(remotePort);

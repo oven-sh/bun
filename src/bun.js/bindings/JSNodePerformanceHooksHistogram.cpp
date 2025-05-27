@@ -114,22 +114,26 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
 {
     if (!m_histogramData.histogram) return false;
 
-    // Node.js records ALL values regardless of range
-    // Increment our manual count first
-    m_histogramData.totalCount++;
+    // Try to record in the HDR histogram first
+    bool recorded = hdr_record_value(m_histogramData.histogram, value);
 
-    // Update manual min/max tracking
-    if (value < m_histogramData.manualMin) {
-        m_histogramData.manualMin = value;
+    if (recorded) {
+        // Value was within range - count it and update min/max
+        m_histogramData.totalCount++;
+        
+        // Update manual min/max tracking for in-range values only
+        if (value < m_histogramData.manualMin) {
+            m_histogramData.manualMin = value;
+        }
+        if (value > m_histogramData.manualMax) {
+            m_histogramData.manualMax = value;
+        }
+    } else {
+        // Value was out of range - increment exceeds count
+        m_histogramData.exceedsCount++;
     }
-    if (value > m_histogramData.manualMax) {
-        m_histogramData.manualMax = value;
-    }
 
-    // Try to record in the HDR histogram (may fail if outside range, but that's OK)
-    hdr_record_value(m_histogramData.histogram, value);
-
-    // Always return true since we always "record" the value in Node.js style
+    // Always return true since we always "accept" the value in Node.js style
     return true;
 }
 
@@ -155,7 +159,7 @@ void JSNodePerformanceHooksHistogram::reset()
     m_histogramData.totalCount = 0; // Reset our manual count
     m_histogramData.manualMin = std::numeric_limits<int64_t>::max(); // Reset manual min
     m_histogramData.manualMax = 0; // Reset manual max
-    // Node.js doesn't track exceeds, so no need to reset exceedsCount
+    m_histogramData.exceedsCount = 0; // Reset exceeds count
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMin() const
@@ -198,14 +202,13 @@ int64_t JSNodePerformanceHooksHistogram::getPercentile(double percentile) const
 
 size_t JSNodePerformanceHooksHistogram::getExceeds() const
 {
-    // Node.js always returns 0 for exceeds
-    return 0;
+    return m_histogramData.exceedsCount;
 }
 
 uint64_t JSNodePerformanceHooksHistogram::getCount() const
 {
-    // Return our manual count instead of the HDR histogram count
-    // This matches Node.js behavior of counting all values
+    // Return our manual count of in-range values only
+    // This matches Node.js behavior
     return m_histogramData.totalCount;
 }
 
@@ -213,8 +216,9 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
 {
     if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
 
-    // Add the manual counts
+    // Add the manual counts and exceeds
     m_histogramData.totalCount += other->m_histogramData.totalCount;
+    m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
 
     // Update manual min/max from the other histogram
     if (other->m_histogramData.totalCount > 0) {
@@ -236,7 +240,6 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     // hdr_add returns number of dropped values
     double dropped = hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 
-    // Node.js doesn't track exceeds, so don't update exceedsCount
     return dropped;
 }
 

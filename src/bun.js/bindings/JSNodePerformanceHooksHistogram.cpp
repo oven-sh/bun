@@ -120,7 +120,7 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
     if (recorded) {
         // Value was within range - count it and update min/max
         m_histogramData.totalCount++;
-        
+
         // Update manual min/max tracking for in-range values only
         if (value < m_histogramData.manualMin) {
             m_histogramData.manualMin = value;

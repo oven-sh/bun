@@ -227,7 +227,9 @@ export default {
 
     // Node.js validation - highest must be >= 2 * lowest
     if (lowest < 1) {
-      throw new RangeError("The 'lowest' option must be >= 1");
+      throw new RangeError(
+        `The value of "options.lowest" is out of range. It must be >= 1 && <= 9007199254740991. Received ${lowest}`,
+      );
     }
 
     if (highest < 2 * lowest) {

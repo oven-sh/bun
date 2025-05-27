@@ -7,12 +7,10 @@ test("Piscina basic functionality", async () => {
     filename: join(import.meta.dir, "worker.fixture.ts"),
   });
 
-  try {
-    const result = await piscina.run({ a: 4, b: 6 });
-    expect(result).toBe(10);
-  } finally {
-    await piscina.destroy();
-  }
+  const result = await piscina.run({ a: 4, b: 6 });
+  expect(result).toBe(10);
+
+  await piscina.destroy();
 });
 
 test("Piscina event loop cleanup", async () => {
@@ -20,17 +18,15 @@ test("Piscina event loop cleanup", async () => {
     filename: join(import.meta.dir, "worker.fixture.ts"),
   });
 
-  try {
-    const results = await Promise.all([
-      piscina.run({ a: 1, b: 2 }),
-      piscina.run({ a: 3, b: 4 }),
-      piscina.run({ a: 5, b: 6 }),
-    ]);
+  const results = await Promise.all([
+    piscina.run({ a: 1, b: 2 }),
+    piscina.run({ a: 3, b: 4 }),
+    piscina.run({ a: 5, b: 6 }),
+  ]);
 
-    expect(results).toEqual([3, 7, 11]);
-  } finally {
-    await piscina.destroy();
-  }
+  expect(results).toEqual([3, 7, 11]);
+
+  await piscina.destroy();
 });
 
 test("Piscina with idleTimeout", async () => {
@@ -40,14 +36,10 @@ test("Piscina with idleTimeout", async () => {
     maxThreads: 1,
   });
 
-  try {
-    const result = await piscina.run({ a: 10, b: 20 });
-    expect(result).toBe(30);
+  const result = await piscina.run({ a: 10, b: 20 });
+  expect(result).toBe(30);
 
-    await new Promise(resolve => setTimeout(resolve, 200));
-  } finally {
-    await piscina.destroy();
-  }
+  await piscina.destroy();
 });
 
 test("Piscina error handling", async () => {
@@ -55,11 +47,14 @@ test("Piscina error handling", async () => {
     filename: join(import.meta.dir, "worker-error.fixture.ts"),
   });
 
-  try {
-    expect(piscina.run({ shouldThrow: true })).rejects.toThrow();
-  } finally {
-    await piscina.destroy();
-  }
+  const p = await piscina.run({ shouldThrow: true }).then(
+    () => true,
+    () => false,
+  );
+
+  expect(p).toBe(false);
+
+  await piscina.destroy();
 });
 
 setTimeout(() => {

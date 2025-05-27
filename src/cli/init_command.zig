@@ -1014,17 +1014,44 @@ const Template = enum {
     const agent_rule = @embedFile("../init/rule.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
 
-    pub fn getCursorRule() ?*const TemplateFile {
+    fn isCursorInstalled() bool {
         // Give some way to opt-out.
         if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED")) {
-            return null;
+            return false;
         }
 
         // Detect if they're currently using cursor.
         if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
             if (env.len > 0) {
-                return &cursor_rule;
+                return true;
             }
+        }
+
+        if (Environment.isMac) {
+            if (bun.sys.exists("/Applications/Cursor.app")) {
+                return true;
+            }
+        }
+
+        if (Environment.isWindows) {
+            if (bun.getenvZAnyCase("USER")) |user| {
+                const pathbuf = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(pathbuf);
+                const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {
+                    return false;
+                };
+
+                if (bun.sys.exists(path)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+    pub fn getCursorRule() ?*const TemplateFile {
+        if (isCursorInstalled()) {
+            return &cursor_rule;
         }
 
         return null;

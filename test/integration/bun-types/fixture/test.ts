@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
 import { expectType } from "./utilities";
 
 const spy = spyOn(console, "log");
@@ -123,3 +123,25 @@ describe.each(dataAsConst)("test.each", (a, b, c) => {
   expectType<boolean>(b);
   expectType<5 | "asdf">(c);
 });
+
+const mySpyOnObjectWithOptionalMethod: {
+  optionalMethod?: (input: { question: string }) => { answer: string };
+} = {
+  optionalMethod: input => ({ answer: `Aswer to ${input.question}` }),
+};
+
+const mySpiedMethodOfOptional = spyOn(mySpyOnObjectWithOptionalMethod, "optionalMethod");
+
+mySpiedMethodOfOptional({ question: "asdf" });
+
+expectType<Mock<(input: { question: string }) => { answer: string }>>(mySpiedMethodOfOptional);
+
+const myNormalSpyOnObject = {
+  normalMethod: (name: string) => `Hello ${name}`,
+};
+
+const myNormalSpiedMethod = spyOn(myNormalSpyOnObject, "normalMethod");
+
+myNormalSpiedMethod("asdf");
+
+expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);

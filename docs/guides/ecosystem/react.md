@@ -1,49 +1,50 @@
 ---
-name: Use React and JSX
+name: Build a React app with Bun
 ---
 
-React just works with Bun. Bun supports `.jsx` and `.tsx` files out of the box.
+Bun supports `.jsx` and `.tsx` files out of the box. React just works with Bun.
 
-Remember that JSX is just a special syntax for including HTML-like syntax in JavaScript files. React uses JSX syntax, as do alternatives like [Preact](https://preactjs.com/) and [Solid](https://www.solidjs.com/). Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.
-
----
-
-Bun _assumes_ you're using React (unless you [configure it otherwise](https://bun.sh/docs/runtime/bunfig#jsx)) so a line like this:
-
-```
-const element = <h1>Hello, world!</h1>;
-```
-
----
-
-is internally converted into something like this:
-
-```ts
-// jsxDEV
-import { jsx } from "react/jsx-dev-runtime";
-
-const element = jsx("h1", { children: "Hello, world!" });
-```
-
----
-
-This code requires `react` to run, so make sure you've installed React.
+Create a new React app with `bun init --react`. This gives you a template with a simple React app and a simple API server together in one full-stack app.
 
 ```bash
-$ bun install react
+# Create a new React app
+$ bun init --react
+
+# Run the app in development mode
+$ bun dev
+
+# Build as a static site for production
+$ bun run build
+
+# Run the server in production
+$ bun start
 ```
 
 ---
 
-Bun implements special logging for JSX components to make debugging easier.
+### Hot Reloading
 
-```bash
-$ bun run log-my-component.tsx
-<Component message="Hello world!" />
+Run `bun dev` to start the app in development mode. This will start the API server and the React app with hot reloading.
+
+### Full-Stack App
+
+Run `bun start` to start the API server and frontend together in one process.
+
+### Static Site
+
+Run `bun run build` to build the app as a static site. This will create a `dist` directory with the built app and all the assets.
+
 ```
-
----
-
-As far as "official support" for React goes, that's it. React is a library like any other, and Bun can run that library. Bun is not a framework, so you should use a framework like [Vite](https://vitejs.dev/) to build an app with server-side rendering and hot reloading in the browser.
-
-Refer to [Runtime > JSX](https://bun.sh/docs/runtime/jsx) for complete documentation on configuring JSX.
+├── src/
+│   ├── index.tsx       # Server entry point with API routes
+│   ├── frontend.tsx    # React app entry point with HMR
+│   ├── App.tsx         # Main React component
+│   ├── APITester.tsx   # Component for testing API endpoints
+│   ├── index.html      # HTML template
+│   ├── index.css       # Styles
+│   └── *.svg           # Static assets
+├── package.json        # Dependencies and scripts
+├── tsconfig.json       # TypeScript configuration
+├── bunfig.toml         # Bun configuration
+└── bun.lock            # Lock file
+```

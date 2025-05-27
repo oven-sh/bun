@@ -762,6 +762,7 @@ declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
+declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
 declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
 declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;

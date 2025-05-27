@@ -80,7 +80,7 @@ To update all dependencies to the latest versions (including breaking changes):
 
 exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities: bun-audit-expect-valid-json-stdout-report-no-vulnerabilities 1`] = `{}`;
 
-exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is passed and there are vulnerabilities: bun-audit-expect-valid-json-stdout-report-vulnerabilities 1`] = `
+exports[`\`bun pm audit\` should print valid JSON and exit 1 when --json is passed and there are vulnerabilities: bun-audit-expect-valid-json-stdout-report-vulnerabilities 1`] = `
 {
   "base64-url": [
     {

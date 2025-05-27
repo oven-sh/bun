@@ -856,6 +856,13 @@ pub const InitCommand = struct {
                     }
                 }
 
+                if (Template.getCursorRule()) |template_file| {
+                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
+                    result catch {
+                        // No big deal if this fails
+                    };
+                }
+
                 Output.flush();
 
                 if (existsZ("package.json") and need_run_bun_install) {
@@ -1004,6 +1011,25 @@ const Template = enum {
         return s;
     }
 
+    const agent_rule = @embedFile("../init/rule.md");
+    const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
+
+    pub fn getCursorRule() ?*const TemplateFile {
+        // Give some way to opt-out.
+        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED")) {
+            return null;
+        }
+
+        // Detect if they're currently using cursor.
+        if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
+            if (env.len > 0) {
+                return &cursor_rule;
+            }
+        }
+
+        return null;
+    }
+
     const ReactBlank = struct {
         const files: []const TemplateFile = &.{
             .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-app/bunfig.toml") },
@@ -1101,6 +1127,13 @@ const Template = enum {
                     Output.err(err, "failed to create file: '{s}'", .{path});
                     Global.crash();
                 }
+            };
+        }
+
+        if (Template.getCursorRule()) |rule| {
+            const result = InitCommand.Assets.createNew(rule.path, rule.contents);
+            result catch {
+                // No big deal if this fails
             };
         }
 

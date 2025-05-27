@@ -2,13 +2,11 @@ const std = @import("std");
 const JSC = bun.JSC;
 const VirtualMachine = bun.JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
-const Lock = bun.Mutex;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
-const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
@@ -53,7 +51,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .globalThis = globalThis,
             });
             var promise = JSC.JSPromise.create(globalThis);
-            this.promise.strong.set(globalThis, promise.asValue(globalThis));
+            this.promise.strong.set(globalThis, promise.toJS());
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -902,6 +900,19 @@ pub const EventLoop = struct {
         this.entered_event_loop_count -= 1;
     }
 
+    pub fn exitMaybeDrainMicrotasks(this: *EventLoop, allow_drain_microtask: bool) void {
+        const count = this.entered_event_loop_count;
+        log("exit() = {d}", .{count - 1});
+
+        defer this.debug.exit();
+
+        if (allow_drain_microtask and count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
+
+        this.entered_event_loop_count -= 1;
+    }
+
     pub inline fn getVmImpl(this: *EventLoop) *VirtualMachine {
         return this.virtual_machine;
     }
@@ -937,6 +948,13 @@ pub const EventLoop = struct {
 
     pub fn drainMicrotasks(this: *EventLoop) void {
         this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+    }
+
+    // should be called after exit()
+    pub fn maybeDrainMicrotasks(this: *EventLoop) void {
+        if (this.entered_event_loop_count == 0 and !this.virtual_machine.is_inside_deferred_task_queue) {
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+        }
     }
 
     /// When you call a JavaScript function from outside the event loop task
@@ -1356,14 +1374,6 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, @typeName(TimeoutObject)) => {
-                    var any: *TimeoutObject = task.get(TimeoutObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
-                @field(Task.Tag, @typeName(ImmediateObject)) => {
-                    var any: *ImmediateObject = task.get(ImmediateObject).?;
-                    any.runImmediateTask(virtual_machine);
-                },
                 @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
@@ -1404,17 +1414,19 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        var global = this.global;
-        const global_vm = global.vm();
-
         var to_run_now = this.immediate_tasks;
 
         this.immediate_tasks = this.next_immediate_tasks;
         this.next_immediate_tasks = .{};
 
+        var exception_thrown = false;
         for (to_run_now.items) |task| {
-            task.runImmediateTask(virtual_machine);
-            this.drainMicrotasksWithGlobal(global, global_vm);
+            exception_thrown = task.runImmediateTask(virtual_machine);
+        }
+
+        // make sure microtasks are drained if the last task had an exception
+        if (exception_thrown) {
+            this.maybeDrainMicrotasks();
         }
 
         if (this.next_immediate_tasks.capacity > 0) {

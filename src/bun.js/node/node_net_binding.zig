@@ -1,11 +1,6 @@
-const std = @import("std");
 const bun = @import("bun");
-const C = bun.c;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
+const validators = @import("./util/validators.zig");
 
 //
 //
@@ -67,21 +62,14 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
                 return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
-            if (!arg.isInt32AsAnyInt()) {
-                return globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
-            }
-            const value: u32 = @max(10, arg.coerceToInt32(globalThis));
-            autoSelectFamilyAttemptTimeoutDefault = value;
+            var value = try validators.validateInt32(globalThis, arg, "value", .{}, 1, null);
+            if (value < 10) value = 10;
+            autoSelectFamilyAttemptTimeoutDefault = @intCast(value);
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
 }
 
-pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
-    const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
 
-    net.put(global, "SocketAddress", SocketAddress.js.getConstructor(global));
-
-    return net;
-}
+pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;

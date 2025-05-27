@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
 
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");
@@ -356,14 +354,14 @@ pub const TokenList = struct {
                             .{ .color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (input.tryParse(UnresolvedColor.parse, .{ f, options }).asValue()) |color| {
                         tokens.append(
                             input.allocator(),
                             .{ .unresolved_color = color },
                         ) catch unreachable;
                         last_is_delim = false;
-                        last_is_whitespace = true;
+                        last_is_whitespace = false;
                     } else if (bun.strings.eql(f, "url")) {
                         input.reset(&state);
                         tokens.append(

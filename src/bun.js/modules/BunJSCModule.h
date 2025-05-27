@@ -50,7 +50,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 #if OS(DARWIN)
-#if BUN_DEBUG
+#if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
@@ -246,12 +246,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                     unsigned size = std::min(left.length(), right.length());
                     left = left.substring(0, size);
                     right = right.substring(0, size);
-                    int result = WTF::codePointCompare(right, left);
-                    if (result == 0) {
+                    std::strong_ordering result = WTF::codePointCompare(right, left);
+                    if (result == std::strong_ordering::equal) {
                         return originalLeftLength > originalRightLength;
                     }
 
-                    return result > 0;
+                    return result == std::strong_ordering::greater;
                 }
 
                 return a.second > b.second;

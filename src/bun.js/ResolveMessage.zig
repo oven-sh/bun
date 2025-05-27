@@ -179,10 +179,10 @@ pub const ResolveMessage = struct {
         allocator: std.mem.Allocator,
         msg: logger.Msg,
         referrer: string,
-    ) JSC.JSValue {
-        var resolve_error = allocator.create(ResolveMessage) catch unreachable;
+    ) bun.OOM!JSC.JSValue {
+        var resolve_error = try allocator.create(ResolveMessage);
         resolve_error.* = ResolveMessage{
-            .msg = msg.clone(allocator) catch unreachable,
+            .msg = try msg.clone(allocator),
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };

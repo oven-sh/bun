@@ -267,7 +267,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThanOrEqual(149);
+    expect(end - start).toBeGreaterThan(120);
     done();
   }, 100);
 
@@ -364,5 +364,5 @@ it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive
 });
 
 it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
+  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });

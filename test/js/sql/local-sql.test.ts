@@ -1,15 +1,14 @@
 import { SQL } from "bun";
-const postgres = (...args) => new SQL(...args);
-import { expect, test, mock, beforeAll, afterAll } from "bun:test";
-import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
+import { afterAll, expect, test } from "bun:test";
+import { isLinux } from "harness";
 import path from "path";
+const postgres = (...args) => new SQL(...args);
 
 import { exec, execSync } from "child_process";
+import net from "net";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
 async function findRandomPort() {

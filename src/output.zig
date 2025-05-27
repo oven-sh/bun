@@ -8,8 +8,6 @@ const StringTypes = bun.StringTypes;
 const Global = bun.Global;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const use_mimalloc = bun.use_mimalloc;
-const writeStream = std.json.writeStream;
-const WriteStream = std.json.WriteStream;
 const c = bun.c;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -739,32 +737,35 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = disabled;
-        var evaluated_disable = false;
+        var really_disable = std.atomic.Value(bool).init(disabled);
+
         var lock = bun.Mutex{};
 
-        pub fn isVisible() bool {
-            if (!evaluated_disable) {
-                evaluated_disable = true;
-                if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
-                    really_disable = strings.eqlComptime(val, "0");
-                } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = really_disable or !strings.eqlComptime(val, "0");
-                } else {
-                    for (bun.argv) |arg| {
-                        if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
-                            really_disable = false;
-                            break;
-                        } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
-                            really_disable = false;
-                            break;
-                        }
+        var is_visible_once = std.once(evaluateIsVisible);
+
+        fn evaluateIsVisible() void {
+            if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
+                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
+                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
+                really_disable.store(really_disable.load(.monotonic) or !strings.eqlComptime(val, "0"), .monotonic);
+            } else {
+                for (bun.argv) |arg| {
+                    if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                        really_disable.store(false, .monotonic);
+                        break;
+                    } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                        really_disable.store(false, .monotonic);
+                        break;
                     }
                 }
             }
-            return !really_disable;
+        }
+
+        pub fn isVisible() bool {
+            is_visible_once.call();
+            return !really_disable.load(.monotonic);
         }
 
         /// Debug-only logs which should not appear in release mode
@@ -807,20 +808,20 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
 
             if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
                 buffered_writer.flush() catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
             } else {
                 out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
                 buffered_writer.flush() catch {
-                    really_disable = true;
+                    really_disable.store(true, .monotonic);
                     return;
                 };
             }
@@ -862,6 +863,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "b", CSI ++ "1m" },
     &.{ "d", CSI ++ "2m" },
     &.{ "i", CSI ++ "3m" },
+    &.{ "u", CSI ++ "4m" },
     &.{ "black", CSI ++ "30m" },
     &.{ "red", CSI ++ "31m" },
     &.{ "green", CSI ++ "32m" },

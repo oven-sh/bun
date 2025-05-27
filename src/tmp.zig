@@ -1,6 +1,5 @@
 const bun = @import("bun");
 const std = @import("std");
-const Environment = bun.Environment;
 const O = bun.O;
 
 // O_TMPFILE doesn't seem to work very well.

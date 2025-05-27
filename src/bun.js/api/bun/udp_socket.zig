@@ -2,7 +2,6 @@ const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
 const bun = @import("bun");
 
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
 const Async = bun.Async;
@@ -43,7 +42,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     event_loop.enter();
     defer event_loop.exit();
     _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
-        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException(err)});
+        this.callErrorHandler(.zero, this.globalThis.takeException(err));
     };
 }
 
@@ -111,7 +110,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             JSC.jsNumber(port),
             hostname_string.transferToJS(globalThis),
         }) catch |err| {
-            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
+            udpSocket.callErrorHandler(.zero, udpSocket.globalThis.takeException(err));
         };
     }
 }
@@ -375,22 +374,21 @@ pub const UDPSocket = struct {
     pub fn callErrorHandler(
         this: *This,
         thisValue: JSValue,
-        err: []const JSValue,
-    ) bool {
+        err: JSValue,
+    ) void {
         const callback = this.config.on_error;
         const globalThis = this.globalThis;
         const vm = globalThis.bunVM();
 
+        if (err.isTerminationException(vm.jsc)) {
+            return;
+        }
         if (callback == .zero) {
-            if (err.len > 0)
-                _ = vm.uncaughtException(globalThis, err[0], false);
-
-            return false;
+            _ = vm.uncaughtException(globalThis, err, false);
+            return;
         }
 
-        _ = callback.call(globalThis, thisValue, err) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
-
-        return true;
+        _ = callback.call(globalThis, thisValue, &.{err}) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
     }
 
     pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

@@ -15,9 +15,9 @@
  *
  */
 
-import * as assert from "assert";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 import { loadPackageDefinition } from "@grpc/grpc-js";
+import * as assert from "assert";
+import { describe, it } from "bun:test";
 
 describe("loadPackageDefinition", () => {
   it("Should not allow prototype pollution", () => {

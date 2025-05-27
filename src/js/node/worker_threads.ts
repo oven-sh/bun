@@ -4,14 +4,33 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { Readable } = require("node:stream");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
-const { validateObject, validateBoolean } = require("internal/validators");
 
-const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
+const {
+  MessageChannel,
+  BroadcastChannel,
+  Worker: WebWorker,
+} = globalThis as typeof globalThis & {
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
+};
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
+const {
+  0: _workerData,
+  1: _threadId,
+  2: _receiveMessageOnPort,
+  3: environmentData,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
+  unknown,
+  number,
+  (port: unknown) => unknown,
+  Map<unknown, unknown>,
+];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -184,12 +203,16 @@ function fakeParentPort() {
 }
 let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
-function getEnvironmentData() {
-  return process.env;
+function getEnvironmentData(key: unknown): unknown {
+  return environmentData.get(key);
 }
 
-function setEnvironmentData(env: any) {
-  process.env = env;
+function setEnvironmentData(key: unknown, value: unknown): void {
+  if (value === undefined) {
+    environmentData.delete(key);
+  } else {
+    environmentData.set(key, value);
+  }
 }
 
 function markAsUntransferable() {
@@ -210,7 +233,6 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
-  #isRunning = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -234,7 +256,7 @@ class Worker extends EventEmitter {
       }
     }
     try {
-      this.#worker = new WebWorker(filename, options);
+      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
@@ -298,7 +320,6 @@ class Worker extends EventEmitter {
   }
 
   terminate(callback: unknown) {
-    this.#isRunning = false;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
@@ -330,16 +351,21 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
+  getHeapSnapshot(options: unknown) {
+    const stringPromise = this.#worker.getHeapSnapshot(options);
+    return stringPromise.then(s => new HeapSnapshotStream(s));
+  }
+
   #onClose(e) {
-    this.#isRunning = false;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
-    this.#isRunning = false;
     let error = event?.error;
-    if (!error) {
+    // if the thrown value serialized successfully, the message will be empty
+    // if not the message is the actual error
+    if (event.message !== "") {
       error = new Error(event.message, { cause: event });
       const stack = event?.stack;
       if (stack) {
@@ -360,23 +386,24 @@ class Worker extends EventEmitter {
   }
 
   #onOpen() {
-    this.#isRunning = true;
     this.emit("online");
   }
+}
 
-  getHeapSnapshot(options: any) {
-    if (options !== undefined) {
-      // These errors must be thrown synchronously.
-      validateObject(options, "options");
-      validateBoolean(options.exposeInternals, "options.exposeInternals");
-      validateBoolean(options.exposeNumericValues, "options.exposeNumericValues");
+class HeapSnapshotStream extends Readable {
+  #json: string | undefined;
+
+  constructor(json: string) {
+    super();
+    this.#json = json;
+  }
+
+  _read() {
+    if (this.#json !== undefined) {
+      this.push(this.#json);
+      this.push(null);
+      this.#json = undefined;
     }
-    if (!this.#isRunning) {
-      const err = new Error("Worker instance not running");
-      err.code = "ERR_WORKER_NOT_RUNNING";
-      return Promise.$reject(err);
-    }
-    throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
   }
 }
 

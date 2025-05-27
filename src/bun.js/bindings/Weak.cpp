@@ -31,7 +31,7 @@ class WeakRefOwner : public JSC::WeakHandleOwner {
 public:
     void finalize(JSC::Handle<JSC::Unknown> handle, void* context) final
     {
-        if (LIKELY(context)) {
+        if (context) [[likely]] {
             switch (T) {
             case WeakRefType::FetchResponse:
                 Bun__FetchResponse_finalize(context);

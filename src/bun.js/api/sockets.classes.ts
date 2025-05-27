@@ -448,4 +448,41 @@ export default [
       },
     },
   }),
+  define({
+    name: "BlockList",
+    construct: true,
+    call: false,
+    finalize: true,
+    estimatedSize: true,
+    // customInspect: true,
+    structuredClone: { transferable: false, tag: 251 },
+    JSType: "0b11101110",
+    klass: {
+      isBlockList: {
+        fn: "isBlockList",
+        length: 1,
+      },
+    },
+    proto: {
+      addAddress: {
+        fn: "addAddress",
+        length: 1,
+      },
+      addRange: {
+        fn: "addRange",
+        length: 2,
+      },
+      addSubnet: {
+        fn: "addSubnet",
+        length: 2,
+      },
+      check: {
+        fn: "check",
+        length: 1,
+      },
+      rules: {
+        getter: "rules",
+      },
+    },
+  }),
 ];

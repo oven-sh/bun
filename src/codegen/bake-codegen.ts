@@ -60,6 +60,7 @@ async function run() {
         },
         target: side === "server" ? "bun" : "browser",
         drop: debug ? [] : ["ASSERT", "DEBUG"],
+        conditions: [side],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -133,7 +134,9 @@ async function run() {
             : `${code};return ${outName("server_exports")};`;
 
           const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
-          code = code.replaceAll("import.meta", outName("$importMeta")).replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
+          code = code
+            .replaceAll("import.meta", outName("$importMeta"))
+            .replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
           code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
@@ -145,9 +148,9 @@ async function run() {
       if (side === "client" && code.match(/\beval\(|,\s*eval\s*\)/)) {
         throw new AggregateError([
           new Error(
-              "eval is not allowed in the HMR runtime. there are problems in all " 
-            + "browsers regarding stack traces from eval'd frames and source maps. "
-            + "you must find an alternative solution to your problem."
+            "eval is not allowed in the HMR runtime. there are problems in all " +
+              "browsers regarding stack traces from eval'd frames and source maps. " +
+              "you must find an alternative solution to your problem.",
           ),
         ]);
       }

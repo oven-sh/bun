@@ -1,0 +1,18 @@
+# Project
+/.github/CODEOWNERS @Jarred-Sumner
+
+# Build system
+/CMakeLists.txt @Electroid
+/cmake/*.cmake @Electroid
+/scripts/ @Electroid
+
+# CI
+/.buildkite/ @Electroid
+/.github/workflows/ @Electroid
+
+# Debugger protocol
+/packages/bun-inspector-protocol/ @Electroid
+/packages/bun-debug-adapter-protocol/ @Electroid
+
+# Tests
+/test/expectations.txt @Jarred-Sumner

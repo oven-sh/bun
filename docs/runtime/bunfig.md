@@ -198,7 +198,6 @@ Set path where coverage reports will be saved. Please notice, that it works only
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
-
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.

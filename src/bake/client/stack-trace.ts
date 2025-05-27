@@ -31,7 +31,7 @@ const gcBlobs: SourceMapURL[] = [];
  * browser tab eating infinite memory, when more than `gcSize` bytes are
  * unreachable, the oldest blobs will get freed.
  */
-const gcSize = 1024 * 1024 * 2; // 2MB
+let gcSize = 1024 * 1024 * 2; // 2MB
 
 /**
  * Modern port of the error-stack-parser library
@@ -72,7 +72,7 @@ function parseV8OrIE(stack: string): Frame[] {
       let fileName = ["eval", "<anonymous>"].indexOf(locationParts[0]) > -1 ? undefined : locationParts[0];
 
       return {
-        fn: functionName || 'unknown',
+        fn: functionName || "unknown",
         file: fileName,
         line: 0 | locationParts[1],
         col: 0 | locationParts[2],
@@ -127,7 +127,7 @@ function remapFileName(fileName: string) {
   if (fileName.startsWith("blob:")) {
     const sourceMapURL = blobToSourceMap.get(fileName);
     if (sourceMapURL) {
-      return location.origin + '/_bun/client/hmr-' + sourceMapURL.id + '.js';
+      return location.origin + "/_bun/client/hmr-" + sourceMapURL.id + ".js";
     }
   }
   return fileName;
@@ -143,21 +143,43 @@ export function derefMapping(value: SourceMapURL) {
   if (refs <= 0) {
     if (value.size > gcSize) {
       const url = value.url;
-      URL.revokeObjectURL(url);
+      revokeObjectURL(value);
       blobToSourceMap.delete(url);
     } else {
       gcBlobs.push(value);
-      // Delete old blobs
+      // Count up to gcSize, then delete old blobs
       let acc = 0;
-      for (let i = 0; i < gcBlobs.length; i++) {
-        acc += gcBlobs[i].size;
+      for (let i = gcBlobs.length - 1; i >= 0; i--) {
+        const size = gcBlobs[i].size;
+        acc += size;
         if (acc > gcSize) {
-          acc -= gcBlobs[i].size;
-          URL.revokeObjectURL(gcBlobs[i].url);
+          acc -= size;
+          revokeObjectURL(gcBlobs[i]);
           gcBlobs.splice(i, 1);
-          i--;
         }
       }
     }
   }
+}
+
+export function revokeObjectURL(value: SourceMapURL) {
+  URL.revokeObjectURL(value.url);
+  // TODO: notify the server that the source map is no longer needed
+}
+
+// These methods are exported for testing only
+
+export function configureSourceMapGCSize(size: number) {
+  gcSize = size;
+}
+
+export function clearDisconnectedSourceMaps() {
+  for (const sourceMap of blobToSourceMap.values()) {
+    sourceMap.refs = 1;
+    derefMapping(sourceMap);
+  }
+}
+
+export function getKnownSourceMaps() {
+  return { blobToSourceMap, gcBlobs };
 }

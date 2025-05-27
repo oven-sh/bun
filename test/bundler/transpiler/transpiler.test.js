@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {

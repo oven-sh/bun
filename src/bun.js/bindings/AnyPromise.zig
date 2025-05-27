@@ -55,9 +55,9 @@ pub const AnyPromise = union(enum) {
         }
     }
 
-    pub fn asValue(this: AnyPromise, globalThis: *JSGlobalObject) JSValue {
+    pub fn asValue(this: AnyPromise) JSValue {
         return switch (this) {
-            .normal => |promise| promise.asValue(globalThis),
+            .normal => |promise| promise.toJS(),
             .internal => |promise| promise.asValue(),
         };
     }
@@ -81,6 +81,6 @@ pub const AnyPromise = union(enum) {
         };
 
         var ctx = Wrapper{ .args = args };
-        JSC__AnyPromise__wrap(globalObject, this.asValue(globalObject), &ctx, @ptrCast(&Wrapper.call));
+        JSC__AnyPromise__wrap(globalObject, this.asValue(), &ctx, @ptrCast(&Wrapper.call));
     }
 };

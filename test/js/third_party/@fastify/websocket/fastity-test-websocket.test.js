@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import websocket from "@fastify/websocket";
+import { expect, test } from "bun:test";
 import Fastify from "fastify";
 
 test("websocket", async () => {

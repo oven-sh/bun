@@ -3,10 +3,8 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = bun.Semver.String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;
@@ -530,7 +528,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
+        .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
     };

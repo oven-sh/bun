@@ -183,6 +183,9 @@ export default {
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
+    }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
@@ -389,7 +392,7 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
-    page("api/test", "Testing", {
+    page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),
     page("api/utils", "Utils", {

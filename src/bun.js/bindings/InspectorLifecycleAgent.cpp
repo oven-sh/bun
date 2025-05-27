@@ -157,9 +157,9 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     {
         auto iter1 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
-        while (auto result = iter1->nextKey(vm)) {
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get next key"_s)));
-            esm->addItem(result.toWTFString(global));
+        JSC::JSValue value;
+        while (iter1->next(global, value)) {
+            esm->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to esm array"_s)));
         }
     }
@@ -168,9 +168,9 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     {
         auto iter2 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
-        while (auto result = iter2->nextKey(vm)) {
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get next key"_s)));
-            cjs->addItem(result.toWTFString(global));
+        JSC::JSValue value;
+        while (iter2->next(global, value)) {
+            cjs->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to cjs array"_s)));
         }
     }

@@ -4,7 +4,7 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunExe, bunEnv as env, isPosix, tmpdirSync } from "harness";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
 const bunEnv = { ...env, NODE_ENV: "development" };
@@ -18,6 +18,7 @@ class BunFrontendDevServerSession extends InspectorSession {
     this.send("Console.enable");
     this.send("Runtime.enable");
     this.send("BunFrontendDevServer.enable");
+    this.send("LifecycleReporter.enable");
     await this.sendAndWait("Inspector.initialized");
   }
 
@@ -341,6 +342,39 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
 
     // Verify the duration is reasonable
     expect(bundleCompleteEvent.durationMs).toBeGreaterThan(-1);
+
+    // Test for LifecycleReporter.getModuleGraph
+    type ModuleGraph = {
+      argv: string[];
+      cjs: string[];
+      esm: string[];
+      main: string;
+      cwd: string;
+    };
+    const moduleGraph = (await session.sendAndWait("LifecycleReporter.getModuleGraph")) as ModuleGraph;
+    const realCwd = path.resolve(tempdir).replaceAll("\\", "/");
+    moduleGraph.argv = moduleGraph.argv.map(a => path.basename(a));
+    moduleGraph.cjs = moduleGraph.cjs.map(a => a.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>"));
+    moduleGraph.esm = moduleGraph.esm.map(a => a.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>"));
+    moduleGraph.main = moduleGraph.main.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>");
+    moduleGraph.cwd = moduleGraph.cwd.replaceAll("\\", "/").replaceAll(realCwd, "<cwd>");
+    expect(moduleGraph).toMatchInlineSnapshot(`
+      {
+        "argv": [
+          "${path.basename(process.execPath)}",
+          "server.ts",
+        ],
+        "cjs": [],
+        "cwd": "<cwd>",
+        "esm": [
+          "bun:main",
+          "<cwd>/server.ts",
+          "<cwd>/index.html",
+          "<cwd>/second.html",
+        ],
+        "main": "<cwd>/server.ts",
+      }
+    `);
   });
 
   test("should notify on bundleFailed events", async () => {

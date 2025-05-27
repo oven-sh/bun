@@ -199,7 +199,7 @@ export default {
       } else if (typeof opts.lowest === "number") {
         lowest = opts.lowest;
       } else {
-        throw new TypeError("The 'lowest' option must be a number or bigint");
+        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], opts.lowest);
       }
     }
 
@@ -209,33 +209,27 @@ export default {
       } else if (typeof opts.highest === "number") {
         highest = opts.highest;
       } else {
-        throw new TypeError("The 'highest' option must be a number or bigint");
+        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], opts.highest);
       }
     }
 
     if (opts.figures !== undefined) {
       if (typeof opts.figures !== "number") {
-        throw new TypeError("The 'figures' option must be a number");
+        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", opts.figures);
       }
       if (opts.figures < 1 || opts.figures > 5) {
-        throw new RangeError(
-          `The value of "options.figures" is out of range. It must be >= 1 && <= 5. Received ${opts.figures}`,
-        );
+        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", opts.figures);
       }
       figures = opts.figures;
     }
 
     // Node.js validation - highest must be >= 2 * lowest
     if (lowest < 1) {
-      throw new RangeError(
-        `The value of "options.lowest" is out of range. It must be >= 1 && <= 9007199254740991. Received ${lowest}`,
-      );
+      throw $ERR_OUT_OF_RANGE("options.lowest", ">= 1 && <= 9007199254740991", lowest);
     }
 
     if (highest < 2 * lowest) {
-      throw new RangeError(
-        `The value of "options.highest" is out of range. It must be >= ${2 * lowest} && <= 9007199254740991. Received ${highest}`,
-      );
+      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2 * lowest} && <= 9007199254740991`, highest);
     }
 
     return cppCreateHistogram(lowest, highest, figures);

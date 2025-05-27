@@ -306,15 +306,69 @@ describe("Histogram", () => {
     });
 
     test("createHistogram parameter validation", () => {
-      assert.throws(() => createHistogram({ figures: -1 }), /out of range/);
-      assert.throws(() => createHistogram({ figures: 6 }), /out of range/);
+      // Test figures validation
+      assert.throws(
+        () => createHistogram({ figures: -1 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.figures");
+        },
+      );
+      assert.throws(
+        () => createHistogram({ figures: 6 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.figures");
+        },
+      );
 
-      assert.throws(() => createHistogram({ lowest: 0 }), /out of range/);
-      assert.throws(() => createHistogram({ lowest: -1 }), /out of range/);
+      // Test lowest validation
+      assert.throws(
+        () => createHistogram({ lowest: 0 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.lowest");
+        },
+      );
+      assert.throws(
+        () => createHistogram({ lowest: -1 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.lowest");
+        },
+      );
 
-      assert.throws(() => createHistogram({ lowest: 10, highest: 15 }), /out of range/);
-      assert.throws(() => createHistogram({ lowest: 5, highest: 9 }), /out of range/);
+      // Test highest validation (must be >= 2 * lowest)
+      assert.throws(
+        () => createHistogram({ lowest: 10, highest: 15 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.highest");
+        },
+      );
+      assert.throws(
+        () => createHistogram({ lowest: 5, highest: 9 }),
+        (err: any) => {
+          return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.highest");
+        },
+      );
 
+      // Test type validation
+      assert.throws(
+        () => createHistogram({ figures: "invalid" as any }),
+        (err: any) => {
+          return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.figures");
+        },
+      );
+      assert.throws(
+        () => createHistogram({ lowest: "invalid" as any }),
+        (err: any) => {
+          return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.lowest");
+        },
+      );
+      assert.throws(
+        () => createHistogram({ highest: "invalid" as any }),
+        (err: any) => {
+          return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.highest");
+        },
+      );
+
+      // Valid case: highest = 2 * lowest
       const h = createHistogram({ lowest: 5, highest: 10, figures: 1 });
       assert.strictEqual(h.count, 0);
     });

@@ -149,6 +149,9 @@ private:
 
     uint32_t m_messageEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
+    // keeps MessagePort alive until we close()
+    RefPtr<MessagePort> m_strongRef = nullptr;
+    unsigned m_messagesInFight = 0;
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

@@ -104,6 +104,7 @@ void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier
 Ref<MessagePort> MessagePort::create(ScriptExecutionContext& scriptExecutionContext, const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
     auto messagePort = adoptRef(*new MessagePort(scriptExecutionContext, local, remote));
+    messagePort->m_strongRef = messagePort.ptr();
     // messagePort->suspendIfNeeded();
     return messagePort;
 }
@@ -236,13 +237,18 @@ void MessagePort::start()
 
 void MessagePort::close()
 {
-    if (m_isDetached)
+    if (m_isDetached || m_messagesInFight > 0)
         return;
     m_isDetached = true;
 
     MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
+
+    // message port is closed, we can safely mark it for GC
+    this->m_strongRef = nullptr;
+
+    scriptExecutionContext()->unrefEventLoop();
 }
 
 void MessagePort::dispatchMessages()
@@ -268,6 +274,7 @@ void MessagePort::dispatchMessages()
         auto* globalObject = defaultGlobalObject(context->globalObject());
         Ref vm = globalObject->vm();
         auto scope = DECLARE_CATCH_SCOPE(vm);
+        protectedThis->m_messagesInFight += messages.size();
 
         for (auto& message : messages) {
             // close() in Worker onmessage handler should prevent next message from dispatching.
@@ -289,6 +296,8 @@ void MessagePort::dispatchMessages()
             ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTFMove(ports), message = WTFMove(message)](ScriptExecutionContext& context) mutable {
                 auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
                 protectedThis->dispatchEvent(event.event);
+                protectedThis->m_messagesInFight -= 1;
+                protectedThis->close();
             });
         }
     };

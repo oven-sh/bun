@@ -186,7 +186,7 @@ export default {
     lowest?: number | bigint;
     highest?: number | bigint;
     figures?: number;
-  }): RecordableHistogram {
+  }): import("node:perf_hooks").RecordableHistogram {
     const opts = options || {};
 
     let lowest = 1;

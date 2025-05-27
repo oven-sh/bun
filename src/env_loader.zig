@@ -3,15 +3,9 @@ const logger = bun.logger;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const CodePoint = bun.CodePoint;
 
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
@@ -1343,8 +1337,5 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
-
-const expectString = std.testing.expectEqualStrings;
-const expect = std.testing.expect;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";

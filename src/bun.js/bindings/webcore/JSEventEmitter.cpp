@@ -104,7 +104,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "EventEmitter"_s);
     auto object = EventEmitter::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -132,7 +132,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context)) {
+    if (!context) [[unlikely]] {
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "EventEmitter"_s);
     }
     const auto object = EventEmitter::create(*context);
@@ -250,7 +250,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventEmitterPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEventEmitter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -261,7 +261,7 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue actualThis = callFrame->thisValue();
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
@@ -374,7 +374,7 @@ inline JSC::EncodedJSValue JSEventEmitter::removeListener(JSC::JSGlobalObject* l
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue actualThis = callFrame->thisValue();
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
@@ -430,7 +430,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
     size_t argumentCount = callFrame->argumentCount();
-    if (UNLIKELY(argumentCount < 1))
+    if (argumentCount < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -469,7 +469,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -486,7 +486,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -547,7 +547,7 @@ bool JSEventEmitterOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
 {
     auto* jsEventEmitter = jsCast<JSEventEmitter*>(handle.slot()->asCell());
     if (jsEventEmitter->wrapped().isFiringEventListeners()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "EventEmitter firing event listeners"_s;
         return true;
     }
@@ -568,10 +568,10 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionGetEventListeners,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
-    if (UNLIKELY(!argument0)) {
+    if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
     }
@@ -590,10 +590,10 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionListenerCount,
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(callFrame->argumentCount() < 2))
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
-    if (UNLIKELY(!argument0)) {
+    if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
     }
@@ -609,10 +609,10 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOnce,
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() < 3))
+    if (callFrame->argumentCount() < 3) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCastFast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
-    if (UNLIKELY(!argument0)) {
+    if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
     }
@@ -633,10 +633,10 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOn,
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() < 3))
+    if (callFrame->argumentCount() < 3) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto argument0 = jsEventEmitterCastFast(vm, lexicalGlobalObject, callFrame->uncheckedArgument(0));
-    if (UNLIKELY(!argument0)) {
+    if (!argument0) [[unlikely]] {
         throwException(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, "Expected EventEmitter"_s));
         return {};
     }

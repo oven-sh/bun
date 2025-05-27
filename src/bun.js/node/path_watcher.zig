@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = bun.Mutex;
@@ -9,21 +8,17 @@ const FSEvents = @import("./fs_events.zig");
 const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
-const StoredFileDescriptorType = bun.FD;
 const FD = bun.FD;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 
-const sync = @import("../../sync.zig");
-const Semaphore = sync.Semaphore;
 
 var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
 const FSWatcher = bun.api.node.fs.Watcher;
 const Event = FSWatcher.Event;
-const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
 const Watcher = bun.Watcher;
 

@@ -18,13 +18,13 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &port);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 
     // Insert a send right into the port since we also use this to send
     kr = mach_port_insert_right(self, port, port, MACH_MSG_TYPE_MAKE_SEND);
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 
@@ -35,7 +35,7 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
         (mach_port_info_t)&limits,
         MACH_PORT_LIMITS_INFO_COUNT);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
+    if (kr != KERN_SUCCESS) [[unlikely]] {
         return 0;
     }
 

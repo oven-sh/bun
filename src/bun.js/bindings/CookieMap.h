@@ -38,6 +38,8 @@ public:
 
     void set(Ref<Cookie>);
 
+    Ref<CookieMap> clone();
+
     ExceptionOr<void> remove(const CookieStoreDeleteOptions& options);
 
     JSC::JSValue toJSON(JSC::JSGlobalObject*) const;

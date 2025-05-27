@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const UUID = bun.UUID;
-const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
 lock: bun.Mutex = .{},

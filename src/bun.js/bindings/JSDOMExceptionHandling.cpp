@@ -146,7 +146,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    if (UNLIKELY(vm.hasPendingTerminationException()))
+    if (vm.hasPendingTerminationException()) [[unlikely]]
         return jsUndefined();
 
     switch (ec) {

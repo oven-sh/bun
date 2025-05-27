@@ -1,13 +1,9 @@
 const std = @import("std");
 const JSC = bun.JSC;
-const strings = bun.strings;
 const bun = @import("bun");
-const Lock = bun.Mutex;
 const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
-const Channel = @import("../sync.zig").Channel;
 
 const log = bun.Output.scoped(.napi, false);
 
@@ -1827,9 +1823,7 @@ pub export fn napi_ref_threadsafe_function(env_: napi_env, func: napi_threadsafe
     return env.ok();
 }
 
-const NAPI_VERSION = @as(c_int, 8);
 const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
-const NAPI_MODULE_VERSION = @as(c_int, 1);
 
 /// v8:: C++ symbols defined in v8.cpp
 ///

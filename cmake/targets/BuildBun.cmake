@@ -46,7 +46,7 @@ endif()
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
-absolute_sources(BUN_ERROR_SOURCES ${CWD}/cmake/BunErrorSources.txt)
+absolute_sources(BUN_ERROR_SOURCES ${CWD}/cmake/sources/BunErrorSources.txt)
 
 set(BUN_ERROR_OUTPUT ${CODEGEN_PATH}/bun-error)
 set(BUN_ERROR_OUTPUTS
@@ -135,7 +135,7 @@ register_command(
 
 set(BUN_NODE_FALLBACKS_SOURCE ${CWD}/src/node-fallbacks)
 
-absolute_sources(BUN_NODE_FALLBACKS_SOURCES ${CWD}/cmake/NodeFallbacksSources.txt)
+absolute_sources(BUN_NODE_FALLBACKS_SOURCES ${CWD}/cmake/sources/NodeFallbacksSources.txt)
 
 set(BUN_NODE_FALLBACKS_OUTPUT ${CODEGEN_PATH}/node-fallbacks)
 set(BUN_NODE_FALLBACKS_OUTPUTS)
@@ -161,14 +161,9 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} x
-      esbuild ${ESBUILD_ARGS}
+    ${BUN_EXECUTABLE} run build-fallbacks
+      ${BUN_NODE_FALLBACKS_OUTPUT}
       ${BUN_NODE_FALLBACKS_SOURCES}
-      --outdir=${BUN_NODE_FALLBACKS_OUTPUT}
-      --format=esm
-      --minify
-      --bundle
-      --platform=browser
   SOURCES
     ${BUN_NODE_FALLBACKS_SOURCES}
     ${BUN_NODE_FALLBACKS_NODE_MODULES}
@@ -235,7 +230,7 @@ register_command(
 
 set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
-absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/ZigGeneratedClassesSources.txt)
+absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/sources/ZigGeneratedClassesSources.txt)
 
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
@@ -268,8 +263,8 @@ register_command(
 
 set(BUN_JAVASCRIPT_CODEGEN_SCRIPT ${CWD}/src/codegen/bundle-modules.ts)
 
-absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/JavaScriptSources.txt)
-absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/JavaScriptCodegenSources.txt)
+absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/sources/JavaScriptSources.txt)
+absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/sources/JavaScriptCodegenSources.txt)
 
 list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -311,7 +306,7 @@ register_command(
 
 set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
-absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/BakeRuntimeSources.txt)
+absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/sources/BakeRuntimeSources.txt)
 
 list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
@@ -344,7 +339,7 @@ register_command(
 
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
-absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/BindgenSources.txt)
+absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/sources/BindgenSources.txt)
 
 set(BUN_BINDGEN_CPP_OUTPUTS
   ${CODEGEN_PATH}/GeneratedBindings.cpp
@@ -501,7 +496,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 # --- Zig ---
 
-absolute_sources(BUN_ZIG_SOURCES ${CWD}/cmake/ZigSources.txt)
+absolute_sources(BUN_ZIG_SOURCES ${CWD}/cmake/sources/ZigSources.txt)
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
@@ -598,8 +593,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 # hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/CxxSources.txt)
-absolute_sources(BUN_C_SOURCES ${CWD}/cmake/CSources.txt)
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
@@ -749,7 +744,7 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
-if(NOT WIN32) 
+if(NOT WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
 endif()
 
@@ -882,7 +877,7 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
-    
+
     if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
@@ -940,6 +935,7 @@ if(LINUX)
   if(NOT ABI STREQUAL "musl")
   target_link_options(${bun} PUBLIC
     -Wl,--wrap=exp
+    -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
     -Wl,--wrap=log
@@ -1062,6 +1058,7 @@ set(BUN_DEPENDENCIES
   TinyCC
   Zlib
   LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
   Zstd
 )
 

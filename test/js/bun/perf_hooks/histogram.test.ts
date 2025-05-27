@@ -76,7 +76,6 @@ describe("Histogram", () => {
   });
 
   test("invalid histogram options", () => {
-    // Test only the validations that Node.js actually enforces
     assert.throws(() => createHistogram({ figures: 6 }));
     assert.throws(() => createHistogram({ figures: 0 }));
   });
@@ -253,7 +252,6 @@ describe("Histogram", () => {
     });
 
     test("histogram with same lowest and highest", () => {
-      // Node.js does enforce this validation
       assert.throws(() => createHistogram({ lowest: 5, highest: 5, figures: 1 }), /out of range/);
     });
 
@@ -298,7 +296,6 @@ describe("Histogram", () => {
     });
   });
 
-  // Additional comprehensive tests based on Node.js implementation
   describe("comprehensive validation tests", () => {
     test("createHistogram with BigInt parameters", () => {
       const h = createHistogram({ lowest: 1n, highest: 1000n, figures: 3 });
@@ -309,19 +306,15 @@ describe("Histogram", () => {
     });
 
     test("createHistogram parameter validation", () => {
-      // Test figures validation
       assert.throws(() => createHistogram({ figures: -1 }), /out of range/);
       assert.throws(() => createHistogram({ figures: 6 }), /out of range/);
 
-      // Test lowest validation
       assert.throws(() => createHistogram({ lowest: 0 }), /out of range/);
       assert.throws(() => createHistogram({ lowest: -1 }), /out of range/);
 
-      // Test highest validation (must be >= 2 * lowest)
       assert.throws(() => createHistogram({ lowest: 10, highest: 15 }), /out of range/);
       assert.throws(() => createHistogram({ lowest: 5, highest: 9 }), /out of range/);
 
-      // Valid case: highest = 2 * lowest
       const h = createHistogram({ lowest: 5, highest: 10, figures: 1 });
       assert.strictEqual(h.count, 0);
     });
@@ -330,13 +323,11 @@ describe("Histogram", () => {
       const h = createHistogram();
       h.record(50);
 
-      // Invalid percentiles
       assert.throws(() => h.percentile(0), /out of range/);
       assert.throws(() => h.percentile(-1), /out of range/);
       assert.throws(() => h.percentile(101), /out of range/);
       assert.throws(() => h.percentile(NaN), /out of range/);
 
-      // Valid percentiles
       assert.strictEqual(typeof h.percentile(1), "number");
       assert.strictEqual(typeof h.percentile(50), "number");
       assert.strictEqual(typeof h.percentile(100), "number");
@@ -346,13 +337,11 @@ describe("Histogram", () => {
       const h = createHistogram();
       h.record(50);
 
-      // Invalid percentiles
       assert.throws(() => h.percentileBigInt(0), /out of range/);
       assert.throws(() => h.percentileBigInt(-1), /out of range/);
       assert.throws(() => h.percentileBigInt(101), /out of range/);
       assert.throws(() => h.percentileBigInt(NaN), /out of range/);
 
-      // Valid percentiles
       assert.strictEqual(typeof h.percentileBigInt(1), "bigint");
       assert.strictEqual(typeof h.percentileBigInt(50), "bigint");
       assert.strictEqual(typeof h.percentileBigInt(100), "bigint");
@@ -360,7 +349,7 @@ describe("Histogram", () => {
 
     test("record with very large BigInt values", () => {
       const h = createHistogram();
-      // Use a large but reasonable BigInt value that Node.js can handle
+
       const largeBigInt = BigInt(Number.MAX_SAFE_INTEGER);
 
       h.record(largeBigInt);
@@ -372,12 +361,10 @@ describe("Histogram", () => {
       const h1 = createHistogram();
       const h2 = createHistogram();
 
-      // Both empty
       h1.add(h2);
       assert.strictEqual(h1.count, 0);
       assert.strictEqual(h1.exceeds, 0);
 
-      // One empty, one with data
       h2.record(42);
       h1.add(h2);
       assert.strictEqual(h1.count, 1);
@@ -388,15 +375,12 @@ describe("Histogram", () => {
     test("reset preserves initial state", () => {
       const h = createHistogram();
 
-      // Record some values
       h.record(10);
       h.record(20);
       h.record(30);
 
-      // Reset
       h.reset();
 
-      // Should be back to initial state
       assert.strictEqual(h.count, 0);
       assert.strictEqual(h.countBigInt, 0n);
       assert.strictEqual(h.min, 9223372036854776000);
@@ -419,7 +403,6 @@ describe("Histogram", () => {
       const percentiles = h.percentiles;
       const percentilesBigInt = h.percentilesBigInt;
 
-      // Should be Map-like objects
       assert.ok(typeof percentiles.size === "number");
       assert.ok(typeof percentiles.has === "function");
       assert.ok(typeof percentiles.get === "function");
@@ -430,14 +413,12 @@ describe("Histogram", () => {
       assert.ok(typeof percentilesBigInt.get === "function");
       assert.ok(typeof percentilesBigInt[Symbol.iterator] === "function");
 
-      // Should have same keys
       assert.strictEqual(percentiles.size, percentilesBigInt.size);
 
-      // Values should be consistent - in Node.js both percentiles and percentilesBigInt return bigint values
       for (const [key, value] of percentiles) {
         assert.strictEqual(typeof key, "number");
         assert.strictEqual(typeof value, "bigint");
-        // Check that percentilesBigInt has the same key and value
+
         assert.ok(percentilesBigInt.has(key));
         const bigIntValue = percentilesBigInt.get(key);
         assert.strictEqual(typeof bigIntValue, "bigint");
@@ -448,7 +429,6 @@ describe("Histogram", () => {
     test("statistical accuracy", () => {
       const h = createHistogram();
 
-      // Record values 1-1000
       for (let i = 1; i <= 1000; i++) {
         h.record(i);
       }
@@ -458,31 +438,27 @@ describe("Histogram", () => {
       assert.strictEqual(h.max, 1000);
       assert.strictEqual(h.mean, 500.5);
 
-      // Check some percentiles
-      assert.ok(Math.abs(h.percentile(50) - 500) <= 1); // 50th percentile should be around 500
-      assert.ok(Math.abs(h.percentile(90) - 900) <= 10); // 90th percentile should be around 900
-      assert.ok(Math.abs(h.percentile(99) - 990) <= 10); // 99th percentile should be around 990
+      assert.ok(Math.abs(h.percentile(50) - 500) <= 1);
+      assert.ok(Math.abs(h.percentile(90) - 900) <= 10);
+      assert.ok(Math.abs(h.percentile(99) - 990) <= 10);
     });
 
     test("recordDelta timing accuracy", async () => {
       const h = createHistogram();
 
-      h.recordDelta(); // Start timing
+      h.recordDelta();
 
       const start = Date.now();
       await new Promise(resolve => setTimeout(resolve, 50));
       const end = Date.now();
 
-      h.recordDelta(); // Record the delta
+      h.recordDelta();
 
       assert.strictEqual(h.count, 1);
 
-      // The recorded value should be roughly the time elapsed (in nanoseconds)
-      // We can't be too precise due to timing variations, but it should be in the right ballpark
-      const expectedNs = (end - start) * 1000000; // Convert ms to ns
+      const expectedNs = (end - start) * 1000000;
       const actualValue = h.min;
 
-      // Should be within reasonable range (allowing for timing variations)
       assert.ok(actualValue > expectedNs * 0.5);
       assert.ok(actualValue < expectedNs * 2);
     });
@@ -494,7 +470,6 @@ describe("Histogram", () => {
       h.record(20);
       h.record(30);
 
-      // Check if toJSON method exists (it might not be implemented yet)
       if (typeof (h as any).toJSON === "function") {
         const json = (h as any).toJSON();
 
@@ -507,11 +482,9 @@ describe("Histogram", () => {
         assert.strictEqual(typeof json.stddev, "number");
         assert.strictEqual(typeof json.percentiles, "object");
 
-        // percentiles should be a plain object, not a Map
-        assert.ok(!json.percentiles.has); // Should not have Map methods
+        assert.ok(!json.percentiles.has);
         assert.ok(typeof json.percentiles === "object");
       } else {
-        // Skip test if toJSON is not implemented
         console.log("toJSON method not implemented yet - skipping test");
       }
     });
@@ -519,13 +492,11 @@ describe("Histogram", () => {
     test("extreme value handling", () => {
       const h = createHistogram();
 
-      // Test with value 1 (minimum allowed)
       h.record(1);
       assert.strictEqual(h.min, 1);
       assert.strictEqual(h.max, 1);
       assert.strictEqual(h.count, 1);
 
-      // Test with very large value
       const largeValue = Number.MAX_SAFE_INTEGER;
       h.record(largeValue);
       assert.strictEqual(h.min, 1);
@@ -536,11 +507,9 @@ describe("Histogram", () => {
     test("concurrent operations", () => {
       const h = createHistogram();
 
-      // Simulate concurrent operations
       for (let i = 0; i < 100; i++) {
         h.record(i + 1);
         if (i % 10 === 0) {
-          // Intermittent reads shouldn't affect the data
           const count = h.count;
           const min = h.min;
           const max = h.max;
@@ -561,7 +530,7 @@ describe("Histogram", () => {
     h.record(1);
 
     const inspected = inspect(h);
-    // Node.js shows "Histogram", Bun shows "RecordableHistogram"
+
     assert.ok(inspected.includes("Histogram"));
   });
 });

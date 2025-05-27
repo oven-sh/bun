@@ -32,4 +32,6 @@ Use the `--json` flag to print the raw JSON response from the registry instead o
 $ bun pm audit --json
 ```
 
-In JSON mode the command always exits with code `0`. Otherwise it exits with `0` if no vulnerabilities are found and `1` if the report lists any vulnerabilities.
+### Exit code
+
+`bun pm audit` will exit with code `0` if no vulnerabilities are found and `1` if the report lists any vulnerabilities. This will still happen even if `--json` is passed.

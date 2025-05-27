@@ -6,7 +6,7 @@ Run the command in a project with a `bun.lock` file:
 $ bun pm audit
 ```
 
-Bun sends the list of installed packages to the registry configured for the project and prints a report of any vulnerabilities that were found. Packages installed from registries other than the default registry are skipped.
+Bun sends the list of installed packages and versions to NPM, and prints a report of any vulnerabilities that were found. Packages installed from registries other than the default registry are skipped.
 
 If no vulnerabilities are found, the command prints:
 

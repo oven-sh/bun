@@ -44,6 +44,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include "Event.h"
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -240,7 +241,7 @@ void MessagePort::close()
     if (m_isDetached || m_messagesInFight > 0)
         return;
     m_isDetached = true;
-
+    dispatchCloseEvent();
     MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
@@ -249,6 +250,11 @@ void MessagePort::close()
     this->m_strongRef = nullptr;
 
     scriptExecutionContext()->unrefEventLoop();
+}
+
+void MessagePort::dispatchCloseEvent()
+{
+    dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 void MessagePort::dispatchMessages()

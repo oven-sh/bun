@@ -38,7 +38,7 @@ export default map.sqlite('orange.db');
 
 ---
 
-The next snippet creates the `task` table (if it doesn’t exist), seeds it with a few sample rows the first time it runs, queries every task that is still **not** done, prints the result, and finally closes the connection. .
+The next snippet creates the `task` table (if it doesn't exist), seeds it with a few sample rows the first time it runs, queries every task that is still **not** done, prints the result, and finally closes the connection.
 
 ```ts#index.ts
 import db from './db';

@@ -15,7 +15,6 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSMapIterator.h>
-#include <JavaScriptCore/JSValue.h>
 #include <JavaScriptCore/IterationKind.h>
 #include "BunProcess.h"
 #include "headers.h"

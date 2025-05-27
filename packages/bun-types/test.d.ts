@@ -146,7 +146,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
-  ): Mock<T[K] extends (...args: any[]) => any ? T[K] : never>;
+  ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
   interface FunctionLike {
     readonly name: string;

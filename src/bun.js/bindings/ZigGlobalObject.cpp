@@ -4377,6 +4377,22 @@ bool GlobalObject::hasNapiFinalizers() const
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
+void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
+{
+    this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+}
+bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
+{
+    for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
+        if (this->m_ffiFunctions[i].get() == function) {
+            this->m_ffiFunctions[i].clear();
+            this->m_ffiFunctions.removeAt(i);
+            return true;
+        }
+    }
+    return false;
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

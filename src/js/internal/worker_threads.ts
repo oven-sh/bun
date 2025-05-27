@@ -1,5 +1,4 @@
 const { Readable, Writable } = require("node:stream");
-import type { Worker } from "node:worker_threads";
 
 const {
   0: _workerData,

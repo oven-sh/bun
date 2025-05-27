@@ -1,9 +1,9 @@
+import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { duplexPair, Readable, Writable } from "node:stream";
-import { test, describe, it, expect, mock } from "bun:test";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,

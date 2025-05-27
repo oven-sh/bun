@@ -6006,28 +6006,35 @@ declare module "bun" {
      */
     readonly listener?: SocketListener;
 
-     */
     readonly remoteFamily: "IPv4" | "IPv6";
 
     /**
      * Remote IP address connected to the socket
-     * @example "192.168.1.100"
-     * @example "2001:db8::1"
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly remoteAddress: string;
 
+    /**
+     * Remote port connected to the socket
      * @example 8080
      */
     readonly remotePort: number;
 
+    /**
+     * Local IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly localFamily: "IPv4" | "IPv6";
 
+    /**
+     * Local IP address connected to the socket
+     * @example "192.168.1.100" | "2001:db8::1"
      */
     readonly localAddress: string;
 
     /**
      * local port connected to the socket
+     * @example 8080
      */
     readonly localPort: number;
 

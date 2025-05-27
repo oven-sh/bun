@@ -1,9 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
 import { expectType } from "./utilities";
 
-const spy = spyOn(console, "log");
-expectType<any[][]>(spy.mock.calls);
-
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
 
 for (const hook of hooks) {
@@ -131,9 +128,7 @@ const mySpyOnObjectWithOptionalMethod: {
 };
 
 const mySpiedMethodOfOptional = spyOn(mySpyOnObjectWithOptionalMethod, "optionalMethod");
-
 mySpiedMethodOfOptional({ question: "asdf" });
-
 expectType<Mock<(input: { question: string }) => { answer: string }>>(mySpiedMethodOfOptional);
 
 const myNormalSpyOnObject = {
@@ -141,7 +136,8 @@ const myNormalSpyOnObject = {
 };
 
 const myNormalSpiedMethod = spyOn(myNormalSpyOnObject, "normalMethod");
-
 myNormalSpiedMethod("asdf");
-
 expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
+
+const spy = spyOn(console, "log");
+expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();

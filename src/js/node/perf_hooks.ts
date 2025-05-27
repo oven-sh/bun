@@ -218,7 +218,9 @@ export default {
         throw new TypeError("The 'figures' option must be a number");
       }
       if (opts.figures < 1 || opts.figures > 5) {
-        throw new RangeError("The 'figures' option must be between 1 and 5");
+        throw new RangeError(
+          `The value of "options.figures" is out of range. It must be >= 1 && <= 5. Received ${opts.figures}`,
+        );
       }
       figures = opts.figures;
     }

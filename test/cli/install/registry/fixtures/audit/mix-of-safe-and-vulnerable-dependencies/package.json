@@ -1,0 +1,7 @@
+{
+  "name": "mix-of-safe-and-vulnerable-dependencies",
+  "dependencies": {
+    "is-number": "7.0.0",
+    "ms": "0.7.0"
+  }
+}

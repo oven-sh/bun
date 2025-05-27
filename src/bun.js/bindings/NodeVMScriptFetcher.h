@@ -11,7 +11,7 @@ class NodeVMScriptFetcher : public JSC::ScriptFetcher {
 public:
     static Ref<NodeVMScriptFetcher> create(JSC::VM& vm, JSC::JSValue dynamicImportCallback) { return adoptRef(*new NodeVMScriptFetcher(vm, dynamicImportCallback)); }
 
-    Type type() const final { return Type::NodeVM; }
+    Type fetcherType() const final { return Type::NodeVM; }
 
     JSC::JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 

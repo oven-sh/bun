@@ -80,6 +80,9 @@ src/bun.js/bindings/JSEnvironmentVariableMap.cpp
 src/bun.js/bindings/JSFFIFunction.cpp
 src/bun.js/bindings/JSMockFunction.cpp
 src/bun.js/bindings/JSNextTickQueue.cpp
+src/bun.js/bindings/JSNodePerformanceHooksHistogram.cpp
+src/bun.js/bindings/JSNodePerformanceHooksHistogramConstructor.cpp
+src/bun.js/bindings/JSNodePerformanceHooksHistogramPrototype.cpp
 src/bun.js/bindings/JSPropertyIterator.cpp
 src/bun.js/bindings/JSS3File.cpp
 src/bun.js/bindings/JSSocketAddressDTO.cpp

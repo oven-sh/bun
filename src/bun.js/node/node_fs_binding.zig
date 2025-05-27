@@ -1,14 +1,7 @@
 const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
-const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
-const system = std.posix.system;
-const Maybe = JSC.Maybe;
-const Encoding = JSC.Node.Encoding;
-const FeatureFlags = bun.FeatureFlags;
-const Args = JSC.Node.fs.NodeFS.Arguments;
-const d = JSC.d;
 
 const NodeFSFunction = fn (this: *JSC.Node.fs.Binding, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue;
 

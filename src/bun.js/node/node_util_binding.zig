@@ -1,12 +1,9 @@
 const std = @import("std");
 const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
-const Output = bun.Output;
 const ZigString = JSC.ZigString;
-const uv = bun.windows.libuv;
 const validators = @import("./util/validators.zig");
 const envloader = @import("./../../env_loader.zig");
 

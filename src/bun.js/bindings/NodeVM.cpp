@@ -13,6 +13,7 @@
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
+
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -207,7 +208,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
 JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, JSValue parameters, const SourceOrigin& sourceOrigin)
 {
-    if (auto* fetcher = sourceOrigin.fetcher(); !fetcher || fetcher->type() != ScriptFetcher::Type::NodeVM) {
+    if (auto* fetcher = sourceOrigin.fetcher(); !fetcher || fetcher->fetcherType() != ScriptFetcher::Type::NodeVM) {
         return nullptr;
     }
 

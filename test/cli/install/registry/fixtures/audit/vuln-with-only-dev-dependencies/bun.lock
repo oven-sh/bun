@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "vuln-with-only-dev-dependencies",
+      "devDependencies": {
+        "ms": "0.7.0",
+      },
+    },
+  },
+  "packages": {
+    "ms": ["ms@0.7.0", "", {}, "sha512-YmuMMkfOZzzAftlHwiQxFepJx/5rDaYi9o9QanyBCk485BRAyM/vB9XoYlZvglxE/pmAWOiQgrdoE10watiK9w=="],
+  }
+}

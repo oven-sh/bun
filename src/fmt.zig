@@ -4,7 +4,6 @@ const Output = bun.Output;
 const strings = bun.strings;
 const string = bun.string;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;

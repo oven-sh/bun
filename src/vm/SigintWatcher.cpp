@@ -58,7 +58,7 @@ void SigintWatcher::install()
         return;
     }
 
-    m_thread = std::thread([this] {
+    m_thread = WTF::Thread::create("SigintWatcher"_s, [this] {
         while (m_installed.load()) {
             bool success = m_semaphore.wait();
             if (!m_installed) {
@@ -84,7 +84,8 @@ void SigintWatcher::install()
 void SigintWatcher::uninstall()
 {
     if (m_installed.exchange(false)) {
-        ASSERT(m_thread.get_id() != std::this_thread::get_id());
+        WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
+        ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
 
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
@@ -99,7 +100,7 @@ void SigintWatcher::uninstall()
 #endif
 
         m_semaphore.signal();
-        m_thread.join();
+        m_thread->waitForCompletion();
     }
 }
 
@@ -117,7 +118,7 @@ void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
         return;
     }
 
-    std::unique_lock lock(m_globalObjectsMutex);
+    WTF::Locker lock(m_globalObjectsMutex);
     m_globalObjects.appendIfNotContains(globalObject);
 }
 
@@ -127,7 +128,7 @@ void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)
         return;
     }
 
-    std::unique_lock lock(m_globalObjectsMutex);
+    WTF::Locker lock(m_globalObjectsMutex);
 
     auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
     if (iter == m_globalObjects.end()) {
@@ -144,13 +145,13 @@ void SigintWatcher::registerReceiver(SigintReceiver* module)
         return;
     }
 
-    std::unique_lock lock(m_receiversMutex);
+    WTF::Locker lock(m_receiversMutex);
     m_receivers.appendIfNotContains(module);
 }
 
 void SigintWatcher::unregisterReceiver(SigintReceiver* module)
 {
-    std::unique_lock lock(m_receiversMutex);
+    WTF::Locker lock(m_receiversMutex);
 
     auto iter = std::find(m_receivers.begin(), m_receivers.end(), module);
     if (iter == m_receivers.end()) {
@@ -185,13 +186,13 @@ SigintWatcher& SigintWatcher::get()
 bool SigintWatcher::signalAll()
 {
     {
-        std::unique_lock lock(m_receiversMutex);
+        WTF::Locker lock(m_receiversMutex);
         for (auto* receiver : m_receivers) {
             receiver->setSigintReceived();
         }
     }
 
-    std::unique_lock lock(m_globalObjectsMutex);
+    WTF::Locker lock(m_globalObjectsMutex);
 
     if (m_globalObjects.isEmpty()) {
         return false;

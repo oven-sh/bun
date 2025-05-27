@@ -7,7 +7,6 @@ const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 const bun = @import("bun");
-const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,24 +16,19 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const std = @import("std");
-const uws = @import("../deps/uws.zig");
 const JSC = bun.JSC;
 const DirInfo = @import("../resolver/dir_info.zig");
 const File = bun.sys.File;
-const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
 const FD = bun.FD;
 
-const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
-const linker = @import("../linker.zig");
 
 const Api = @import("../api/schema.zig").Api;
 const Path = bun.path;
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
 const transpiler = bun.transpiler;
@@ -44,20 +38,16 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
-const HTTPChannel = HTTP.HTTPChannel;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
 
-const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
@@ -69,7 +59,6 @@ pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
-const anyhow = bun.anyhow;
 
 pub const bun_hash_tag = ".bun-tag-";
 pub const max_hex_hash_len: comptime_int = brk: {
@@ -8962,6 +8951,10 @@ pub const PackageManager = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
+
+        if (subcommand == .pm and cli.positionals.len >= 2 and strings.eqlComptime(cli.positionals[1], "audit")) {
+            env.quiet = true;
+        }
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);

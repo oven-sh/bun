@@ -14,7 +14,6 @@ pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
 const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
 const EventLoopTimer = @import("../bun.js/api/Timer.zig").EventLoopTimer;
 const WriteResult = union(enum) {

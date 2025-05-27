@@ -261,9 +261,19 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
+    printf("[DEBUG] Worker::terminate() called\n");
+    
+    // Don't try to terminate an already terminated worker
+    if (m_terminationFlags & TerminatedFlag) {
+        printf("[DEBUG] Worker::terminate() - already terminated, returning\n");
+        return;
+    }
+    
+    printf("[DEBUG] Worker::terminate() - setting TerminateRequestedFlag and calling WebWorker__notifyNeedTermination\n");
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
     WebWorker__notifyNeedTermination(impl_);
+    printf("[DEBUG] Worker::terminate() - completed\n");
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -430,19 +440,30 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
 void Worker::dispatchExit(int32_t exitCode)
 {
+    printf("[DEBUG] Worker::dispatchExit called with exitCode: %d\n", exitCode);
     auto* ctx = scriptExecutionContext();
-    if (!ctx)
+    if (!ctx) {
+        printf("[DEBUG] Worker::dispatchExit - no script execution context, returning\n");
         return;
+    }
 
+    printf("[DEBUG] Worker::dispatchExit - posting task to script execution context\n");
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+        printf("[DEBUG] Worker::dispatchExit - task executing, setting ClosingFlag\n");
         protectedThis->m_onlineClosingFlags = ClosingFlag;
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
+            printf("[DEBUG] Worker::dispatchExit - dispatching close event\n");
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
+            printf("[DEBUG] Worker::dispatchExit - close event dispatched\n");
+        } else {
+            printf("[DEBUG] Worker::dispatchExit - no close event listeners\n");
         }
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
+        printf("[DEBUG] Worker::dispatchExit - task completed, TerminatedFlag set\n");
     });
+    printf("[DEBUG] Worker::dispatchExit - completed\n");
 }
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
@@ -465,11 +486,14 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+    printf("[DEBUG] WebWorker__dispatchExit called with exitCode: %d\n", exitCode);
     worker->dispatchExit(exitCode);
+    printf("[DEBUG] WebWorker__dispatchExit - dispatchExit completed, dereferencing worker\n");
     // no longer referenced by Zig
     worker->deref();
 
     if (globalObject) {
+        printf("[DEBUG] WebWorker__dispatchExit - cleaning up global object\n");
         auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
 
@@ -485,7 +509,11 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
+        printf("[DEBUG] WebWorker__dispatchExit - global object cleanup completed\n");
+    } else {
+        printf("[DEBUG] WebWorker__dispatchExit - no global object to clean up\n");
     }
+    printf("[DEBUG] WebWorker__dispatchExit - completed\n");
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {

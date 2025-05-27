@@ -507,13 +507,22 @@ fn spin(this: *WebWorker) void {
     // always doing a first tick so we call CppTask without delay after dispatchOnline
     vm.tick();
 
+    std.debug.print("[DEBUG] Worker {d} entering main event loop\n", .{this.execution_context_id});
     while (vm.isEventLoopAlive()) {
+        std.debug.print("[DEBUG] Worker {d} - event loop tick, hasRequestedTerminate: {}\n", .{ this.execution_context_id, this.hasRequestedTerminate() });
         vm.tick();
-        if (this.hasRequestedTerminate()) break;
+        if (this.hasRequestedTerminate()) {
+            std.debug.print("[DEBUG] Worker {d} - termination requested, breaking from event loop\n", .{this.execution_context_id});
+            break;
+        }
         vm.eventLoop().autoTickActive();
-        if (this.hasRequestedTerminate()) break;
+        if (this.hasRequestedTerminate()) {
+            std.debug.print("[DEBUG] Worker {d} - termination requested after autoTickActive, breaking from event loop\n", .{this.execution_context_id});
+            break;
+        }
     }
 
+    std.debug.print("[DEBUG] Worker {d} - exited main event loop, hasRequestedTerminate: {}\n", .{ this.execution_context_id, this.hasRequestedTerminate() });
     log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
     // Only call "beforeExit" if we weren't from a .terminate
@@ -552,51 +561,37 @@ pub fn exit(this: *WebWorker) void {
 
 /// Request a terminate from any thread.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
+    std.debug.print("[DEBUG] notifyNeedTermination called for worker {d}\n", .{this.execution_context_id});
+
     if (this.status.load(.acquire) == .terminated) {
+        std.debug.print("[DEBUG] notifyNeedTermination - worker {d} already terminated\n", .{this.execution_context_id});
         return;
     }
     if (this.setRequestedTerminate()) {
+        std.debug.print("[DEBUG] notifyNeedTermination - worker {d} termination already requested\n", .{this.execution_context_id});
         return;
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
     const current_status = this.status.load(.acquire);
-
-    // If the worker hasn't started yet or is still starting, we need to handle termination differently
-    // This can happen when:
-    // 1. terminate() is called immediately after creating the worker
-    // 2. The worker thread hasn't been spawned yet
-    // 3. The worker thread is spawned but hasn't reached the event loop
-    // In these cases, we need to dispatch the exit event immediately because the worker
-    // thread might not be able to do it itself.
-    if (current_status == .start or current_status == .starting) {
-        log("[{d}] notifyNeedTermination - worker not fully started, dispatching exit immediately", .{this.execution_context_id});
-
-        this.setStatus(.terminated);
-
-        // Dispatch the exit event immediately since the worker thread might not be running yet
-        // or might not have reached the event loop
-        WebWorker__dispatchExit(null, this.cpp_worker, 0);
-        this.parent_poll_ref.unrefConcurrently(this.parent);
-
-        if (this.vm) |vm| vm.eventLoop().wakeup();
-
-        return;
-    }
+    std.debug.print("[DEBUG] notifyNeedTermination - worker {d} current status: {}\n", .{ this.execution_context_id, current_status });
 
     if (this.vm) |vm| {
+        std.debug.print("[DEBUG] notifyNeedTermination - worker {d} waking up VM\n", .{this.execution_context_id});
         vm.eventLoop().wakeup();
         // TODO(@190n) notifyNeedTermination
+    } else {
+        std.debug.print("[DEBUG] notifyNeedTermination - worker {d} has no VM\n", .{this.execution_context_id});
     }
 
-    // TODO(@190n) delete
-    this.setRefInternal(false);
+    std.debug.print("[DEBUG] notifyNeedTermination - worker {d} completed\n", .{this.execution_context_id});
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
 /// Only call after the VM is initialized AND on the same thread as the worker.
 /// Otherwise, call `notifyNeedTermination` to cause the event loop to safely terminate.
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
+    std.debug.print("[DEBUG] Worker {d} - exitAndDeinit called\n", .{this.execution_context_id});
     jsc.markBinding(@src());
     this.setStatus(.terminated);
     bun.Analytics.Features.workers_terminated += 1;
@@ -618,7 +613,10 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
     var arena = this.arena;
 
+    std.debug.print("[DEBUG] Worker {d} - calling WebWorker__dispatchExit with exit_code: {d}\n", .{ this.execution_context_id, exit_code });
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+    std.debug.print("[DEBUG] Worker {d} - WebWorker__dispatchExit completed\n", .{this.execution_context_id});
+
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
@@ -634,6 +632,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         arena_.deinit();
     }
 
+    std.debug.print("[DEBUG] Worker {d} - exitAndDeinit about to call bun.exitThread()\n", .{this.execution_context_id});
     bun.exitThread();
 }
 

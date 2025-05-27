@@ -10,19 +10,11 @@ const default_allocator = bun.default_allocator;
 const std = @import("std");
 const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
@@ -30,14 +22,9 @@ const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 
 pub var initialized_store = false;
 pub fn initializeStore() void {

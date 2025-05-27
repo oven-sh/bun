@@ -3,11 +3,7 @@ const JSC = bun.JSC;
 const bun = @import("bun");
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
-const Encoder = JSC.WebCore.encoding;
-const Mutex = bun.Mutex;
-const uws = @import("../../deps/uws.zig");
 
-const PathWatcher = @import("./path_watcher.zig");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
@@ -16,8 +12,6 @@ const PathLike = JSC.Node.PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Output = bun.Output;
 const string = bun.string;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Environment = bun.Environment;
 
 const StatsSmall = bun.JSC.Node.StatsSmall;
 const StatsBig = bun.JSC.Node.StatsBig;

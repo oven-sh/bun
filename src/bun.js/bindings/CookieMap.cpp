@@ -214,7 +214,16 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     return {};
 }
 
-size_t CookieMap::size() const
+Ref<CookieMap> CookieMap::clone()
+{
+    auto clone = adoptRef(*new CookieMap());
+    clone->m_originalCookies = m_originalCookies;
+    clone->m_modifiedCookies = m_modifiedCookies;
+    return clone;
+}
+
+size_t
+CookieMap::size() const
 {
     size_t size = 0;
     for (const auto& cookie : m_modifiedCookies) {

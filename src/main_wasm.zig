@@ -11,7 +11,6 @@ const Define = @import("./defines.zig");
 const Options = @import("./options.zig");
 const ApiWriter = @import("./api/schema.zig").Writer;
 const ApiReader = @import("./api/schema.zig").Reader;
-const ImportKind = @import("./import_record.zig").ImportKind;
 const Output = global.Output;
 
 export var code_buffer_ptr: ?[*]const u8 = null;

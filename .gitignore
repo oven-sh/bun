@@ -13,8 +13,7 @@
 .trace
 .uuid
 .vs
-.vscode/
-/context.txtng*
+.vscode/clang*
 .vscode/cpp*
 .zig-cache
 .bake-debug
@@ -185,4 +184,3 @@ codegen-for-zig-team.tar.gz
 scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
-/context.txt

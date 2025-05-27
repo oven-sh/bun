@@ -99,6 +99,26 @@ pub const AuditCommand = struct {
         if (json_output) {
             Output.writer().writeAll(response_text) catch {};
             Output.writer().writeByte('\n') catch {};
+
+            if (response_text.len > 0) {
+                const source = logger.Source.initPathString("audit-response.json", response_text);
+                var log = logger.Log.init(ctx.allocator);
+                defer log.deinit();
+
+                const expr = @import("../json_parser.zig").parse(&source, &log, ctx.allocator, true) catch {
+                    Output.prettyErrorln("<red>error<r>: audit request failed to parse json. Is the registry down?", .{});
+                    return 1; // If we can't parse then safe to assume a similar failure
+                };
+
+                // If the response is an empty object, no vulnerabilities
+                if (expr.data == .e_object and expr.data.e_object.properties.len == 0) {
+                    return 0;
+                }
+
+                // If there's any content in the response, there are vulnerabilities
+                return 1;
+            }
+
             return 0;
         } else if (response_text.len > 0) {
             const exit_code = try printEnhancedAuditReport(ctx.allocator, response_text, pm, &dependency_tree);

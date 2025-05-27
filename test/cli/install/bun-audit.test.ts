@@ -164,8 +164,8 @@ describe("`bun pm audit`", () => {
     },
   });
 
-  doAuditTest("should print valid JSON and exit 0 when --json is passed and there are vulnerabilities", {
-    exitCode: 0,
+  doAuditTest("should print valid JSON and exit 1 when --json is passed and there are vulnerabilities", {
+    exitCode: 1,
     files: fixture("express@3"),
     args: ["--json"],
     fn: async ({ stdout }) => {

@@ -24,13 +24,14 @@
  */
 
 #include "config.h"
-
-#include <wtf/TZoneMallocInlines.h>
 #include "MessagePortChannelRegistry.h"
 
+#include "MessagePort.h"
+#include "MessagePortChannel.h"
 // #include "Logging.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
+#include <wtf/TZoneMallocInlines.h>
 
 // ASSERT(isMainThread()) is used alot here, and I think it may be required, but i'm not 100% sure.
 // we totally are calling these off the main thread in many cases in Bun, so ........
@@ -115,6 +116,13 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
     // if (channel && channel->hasAnyMessagesPendingOrInFlight())
     //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
 #endif
+
+    MessagePortIdentifier remotePort = channel->port1() == port ? channel->port2() : channel->port1();
+    
+    if (m_openChannels.get(remotePort)) {
+        // Notify the remote port about the closure
+        MessagePort::notifyPortClosed(remotePort);
+    }
 
     channel->closePort(port);
 

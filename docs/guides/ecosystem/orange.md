@@ -80,4 +80,4 @@ $ bun run index.ts
 
 ---
 
-For more details, checkout out the complete [Orange ORM documentation.](https://github.com/alfateam/orange-orm/blob/master/README.md)
+For more details, check out the complete [Orange ORM documentation.](https://github.com/alfateam/orange-orm/blob/master/README.md)

@@ -560,6 +560,30 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
+    const current_status = this.status.load(.acquire);
+
+    // If the worker hasn't started yet or is still starting, we need to handle termination differently
+    // This can happen when:
+    // 1. terminate() is called immediately after creating the worker
+    // 2. The worker thread hasn't been spawned yet
+    // 3. The worker thread is spawned but hasn't reached the event loop
+    // In these cases, we need to dispatch the exit event immediately because the worker
+    // thread might not be able to do it itself.
+    if (current_status == .start or current_status == .starting) {
+        log("[{d}] notifyNeedTermination - worker not fully started, dispatching exit immediately", .{this.execution_context_id});
+
+        this.setStatus(.terminated);
+
+        // Dispatch the exit event immediately since the worker thread might not be running yet
+        // or might not have reached the event loop
+        WebWorker__dispatchExit(null, this.cpp_worker, 0);
+        this.parent_poll_ref.unrefConcurrently(this.parent);
+
+        if (this.vm) |vm| vm.eventLoop().wakeup();
+
+        return;
+    }
+
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
         // TODO(@190n) notifyNeedTermination

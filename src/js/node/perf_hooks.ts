@@ -223,14 +223,15 @@ export default {
       figures = opts.figures;
     }
 
-    // Node.js is more permissive with validation - no strict 2x requirement
-    // Just ensure basic sanity
+    // Node.js validation - highest must be >= 2 * lowest
     if (lowest < 1) {
       throw new RangeError("The 'lowest' option must be >= 1");
     }
 
-    if (highest < lowest) {
-      throw new RangeError("The 'highest' option must be >= lowest");
+    if (highest < 2 * lowest) {
+      throw new RangeError(
+        `The value of "options.highest" is out of range. It must be >= ${2 * lowest} && <= 9007199254740991. Received ${highest}`,
+      );
     }
 
     return cppCreateHistogram(lowest, highest, figures);

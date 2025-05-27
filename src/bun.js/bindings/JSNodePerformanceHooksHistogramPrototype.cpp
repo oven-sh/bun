@@ -94,8 +94,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecordDelta, (J
         return {};
     }
 
-    uint64_t delta = thisObject->recordDelta(globalObject);
-    return JSValue::encode(jsNumber(static_cast<double>(delta)));
+    thisObject->recordDelta(globalObject);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalObject * globalObject, CallFrame* callFrame))

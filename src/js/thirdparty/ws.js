@@ -28,7 +28,7 @@ function emitWarning(type, message) {
 }
 
 // TODO: add private method on WebSocket to avoid these allocations
-function normalizeData(data, opts) {
+async function normalizeData(data, opts) {
   const isBinary = opts?.binary;
 
   if (typeof data === "number") {
@@ -39,6 +39,8 @@ function normalizeData(data, opts) {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
     data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+  } else if (data instanceof Blob) {
+    data = await data.arrayBuffer();
   }
 
   return data;
@@ -200,7 +202,8 @@ class BunWebSocket extends EventEmitter {
           ({ data }) => {
             const isBinary = typeof data !== "string";
             if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
+              const formattedData = this.#binaryType === "blob" ? new Blob([data]) : data;
+              this.emit("message", this.#fragments ? [formattedData] : formattedData, isBinary);
             } else {
               let encoded = encoder.encode(data);
               if (this.#binaryType !== "arraybuffer") {
@@ -231,7 +234,8 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "pong",
           ({ data }) => {
-            this.emit("pong", data);
+            const formattedData = this.#binaryType === "blob" ? new Blob([data]) : data;
+            this.emit("pong", formattedData);
           },
           once,
         );
@@ -254,16 +258,18 @@ class BunWebSocket extends EventEmitter {
       opts = undefined;
     }
 
-    try {
-      this.#ws.send(normalizeData(data, opts), opts?.compress);
-    } catch (error) {
+    normalizeData(data, opts).then(normalizedData => {
+      try {
+        this.#ws.send(normalizedData, opts?.compress);
+      } catch (error) {
+        // Node.js APIs expect callback arguments to be called after the current stack pops
+        typeof cb === "function" && process.nextTick(cb, error);
+        return;
+      }
+      // deviation: this should be called once the data is written, not immediately
       // Node.js APIs expect callback arguments to be called after the current stack pops
-      typeof cb === "function" && process.nextTick(cb, error);
-      return;
-    }
-    // deviation: this should be called once the data is written, not immediately
-    // Node.js APIs expect callback arguments to be called after the current stack pops
-    typeof cb === "function" && process.nextTick(cb, null);
+      typeof cb === "function" && process.nextTick(cb, null);
+    });
   }
 
   close(code, reason) {
@@ -293,7 +299,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
@@ -848,26 +854,31 @@ class BunWebSocketMocked extends EventEmitter {
     }
 
     if (this.#state === 1) {
-      const compress = opts?.compress;
-      data = normalizeData(data, opts);
-      // send returns:
-      // 1+ - The number of bytes sent is always the byte length of the data never less
-      // 0 - dropped due to backpressure (not sent)
-      // -1 - enqueue the data internaly
-      // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
-      if (written === 0) {
-        // dropped
-        this.#enquedMessages.push([data, compress, cb]);
-        this.#bufferedAmount += data.length;
-        return;
-      }
+      normalizeData(data, opts).then(normalizedData => {
+        const compress = opts?.compress;
 
-      typeof cb === "function" && process.nextTick(cb);
+        // send returns:
+        // 1+ - The number of bytes sent is always the byte length of the data never less
+        // 0 - dropped due to backpressure (not sent)
+        // -1 - enqueue the data internaly
+        // we dont need to do anything with the return value here
+        const written = this.#ws.send(normalizedData, compress, () => {});
+
+        if (written === 0) {
+          // dropped
+          this.#enquedMessages.push([normalizedData, compress, cb]);
+          this.#bufferedAmount += normalizedData.length;
+          return;
+        }
+
+        typeof cb === "function" && process.nextTick(cb);
+      });
     } else if (this.#state === 0) {
       // not connected yet
-      this.#enquedMessages.push([data, opts?.compress, cb]);
-      this.#bufferedAmount += data.length;
+      normalizeData(data, opts).then(normalizedData => {
+        this.#enquedMessages.push([normalizedData, opts?.compress, cb]);
+        this.#bufferedAmount += normalizedData.length;
+      });
     }
   }
 

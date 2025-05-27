@@ -65,4 +65,4 @@ test("Piscina error handling", async () => {
 setTimeout(() => {
   console.log("Catastrophic failure, exiting so test can fail");
   process.exit(1);
-}, 30_000).unref();
+}, 10_000).unref();

@@ -40,7 +40,7 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-     struct hdr_histogram* raw_histogram = nullptr;
+    struct hdr_histogram* raw_histogram = nullptr;
     int result = hdr_init(lowest, highest, figures, &raw_histogram);
     if (result != 0 || !raw_histogram) {
         throwTypeError(globalObject, scope, "Failed to initialize histogram"_s);

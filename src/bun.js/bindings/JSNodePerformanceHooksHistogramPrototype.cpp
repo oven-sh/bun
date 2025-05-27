@@ -228,7 +228,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "min"_s);
         return {};
     }
-    
+
     int64_t minValue = thisObject->getMin();
     // Node.js returns the value as if it were unsigned when converting to double
     // This handles the special case where the initial value is INT64_MIN
@@ -245,14 +245,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlo
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "minBigInt"_s);
         return {};
     }
-    
+
     // Node.js returns different initial values for min vs minBigInt
     // min returns 9223372036854776000 (as double)
     // minBigInt returns 9223372036854775807n (INT64_MAX)
     if (thisObject->getCount() == 0) {
         return JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX));
     }
-    
+
     return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin()));
 }
 

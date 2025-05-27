@@ -82,6 +82,7 @@ extern "C" int kill(int pid, int sig)
 
 #if defined(__x86_64__)
 __asm__(".symver exp,exp@GLIBC_2.2.5");
+__asm__(".symver exp2,exp2@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
 __asm__(".symver log2,log2@GLIBC_2.2.5");
@@ -92,6 +93,7 @@ __asm__(".symver powf,powf@GLIBC_2.2.5");
 #elif defined(__aarch64__)
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver exp2,exp2@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
 __asm__(".symver log2,log2@GLIBC_2.17");
 __asm__(".symver log2f,log2f@GLIBC_2.17");
@@ -109,6 +111,7 @@ __asm__(".symver powf,powf@GLIBC_2.17");
 extern "C" {
 
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
+double BUN_WRAP_GLIBC_SYMBOL(exp2)(double);
 float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
@@ -123,6 +126,7 @@ float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_logf(float x) { return logf(x); }
 float __wrap_log2f(float x) { return log2f(x); }
 double __wrap_exp(double x) { return exp(x); }
+double __wrap_exp2(double x) { return exp2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }

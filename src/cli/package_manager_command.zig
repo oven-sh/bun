@@ -1,12 +1,10 @@
 const std = @import("std");
-const Progress = std.Progress;
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const string = bun.string;
 const strings = bun.strings;
 const log = bun.log;
-const logger = bun.logger;
 const Command = @import("../cli.zig").Command;
 const Fs = @import("../fs.zig");
 const Dependency = @import("../install/dependency.zig");
@@ -17,14 +15,12 @@ const PackageManager = Install.PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
 const Path = @import("../resolver/resolve_path.zig");
-const String = bun.Semver.String;
-const ArrayIdentityContext = bun.ArrayIdentityContext;
-const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
 const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
 const File = bun.sys.File;
@@ -131,6 +127,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>hash<r>               generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>        print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>         print the hash stored in the current lockfile
+            \\  <b><green>bun pm<r> <blue>audit<r>              check installed packages for vulnerabilities
             \\  <b><green>bun pm<r> <blue>cache<r>              print the path to the cache folder
             \\  <b><green>bun pm<r> <blue>cache rm<r>           clear the cache
             \\  <b><green>bun pm<r> <blue>migrate<r>            migrate another package manager's lockfile without installing anything
@@ -250,6 +247,9 @@ pub const PackageManagerCommand = struct {
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "audit")) {
+            const code = try AuditCommand.exec(ctx, pm, args);
+            Global.exit(code);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();

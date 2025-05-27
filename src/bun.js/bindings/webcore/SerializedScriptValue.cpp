@@ -113,6 +113,7 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
+#include "JSNodePerformanceHooksHistogram.h"
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -244,6 +245,7 @@ enum SerializationTag {
     Bun__X509CertificateTag = 253,
     Bun__KeyObjectTag = 252,
     Bun__nodenet_BlockList = 251,
+    Bun__NodePerformanceHooksHistogramTag = 250,
 
     ErrorTag = 255
 };
@@ -2031,6 +2033,30 @@ private:
                     return true;
                 }
                 }
+            }
+
+            if (auto* histogram = jsDynamicCast<Bun::JSNodePerformanceHooksHistogram*>(obj)) {
+                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage) {
+                    // Don't allow cloning of histograms if it's not a simple .postMessage().
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+
+                // Serialize histogram configuration
+                hdr_histogram* hdr = histogram->m_histogramData.histogram;
+                if (!hdr) {
+                    // Histogram is not initialized
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+
+                write(Bun__NodePerformanceHooksHistogramTag);
+                // TODO: write the index into the histograms vector on SerializedScriptValue
+                // make it ThreadSafeRefCounted
+                // and then we can just write the index
+                code = SerializationReturnCode::DataCloneError;
+
+                return true;
             }
 
             return false;
@@ -5155,6 +5181,9 @@ private:
 
         case Bun__KeyObjectTag:
             return readKeyObject();
+
+            // case Bun__NodePerformanceHooksHistogramTag:
+            // ?
 
         default:
             m_ptr--; // Push the tag back

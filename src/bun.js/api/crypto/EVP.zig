@@ -205,17 +205,9 @@ pub const pbkdf2 = PBKDF2.pbkdf2;
 
 const std = @import("std");
 const bun = @import("bun");
-const string = bun.string;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
-const Async = bun.Async;
 const ZigString = JSC.ZigString;
-const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const CallFrame = JSC.CallFrame;
-const assert = bun.assert;
 const EVP = @This();
 const BoringSSL = bun.BoringSSL.c;

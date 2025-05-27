@@ -258,13 +258,59 @@ describe("bun pm view", () => {
     expect(output).toContain("Returns true if a number");
   });
 
-  it("should handle dist-tags like beta", async () => {
+  it("versions should work", async () => {
     const testDir = await setupTest();
-    const { output, error, code } = await runCommand([bunExe(), "pm", "view", "is-number@latest"], testDir);
+    const { output, error, code } = await runCommand([bunExe(), "pm", "view", "fs", "versions"], testDir);
+
+    expect(error).toBe("");
+    expect(output).toMatchInlineSnapshot(`
+      "[
+        "0.0.1-security",
+        "0.0.0",
+        "0.0.2"
+      ]
+      "
+    `);
+    expect(code).toBe(0);
+  });
+
+  it("versions[0] should work", async () => {
+    const testDir = await setupTest();
+    const { output, error, code } = await runCommand([bunExe(), "pm", "view", "fs", "versions[0]"], testDir);
+
+    expect(error).toBe("");
+    expect(output).toMatchInlineSnapshot(`
+      "0.0.1-security
+      "
+    `);
+    expect(code).toBe(0);
+  });
+
+  it("should handle dist-tags like latest", async () => {
+    const testDir = await setupTest();
+    const { output, error, code } = await runCommand([bunExe(), "pm", "view", "fs@latest"], testDir);
 
     expect(code).toBe(0);
     expect(error).toBe("");
-    expect(output).toContain("is-number@7.0.0"); // latest should resolve to 7.0.0
-    expect(output).toContain("Returns true if a number");
+    expect(output).toContain("0.0.1-security"); // latest should resolve to 7.0.0
+    expect(output).toMatchInlineSnapshot(`
+      "fs@0.0.1-security | ISC | deps: 0 | versions: 3
+      This package name is not currently in use, but was formerly occupied by another package. To avoid malicious use, npm is hanging on to the package name, but loosely, and we'll probably give it to you if you want it.
+      https://github.com/npm/security-holder#readme
+
+      dist
+       .tarball: https://registry.npmjs.org/fs/-/fs-0.0.1-security.tgz
+       .shasum: 8a7bd37186b6dddf3813f23858b57ecaaf5e41d4
+       .integrity: sha512-3XY9e1pP0CVEUCdj5BmfIZxRBTSDycnbqhIOGec9QYtmVH2fbLpj86CFWkrNOkt/Fvty4KZG5lTglL9j/gJ87w==
+
+      dist-tags:
+      latest: 0.0.1-security
+
+      maintainers:
+      - npm <npm@npmjs.com>
+
+      Published: 2016-08-23T17:56:58.976Z
+      "
+    `);
   });
 });

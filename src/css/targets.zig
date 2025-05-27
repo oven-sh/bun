@@ -1,12 +1,9 @@
 const std = @import("std");
 const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 
 pub const css = @import("./css_parser.zig");
 const bits = bun.bits;
 
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
 /// Target browsers and features to compile.

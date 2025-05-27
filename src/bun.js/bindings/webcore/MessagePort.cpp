@@ -29,6 +29,7 @@
 
 #include "BunClientData.h"
 // #include "Document.h"
+#include "Event.h"
 #include "EventNames.h"
 // #include "Logging.h"
 #include "MessageEvent.h"
@@ -98,6 +99,26 @@ void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier
     ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
         if (RefPtr port = weakPort.get())
             port->messageAvailable();
+    });
+}
+
+void MessagePort::notifyPortClosed(const MessagePortIdentifier& identifier)
+{
+    std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
+    ThreadSafeWeakPtr<MessagePort> weakPort;
+    {
+        Locker locker { allMessagePortsLock };
+        scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
+        weakPort = allMessagePorts().get(identifier);
+    }
+    if (!scriptExecutionContextIdentifier)
+        return;
+
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
+        if (RefPtr port = weakPort.get()) {
+            // Dispatch close event on the remote port
+            port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        }
     });
 }
 
@@ -199,6 +220,9 @@ TransferredMessagePort MessagePort::disentangle()
     context.destroyedMessagePort(*this);
     // context.willDestroyActiveDOMObject(*this);
     context.willDestroyDestructionObserver(*this);
+
+    // Dispatch close event when the port is transferred
+    dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 
     observeContext(nullptr);
 

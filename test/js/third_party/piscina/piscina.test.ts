@@ -9,6 +9,8 @@ test("Piscina basic functionality", async () => {
 
   const result = await piscina.run({ a: 4, b: 6 });
   expect(result).toBe(10);
+
+  await piscina.destroy();
 });
 
 test("Piscina event loop cleanup", async () => {
@@ -23,6 +25,8 @@ test("Piscina event loop cleanup", async () => {
   ]);
 
   expect(results).toEqual([3, 7, 11]);
+
+  await piscina.destroy();
 });
 
 test("Piscina with idleTimeout", async () => {
@@ -34,6 +38,8 @@ test("Piscina with idleTimeout", async () => {
 
   const result = await piscina.run({ a: 10, b: 20 });
   expect(result).toBe(30);
+
+  await piscina.destroy();
 });
 
 test("Piscina error handling", async () => {
@@ -47,6 +53,8 @@ test("Piscina error handling", async () => {
   );
 
   expect(p).toBe(false);
+
+  await piscina.destroy();
 });
 
 setTimeout(() => {

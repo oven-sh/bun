@@ -3357,6 +3357,30 @@ declare module "bun" {
            * @default false
            */
           console?: boolean;
+
+          /**
+           * Enable automatic workspace folders for Chrome DevTools
+           *
+           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * `/.well-known/appspecific/com.chrome.devtools.json`
+           *
+           * The response is a JSON object with the following shape:
+           * ```json
+           * {
+           *   "workspace": {
+           *     "root": "<cwd>",
+           *     "uuid": "<uuid>"
+           *   }
+           * }
+           * ```
+           *
+           * The `root` field is the current working directory of the server.
+           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           *
+           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * @default true
+           */
+          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
         };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;

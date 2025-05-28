@@ -348,6 +348,13 @@ pub const ServerConfig = struct {
     development: DevelopmentOption = .development,
     broadcast_console_log_from_browser_to_server_for_bake: bool = false,
 
+    /// Enable automatic workspace folders for Chrome DevTools
+    /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+    /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
+    ///
+    /// If HMR is not enabled, then this field is ignored.
+    enable_chrome_devtools_automatic_workspace_folders: bool = true,
+
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
     onNodeHTTPRequest: JSC.JSValue = JSC.JSValue.zero,
@@ -1325,6 +1332,10 @@ pub const ServerConfig = struct {
 
                     if (try dev.getBooleanStrict(global, "console")) |console| {
                         args.broadcast_console_log_from_browser_to_server_for_bake = console;
+                    }
+
+                    if (try dev.getBooleanStrict(global, "chromeDevToolsAutomaticWorkspaceFolders")) |enable_chrome_devtools_automatic_workspace_folders| {
+                        args.enable_chrome_devtools_automatic_workspace_folders = enable_chrome_devtools_automatic_workspace_folders;
                     }
                 } else {
                     args.development = if (dev.toBoolean()) .development else .production;
@@ -7088,11 +7099,79 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.toAsync(req, request_object);
         }
 
+        // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+        fn onChromeDevToolsJSONRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime Environment.enable_logs)
+                httplog("{s} - {s}", .{ req.method(), req.url() });
+
+            const authorized = brk: {
+                if (this.dev_server == null)
+                    break :brk false;
+
+                if (resp.getRemoteSocketInfo()) |*address| {
+                    if (strings.eqlComptime(address.ip, "127.0.0.1") or strings.eqlComptime(address.ip, "::1") or strings.eqlComptime(address.ip, "localhost")) {
+                        break :brk true;
+                    }
+                }
+                break :brk false;
+            };
+
+            if (!authorized) {
+                req.setYield(true);
+                return;
+            }
+
+            // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
+
+            // So we first use a hash of the main field:
+            const first_hash_segment: [8]u8 = brk: {
+                var buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const main = JSC.VirtualMachine.get().main;
+                const len = @min(main.len, buffer.len);
+                break :brk @bitCast(bun.hash(bun.strings.copyLowercase(main[0..len], buffer[0..len])));
+            };
+
+            // And then we use a hash of their project root directory:
+            const second_hash_segment: [8]u8 = brk: {
+                var buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const root = this.dev_server.?.root;
+                const len = @min(root.len, buffer.len);
+                break :brk @bitCast(bun.hash(bun.strings.copyLowercase(root[0..len], buffer[0..len])));
+            };
+
+            // We combine it together to get a 16 byte uuid.
+            const hash_bytes: [16]u8 = first_hash_segment ++ second_hash_segment;
+            const uuid = bun.UUID.initWith(&hash_bytes);
+
+            // interface DevToolsJSON {
+            //   workspace?: {
+            //     root: string,
+            //     uuid: string,
+            //   }
+            // }
+            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": \"{s}\", \"uuid\": \"{}\" }} }}", .{
+                this.dev_server.?.root,
+                uuid,
+            }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(json_string);
+
+            resp.writeStatus("200 OK");
+            resp.writeHeader("Content-Type", "application/json");
+            resp.end(json_string, resp.shouldCloseConnection());
+        }
+
         fn setRoutes(this: *ThisServer) JSC.JSValue {
             var route_list_value = JSC.JSValue.zero;
             const app = this.app.?;
             const any_server = AnyServer.from(this);
             const dev_server = this.dev_server;
+
+            // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+            // Only enable this when we're using the dev server.
+            var should_add_chrome_devtools_json_route = debug_mode and this.config.allow_hot and dev_server != null and this.config.enable_chrome_devtools_automatic_workspace_folders;
+            const chrome_devtools_route = "/.well-known/appspecific/com.chrome.devtools.json";
 
             // --- 1. Handle user_routes_to_build (dynamic JS routes) ---
             // (This part remains conceptually the same: populate this.user_routes and route_list_value
@@ -7141,6 +7220,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 const is_star_path = strings.eqlComptime(user_route.route.path, "/*");
                 if (is_star_path) {
                     has_any_user_route_for_star_path = true;
+                }
+
+                if (should_add_chrome_devtools_json_route) {
+                    if (strings.eqlComptime(user_route.route.path, chrome_devtools_route) or strings.hasPrefix(user_route.route.path, "/.well-known/")) {
+                        should_add_chrome_devtools_json_route = false;
+                    }
                 }
 
                 // Register HTTP routes
@@ -7206,6 +7291,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             .method => |method| {
                                 star_methods_covered_by_user.setUnion(method);
                             },
+                        }
+                    }
+
+                    if (should_add_chrome_devtools_json_route) {
+                        if (strings.eqlComptime(entry.path, chrome_devtools_route) or strings.hasPrefix(entry.path, "/.well-known/")) {
+                            should_add_chrome_devtools_json_route = false;
                         }
                     }
 
@@ -7293,6 +7384,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     },
                     else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
                 }
+            }
+
+            if (should_add_chrome_devtools_json_route) {
+                app.get(chrome_devtools_route, *ThisServer, this, onChromeDevToolsJSONRequest);
             }
 
             // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer

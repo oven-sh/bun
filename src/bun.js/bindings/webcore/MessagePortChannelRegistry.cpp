@@ -113,14 +113,14 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
         return;
 
 #ifndef NDEBUG
-    // if (channel && channel->hasAnyMessagesPendingOrInFlight())
-    //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
+        // if (channel && channel->hasAnyMessagesPendingOrInFlight())
+        //     LOG(MessagePorts, "Registry: (Note) The channel closed for port %s had messages pending or in flight", port.logString().utf8().data());
 #endif
 
     MessagePortIdentifier remotePort = channel->port1() == port ? channel->port2() : channel->port1();
 
     if (m_openChannels.get(remotePort)) {
-        // Notify the remote port about the closure
+        // notify the remote port that we closed
         MessagePort::notifyPortClosed(remotePort);
     }
 

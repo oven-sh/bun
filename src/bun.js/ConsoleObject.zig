@@ -146,26 +146,38 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
+    const enable_colors = global.bunVM().worker == null and
+        if (level == .Warning or level == .Error)
+            Output.enable_ansi_colors_stderr
+        else
+            Output.enable_ansi_colors_stdout;
+
+    // TODO only node:worker_threads
+    var worker_writer = if (global.bunVM().worker) |w|
+        w.stdioWriter(if (level == .Warning or level == .Error) .stderr else .stdout)
+    else
+        null;
+
+    const underlying_writer = if (worker_writer) |*w|
+        w.any()
+    else if (level == .Warning or level == .Error) // TODO fix buffering here
+        console.error_writer.unbuffered_writer.any()
+    else
+        console.writer.unbuffered_writer.any();
+
+    var buffered_writer = std.io.bufferedWriter(underlying_writer);
+    var writer = buffered_writer.writer();
+    const Writer = @TypeOf(writer);
+
     if (message_type == .Assert and len == 0) {
-        const text = if (Output.enable_ansi_colors_stderr)
+        const text = if (enable_colors)
             Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
         else
             "Assertion failed\n";
-        console.error_writer.unbuffered_writer.writeAll(text) catch {};
+        writer.writeAll(text) catch {};
+        buffered_writer.flush() catch {};
         return;
     }
-
-    const enable_colors = if (level == .Warning or level == .Error)
-        Output.enable_ansi_colors_stderr
-    else
-        Output.enable_ansi_colors_stdout;
-
-    var buffered_writer = if (level == .Warning or level == .Error)
-        &console.error_writer
-    else
-        &console.writer;
-    var writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
 
     var print_length = len;
     var print_options: FormatOptions = .{
@@ -230,8 +242,8 @@ fn messageWithTypeAndLevel_(
             print_options,
         )
     else if (message_type == .Log) {
-        _ = console.writer.write("\n") catch 0;
-        console.writer.flush() catch {};
+        _ = writer.write("\n") catch 0;
+        buffered_writer.flush() catch {};
     } else if (message_type != .Trace)
         writer.writeAll("undefined\n") catch {};
 

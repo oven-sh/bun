@@ -3271,13 +3271,13 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     return nextTickFunction;
 }
 
-void Process::emitWorkerStdioInParent(JSWorker* worker, int fd, JSUint8Array* data)
+void Process::emitWorkerStdioInParent(JSWorker* worker, Worker::PushStdioFd fd, JSUint8Array* data)
 {
     auto* fn = m_emitWorkerStdioInParentFunction.getInitializedOnMainThread(this);
     auto callData = JSC::getCallData(fn);
     MarkedArgumentBuffer args;
     args.append(worker);
-    args.append(jsNumber(fd));
+    args.append(jsNumber(static_cast<int>(fd)));
     args.append(data);
     JSC::call(globalObject(), fn, callData, jsNull(), args);
 }

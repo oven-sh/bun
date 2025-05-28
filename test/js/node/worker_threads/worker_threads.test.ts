@@ -509,7 +509,7 @@ describe("stdio", () => {
 
     const consoleFunction = stream == "stdout" ? "log" : "error";
 
-    it.todo(`console.${consoleFunction} in worker writes to process.${stream} in parent`, async () => {
+    it(`console.${consoleFunction} in worker writes to process.${stream} in parent`, async () => {
       using capture = captureProcessStdio(stream);
       const worker = new Worker(`console.${consoleFunction}("hello");`, { eval: true });
       const [code] = await once(worker, "exit");

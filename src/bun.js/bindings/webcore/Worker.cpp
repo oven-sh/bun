@@ -547,18 +547,11 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+void Worker::pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    // internal binding
-    ASSERT(callFrame->argumentCount() == 2);
-    auto fd = callFrame->argument(0).asInt32();
-    ASSERT(fd == 0 || fd == 1 || fd == 2);
-    auto* buf = jsCast<JSUint8Array*>(callFrame->argument(1));
-    Vector<uint8_t, 64> vec { buf->span() };
-    auto& sourceWorker = *globalObject->worker();
+    Vector<uint8_t, 64> vec { bytes };
 
-    sourceWorker.scriptExecutionContext()->postTaskConcurrently([sourceWorker = Ref { sourceWorker }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
+    scriptExecutionContext()->postTaskConcurrently([sourceWorker = Ref { *this }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
         auto& vm = ctx.vm();
         auto* parentGlobalObject = defaultGlobalObject(ctx.globalObject());
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -570,6 +563,25 @@ JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObj
         process->emitWorkerStdioInParent(jsWorker, fd, buffer);
         RETURN_IF_EXCEPTION(scope, parentGlobalObject->reportUncaughtExceptionAtEventLoop(parentGlobalObject, scope.exception()));
     });
+}
+
+extern "C" void WebWorker__pushStdioToParent(Worker* worker, int fd, const uint8_t* bytes, size_t len)
+{
+    ASSERT(fd == 1 || fd == 2);
+    worker->pushStdioToParent(static_cast<Worker::PushStdioFd>(fd), { bytes, len });
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    // internal binding
+    ASSERT(callFrame->argumentCount() == 2);
+    auto fd = callFrame->argument(0).asInt32();
+    ASSERT(fd == 1 || fd == 2);
+    auto* buf = jsCast<JSUint8Array*>(callFrame->argument(1));
+    auto& sourceWorker = *globalObject->worker();
+
+    sourceWorker.pushStdioToParent(static_cast<Worker::PushStdioFd>(fd), buf->span());
 
     return JSValue::encode(jsUndefined());
 }

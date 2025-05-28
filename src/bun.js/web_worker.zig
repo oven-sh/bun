@@ -8,6 +8,8 @@ const JSValue = jsc.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 const WebWorker = @This();
+/// class WebCore::Worker
+const CppWorker = opaque {};
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -24,7 +26,7 @@ preloads: [][]const u8 = &.{},
 store_fd: bool = false,
 arena: ?bun.MimallocArena = null,
 name: [:0]const u8 = "Worker",
-cpp_worker: *anyopaque,
+cpp_worker: *CppWorker,
 mini: bool,
 // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
 // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
@@ -52,10 +54,16 @@ pub const Status = enum(u8) {
     terminated,
 };
 
-extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
-extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+const PushStdioFd = enum(c_int) {
+    stdout = 1,
+    stderr = 2,
+};
+
+extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *CppWorker, i32) void;
+extern fn WebWorker__dispatchOnline(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
+extern fn WebWorker__fireEarlyMessages(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
+extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *CppWorker, bun.String, JSValue) void;
+extern fn WebWorker__pushStdioToParent(cpp_worker: *CppWorker, fd: PushStdioFd, bytes: [*]const u8, len: usize) void;
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
     return this.requested_terminate.load(.monotonic);
@@ -65,7 +73,7 @@ pub fn setRequestedTerminate(this: *WebWorker) bool {
     return this.requested_terminate.swap(true, .release);
 }
 
-export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
+export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *CppWorker) bool {
     worker.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
@@ -172,7 +180,7 @@ fn resolveEntryPointSpecifier(
 }
 
 pub fn create(
-    cpp_worker: *void,
+    cpp_worker: *CppWorker,
     parent: *jsc.VirtualMachine,
     name_str: bun.String,
     specifier_str: bun.String,
@@ -386,7 +394,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     jsc.ConsoleObject.format2(
@@ -394,8 +401,8 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         globalObject,
         &[_]jsc.JSValue{error_instance},
         1,
-        Writer,
-        Writer,
+        @TypeOf(writer),
+        @TypeOf(writer),
         writer,
         .{
             .enable_colors = false,
@@ -606,6 +613,22 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     bun.exitThread();
+}
+
+const WriterContext = struct {
+    cpp_worker: *CppWorker,
+    fd: PushStdioFd,
+
+    fn write(this: WriterContext, bytes: []const u8) error{}!usize {
+        WebWorker__pushStdioToParent(this.cpp_worker, this.fd, bytes.ptr, bytes.len);
+        return bytes.len;
+    }
+};
+
+pub const Writer = std.io.Writer(WriterContext, error{}, WriterContext.write);
+
+pub fn stdioWriter(this: *WebWorker, fd: PushStdioFd) Writer {
+    return .{ .context = .{ .cpp_worker = this.cpp_worker, .fd = fd } };
 }
 
 comptime {

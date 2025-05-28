@@ -82,7 +82,7 @@ public:
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
-    void emitWorkerStdioInParent(JSWorker* worker, int fd, JSUint8Array* data);
+    void emitWorkerStdioInParent(JSWorker* worker, Worker::PushStdioFd fd, JSUint8Array* data);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

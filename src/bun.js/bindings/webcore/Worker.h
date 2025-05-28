@@ -94,6 +94,14 @@ public:
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
+    enum class PushStdioFd : int {
+        stdout = 1,
+        stderr = 2,
+    };
+
+    // bytes are cloned
+    void pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes);
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 

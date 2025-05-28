@@ -262,9 +262,8 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-
-    // Don't try to terminate an already terminated worker
-    if (m_terminationFlags & TerminatedFlag) {
+    // Atomically set the TerminateRequestedFlag, and only proceed if the worker wasn't already terminated
+    if (m_terminationFlags.fetch_or(TerminatedFlag) & TerminatedFlag) {
         return;
     }
 

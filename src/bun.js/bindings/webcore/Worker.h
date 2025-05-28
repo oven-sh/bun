@@ -95,8 +95,8 @@ public:
     WorkerOptions& options() { return m_options; }
 
     enum class PushStdioFd : int {
-        stdout = 1,
-        stderr = 2,
+        Stdout = 1,
+        Stderr = 2,
     };
 
     // bytes are cloned

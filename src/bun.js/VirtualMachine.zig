@@ -502,6 +502,7 @@ extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promis
 extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
 extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
 extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
+extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
 
 fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
     if (Bun__promises__isErrorLike(globalObject, reason)) return reason;
@@ -511,34 +512,6 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
         "{s}" ++
         "\".", .{reasonStr.view(globalObject)}).toJS();
-}
-
-fn emitUnhandledRejectionWarning(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {
-    _ = this;
-    _ = globalObject;
-    _ = reason;
-    _ = promise;
-    // TODO: implement
-    //   const warning = new UnhandledPromiseRejectionWarning(promiseInfo.uid);
-    //   const reason = promiseInfo.reason;
-    //   try {
-    //     if (isErrorLike(reason)) {
-    //       warning.stack = reason.stack;
-    //       process.emitWarning(reason.stack, unhandledRejectionErrName);
-    //     } else {
-    //       process.emitWarning(
-    //         noSideEffectsToString(reason), unhandledRejectionErrName);
-    //     }
-    //   } catch {
-    //     try {
-    //       process.emitWarning(
-    //         noSideEffectsToString(reason), unhandledRejectionErrName);
-    //     } catch {
-    //       // Ignore.
-    //     }
-    //   }
-    //
-    //   process.emitWarning(warning);
 }
 
 pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
@@ -563,13 +536,13 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             return true; // ignore the unhandled rejection
         },
         .warn => {
-            _ = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
-            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             return true;
         },
         .warn_with_error_code => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
-            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             this.exit_handler.exit_code = 1;
             return true;
         },
@@ -577,7 +550,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
-            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             return true;
         },
         .throw => {

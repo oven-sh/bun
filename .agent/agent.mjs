@@ -56,7 +56,7 @@ try {
     prompt = prompt + extraArgsContext;
   }
 
-  const claudeArgs = [prompt, "--allowedTools=Bash,Edit,Write,Replace,Search", "--output-format=json"];
+  const claudeArgs = [prompt, "--allowedTools=Edit,Write,Replace,Search", "--output-format=json"];
   if (!values.interactive) {
     claudeArgs.unshift("--print");
   }

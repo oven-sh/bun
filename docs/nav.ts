@@ -207,6 +207,9 @@ export default {
       description:
         "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
     }),
+    page("install/audit", "Audit dependencies", {
+      description: "Check installed packages for vulnerabilities.",
+    }),
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
     }),

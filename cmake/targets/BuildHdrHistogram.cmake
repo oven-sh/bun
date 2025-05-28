@@ -1,0 +1,24 @@
+register_repository(
+  NAME
+    hdrhistogram
+  REPOSITORY
+    HdrHistogram/HdrHistogram_c
+  COMMIT
+    652d51bcc36744fd1a6debfeb1a8a5f58b14022c
+)
+
+register_cmake_command(
+  TARGET
+    hdrhistogram
+  LIBRARIES
+    hdr_histogram_static
+  INCLUDES
+    include
+  LIB_PATH
+    src
+  ARGS
+    -DHDR_HISTOGRAM_BUILD_SHARED=OFF
+    -DHDR_HISTOGRAM_BUILD_STATIC=ON
+    -DHDR_LOG_REQUIRED=DISABLED
+    -DHDR_HISTOGRAM_BUILD_PROGRAMS=OFF
+)

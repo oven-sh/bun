@@ -4157,7 +4157,7 @@ pub const ParseTask = struct {
             // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
             else =>
             \\var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
-            \\var __asyncDispose =  Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
+            \\var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.asyncDispose');
             \\
             \\export var __using = (stack, value, async) => {
             \\  if (value != null) {

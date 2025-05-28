@@ -7,4 +7,3 @@ it("parses namespaced attributes correctly", () => {
   expect(nsExample3.props).toEqual({ "ns:bar42bar": "baz" });
   expect(nsExample4.props).toEqual({ "ns42:bar": "baz" });
 });
-

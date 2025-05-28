@@ -87,16 +87,19 @@ bool MessagePort::isMessagePortAliveForTesting(const MessagePortIdentifier& iden
 void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier)
 {
     std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
-    ThreadSafeWeakPtr<MessagePort> weakPort;
     {
         Locker locker { allMessagePortsLock };
         scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
-        weakPort = allMessagePorts().get(identifier);
     }
     if (!scriptExecutionContextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [identifier](auto&) {
+        ThreadSafeWeakPtr<MessagePort> weakPort;
+        {
+            Locker locker { allMessagePortsLock };
+            weakPort = allMessagePorts().get(identifier);
+        }
         if (RefPtr port = weakPort.get())
             port->messageAvailable();
     });
@@ -105,16 +108,19 @@ void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier
 void MessagePort::notifyPortClosed(const MessagePortIdentifier& identifier)
 {
     std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
-    ThreadSafeWeakPtr<MessagePort> weakPort;
     {
         Locker locker { allMessagePortsLock };
         scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
-        weakPort = allMessagePorts().get(identifier);
     }
     if (!scriptExecutionContextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [identifier](auto&) {
+        ThreadSafeWeakPtr<MessagePort> weakPort;
+        {
+            Locker locker { allMessagePortsLock };
+            weakPort = allMessagePorts().get(identifier);
+        }
         if (RefPtr port = weakPort.get()) {
             // Only dispatch close event if the port has message event listeners
             if (port->m_hasMessageEventListener) {

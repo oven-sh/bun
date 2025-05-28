@@ -9754,7 +9754,8 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
-    const audit_params: []const ParamType = &(shared_params ++ [_]ParamType{
+    const audit_params: []const ParamType = &([_]ParamType{
+        clap.parseParam("<POS>                                  Check installed packages for vulnerabilities") catch unreachable,
         clap.parseParam("--json                                 Output in JSON format") catch unreachable,
     });
 
@@ -10159,7 +10160,10 @@ pub const PackageManager = struct {
                 .outdated => outdated_params,
                 .pack => pack_params,
                 .publish => publish_params,
-                .audit => audit_params,
+
+                // TODO: we will probably want to do this for other *_params. this way extra params
+                // are not included in the help text
+                .audit => shared_params ++ audit_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -10168,10 +10172,9 @@ pub const PackageManager = struct {
                 .diagnostic = &diag,
                 .allocator = allocator,
             }) catch |err| {
-                clap.help(Output.errorWriter(), params) catch {};
-                Output.errorWriter().writeAll("\n") catch {};
+                printHelp(subcommand);
                 diag.report(Output.errorWriter(), err) catch {};
-                return err;
+                Global.exit(1);
             };
 
             if (args.flag("--help")) {

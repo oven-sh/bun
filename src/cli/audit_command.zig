@@ -63,8 +63,8 @@ const AuditResult = struct {
 
 pub const AuditCommand = struct {
     pub fn exec(ctx: Command.Context) !noreturn {
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        const manager, _ = PackageManager.init(ctx, cli, .pm) catch |err| {
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .audit);
+        const manager, _ = PackageManager.init(ctx, cli, .audit) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {

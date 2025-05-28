@@ -447,8 +447,8 @@ void Worker::dispatchExit(int32_t exitCode)
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
-        } else {
         }
+
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
     });
 }
@@ -494,7 +494,6 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
-    } else {
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

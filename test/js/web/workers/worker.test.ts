@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -328,7 +328,7 @@ describe("web worker", () => {
       const stdout = (await new Response(proc.stdout).text()).replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
       const stderr = await new Response(proc.stderr).text();
 
-      expect(stdout).toBe(`debug
+      let expectedStdout = `debug
 info
 log
 ┌───┬───┐
@@ -337,12 +337,17 @@ log
 │ 0 │ 5 │
 └───┴───┘
 trace
-      at ${__dirname}/worker-fixture-console.js:39:11
+      at ${__dirname}${path.sep}worker-fixture-console.js:39:11
       at loadAndEvaluateModule (line:col)
-      at asyncFunctionResume (line:col)
+`;
+      if (isDebug) {
+        expectedStdout += `      at asyncFunctionResume (line:col)
       at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
       at promiseReactionJob (line:col)
-`);
+`;
+      }
+
+      expect(stdout).toBe(expectedStdout);
       expect(stderr).toBe(`Assertion failed
 Assertion failed
 should be true

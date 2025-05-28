@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { Piscina } from "piscina";
 
-const EXPECT_THIS_FILE_TO_TAKE_SECONDS = 10;
+setTimeout(() => {
+  console.error(new Error("Catastrophic failure, exiting so test can fail"));
+  process.exit(1);
+}, 10 * 1000).unref();
 
 test("Piscina basic functionality", async () => {
   const piscina = new Piscina({
@@ -58,8 +61,3 @@ test("Piscina error handling", async () => {
 
   await piscina.destroy();
 });
-
-setTimeout(() => {
-  console.error(new Error("Catastrophic failure, exiting so test can fail"));
-  process.exit(1);
-}, EXPECT_THIS_FILE_TO_TAKE_SECONDS * 1000).unref();

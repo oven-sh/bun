@@ -49,15 +49,15 @@ const a = tls.createServer(options, function(socket) {
   dest.pipe(socket);
   socket.pipe(dest);
 
-  dest.on('end', common.mustCall(function() {
+  dest.on('end', function() {
     socket.destroy();
-  }));
+  });
 });
 
 // the "target" server
-const b = tls.createServer(options, common.mustCall(function(socket) {
+const b = tls.createServer(options, function(socket) {
   socket.end(body);
-}));
+});
 
 a.listen(0, function() {
   b.listen(0, function() {
@@ -73,9 +73,9 @@ a.listen(0, function() {
     });
     ssl.setEncoding('utf8');
     let buf = '';
-    ssl.on('data', common.mustCall(function(data) {
+    ssl.on('data', function(data) {
       buf += data;
-    }, 3));
+    });
     ssl.on('end', common.mustCall(function() {
       assert.strictEqual(buf, body);
       ssl.end();

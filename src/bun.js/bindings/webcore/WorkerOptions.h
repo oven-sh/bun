@@ -34,9 +34,6 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
-    // If true, process.stdin in the worker is the data written to worker.stdin in the main thread.
-    // If false, process.stdin in the worker provides no data and worker.stdin in the main thread is null.
-    bool createStdin;
 };
 
 } // namespace WebCore

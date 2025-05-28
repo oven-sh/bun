@@ -503,24 +503,14 @@ fn spin(this: *WebWorker) void {
         _ = vm.global.vm().runGC(false);
     }
 
-    // Ensure initial tick to process CppTasks, especially those from WebWorker__fireEarlyMessages.
     // always doing a first tick so we call CppTask without delay after dispatchOnline
     vm.tick();
 
     while (!this.hasRequestedTerminate() and vm.isEventLoopAlive()) {
         vm.tick();
-
-        // Re-check termination after vm.tick() in case a task or microtask caused it.
-        if (this.hasRequestedTerminate()) {
-            break;
-        }
-
+        if (this.hasRequestedTerminate()) break;
         vm.eventLoop().autoTickActive();
-
-        // Re-check termination after autoTickActive() as it might have processed a wakeup signal.
-        if (this.hasRequestedTerminate()) {
-            break;
-        }
+        if (this.hasRequestedTerminate()) break;
     }
 
     // Only call "beforeExit" if we weren't from a .terminate

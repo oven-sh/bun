@@ -3,9 +3,9 @@
 #include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
-#include "JavaScriptCore/Watchdog.h"
 #include "JSDOMExceptionHandling.h"
-#include "JSPromise.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/Watchdog.h"
 
 #include "../vm/SigintWatcher.h"
 

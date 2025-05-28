@@ -3,7 +3,7 @@
 #include "NodeVM.h"
 #include "NodeVMModule.h"
 
-#include "SyntheticModuleRecord.h"
+#include "JavaScriptCore/SyntheticModuleRecord.h"
 
 #include "../vm/SigintReceiver.h"
 

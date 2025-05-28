@@ -116,8 +116,10 @@ void MessagePort::notifyPortClosed(const MessagePortIdentifier& identifier)
 
     ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
         if (RefPtr port = weakPort.get()) {
-            // Dispatch close event on the remote port
-            port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            // Only dispatch close event if the port has message event listeners
+            if (port->m_hasMessageEventListener) {
+                port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            }
         }
     });
 }

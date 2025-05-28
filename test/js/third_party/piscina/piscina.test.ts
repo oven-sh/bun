@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { Piscina } from "piscina";
 
+const EXPECT_THIS_FILE_TO_TAKE_SECONDS = 10;
+
 test("Piscina basic functionality", async () => {
   const piscina = new Piscina({
     filename: join(import.meta.dir, "worker.fixture.ts"),
@@ -58,6 +60,6 @@ test("Piscina error handling", async () => {
 });
 
 setTimeout(() => {
-  console.log("Catastrophic failure, exiting so test can fail");
+  console.error(new Error("Catastrophic failure, exiting so test can fail"));
   process.exit(1);
-}, 10_000).unref();
+}, EXPECT_THIS_FILE_TO_TAKE_SECONDS * 1000).unref();

@@ -134,26 +134,22 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    printf("[DEBUG] Worker::setKeepAlive(%d) called\n", keepAlive);
     WebWorker__setRef(impl_, keepAlive);
 }
 
 bool Worker::updatePtr()
 {
-    printf("[DEBUG] Worker::updatePtr called\n");
     if (!WebWorker__updatePtr(impl_, this)) {
-        printf("[DEBUG] Worker::updatePtr - updatePtr failed, setting TerminatedFlag\n");
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
     }
-    printf("[DEBUG] Worker::updatePtr - updatePtr succeeded\n");
+
     return true;
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
-    printf("[DEBUG] Worker::create called\n");
     auto worker = adoptRef(*new Worker(context, WTFMove(options)));
 
     WTF::String url = urlInit;
@@ -218,11 +214,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     preloadModuleStrings.clear();
 
     if (!impl) {
-        printf("[DEBUG] Worker::create - impl is null, returning exception\n");
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
-    printf("[DEBUG] Worker::create - impl created successfully\n");
     worker->impl_ = impl;
     worker->m_workerCreationTime = MonotonicTime::now();
 
@@ -231,7 +225,6 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
 Worker::~Worker()
 {
-    printf("[DEBUG] Worker::~Worker called\n");
     {
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
@@ -241,7 +234,6 @@ Worker::~Worker()
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    printf("[DEBUG] Worker::postMessage called\n");
     if (m_terminationFlags & TerminatedFlag)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
@@ -270,19 +262,15 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    printf("[DEBUG] Worker::terminate() called\n");
 
     // Don't try to terminate an already terminated worker
     if (m_terminationFlags & TerminatedFlag) {
-        printf("[DEBUG] Worker::terminate() - already terminated, returning\n");
         return;
     }
 
-    printf("[DEBUG] Worker::terminate() - setting TerminateRequestedFlag and calling WebWorker__notifyNeedTermination\n");
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
     WebWorker__notifyNeedTermination(impl_);
-    printf("[DEBUG] Worker::terminate() - completed\n");
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -338,7 +326,6 @@ bool Worker::isOnline() const
 
 void Worker::dispatchEvent(Event& event)
 {
-    printf("[DEBUG] Worker::dispatchEvent called for event: %s\n", event.type().utf8().data());
     if (!m_terminationFlags)
         EventTargetWithInlineData::dispatchEvent(event);
 }
@@ -347,7 +334,6 @@ void Worker::dispatchEvent(Event& event)
 // This allows new wt.Worker().terminate() to actually resolve
 void Worker::dispatchCloseEvent(Event& event)
 {
-    printf("[DEBUG] Worker::dispatchCloseEvent called\n");
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
@@ -366,7 +352,6 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
 
 void Worker::drainEvents()
 {
-    printf("[DEBUG] Worker::drainEvents called\n");
     Locker lock(this->m_pendingTasksMutex);
     for (auto& task : m_pendingTasks)
         postTaskToWorkerGlobalScope(WTFMove(task));
@@ -375,7 +360,6 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
-    printf("[DEBUG] Worker::dispatchOnline called\n");
     auto* ctx = scriptExecutionContext();
     if (ctx) {
         ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
@@ -399,7 +383,6 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
-    printf("[DEBUG] Worker::fireEarlyMessages called\n");
     auto tasks = [&]() {
         Locker lock(this->m_pendingTasksMutex);
         return std::exchange(this->m_pendingTasks, {});
@@ -420,7 +403,6 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::dispatchErrorWithMessage(WTF::String message)
 {
-    printf("[DEBUG] Worker::dispatchErrorWithMessage called: %s\n", message.utf8().data());
     auto* ctx = scriptExecutionContext();
     if (!ctx) return;
 
@@ -435,7 +417,6 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
-    printf("[DEBUG] Worker::dispatchErrorWithValue called\n");
     auto* ctx = scriptExecutionContext();
     if (!ctx) return false;
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
@@ -456,35 +437,25 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
 void Worker::dispatchExit(int32_t exitCode)
 {
-    printf("[DEBUG] Worker::dispatchExit called with exitCode: %d\n", exitCode);
     auto* ctx = scriptExecutionContext();
     if (!ctx) {
-        printf("[DEBUG] Worker::dispatchExit - no script execution context, returning\n");
         return;
     }
 
-    printf("[DEBUG] Worker::dispatchExit - posting task to script execution context\n");
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
-        printf("[DEBUG] Worker::dispatchExit - task executing, setting ClosingFlag\n");
         protectedThis->m_onlineClosingFlags = ClosingFlag;
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-            printf("[DEBUG] Worker::dispatchExit - dispatching close event\n");
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
-            printf("[DEBUG] Worker::dispatchExit - close event dispatched\n");
         } else {
-            printf("[DEBUG] Worker::dispatchExit - no close event listeners\n");
         }
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
-        printf("[DEBUG] Worker::dispatchExit - task completed, TerminatedFlag set\n");
     });
-    printf("[DEBUG] Worker::dispatchExit - completed\n");
 }
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
-    printf("[DEBUG] Worker::postTaskToWorkerGlobalScope called\n");
     if (!(m_onlineClosingFlags & OnlineFlag)) {
         Locker lock(this->m_pendingTasksMutex);
         this->m_pendingTasks.append(WTFMove(task));
@@ -503,14 +474,12 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
-    printf("[DEBUG] WebWorker__dispatchExit called with exitCode: %d\n", exitCode);
     worker->dispatchExit(exitCode);
-    printf("[DEBUG] WebWorker__dispatchExit - dispatchExit completed, dereferencing worker\n");
+
     // no longer referenced by Zig
     worker->deref();
 
     if (globalObject) {
-        printf("[DEBUG] WebWorker__dispatchExit - cleaning up global object\n");
         auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
 
@@ -526,11 +495,8 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
-        printf("[DEBUG] WebWorker__dispatchExit - global object cleanup completed\n");
     } else {
-        printf("[DEBUG] WebWorker__dispatchExit - no global object to clean up\n");
     }
-    printf("[DEBUG] WebWorker__dispatchExit - completed\n");
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {

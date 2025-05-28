@@ -271,13 +271,13 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     printf("[DEBUG] Worker::terminate() called\n");
-    
+
     // Don't try to terminate an already terminated worker
     if (m_terminationFlags & TerminatedFlag) {
         printf("[DEBUG] Worker::terminate() - already terminated, returning\n");
         return;
     }
-    
+
     printf("[DEBUG] Worker::terminate() - setting TerminateRequestedFlag and calling WebWorker__notifyNeedTermination\n");
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);

@@ -509,13 +509,15 @@ describe("stdio", () => {
 
     const consoleFunction = stream == "stdout" ? "log" : "error";
 
-    it(`console.${consoleFunction} in worker writes to process.${stream} in parent`, async () => {
+    it(`console.${consoleFunction} in worker writes to both streams in parent`, async () => {
       using capture = captureProcessStdio(stream);
       const worker = new Worker(`console.${consoleFunction}("hello");`, { eval: true });
+      const resultPromise = readToEnd(worker[stream]);
       const [code] = await once(worker, "exit");
       expect(code).toBe(0);
       capture.end();
       expect(await capture.data).toBe("hello\n");
+      expect(await resultPromise).toBe("hello\n");
     });
 
     describe(`with ${stream}: true option`, () => {
@@ -574,6 +576,28 @@ describe("stdio", () => {
       expect(code).toBe(0);
       await promise;
       expect(writeFn).toHaveBeenCalledTimes(1);
+    });
+
+    it.todo(`console uses overridden process.${stream} in worker`, async () => {
+      const worker = new Worker(
+        /* js */ `
+          import { Writable } from "node:stream";
+          const original = process.${stream};
+          class WrapStream extends Writable {
+            _write(chunk, encoding, callback) {
+              original.write("[wrapped] " + chunk.toString());
+              callback();
+            }
+          }
+          process.${stream} = new WrapStream();
+          console.${consoleFunction}("hello");
+        `,
+        { eval: true, [stream]: true },
+      );
+      const resultPromise = readToEnd(worker[stream]);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+      expect(await resultPromise).toBe("[wrapped] hello\n");
     });
   });
 });

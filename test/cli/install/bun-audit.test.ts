@@ -47,9 +47,9 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+    const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
-    const cmd = [bunExe(), "pm", "audit", ...(options.args ?? [])];
+    const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 
     const url = server.url.toString().slice(0, -1);
 
@@ -87,7 +87,7 @@ function doAuditTest(
   });
 }
 
-describe("`bun pm audit`", () => {
+describe("`bun audit`", () => {
   doAuditTest("should fail with no package.json", {
     exitCode: 1,
     files: {

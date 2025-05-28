@@ -7109,10 +7109,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     break :brk false;
 
                 if (resp.getRemoteSocketInfo()) |*address| {
-                    if (strings.eqlComptime(address.ip, "127.0.0.1") or strings.eqlComptime(address.ip, "::1") or strings.eqlComptime(address.ip, "localhost")) {
+                    // IPv4 loopback addresses
+                    if (strings.startsWith(address.ip, "127.")) {
+                        break :brk true;
+                    }
+
+                    // IPv6 loopback addresses
+                    if (strings.startsWith(address.ip, "::ffff:127.") or
+                        strings.startsWith(address.ip, "::1") or
+                        strings.eqlComptime(address.ip, "0:0:0:0:0:0:0:1"))
+                    {
                         break :brk true;
                     }
                 }
+
                 break :brk false;
             };
 
@@ -7125,7 +7135,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // So we first use a hash of the main field:
             const first_hash_segment: [8]u8 = brk: {
-                var buffer = bun.PathBufferPool.get();
+                const buffer = bun.PathBufferPool.get();
                 defer bun.PathBufferPool.put(buffer);
                 const main = JSC.VirtualMachine.get().main;
                 const len = @min(main.len, buffer.len);
@@ -7134,7 +7144,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             // And then we use a hash of their project root directory:
             const second_hash_segment: [8]u8 = brk: {
-                var buffer = bun.PathBufferPool.get();
+                const buffer = bun.PathBufferPool.get();
                 defer bun.PathBufferPool.put(buffer);
                 const root = this.dev_server.?.root;
                 const len = @min(root.len, buffer.len);

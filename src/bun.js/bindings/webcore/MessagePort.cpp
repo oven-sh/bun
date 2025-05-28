@@ -29,7 +29,6 @@
 
 #include "BunClientData.h"
 // #include "Document.h"
-#include "Event.h"
 #include "EventNames.h"
 // #include "Logging.h"
 #include "MessageEvent.h"

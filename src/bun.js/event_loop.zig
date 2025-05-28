@@ -1458,6 +1458,9 @@ pub const EventLoop = struct {
 
     fn updateCounts(this: *EventLoop) void {
         const delta = this.concurrent_ref.swap(0, .seq_cst);
+        // if (delta != 0) {
+        //     bun.Output.scoped(.EventLoop, true)("updateCounts: delta={}", .{delta});
+        // }
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {

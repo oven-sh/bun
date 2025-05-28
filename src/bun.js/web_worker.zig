@@ -503,21 +503,25 @@ fn spin(this: *WebWorker) void {
         _ = vm.global.vm().runGC(false);
     }
 
+    // Ensure initial tick to process CppTasks, especially those from WebWorker__fireEarlyMessages.
     // always doing a first tick so we call CppTask without delay after dispatchOnline
     vm.tick();
 
-    while (vm.isEventLoopAlive()) {
+    while (!this.hasRequestedTerminate() and vm.isEventLoopAlive()) {
         vm.tick();
+
+        // Re-check termination after vm.tick() in case a task or microtask caused it.
         if (this.hasRequestedTerminate()) {
             break;
         }
+
         vm.eventLoop().autoTickActive();
+
+        // Re-check termination after autoTickActive() as it might have processed a wakeup signal.
         if (this.hasRequestedTerminate()) {
             break;
         }
     }
-
-    log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
     // Only call "beforeExit" if we weren't from a .terminate
     if (!this.hasRequestedTerminate()) {
@@ -527,7 +531,6 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs();
     this.exitAndDeinit();
-    log("[{d}] spin done", .{this.execution_context_id});
 }
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
@@ -539,6 +542,7 @@ pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
+    log("[{d}] setRefInternal({}) called", .{ this.execution_context_id, value });
     if (value) {
         this.parent_poll_ref.ref(this.parent);
     } else {
@@ -564,7 +568,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-    } else {}
+    }
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
@@ -574,12 +578,13 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
     bun.Analytics.Features.workers_terminated += 1;
-    log("[{d}] exitAndDeinit", .{this.execution_context_id});
+
     const cpp_worker = this.cpp_worker;
     var exit_code: i32 = 0;
     var globalObject: ?*jsc.JSGlobalObject = null;
     var vm_to_deinit: ?*jsc.VirtualMachine = null;
     var loop: ?*bun.uws.Loop = null;
+
     if (this.vm) |vm| {
         loop = vm.uwsLoop();
         this.vm = null;
@@ -589,6 +594,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         globalObject = vm.global;
         vm_to_deinit = vm;
     }
+
     var arena = this.arena;
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);

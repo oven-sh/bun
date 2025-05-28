@@ -357,7 +357,6 @@ pub fn start(
 /// Deinit will clean up vm and everything.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
 fn deinit(this: *WebWorker) void {
-    std.debug.print("[DEBUG] deinit called\n", .{});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
@@ -507,22 +506,17 @@ fn spin(this: *WebWorker) void {
     // always doing a first tick so we call CppTask without delay after dispatchOnline
     vm.tick();
 
-    std.debug.print("[DEBUG] Worker {d} entering main event loop\n", .{this.execution_context_id});
     while (vm.isEventLoopAlive()) {
-        std.debug.print("[DEBUG] Worker {d} - event loop tick, hasRequestedTerminate: {}\n", .{ this.execution_context_id, this.hasRequestedTerminate() });
         vm.tick();
         if (this.hasRequestedTerminate()) {
-            std.debug.print("[DEBUG] Worker {d} - termination requested, breaking from event loop\n", .{this.execution_context_id});
             break;
         }
         vm.eventLoop().autoTickActive();
         if (this.hasRequestedTerminate()) {
-            std.debug.print("[DEBUG] Worker {d} - termination requested after autoTickActive, breaking from event loop\n", .{this.execution_context_id});
             break;
         }
     }
 
-    std.debug.print("[DEBUG] Worker {d} - exited main event loop, hasRequestedTerminate: {}\n", .{ this.execution_context_id, this.hasRequestedTerminate() });
     log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
     // Only call "beforeExit" if we weren't from a .terminate
@@ -538,21 +532,16 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    std.debug.print("[DEBUG] setRef({}) called\n", .{value});
     if (this.hasRequestedTerminate()) {
-        std.debug.print("[DEBUG] setRef - already requested terminate, returning\n", .{});
         return;
     }
     this.setRefInternal(value);
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
-    std.debug.print("[DEBUG] setRefInternal({}) called\n", .{value});
     if (value) {
-        std.debug.print("[DEBUG] setRefInternal - ref()\n", .{});
         this.parent_poll_ref.ref(this.parent);
     } else {
-        std.debug.print("[DEBUG] setRefInternal - unref()\n", .{});
         this.parent_poll_ref.unref(this.parent);
     }
 }
@@ -565,32 +554,24 @@ pub fn exit(this: *WebWorker) void {
 
 /// Request a terminate from any thread.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
-    std.debug.print("[DEBUG] notifyNeedTermination called for worker {}\n", .{this.execution_context_id});
     if (this.status.load(.acquire) == .terminated) {
-        std.debug.print("[DEBUG] notifyNeedTermination - worker {} already terminated\n", .{this.execution_context_id});
         return;
     }
     if (this.setRequestedTerminate()) {
-        std.debug.print("[DEBUG] notifyNeedTermination - worker {} termination already requested\n", .{this.execution_context_id});
         return;
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
     const current_status = this.status.load(.acquire);
-    std.debug.print("[DEBUG] notifyNeedTermination - worker {} current status: {}\n", .{ this.execution_context_id, current_status });
+
     if (this.vm) |vm| {
-        std.debug.print("[DEBUG] notifyNeedTermination - worker {} waking up VM\n", .{this.execution_context_id});
         vm.eventLoop().wakeup();
-    } else {
-        std.debug.print("[DEBUG] notifyNeedTermination - worker {} has no VM\n", .{this.execution_context_id});
-    }
-    std.debug.print("[DEBUG] notifyNeedTermination - worker {} completed\n", .{this.execution_context_id});
+    } else {}
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
 /// Only call after the VM is initialized AND on the same thread as the worker.
 /// Otherwise, call `notifyNeedTermination` to cause the event loop to safely terminate.
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
-    std.debug.print("[DEBUG] Worker {} - exitAndDeinit called\n", .{this.execution_context_id});
     jsc.markBinding(@src());
     this.setStatus(.terminated);
     bun.Analytics.Features.workers_terminated += 1;
@@ -610,9 +591,9 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
-    std.debug.print("[DEBUG] Worker {} - calling WebWorker__dispatchExit with exit_code: {}\n", .{ this.execution_context_id, exit_code });
+
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-    std.debug.print("[DEBUG] Worker {} - WebWorker__dispatchExit completed\n", .{this.execution_context_id});
+
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
@@ -625,7 +606,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     if (arena) |*arena_| {
         arena_.deinit();
     }
-    std.debug.print("[DEBUG] Worker {} - exitAndDeinit about to call bun.exitThread()\n", .{this.execution_context_id});
+
     bun.exitThread();
 }
 

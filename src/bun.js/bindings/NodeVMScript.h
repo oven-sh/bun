@@ -92,7 +92,7 @@ private:
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)
         : Base(vm, structure)
-        , m_source(source)
+        , m_source(WTFMove(source))
         , m_options(WTFMove(options))
     {
     }

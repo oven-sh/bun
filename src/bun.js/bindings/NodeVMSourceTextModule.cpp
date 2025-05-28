@@ -213,7 +213,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
     }
 
-    ASSERT_WITH_MESSAGE(attributesNodes.size() == requests.size(), "Attributes node count doesn't match request count (%zu != %zu)", attributesNodes.size(), requests.size());
+    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];

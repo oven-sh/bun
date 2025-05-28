@@ -826,7 +826,6 @@ Writable.prototype.end = function (chunk, encoding, cb) {
 };
 
 function needFinish(state) {
-  $debug("needFinish", fmtState(state[kState]), `length=${state.length}`);
   return (
     // State is ended && constructed but not destroyed, finished, writing, errorEmitted or closedEmitted
     (state[kState] &

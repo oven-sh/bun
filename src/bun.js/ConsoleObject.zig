@@ -152,12 +152,12 @@ fn messageWithTypeAndLevel_(
         else
             Output.enable_ansi_colors_stdout;
 
-    const worker = if (global.bunVM().worker) |w|
-        if (w.kind == .node) w else null
+    const use_process_stdio = if (global.bunVM().worker) |w|
+        w.kind == .node
     else
-        null;
-    var worker_writer = if (worker) |w|
-        w.stdioWriter(if (level == .Warning or level == .Error) .stderr else .stdout)
+        false;
+    var worker_writer = if (use_process_stdio)
+        global.processStdioWriter(if (level == .Warning or level == .Error) .stderr else .stdout)
     else
         null;
 

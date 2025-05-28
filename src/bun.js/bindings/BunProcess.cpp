@@ -3593,6 +3593,30 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
+extern "C" void Process__writeToStdio(JSGlobalObject* jsGlobalObject, int fd, const uint8_t* bytes, size_t len)
+{
+    ASSERT(fd == 1 || fd == 2);
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* process = globalObject->processObject();
+    auto stream = process->get(globalObject, Identifier::fromString(vm, fd == 1 ? "stdout"_s : "stderr"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    auto writeFn = stream.get(globalObject, Identifier::fromString(vm, "write"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    auto callData = JSC::getCallData(writeFn);
+    if (callData.type == CallData::Type::None) {
+        scope.throwException(globalObject, createNotAFunctionError(globalObject, writeFn));
+        return;
+    }
+    MarkedArgumentBuffer args;
+    auto* buffer = WebCore::createBuffer(globalObject, { bytes, len });
+    args.append(buffer);
+    JSC::call(globalObject, writeFn, callData, stream, args);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0

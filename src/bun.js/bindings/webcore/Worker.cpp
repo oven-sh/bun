@@ -566,12 +566,6 @@ void Worker::pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes)
     });
 }
 
-extern "C" void WebWorker__pushStdioToParent(Worker* worker, int fd, const uint8_t* bytes, size_t len)
-{
-    ASSERT(fd == 1 || fd == 2);
-    worker->pushStdioToParent(static_cast<Worker::PushStdioFd>(fd), { bytes, len });
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

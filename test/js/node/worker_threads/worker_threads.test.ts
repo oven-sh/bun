@@ -657,6 +657,52 @@ error
 warn
 `);
     });
+
+    it("handles exceptions", async () => {
+      const cases = [
+        {
+          code: /* js */ `process.stdout.write = () => { throw new Error("write()"); }; console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "write()",
+          },
+        },
+        {
+          code: /* js */ `process.stdout.write = 6; console.log("hello");`,
+          expectedException: {
+            name: "TypeError",
+            message: expect.stringMatching(/is not a function.*is 6/),
+          },
+        },
+        {
+          code: /* js */ `Object.defineProperty(process.stdout, "write", { get() { throw new Error("write getter"); } }); console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "write getter",
+          },
+        },
+        {
+          code: /* js */ `Object.defineProperty(process, "stdout", { get() { throw new Error("stdout getter"); } }); console.log("hello");`,
+          expectedException: {
+            name: "Error",
+            message: "stdout getter",
+          },
+        },
+      ];
+
+      for (const { code, expectedException } of cases) {
+        const worker = new Worker(code, { eval: true, stdout: true });
+        const stdoutPromise = readToEnd(worker.stdout);
+        const [exception] = await once(worker, "error");
+        expect(exception).toMatchObject(expectedException);
+        expect(await stdoutPromise).toBe("");
+      }
+    });
+
+    it("works if the entire process object is overridden", async () => {
+      const worker = new Worker(/* js */ `process = 5; console.log("hello");`, { eval: true, stdout: true });
+      expect(await readToEnd(worker.stdout)).toBe("hello\n");
+    });
   });
 });
 

@@ -64,16 +64,10 @@ pub const Status = enum(u8) {
     terminated,
 };
 
-const PushStdioFd = enum(c_int) {
-    stdout = 1,
-    stderr = 2,
-};
-
 extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *CppWorker, i32) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *CppWorker, *jsc.JSGlobalObject) void;
 extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *CppWorker, bun.String, JSValue) void;
-extern fn WebWorker__pushStdioToParent(cpp_worker: *CppWorker, fd: PushStdioFd, bytes: [*]const u8, len: usize) void;
 
 pub fn hasRequestedTerminate(this: *const WebWorker) bool {
     return this.requested_terminate.load(.monotonic);
@@ -625,22 +619,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     bun.exitThread();
-}
-
-const WriterContext = struct {
-    cpp_worker: *CppWorker,
-    fd: PushStdioFd,
-
-    fn write(this: WriterContext, bytes: []const u8) error{}!usize {
-        WebWorker__pushStdioToParent(this.cpp_worker, this.fd, bytes.ptr, bytes.len);
-        return bytes.len;
-    }
-};
-
-pub const Writer = std.io.Writer(WriterContext, error{}, WriterContext.write);
-
-pub fn stdioWriter(this: *WebWorker, fd: PushStdioFd) Writer {
-    return .{ .context = .{ .cpp_worker = this.cpp_worker, .fd = fd } };
 }
 
 comptime {

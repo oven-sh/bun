@@ -9696,6 +9696,7 @@ pub const PackageManager = struct {
     });
 
     pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
+        clap.parseParam("--json                                Output in JSON format") catch unreachable,
         clap.parseParam("-a, --all") catch unreachable,
         clap.parseParam("--json                              Output in JSON format") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,

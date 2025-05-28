@@ -60,14 +60,6 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             Vector<KeyValuePair<String, String>> cookies;
             for (const auto& pair : pairs) {
                 if (pair.size() == 2) {
-                    if (!pair[1].isEmpty() && !isValidHTTPHeaderValue(pair[1])) {
-                        if (throwOnInvalidCookieString) {
-                            return Exception { TypeError, "Invalid cookie string: cookie value is not valid"_s };
-                        } else {
-                            continue;
-                        }
-                    }
-
                     cookies.append(KeyValuePair<String, String>(pair[0], pair[1]));
                 } else if (throwOnInvalidCookieString) {
                     return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
@@ -78,13 +70,6 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
         [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
             Vector<KeyValuePair<String, String>> cookies;
             for (const auto& entry : pairs) {
-                if (!entry.value.isEmpty() && !isValidHTTPHeaderValue(entry.value)) {
-                    if (throwOnInvalidCookieString) {
-                        return Exception { TypeError, "Invalid cookie string: cookie value is not valid"_s };
-                    } else {
-                        continue;
-                    }
-                }
                 cookies.append(KeyValuePair<String, String>(entry.key, entry.value));
             }
 

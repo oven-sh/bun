@@ -9755,7 +9755,7 @@ pub const PackageManager = struct {
     });
 
     const audit_params: []const ParamType = &([_]ParamType{
-        clap.parseParam("<POS>                                  Check installed packages for vulnerabilities") catch unreachable,
+        clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
         clap.parseParam("--json                                 Output in JSON format") catch unreachable,
     });
 

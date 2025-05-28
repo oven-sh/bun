@@ -1,13 +1,10 @@
 const uws = bun.uws;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -1056,8 +1053,10 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
     if (message == .data) handle_message: {
         const msg_data = message.data;
         if (msg_data.isObject()) {
-            const cmd = msg_data.fastGet(globalThis, .cmd) orelse {
-                if (globalThis.hasException()) _ = globalThis.takeException(bun.JSError.JSError);
+            const cmd = msg_data.fastGet(globalThis, .cmd) catch {
+                globalThis.clearException();
+                break :handle_message;
+            } orelse {
                 break :handle_message;
             };
             if (cmd.isString()) {

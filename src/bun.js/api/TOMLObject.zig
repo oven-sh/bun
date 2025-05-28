@@ -56,12 +56,9 @@ pub fn parse(
     return out.toJSByParseJSON(globalThis);
 }
 
-const TOMLObject = @This();
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
-const std = @import("std");
 const ZigString = JSC.ZigString;
 const logger = bun.logger;
 const bun = @import("bun");

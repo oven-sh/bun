@@ -1,7 +1,6 @@
 const Glob = @This();
 const globImpl = @import("../../glob.zig");
 const GlobWalker = globImpl.BunGlobWalker;
-const PathLike = @import("../node/types.zig").PathLike;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const Syscall = @import("../../sys.zig");
 const std = @import("std");
@@ -11,12 +10,10 @@ const bun = @import("bun");
 const BunString = bun.String;
 const string = bun.string;
 const JSC = bun.JSC;
-const JSArray = JSC.JSArray;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
-const isAllAscii = @import("../../string_immutable.zig").isAllASCII;
 const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
 
 const Arena = std.heap.ArenaAllocator;

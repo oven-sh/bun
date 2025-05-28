@@ -331,16 +331,14 @@ function getZigAgent(platform, options) {
   return getEc2Agent(
     {
       os: "linux",
-      arch: "x64",
+      arch: "aarch64",
       abi: "musl",
       distro: "alpine",
       release: "3.21",
     },
     options,
     {
-      instanceType: "c7i.2xlarge",
-      cpuCount: 4,
-      threadsPerCore: 1,
+      instanceType: "r8g.large",
     },
   );
 }

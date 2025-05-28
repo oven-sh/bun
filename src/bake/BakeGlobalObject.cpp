@@ -104,11 +104,11 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto moduleKey = key.toWTFString(globalObject);
-    if (UNLIKELY(scope.exception()))
+    if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
     if (moduleKey.startsWith("bake:/"_s)) {
-        if (LIKELY(global->m_perThreadData)) {
+        if (global->m_perThreadData) [[likely]] {
             BunString source = BakeProdLoad(global->m_perThreadData, Bun::toString(moduleKey));
             if (source.tag != BunStringTag::Dead) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));

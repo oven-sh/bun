@@ -2,17 +2,13 @@ const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL.c;
@@ -460,7 +456,7 @@ pub const SocketConfig = struct {
 
         var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero, is_server);
 
-        if (opts.fastGet(globalObject, .data)) |default_data_value| {
+        if (try opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -3383,7 +3379,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.fastGet(globalObject, .data)) |default_data_value| {
+            if (try opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }
@@ -4227,7 +4223,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     }
 
     var default_data = JSValue.zero;
-    if (opts.fastGet(globalObject, .data)) |default_data_value| {
+    if (try opts.fastGet(globalObject, .data)) |default_data_value| {
         default_data = default_data_value;
         default_data.ensureStillAlive();
     }

@@ -1,4 +1,3 @@
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const Sizes = @import("./sizes.zig");

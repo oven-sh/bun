@@ -13,10 +13,6 @@ const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
-const JSType = JSValue.JSType;
-const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;
 const Environment = bun.Environment;
@@ -42,7 +38,6 @@ pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
 
-const log = bun.Output.scoped(.expect, false);
 
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
@@ -366,7 +361,7 @@ pub const Expect = struct {
 
         var custom_label = bun.String.empty;
         if (arguments.len > 1) {
-            if (arguments[1].isString() or arguments[1].implementsToString(globalThis)) {
+            if (arguments[1].isString() or try arguments[1].implementsToString(globalThis)) {
                 const label = try arguments[1].toBunString(globalThis);
                 if (globalThis.hasException()) return .zero;
                 custom_label = label;
@@ -2099,7 +2094,7 @@ pub const Expect = struct {
             return .undefined;
         }
 
-        const expected_diff = std.math.pow(f64, 10, -precision) / 2;
+        const expected_diff = bun.pow(10, -precision) / 2;
         const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
@@ -2248,7 +2243,7 @@ pub const Expect = struct {
 
             if (expected_value.isString()) {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
+                    try result.fastGet(globalThis, .message)
                 else
                     JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
@@ -2271,7 +2266,7 @@ pub const Expect = struct {
 
             if (expected_value.isRegExp()) {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
+                    try result.fastGet(globalThis, .message)
                 else
                     JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
 
@@ -2288,9 +2283,9 @@ pub const Expect = struct {
                 });
             }
 
-            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+            if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
+                    try result.fastGet(globalThis, .message)
                 else
                     JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
@@ -2305,7 +2300,7 @@ pub const Expect = struct {
 
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
-            const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+            const received_message = (try result.fastGet(globalThis, .message)) orelse .undefined;
             return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
 
@@ -2318,7 +2313,7 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
-                result.fastGet(globalThis, .message)
+                try result.fastGet(globalThis, .message)
             else
                 JSValue.fromCell(try result.toJSString(globalThis));
 
@@ -2399,7 +2394,7 @@ pub const Expect = struct {
             // If it's not an object, we are going to crash here.
             assert(expected_value.isObject());
 
-            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+            if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
@@ -2477,7 +2472,7 @@ pub const Expect = struct {
             return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
         }
 
-        if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+        if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
             return this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
         }
@@ -4823,7 +4818,7 @@ pub const Expect = struct {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
 
-                    if (result.fastGet(globalThis, .message)) |message_value| {
+                    if (try result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable()) {
                             break :valid false;
                         }

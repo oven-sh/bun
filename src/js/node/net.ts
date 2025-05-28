@@ -31,7 +31,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketHandler, SocketListener } from "bun";
 import type { ServerOpts } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
+const { validateFunction, validateInt32, validateNumber, validateAbortSignal } = require("internal/validators");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
@@ -493,6 +493,10 @@ function Socket(options?) {
     throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
   if (options?.writableObjectMode)
     throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
+  if (options?.fd !== undefined) {
+    validateInt32(options.fd, "options.fd", 0);
+  }
 
   Duplex.$call(this, {
     ...opts,
@@ -1430,6 +1434,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (typeof port === "number" && (port < 0 || port >= 65536)) {
+    throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
+  }
+
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
@@ -1530,6 +1538,12 @@ Server.prototype[kRealListen] = function (
 
   //make this instance available on handlers
   this._handle.data = this;
+
+  const addr = this.address();
+  if (addr && typeof addr === "object") {
+    const familyLast = String(addr.family).slice(-1);
+    this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  }
 
   if (contexts) {
     for (const [name, context] of contexts) {

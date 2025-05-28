@@ -2,7 +2,6 @@ const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
 const bun = @import("bun");
 
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
 const Async = bun.Async;

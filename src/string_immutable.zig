@@ -2,13 +2,11 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
 const string = bun.string;
-const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
-const JSC = bun.JSC;
 const OOM = bun.OOM;
 
 /// memmem is provided by libc on posix, but implemented in zig for windows.
@@ -3820,6 +3818,9 @@ pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3_fast, comptime T
     }
 
     const s3 = p[3];
+
+    if ((s3 & 0xC0) != 0x80) return zero;
+
     {
         const cp = (@as(T, p[0] & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
         if (cp < 0x10000 or cp > 0x10FFFF) return zero;
@@ -4685,9 +4686,6 @@ pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
     return order(a, b) == .gt;
 }
-
-const sort_asc = std.sort.asc(u8);
-const sort_desc = std.sort.desc(u8);
 
 /// Every time you read a non^2 sized integer, Zig masks off the extra bits.
 /// This is a meaningful performance difference, including in release builds.

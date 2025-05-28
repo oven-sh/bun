@@ -36,7 +36,6 @@ const MAX_WINDOW_SIZE = std.math.maxInt(i32);
 const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
-const MAX_HPACK_HEADER_SIZE = std.math.maxInt(u16);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 
 const PaddingStrategy = enum {
@@ -598,7 +597,7 @@ const Handlers = struct {
             }
         }
 
-        if (opts.fastGet(globalObject, .@"error")) |callback_value| {
+        if (try opts.fastGet(globalObject, .@"error")) |callback_value| {
             if (!callback_value.isCell() or !callback_value.isCallable()) {
                 return globalObject.throwInvalidArguments("Expected \"error\" callback to be a function", .{});
             }

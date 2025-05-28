@@ -479,7 +479,7 @@ for (const { name, connect } of tests) {
       });
     }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
 
-    it.skipIf(connect === duplexProxy)("should be able to transfer data", done => {
+    it("should be able to transfer data", done => {
       const socket = connect(
         {
           port: 443,

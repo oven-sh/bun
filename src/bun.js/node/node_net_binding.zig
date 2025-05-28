@@ -90,6 +90,7 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
+            .handlers = undefined,
         });
         return socket.getThisValue(globalThis);
     } else {
@@ -98,6 +99,7 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
+            .handlers = undefined,
         });
         return socket.getThisValue(globalThis);
     }

@@ -2,7 +2,6 @@ const mem = @import("std").mem;
 const std = @import("std");
 const bun = @import("bun");
 const log = bun.Output.scoped(.mimalloc, true);
-const assert = bun.assert;
 const Allocator = mem.Allocator;
 const mimalloc = @import("./mimalloc.zig");
 const Environment = @import("../env.zig");

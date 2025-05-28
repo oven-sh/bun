@@ -1,5 +1,5 @@
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -283,7 +283,8 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
+// debug builds use way more memory and do not give useful results for this test
+test.skipIf(isDebug)("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
@@ -629,7 +630,7 @@ describe("stdio", () => {
         .replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
       const stderr = await readToEnd(worker.stderr);
 
-      expect(stdout).toBe(`debug
+      let expectedStdout = `debug
 info
 log
 ┌───┬───┐
@@ -640,10 +641,15 @@ log
 trace
       at blob:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:15:17
       at loadAndEvaluateModule (line:col)
-      at asyncFunctionResume (line:col)
+`;
+      if (isDebug) {
+        expectedStdout += `      at asyncFunctionResume (line:col)
       at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
       at promiseReactionJob (line:col)
-`);
+`;
+      }
+
+      expect(stdout).toBe(expectedStdout);
       expect(stderr).toBe(`Assertion failed
 Assertion failed
 should be true

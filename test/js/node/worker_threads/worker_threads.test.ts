@@ -578,7 +578,7 @@ describe("stdio", () => {
       expect(writeFn).toHaveBeenCalledTimes(1);
     });
 
-    it.todo(`console uses overridden process.${stream} in worker`, async () => {
+    it(`console uses overridden process.${stream} in worker`, async () => {
       const worker = new Worker(
         /* js */ `
           import { Writable } from "node:stream";
@@ -598,6 +598,58 @@ describe("stdio", () => {
       const [code] = await once(worker, "exit");
       expect(code).toBe(0);
       expect(await resultPromise).toBe("[wrapped] hello\n");
+    });
+  });
+
+  describe("console", () => {
+    it("all functions are captured", async () => {
+      const worker = new Worker(
+        /* js */ `
+        console.assert();
+        console.assert(false);
+        // TODO: https://github.com/oven-sh/bun/issues/19953
+        // this should be "Assertion failed: should be true," not "should be true"
+        // but we still want to make sure it is captured in workers
+        console.assert(false, "should be true");
+        console.debug("debug");
+        console.error("error");
+        console.info("info");
+        console.log("log");
+        console.table([{ a: 5 }]);
+        // TODO: https://github.com/oven-sh/bun/issues/19952
+        // this goes to the wrong place but we still want to make sure it is captured in workers
+        console.trace("trace");
+        console.warn("warn");
+      `,
+        { eval: true, stdout: true, stderr: true },
+      );
+      // normalize the random blob URL and lines and columns from internal modules
+      const stdout = (await readToEnd(worker.stdout))
+        .replace(/blob:[0-9a-f\-]{36}/, "blob:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+        .replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
+      const stderr = await readToEnd(worker.stderr);
+
+      expect(stdout).toBe(`debug
+info
+log
+┌───┬───┐
+│   │ a │
+├───┼───┤
+│ 0 │ 5 │
+└───┴───┘
+trace
+      at blob:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:15:17
+      at loadAndEvaluateModule (line:col)
+      at asyncFunctionResume (line:col)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
+      at promiseReactionJob (line:col)
+`);
+      expect(stderr).toBe(`Assertion failed
+Assertion failed
+should be true
+error
+warn
+`);
     });
   });
 });

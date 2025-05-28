@@ -296,6 +296,58 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  describe("stdio", () => {
+    test("process stdio in worker does not go to process stdio in parent", async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "worker-fixture-process-stdio.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.exited;
+      expect(proc.exitCode).toBe(0);
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      expect(stdout).toBe("stdout");
+      expect(stderr).toBe("stderr");
+    });
+
+    test("console functions in worker do not go to process stdio in worker or parent", async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "worker-fixture-console.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.exited;
+      expect(proc.exitCode).toBe(0);
+      // normalize lines and columns from internal modules
+      const stdout = (await new Response(proc.stdout).text()).replaceAll(/\(\d+:\d+\)$/gm, "(line:col)");
+      const stderr = await new Response(proc.stderr).text();
+
+      expect(stdout).toBe(`debug
+info
+log
+┌───┬───┐
+│   │ a │
+├───┼───┤
+│ 0 │ 5 │
+└───┴───┘
+trace
+      at ${__dirname}/worker-fixture-console.js:39:11
+      at loadAndEvaluateModule (line:col)
+`);
+      expect(stderr).toBe(`Assertion failed
+Assertion failed
+should be true
+error
+warn
+`);
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

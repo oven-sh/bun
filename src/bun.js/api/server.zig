@@ -2390,7 +2390,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 Output.flush();
                 if (!globalThis.hasException()) {
-                    JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                    JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis, Output.enable_ansi_colors_stderr);
                 }
                 Output.flush();
             }

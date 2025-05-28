@@ -248,7 +248,7 @@ fn messageWithTypeAndLevel_(
         writer.writeAll("undefined\n") catch {};
 
     if (message_type == .Trace) {
-        writeTrace(Writer, writer, global);
+        writeTrace(Writer, writer, global, enable_colors);
         buffered_writer.flush() catch {};
     }
 }
@@ -668,7 +668,7 @@ pub const TablePrinter = struct {
     }
 };
 
-pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
+pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject, enable_ansi_colors: bool) void {
     var holder = ZigException.Holder.init();
     var vm = VirtualMachine.get();
     defer holder.deinit(vm);
@@ -688,20 +688,14 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
         false,
     );
 
-    if (Output.enable_ansi_colors_stderr)
-        VirtualMachine.printStackTrace(
+    switch (enable_ansi_colors) {
+        inline else => |color| VirtualMachine.printStackTrace(
             Writer,
             writer,
             exception.stack,
-            true,
-        ) catch {}
-    else
-        VirtualMachine.printStackTrace(
-            Writer,
-            writer,
-            exception.stack,
-            false,
-        ) catch {};
+            color,
+        ) catch {},
+    }
 }
 
 pub const FormatOptions = struct {

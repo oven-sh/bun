@@ -1112,45 +1112,22 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     return true;
 }
-
-bool isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
+extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
 {
     //   return typeof obj === 'object' &&
     //      obj !== null &&
     //      ObjectPrototypeHasOwnProperty(obj, 'stack');
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
     if (!obj.isObject()) return false;
 
     auto* object = JSC::jsCast<JSC::JSObject*>(obj);
     auto propertyKey = Identifier::fromString(globalObject->vm(), "stack"_s);
     const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);
-    RELEASE_AND_RETURN(scope, result);
-}
-
-extern "C" JSC::EncodedJSValue Bun__wrapUnhandledRejectionErrorForUncaughtException(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
-{
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
-    auto reason = JSC::JSValue::decode(encodedReason);
-    auto isErrorLikeResult = isErrorLike(globalObject, reason);
     if (scope.exception()) {
         scope.clearException();
+        return false;
     }
-    if (!isErrorLikeResult) {
-        auto reasonStr = reason.toString(globalObject); // here, node uses noSideEffectsToString
-        if (scope.exception()) {
-            scope.clearException();
-        }
-        // Non-errors are wrapped in ERR_UNHANDLED_REJECTION before being sent to the uncaught exception handler
-        reason = Bun::createError(
-            globalObject,
-            Bun::ErrorCode::ERR_UNHANDLED_REJECTION,
-            makeString(
-                "This error originated either by throwing inside of an async function without a catch block, "
-                "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \""_s,
-                reasonStr->getString(globalObject),
-                "\"."_s));
-    }
-    return JSC::JSValue::encode(reason);
+    return result;
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)

@@ -501,6 +501,45 @@ extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejecti
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
 extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
 extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
+extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
+
+fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
+    if (Bun__promises__isErrorLike(globalObject, reason)) return reason;
+    const reasonStr = reason.toString(globalObject);
+    if (globalObject.hasException()) globalObject.clearException();
+    return globalObject.ERR(.UNHANDLED_REJECTION, "This error originated either by throwing inside of an async function without a catch block, " ++
+        "or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"" ++
+        "{s}" ++
+        "\".", .{reasonStr.view(globalObject)}).toJS();
+}
+
+fn emitUnhandledRejectionWarning(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) void {
+    _ = this;
+    _ = globalObject;
+    _ = reason;
+    _ = promise;
+    // TODO: implement
+    //   const warning = new UnhandledPromiseRejectionWarning(promiseInfo.uid);
+    //   const reason = promiseInfo.reason;
+    //   try {
+    //     if (isErrorLike(reason)) {
+    //       warning.stack = reason.stack;
+    //       process.emitWarning(reason.stack, unhandledRejectionErrName);
+    //     } else {
+    //       process.emitWarning(
+    //         noSideEffectsToString(reason), unhandledRejectionErrName);
+    //     }
+    //   } catch {
+    //     try {
+    //       process.emitWarning(
+    //         noSideEffectsToString(reason), unhandledRejectionErrName);
+    //     } catch {
+    //       // Ignore.
+    //     }
+    //   }
+    //
+    //   process.emitWarning(warning);
+}
 
 pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObject, reason: JSValue, promise: JSValue) bool {
     if (this.isShuttingDown()) {
@@ -514,28 +553,37 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
         return true;
     }
 
-    // trigger unhandledRejection handler if available
-    if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
-
     switch (this.unhandledRejectionsMode()) {
         .bun => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             // continue to default handler
         },
         .none => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             return true; // ignore the unhandled rejection
         },
         .warn => {
-            // TODO: emit warning
-        },
-        .strict => {
-            // TODO: strict
-        },
-        .throw => {
-            const wrapped_reason = Bun__wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
-            if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;
+            _ = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
+            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            return true;
         },
         .warn_with_error_code => {
-            // TODO: warn_with_error_code
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            this.exit_handler.exit_code = 1;
+            return true;
+        },
+        .strict => {
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            _ = this.uncaughtException(globalObject, wrapped_reason, true);
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
+            emitUnhandledRejectionWarning(this, globalObject, reason, promise);
+            return true;
+        },
+        .throw => {
+            const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
+            if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;
+            // continue to default handler
         },
     }
     this.unhandled_error_counter += 1;

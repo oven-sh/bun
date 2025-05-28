@@ -87,8 +87,8 @@ pub const AuditCommand = struct {
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
     pub fn audit(ctx: Command.Context, pm: *PackageManager, json_output: bool) bun.OOM!u32 {
-        // Output.prettyError(comptime Output.prettyFmt("<r><b>bun audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
-        // Output.flush();
+        Output.prettyError(comptime Output.prettyFmt("<r><b>bun audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
+        Output.flush();
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         @import("./package_manager_command.zig").PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);

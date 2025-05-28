@@ -7151,8 +7151,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             //     uuid: string,
             //   }
             // }
-            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": \"{s}\", \"uuid\": \"{}\" }} }}", .{
-                this.dev_server.?.root,
+            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}", .{
+                bun.fmt.formatJSONStringUTF8(this.dev_server.?.root, .{}),
                 uuid,
             }) catch bun.outOfMemory();
             defer bun.default_allocator.free(json_string);

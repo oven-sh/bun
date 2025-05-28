@@ -249,25 +249,10 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
 const Range = @This();
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
-const JSC = bun.JSC;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const Lockfile = bun.install.Lockfile;
-const ExternalString = bun.Semver.ExternalString;
-const SlicedString = bun.Semver.SlicedString;
-const String = bun.Semver.String;
 const Version = bun.Semver.Version;
 const Query = bun.Semver.Query;
 const assert = bun.assert;

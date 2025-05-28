@@ -20,38 +20,16 @@ error: dependencies expects a map of specifiers, e.g.
 "
 `;
 
-exports[`should report error on invalid format for optionalDependencies 1`] = `
-"1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}
-                                    ^
-error: optionalDependencies expects a map of specifiers, e.g.
-  "optionalDependencies": {
-    <green>"bun"<r>: <green>"latest"<r>
-  }
-    at [dir]/package.json:1:33
-"
-`;
-
 exports[`should report error on invalid format for workspaces 1`] = `
 "1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
-                                    ^
-error: Workspaces expects an array of strings, e.g.
-  "workspaces": [
-    "path/to/package"
-  ]
-    at [dir]/package.json:1:33
-"
-`;
-
-exports[`should report error on duplicated workspace packages 1`] = `
-"1 | {"name":"moo","version":"0.0.3"}
-            ^
-error: Workspace name "moo" already exists
-    at [dir]/baz/package.json:1:9
-
-1 | {"name":"moo","version":"0.0.2"}
-            ^
-note: Package name is also declared here
-   at [dir]/bar/package.json:1:9
+                                                             ^
+error: "workspaces.packages" expects an array of strings, e.g.
+  "workspaces": {
+    "packages": [
+      "path/to/package"
+    ]
+  }
+    at [dir]/package.json:1:58
 "
 `;
 

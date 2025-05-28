@@ -7,7 +7,6 @@ const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 const bun = @import("bun");
-const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,24 +16,18 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const std = @import("std");
-const uws = @import("../deps/uws.zig");
 const JSC = bun.JSC;
 const DirInfo = @import("../resolver/dir_info.zig");
 const File = bun.sys.File;
-const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
 const FD = bun.FD;
 
-const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
-const linker = @import("../linker.zig");
-
 const Api = @import("../api/schema.zig").Api;
 const Path = bun.path;
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
 const transpiler = bun.transpiler;
@@ -44,20 +37,16 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
-const HTTPChannel = HTTP.HTTPChannel;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
 
-const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
@@ -65,11 +54,9 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
-pub const TextLockfile = @import("./bun.lock.zig");
+pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
-
-const anyhow = bun.anyhow;
 
 pub const bun_hash_tag = ".bun-tag-";
 pub const max_hex_hash_len: comptime_int = brk: {
@@ -478,7 +465,7 @@ const NetworkTask = struct {
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
+        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
             this.unsafe_http_client.client.flags.force_last_modified = true;
             this.unsafe_http_client.client.if_modified_since = last_modified;
         }
@@ -777,6 +764,7 @@ pub const Task = struct {
                 }
 
                 const result = this.request.extract.tarball.run(
+                    &this.log,
                     bytes,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -798,7 +786,7 @@ pub const Task = struct {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
                         this.request.git_clone.env,
-                        manager.log,
+                        &this.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
@@ -822,7 +810,7 @@ pub const Task = struct {
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
@@ -846,7 +834,7 @@ pub const Task = struct {
                 const data = Repository.checkout(
                     manager.allocator,
                     this.request.git_checkout.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
@@ -897,6 +885,7 @@ pub const Task = struct {
                     &this.request.local_tarball.tarball,
                     tarball_path,
                     normalize,
+                    &this.log,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -918,13 +907,14 @@ pub const Task = struct {
         tarball: *const ExtractTarball,
         tarball_path: string,
         normalize: bool,
+        log: *logger.Log,
     ) !ExtractData {
         const bytes = if (normalize)
             try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
         else
             try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
-        return tarball.run(bytes);
+        return tarball.run(log, bytes);
     }
 
     pub const Tag = enum(u3) {
@@ -2164,7 +2154,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             const basename = std.fs.path.basename(unintall_task.absolute_path);
 
                             var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
                                 }
                                 return;
@@ -2172,7 +2162,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             defer bun.FD.fromStdDir(dir).close();
 
                             dir.deleteTree(basename) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
                                 }
                             };
@@ -2678,6 +2668,9 @@ pub const PackageManager = struct {
     subcommand: Subcommand,
     update_requests: []UpdateRequest = &[_]UpdateRequest{},
 
+    /// Only set in `bun pm`
+    root_package_json_name_at_time_of_init: []const u8 = "",
+
     root_package_json_file: std.fs.File,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
@@ -2840,7 +2833,7 @@ pub const PackageManager = struct {
     pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
         const log_level = this.options.log_level;
         if (log_level == .silent) return;
-        if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
             return;
         }
 
@@ -5172,6 +5165,23 @@ pub const PackageManager = struct {
 
     const debug = Output.scoped(.PackageManager, true);
 
+    fn updateNameAndNameHashFromVersionReplacement(
+        lockfile: *const Lockfile,
+        original_name: String,
+        original_name_hash: PackageNameHash,
+        new_version: Dependency.Version,
+    ) struct { String, PackageNameHash } {
+        return switch (new_version.tag) {
+            // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+            .dist_tag => .{ new_version.value.dist_tag.name, String.Builder.stringHash(lockfile.str(&new_version.value.dist_tag.name)) },
+            .npm => .{ new_version.value.npm.name, String.Builder.stringHash(lockfile.str(&new_version.value.npm.name)) },
+            .git => .{ new_version.value.git.package_name, original_name_hash },
+            .github => .{ new_version.value.github.package_name, original_name_hash },
+            .tarball => .{ new_version.value.tarball.package_name, original_name_hash },
+            else => .{ original_name, original_name_hash },
+        };
+    }
+
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
     fn enqueueDependencyWithMainAndSuccessFn(
@@ -5219,21 +5229,29 @@ pub const PackageManager = struct {
 
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
             // if it's a workspaceOnly dependency
-            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                    name, name_hash = switch (new.tag) {
-                        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-                        .dist_tag => .{ new.value.dist_tag.name, String.Builder.stringHash(this.lockfile.str(&new.value.dist_tag.name)) },
-                        .npm => .{ new.value.npm.name, String.Builder.stringHash(this.lockfile.str(&new.value.npm.name)) },
-                        .git => .{ new.value.git.package_name, name_hash },
-                        .github => .{ new.value.github.package_name, name_hash },
-                        .tarball => .{ new.value.tarball.package_name, name_hash },
-                        else => .{ name, name_hash },
-                    };
+
+                    name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
+
+                    if (new.tag == .catalog) {
+                        if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
+                            name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+                            break :version catalog_dep.version;
+                        }
+                    }
 
                     // `name_hash` stays the same
                     break :version new;
+                }
+
+                if (dependency.version.tag == .catalog) {
+                    if (this.lockfile.catalogs.get(this.lockfile, dependency.version.value.catalog, name)) |catalog_dep| {
+                        name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+
+                        break :version catalog_dep.version;
+                    }
                 }
             }
 
@@ -6565,12 +6583,14 @@ pub const PackageManager = struct {
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (manager.options.enable.manifest_cache) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
 
                             if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                                 continue;
@@ -6780,6 +6800,10 @@ pub const PackageManager = struct {
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
+                if (task.log.errors > 0) {
+                    manager.any_failed_to_install = true;
+                }
+                task.log.deinit();
             }
 
             switch (task.tag) {
@@ -7179,7 +7203,7 @@ pub const PackageManager = struct {
         pack_destination: string = "",
         pack_filename: string = "",
         pack_gzip_level: ?string = null,
-        // json_output: bool = false,
+        json_output: bool = false,
 
         max_retry_count: u16 = 5,
         min_simultaneous_requests: usize = 4,
@@ -7593,7 +7617,7 @@ pub const PackageManager = struct {
                 this.pack_destination = cli.pack_destination;
                 this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
+                this.json_output = cli.json_output;
 
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
@@ -8642,6 +8666,7 @@ pub const PackageManager = struct {
         outdated,
         pack,
         publish,
+        audit,
 
         // bin,
         // hash,
@@ -8666,6 +8691,16 @@ pub const PackageManager = struct {
                 .outdated => true,
                 .install => true,
                 // .pack => true,
+                // .add => true,
+                else => false,
+            };
+        }
+
+        pub fn supportsJsonOutput(this: Subcommand) bool {
+            return switch (this) {
+                .audit,
+                .pm,
+                => true,
                 else => false,
             };
         }
@@ -8740,6 +8775,7 @@ pub const PackageManager = struct {
         };
 
         var workspace_name_hash: ?PackageNameHash = null;
+        var root_package_json_name_at_time_of_init: []const u8 = "";
 
         // Step 1. Find the nearest package.json directory
         //
@@ -8846,6 +8882,12 @@ pub const PackageManager = struct {
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
                         const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        if (subcommand == .pm) {
+                            if (json.getStringCloned(ctx.allocator, "name") catch null) |name| {
+                                root_package_json_name_at_time_of_init = name;
+                            }
+                        }
+
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -8857,8 +8899,7 @@ pub const PackageManager = struct {
                             };
                             var log = logger.Log.init(ctx.allocator);
                             defer log.deinit();
-                            _ = Package.processWorkspaceNamesArray(
-                                &workspace_names,
+                            _ = workspace_names.processNamesArray(
                                 ctx.allocator,
                                 &workspace_package_json_cache,
                                 &log,
@@ -8919,6 +8960,10 @@ pub const PackageManager = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
+
+        if (subcommand == .pm and cli.positionals.len >= 2 and strings.eqlComptime(cli.positionals[1], "audit")) {
+            env.quiet = true;
+        }
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
@@ -9003,6 +9048,7 @@ pub const PackageManager = struct {
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
+            .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
         };
         manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -9660,6 +9706,7 @@ pub const PackageManager = struct {
 
     pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
+        clap.parseParam("--json                              Output in JSON format") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
@@ -9707,6 +9754,11 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
+    const audit_params: []const ParamType = &([_]ParamType{
+        clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
+        clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+    });
+
     const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -9751,7 +9803,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
-        // json_output: bool = false,
+        json_output: bool = false,
         filters: []const string = &.{},
 
         pack_destination: string = "",
@@ -10067,6 +10119,28 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .audit => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun audit<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Check installed packages for vulnerabilities.<r>
+                        \\  <b><green>bun audit<r>
+                        \\
+                        \\  <d>Output package vulnerabilities in JSON format.<r>
+                        \\  <b><green>bun audit --json<r>
+                        \\
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(PackageManager.audit_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -10086,6 +10160,10 @@ pub const PackageManager = struct {
                 .outdated => outdated_params,
                 .pack => pack_params,
                 .publish => publish_params,
+
+                // TODO: we will probably want to do this for other *_params. this way extra params
+                // are not included in the help text
+                .audit => shared_params ++ audit_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -10094,10 +10172,9 @@ pub const PackageManager = struct {
                 .diagnostic = &diag,
                 .allocator = allocator,
             }) catch |err| {
-                clap.help(Output.errorWriter(), params) catch {};
-                Output.errorWriter().writeAll("\n") catch {};
+                printHelp(subcommand);
                 diag.report(Output.errorWriter(), err) catch {};
-                return err;
+                Global.exit(1);
             };
 
             if (args.flag("--help")) {
@@ -10164,6 +10241,10 @@ pub const PackageManager = struct {
             // commands that support --filter
             if (comptime subcommand.supportsWorkspaceFiltering()) {
                 cli.filters = args.options("--filter");
+            }
+
+            if (comptime subcommand.supportsJsonOutput()) {
+                cli.json_output = args.flag("--json");
             }
 
             if (comptime subcommand == .outdated) {
@@ -14532,12 +14613,16 @@ pub const PackageManager = struct {
         const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
-        if (manager.options.scope.url.hostname.len > 0) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
-            const allocator = hostname_stack.get();
-            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
-            defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        // Unless you're behind a proxy.
+        if (!manager.env.hasHTTPProxy()) {
+            // And don't try to resolve DNS if it's an IP address.
+            if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
+                var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+                const allocator = hostname_stack.get();
+                const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+                defer allocator.free(hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            }
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)
@@ -14717,6 +14802,7 @@ pub const PackageManager = struct {
                         for (lockfile.patched_dependencies.values()) |patch_dep| builder.count(patch_dep.path.slice(lockfile.buffers.string_bytes.items));
 
                         lockfile.overrides.count(&lockfile, builder);
+                        lockfile.catalogs.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -14749,6 +14835,7 @@ pub const PackageManager = struct {
                         };
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
+                        manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -14860,10 +14947,25 @@ pub const PackageManager = struct {
                                     try manager.enqueueDependencyWithMain(
                                         @truncate(dependency_i),
                                         dependency,
-                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        invalid_package_id,
                                         false,
                                     );
                                 }
+                            }
+                        }
+
+                        if (manager.summary.catalogs_changed) {
+                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dep, _dep_id| {
+                                const dep_id: DependencyID = @intCast(_dep_id);
+                                if (dep.version.tag != .catalog) continue;
+
+                                manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
+                                try manager.enqueueDependencyWithMain(
+                                    dep_id,
+                                    dep,
+                                    invalid_package_id,
+                                    false,
+                                );
                             }
                         }
 

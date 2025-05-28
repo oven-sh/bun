@@ -246,12 +246,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                     unsigned size = std::min(left.length(), right.length());
                     left = left.substring(0, size);
                     right = right.substring(0, size);
-                    int result = WTF::codePointCompare(right, left);
-                    if (result == 0) {
+                    std::strong_ordering result = WTF::codePointCompare(right, left);
+                    if (result == std::strong_ordering::equal) {
                         return originalLeftLength > originalRightLength;
                     }
 
-                    return result > 0;
+                    return result == std::strong_ordering::greater;
                 }
 
                 return a.second > b.second;

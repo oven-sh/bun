@@ -109,14 +109,14 @@ static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
         data = std::span(reinterpret_cast<const uint8_t*>(view.span().data()), view.span().size());
     } else if (auto* typedArray = jsDynamicCast<JSArrayBufferView*>(arg)) {
-        if (UNLIKELY(typedArray->isDetached())) {
+        if (typedArray->isDetached()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "TypedArray is detached"_s);
             return {};
         }
         data = typedArray->span();
     } else if (auto* buffer = jsDynamicCast<JSArrayBuffer*>(arg)) {
         auto* impl = buffer->impl();
-        if (UNLIKELY(!impl)) {
+        if (!impl) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Buffer is detached"_s);
             return {};
         }
@@ -157,7 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();
-    if (UNLIKELY(zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget)) {
+    if (zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);

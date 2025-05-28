@@ -53,7 +53,7 @@ struct napi_async_cleanup_hook_handle__ {
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
     do {                                                                                                            \
-        if (UNLIKELY(!(assertion))) {                                                                               \
+        if (!(assertion)) [[unlikely]] {                                                                            \
             WTFReportAssertionFailureWithMessage(__FILE__, __LINE__, __PRETTY_FUNCTION__, #assertion, __VA_ARGS__); \
             WTFReportBacktrace();                                                                                   \
             NAPI_ABORT("Aborted");                                                                                  \

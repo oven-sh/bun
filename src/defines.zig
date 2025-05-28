@@ -6,13 +6,7 @@ const json_parser = bun.JSON;
 const fs = @import("fs.zig");
 const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 
 const Ref = @import("ast/base.zig").Ref;
 

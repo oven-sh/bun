@@ -3304,6 +3304,8 @@ declare module "bun" {
   interface BunRequest<T extends string = string> extends Request {
     params: RouterTypes.ExtractRouteParams<T>;
     readonly cookies: CookieMap;
+
+    clone(): BunRequest<T>;
   }
 
   interface GenericServeOptions {
@@ -3355,6 +3357,30 @@ declare module "bun" {
            * @default false
            */
           console?: boolean;
+
+          /**
+           * Enable automatic workspace folders for Chrome DevTools
+           *
+           * This lets you persistently edit files in the browser. It works by adding the following route to the server:
+           * `/.well-known/appspecific/com.chrome.devtools.json`
+           *
+           * The response is a JSON object with the following shape:
+           * ```json
+           * {
+           *   "workspace": {
+           *     "root": "<cwd>",
+           *     "uuid": "<uuid>"
+           *   }
+           * }
+           * ```
+           *
+           * The `root` field is the current working directory of the server.
+           * The `"uuid"` field is a hash of the file that started the server and a hash of the current working directory.
+           *
+           * For security reasons, if the remote socket address is not from localhost, 127.0.0.1, or ::1, the request is ignored.
+           * @default true
+           */
+          chromeDevToolsAutomaticWorkspaceFolders?: boolean;
         };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
@@ -5403,6 +5429,42 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array;
 
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns The output buffer with the compressed data
+   */
+  function zstdCompressSync(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Buffer;
+
+  /**
+   * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
+   * @param data The buffer of data to compress
+   * @param options Compression options to use
+   * @returns A promise that resolves to the output buffer with the compressed data
+   */
+  function zstdCompress(
+    data: NodeJS.TypedArray | Buffer | string | ArrayBuffer,
+    options?: { level?: number },
+  ): Promise<Buffer>;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdDecompressSync(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Buffer;
+
+  /**
+   * Decompresses a chunk of data with the Zstandard (zstd) decompression algorithm.
+   * @param data The buffer of data to decompress
+   * @returns A promise that resolves to the output buffer with the decompressed data
+   */
+  function zstdDecompress(data: NodeJS.TypedArray | Buffer | string | ArrayBuffer): Promise<Buffer>;
+
   type Target =
     /**
      * For generating bundles that are intended to be run by the Bun runtime. In many cases,
@@ -7443,9 +7505,16 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
+    /** @see https://bun.sh/docs/install/overrides */
     overrides?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/patch */
     patchedDependencies?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/lifecycle#trusteddependencies */
     trustedDependencies?: string[];
+    /** @see https://bun.sh/docs/install/catalogs */
+    catalog?: Record<string, string>;
+    /** @see https://bun.sh/docs/install/catalogs */
+    catalogs?: Record<string, Record<string, string>>;
 
     /**
      * ```

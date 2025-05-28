@@ -496,7 +496,7 @@ String sourceURL(const JSC::SourceOrigin& origin)
 
 String sourceURL(JSC::SourceProvider* sourceProvider)
 {
-    if (UNLIKELY(!sourceProvider)) {
+    if (!sourceProvider) [[unlikely]] {
         return String();
     }
 
@@ -531,7 +531,7 @@ String sourceURL(JSC::CodeBlock& codeBlock)
 
 String sourceURL(JSC::CodeBlock* codeBlock)
 {
-    if (UNLIKELY(!codeBlock)) {
+    if (!codeBlock) [[unlikely]] {
         return String();
     }
 
@@ -544,7 +544,7 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[wasm code]"_s;
     }
 
-    if (UNLIKELY(!frame.hasLineAndColumnInfo())) {
+    if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
         return "[native code]"_s;
     }
 
@@ -627,7 +627,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 }
             }
         }
-        if (UNLIKELY(catchScope.exception())) {
+        if (catchScope.exception()) [[unlikely]] {
             catchScope.clearException();
         }
     }
@@ -636,7 +636,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         // Then try the "displayName" property (what this does internally)
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
         functionName = JSC::getCalculatedDisplayName(vm, object);
-        if (UNLIKELY(catchScope.exception())) {
+        if (catchScope.exception()) [[unlikely]] {
             catchScope.clearException();
         }
     }

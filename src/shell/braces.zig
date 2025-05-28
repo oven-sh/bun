@@ -1,8 +1,6 @@
 const bun = @import("bun");
 const std = @import("std");
-const builtin = @import("builtin");
 const ArrayList = std.ArrayList;
-const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string.zig").SmolStr;
 

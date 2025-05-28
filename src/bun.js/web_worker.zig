@@ -561,7 +561,6 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
         return;
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
-    const current_status = this.status.load(.acquire);
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();

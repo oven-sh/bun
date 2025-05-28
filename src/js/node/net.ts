@@ -350,6 +350,7 @@ const ServerHandlers: SocketHandler = {
         detachSocket(data);
         SocketEmitEndNT(data, err);
         data.data = null;
+        socket[owner_symbol] = null;
       }
     }
 
@@ -506,8 +507,9 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+type SocketHandleData = NonNullable<import("node:net").Socket["_handle"]>["data"];
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: SocketHandler<import("node:net").SocketHandleData> = {
+const SocketHandlers2: SocketHandler<SocketHandleData> = {
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -877,6 +879,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 };
 
 Socket.prototype.connect = function connect(...args) {
+  $debug("Socket.prototype.connect");
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -1153,6 +1156,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 };
 
 Socket.prototype._final = function _final(callback) {
+  $debug("Socket.prototype._final");
   if (this.connecting) {
     return this.once("connect", () => this._final(callback));
   }

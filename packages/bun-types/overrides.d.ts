@@ -204,11 +204,3 @@ declare module "tls" {
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
 }
-
-declare module "net" {
-  type SocketHandleData = { self: Socket; req?: object };
-
-  interface Socket {
-    _handle: Bun.Socket<SocketHandleData> | null;
-  }
-}

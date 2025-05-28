@@ -591,13 +591,6 @@ Readable.prototype.read = function (n) {
   // If we're doing read(0) to trigger a readable event, but we
   // already have a bunch of data in the buffer, then just trigger
   // the 'readable' event and move on.
-  $debug(
-    "read: state:",
-    state[kState] & kNeedReadable ? "NeedReadable" : "",
-    state[kState] & kEnded ? "Ended" : "",
-    `highWaterMark=${state.highWaterMark}`,
-    `length=${state.length}`,
-  );
   if (
     n === 0 &&
     (state[kState] & kNeedReadable) !== 0 &&
@@ -1589,13 +1582,7 @@ function endReadable(stream) {
 }
 
 function endReadableNT(state, stream) {
-  $debug(
-    "endReadableNT",
-    state[kState] & kErrored ? "Errored" : "",
-    state[kState] & kCloseEmitted ? "CloseEmitted" : "",
-    state[kState] & kEndEmitted ? "EndEmitted" : "",
-    `length=${state.length}`,
-  );
+  $debug("endReadableNT");
 
   // Check that we didn't get one last unshift.
   if ((state[kState] & (kErrored | kCloseEmitted | kEndEmitted)) === 0 && state.length === 0) {

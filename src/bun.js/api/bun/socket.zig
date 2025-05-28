@@ -1290,7 +1290,8 @@ pub const Listener = struct {
                 };
 
                 // if this is from node:net there's surface where the user can .ref() and .deref() before the connection starts. make sure we honor that here.
-                if (socket.poll_ref_before_connect >= 0) socket.poll_ref.ref(handlers.vm);
+                // in the Bun.connect path, this will always be true at this point in time.
+                if (socket.ref_pollref_on_connect) socket.poll_ref.ref(handlers.vm);
 
                 return promise_value;
             },
@@ -1380,7 +1381,7 @@ fn NewSocket(comptime ssl: bool) type {
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-        poll_ref_before_connect: i16 = 0,
+        ref_pollref_on_connect: bool = true,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
@@ -1658,7 +1659,6 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
-            this.poll_ref_before_connect = 0;
             if (vm.isShuttingDown()) {
                 return;
             }
@@ -1872,7 +1872,6 @@ fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onEnd;
             if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
-                this.poll_ref_before_connect = 0;
 
                 // If you don't handle TCP fin, we assume you're done.
                 this.markInactive();
@@ -1973,7 +1972,6 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
-            this.poll_ref_before_connect = 0;
 
             const callback = handlers.onClose;
 
@@ -2629,7 +2627,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             log("ref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
-            if (this.socket.isDetached()) this.poll_ref_before_connect += 1;
+            if (this.socket.isDetached()) this.ref_pollref_on_connect = true;
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
@@ -2638,7 +2636,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             log("unref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
-            if (this.socket.isDetached()) this.poll_ref_before_connect -= 1;
+            if (this.socket.isDetached()) this.ref_pollref_on_connect = false;
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }

@@ -917,13 +917,6 @@ function finish(stream, state) {
 
   stream.emit("finish");
 
-  $debug(
-    "finish",
-    state[kState] & kAutoDestroy ? "AutoDestroy" : "",
-    stream._readableState?.autoDestroy,
-    stream._readableState?.endEmitted,
-    stream._readableState?.readable,
-  );
   if ((state[kState] & kAutoDestroy) !== 0) {
     // In case of duplex streams we need a way to detect
     // if the readable side is ready for autoDestroy as well.

@@ -152,8 +152,11 @@ fn messageWithTypeAndLevel_(
         else
             Output.enable_ansi_colors_stdout;
 
-    // TODO only node:worker_threads
-    var worker_writer = if (global.bunVM().worker) |w|
+    const worker = if (global.bunVM().worker) |w|
+        if (w.kind == .node) w else null
+    else
+        null;
+    var worker_writer = if (worker) |w|
         w.stdioWriter(if (level == .Warning or level == .Error) .stderr else .stdout)
     else
         null;

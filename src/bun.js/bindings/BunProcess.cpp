@@ -2030,8 +2030,9 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, int fd)
 {
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -2041,6 +2042,9 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     args.append(jsBoolean(bun_stdio_tty[fd]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
+    bool isNodeWorkerThread = globalObject->worker()
+        && globalObject->worker()->options().kind == WorkerOptions::Kind::Node;
+    args.append(jsBoolean(isNodeWorkerThread));
 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 

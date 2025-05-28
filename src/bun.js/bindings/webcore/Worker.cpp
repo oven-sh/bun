@@ -128,7 +128,8 @@ extern "C" void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    WorkerOptions::Kind kind);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -208,7 +209,8 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv.data(),
         execArgv.size(),
         preloadModules.data(),
-        preloadModules.size());
+        preloadModules.size(),
+        options.kind);
     // now referenced by Zig
     worker->ref();
 

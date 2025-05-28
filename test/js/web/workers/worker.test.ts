@@ -339,6 +339,9 @@ log
 trace
       at ${__dirname}/worker-fixture-console.js:39:11
       at loadAndEvaluateModule (line:col)
+      at asyncFunctionResume (line:col)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (line:col)
+      at promiseReactionJob (line:col)
 `);
       expect(stderr).toBe(`Assertion failed
 Assertion failed

@@ -30,11 +30,12 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType) {
+export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType, isNodeWorkerThread: boolean) {
   $assert(fd === 0 || fd === 1 || fd === 2, `Expected fd to be 0, 1, or 2, got ${fd}`);
 
   let stream;
-  if (Bun.isMainThread /* TODO or if web worker thread */) {
+  // workers do not handle stdin yet
+  if (!isNodeWorkerThread || fd === 0) {
     if (isTTY) {
       const tty = require("node:tty");
       stream = new tty.WriteStream(fd);

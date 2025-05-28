@@ -8,8 +8,6 @@ const JSValue = jsc.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 const WebWorker = @This();
-/// class WebCore::Worker
-const CppWorker = opaque {};
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
@@ -46,6 +44,18 @@ execArgv: ?[]const WTFStringImpl,
 
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
+kind: Kind,
+
+/// class WebCore::Worker
+const CppWorker = opaque {};
+
+/// enum class Kind in WorkerOptions.h
+pub const Kind = enum(u8) {
+    /// Created by the global Worker constructor
+    web,
+    /// Created by the `require("node:worker_threads").Worker` constructor
+    node,
+};
 
 pub const Status = enum(u8) {
     start,
@@ -197,6 +207,7 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    kind: Kind,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -248,6 +259,7 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .kind = kind,
     };
 
     worker.parent_poll_ref.ref(parent);

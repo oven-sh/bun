@@ -558,11 +558,10 @@ void Worker::pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes)
         auto* parentGlobalObject = defaultGlobalObject(ctx.globalObject());
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        auto* process = jsCast<Bun::Process*>(parentGlobalObject->processObject());
         auto* buffer = WebCore::createBuffer(parentGlobalObject, vec.span());
         auto* jsWorker = jsCast<JSWorker*>(WebCore::toJS(parentGlobalObject, parentGlobalObject, sourceWorker));
 
-        process->emitWorkerStdioInParent(jsWorker, fd, buffer);
+        parentGlobalObject->processObject()->emitWorkerStdioInParent(jsWorker, fd, buffer);
         RETURN_IF_EXCEPTION(scope, parentGlobalObject->reportUncaughtExceptionAtEventLoop(parentGlobalObject, scope.exception()));
     });
 }

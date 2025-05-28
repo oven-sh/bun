@@ -221,8 +221,10 @@ TransferredMessagePort MessagePort::disentangle()
     // context.willDestroyActiveDOMObject(*this);
     context.willDestroyDestructionObserver(*this);
 
-    // Dispatch close event when the port is transferred
-    dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    // Dispatch close event when the port is transferred if the port has message event listeners
+    if (m_hasMessageEventListener) {
+        dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    }
 
     observeContext(nullptr);
 

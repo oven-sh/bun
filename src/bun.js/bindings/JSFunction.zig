@@ -1,7 +1,4 @@
-const std = @import("std");
 const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
 const JSC = bun.JSC;
 const JSHostFn = JSC.JSHostFn;
 const ZigString = JSC.ZigString;

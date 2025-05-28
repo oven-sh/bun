@@ -36,7 +36,6 @@ const MAX_WINDOW_SIZE = std.math.maxInt(i32);
 const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
-const MAX_HPACK_HEADER_SIZE = std.math.maxInt(u16);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 
 const PaddingStrategy = enum {

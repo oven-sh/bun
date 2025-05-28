@@ -5,33 +5,20 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const std = @import("std");
-const OOM = bun.OOM;
 
-const lex = bun.js_lexer;
-const logger = bun.logger;
 
 const FileSystem = @import("../fs.zig").FileSystem;
-const PathName = @import("../fs.zig").PathName;
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
@@ -1106,7 +1093,7 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT"),
+                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             },
         );
         vm.argv = ctx.passthrough;

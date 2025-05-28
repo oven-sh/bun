@@ -51,7 +51,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
         return nullptr;
     // Per RFC 7518 Section 6.3.1.1: https://tools.ietf.org/html/rfc7518#section-6.3.1.1
     if (!modulus->isEmpty() && !modulus->at(0))
-        modulus->remove(0);
+        modulus->removeAt(0);
     auto exponent = base64URLDecode(keyData.e);
     if (!exponent)
         return nullptr;

@@ -65,6 +65,7 @@ public:
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
+    static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }

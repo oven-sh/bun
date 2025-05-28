@@ -656,6 +656,21 @@ interface String {
   // add others as needed
 }
 
+interface Set {
+  $add: Set["add"];
+  $clear: Set["clear"];
+  $delete: Set["delete"];
+  $has: Set["has"];
+}
+
+interface Map {
+  $clear: Map["clear"];
+  $delete: Map["delete"];
+  $has: Map["has"];
+  $set: Map["set"];
+  $get: Map["get"];
+}
+
 declare var $Buffer: {
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
@@ -711,6 +726,9 @@ declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
 declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
 declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_INVALID_STATE(message: string): Error;
+declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
+declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;
 declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
 declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
 declare function $ERR_UNHANDLED_ERROR(err?): Error;
@@ -754,6 +772,7 @@ declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
+declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
 declare function $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED(): TypeError;
 declare function $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED(): RangeError;
@@ -782,6 +801,12 @@ declare function $ERR_INVALID_MIME_SYNTAX(production: string, str: string, inval
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
 declare function $ERR_INVALID_HANDLE_TYPE(): TypeError;
 declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;
+declare function $ERR_VM_MODULE_STATUS(reason: string): Error;
+declare function $ERR_VM_MODULE_ALREADY_LINKED(): Error;
+declare function $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA(): Error;
+declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
+declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
+declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 
 /**
  * Convert a function to a class-like object.

@@ -21,7 +21,6 @@ const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
 const INPUT_RECORD = windows.INPUT_RECORD;
 const sockaddr = std.posix.sockaddr;
 const sockaddr_storage = std.os.linux.sockaddr_storage;
-const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
@@ -229,19 +228,9 @@ pub const O = struct {
     }
 };
 
-const _O_RDONLY = 0x0000;
 const _O_WRONLY = 0x0001;
-const _O_RDWR = 0x0002;
-const _O_APPEND = 0x0008;
 const _O_CREAT = 0x0100;
 const _O_TRUNC = 0x0200;
-const _O_EXCL = 0x0400;
-const _O_TEXT = 0x4000;
-const _O_NOINHERIT = 0x0080;
-const _O_TEMPORARY = 0x0040;
-const _O_SHORT_LIVED = 0x1000;
-const _O_SEQUENTIAL = 0x0020;
-const _O_RANDOM = 0x0010;
 
 // These **do not** map to std.posix.O/bun.O
 // To use libuv O, use libuv.O.
@@ -2318,7 +2307,6 @@ pub extern fn uv_tty_set_vterm_state(state: uv_tty_vtermstate_t) void;
 pub extern fn uv_tty_get_vterm_state(state: [*c]uv_tty_vtermstate_t) c_int;
 pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
-const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) ReturnCode;
 pub extern fn uv_pipe_open(*Pipe, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *Pipe, name: [*]const u8) c_int;

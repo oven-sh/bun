@@ -806,6 +806,13 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
+                if (Template.getCursorRule()) |template_file| {
+                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
+                    result catch {
+                        // No big deal if this fails
+                    };
+                }
+
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
                     Output.flush();
@@ -843,13 +850,6 @@ pub const InitCommand = struct {
                         .entryPoint = fields.entry_point,
                     }) catch {
                         // suppressed
-                    };
-                }
-
-                if (Template.getCursorRule()) |template_file| {
-                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
-                    result catch {
-                        // No big deal if this fails
                     };
                 }
 
@@ -1135,6 +1135,13 @@ const Template = enum {
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
+        if (Template.getCursorRule()) |rule| {
+            const result = InitCommand.Assets.createNew(rule.path, rule.contents);
+            result catch {
+                // No big deal if this fails
+            };
+        }
+
         inline for (comptime this.files()) |file| {
             const path = file.path;
             const contents = file.contents;
@@ -1154,13 +1161,6 @@ const Template = enum {
                     Output.err(err, "failed to create file: '{s}'", .{path});
                     Global.crash();
                 }
-            };
-        }
-
-        if (Template.getCursorRule()) |rule| {
-            const result = InitCommand.Assets.createNew(rule.path, rule.contents);
-            result catch {
-                // No big deal if this fails
             };
         }
 

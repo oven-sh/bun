@@ -390,7 +390,7 @@ describe("net.Socket write", () => {
     }),
   );
 
-  it.todo("should allow reconnecting after end()", async () => {
+  it("should allow reconnecting after end()", async () => {
     const server = new Server(socket => socket.end());
     const port = await new Promise(resolve => {
       server.once("listening", () => resolve(server.address().port));
@@ -416,6 +416,7 @@ describe("net.Socket write", () => {
     for (let i = 0; i < 10; i++) {
       await run();
     }
+    server.close();
   });
 });
 

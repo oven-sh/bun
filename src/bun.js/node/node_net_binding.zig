@@ -81,7 +81,6 @@ pub const SocketAddress = bun.JSC.Codegen.JSSocketAddress.getConstructor;
 pub const BlockList = JSC.Codegen.JSBlockList.getConstructor;
 
 pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const vm = globalThis.bunVM();
     const args = callframe.argumentsAsArray(1);
     const is_ssl = args[0].toBoolean();
 
@@ -91,11 +90,6 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = bun.new(bun.api.SocketHandlers, .{
-                .globalObject = globalThis,
-                .vm = vm,
-                .is_server = false,
-            }),
         });
         return socket.getThisValue(globalThis);
     } else {
@@ -104,11 +98,6 @@ pub fn newDetachedSocket(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = bun.new(bun.api.SocketHandlers, .{
-                .globalObject = globalThis,
-                .vm = vm,
-                .is_server = false,
-            }),
         });
         return socket.getThisValue(globalThis);
     }

@@ -1151,7 +1151,7 @@ pub const Listener = struct {
                         prev.connection = connection;
                         prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
                         prev.server_name = server_name;
-                        bun.assert(prev.socket_context == null);
+                        prev.socket_context = null;
                         break :blk prev;
                     } else TLSSocket.new(.{
                         .ref_count = .init(),
@@ -1180,14 +1180,13 @@ pub const Listener = struct {
                     }
                 } else {
                     var tcp = if (prev_maybe_tcp) |prev| blk: {
-                        bun.destroy(prev.handlers);
                         bun.assert(prev.this_value != .zero);
                         prev.handlers = handlers_ptr;
                         bun.assert(prev.socket.socket == .detached);
                         bun.assert(prev.connection == null);
                         bun.assert(prev.protos == null);
                         bun.assert(prev.server_name == null);
-                        bun.assert(prev.socket_context == null);
+                        prev.socket_context = null;
                         break :blk prev;
                     } else TCPSocket.new(.{
                         .ref_count = .init(),
@@ -1268,14 +1267,12 @@ pub const Listener = struct {
                 const maybe_previous: ?*SocketType = if (is_ssl_enabled) prev_maybe_tls else prev_maybe_tcp;
 
                 const socket = if (maybe_previous) |prev| blk: {
-                    bun.destroy(prev.handlers);
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
                     prev.connection = connection;
                     prev.protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null;
                     prev.server_name = server_name;
-                    bun.assert(prev.socket_context == null);
                     prev.socket_context = socket_context;
                     break :blk prev;
                 } else bun.new(SocketType, .{
@@ -1383,6 +1380,7 @@ fn NewSocket(comptime ssl: bool) type {
         flags: Flags = .{},
         ref_count: RefCount,
         wrapped: WrappedType = .none,
+        // TODO: make this optional
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
@@ -2063,8 +2061,6 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getReadyState(this: *This, _: *JSC.JSGlobalObject) JSValue {
-            log("getReadyState()", .{});
-
             if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             } else if (this.socket.isClosed()) {

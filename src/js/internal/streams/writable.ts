@@ -101,7 +101,11 @@ function fmtState(state) {
     state & kCloseEmitted ? "CloseEmitted" : "",
     state & kAllBuffers ? "AllBuffers" : "",
     state & kAllNoop ? "AllNoop" : "",
-  ].join(" ");
+  ]
+    .join(" ")
+    .replace(/\s+/g, ",")
+    .replace(/^,+/, "")
+    .replace(/,+$/, "");
 }
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions

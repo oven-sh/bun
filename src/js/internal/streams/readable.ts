@@ -66,6 +66,34 @@ const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
 const kDataListening = 1 << 27;
 
+function fmtState(state) {
+  return [
+    state & kObjectMode ? "ObjectMode" : "",
+    state & kEnded ? "Ended" : "",
+    state & kEndEmitted ? "EndEmitted" : "",
+    state & kReading ? "Reading" : "",
+    state & kConstructed ? "Constructed" : "",
+    state & kSync ? "Sync" : "",
+    state & kNeedReadable ? "NeedReadable" : "",
+    state & kEmittedReadable ? "EmittedReadable" : "",
+    state & kReadableListening ? "ReadableListening" : "",
+    state & kResumeScheduled ? "ResumeScheduled" : "",
+    state & kErrorEmitted ? "ErrorEmitted" : "",
+    state & kEmitClose ? "EmitClose" : "",
+    state & kAutoDestroy ? "AutoDestroy" : "",
+    state & kDestroyed ? "Destroyed" : "",
+    state & kClosed ? "Closed" : "",
+    state & kCloseEmitted ? "CloseEmitted" : "",
+    state & kMultiAwaitDrain ? "MultiAwaitDrain" : "",
+    state & kReadingMore ? "ReadingMore" : "",
+    state & kDataEmitted ? "DataEmitted" : "",
+  ]
+    .join(" ")
+    .replace(/\s+/g, ",")
+    .replace(/^,+/, "")
+    .replace(/,+$/, "");
+}
+
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
   return {

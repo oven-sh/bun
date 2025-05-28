@@ -841,6 +841,7 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
+  socket[owner_symbol] = this;
   socket.timeout(Math.ceil(this.timeout / 1000));
   this._handle = socket;
   this.connecting = false;
@@ -2548,22 +2549,12 @@ function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb:
 function initSocketHandle(self) {
   self._undestroy();
   self._sockname = null;
+  self[kclosed] = false;
+  self[kended] = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {
     self._handle[owner_symbol] = self;
-    // self._handle.onread = onStreamRead;
-
-    // let userBuf = self[kBuffer];
-    // if (userBuf) {
-    //   const bufGen = self[kBufferGen];
-    //   if (bufGen !== null) {
-    //     userBuf = bufGen();
-    //     if (!isUint8Array(userBuf)) return;
-    //     self[kBuffer] = userBuf;
-    //   }
-    //   self._handle.useUserBuffer(userBuf);
-    // }
   }
 }
 

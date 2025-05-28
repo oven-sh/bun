@@ -64,6 +64,7 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include <stdio.h>
 
 namespace WebCore {
 
@@ -133,22 +134,26 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
+    printf("[DEBUG] Worker::setKeepAlive(%d) called\n", keepAlive);
     WebWorker__setRef(impl_, keepAlive);
 }
 
 bool Worker::updatePtr()
 {
+    printf("[DEBUG] Worker::updatePtr called\n");
     if (!WebWorker__updatePtr(impl_, this)) {
+        printf("[DEBUG] Worker::updatePtr - updatePtr failed, setting TerminatedFlag\n");
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
     }
-
+    printf("[DEBUG] Worker::updatePtr - updatePtr succeeded\n");
     return true;
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
+    printf("[DEBUG] Worker::create called\n");
     auto worker = adoptRef(*new Worker(context, WTFMove(options)));
 
     WTF::String url = urlInit;
@@ -213,9 +218,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     preloadModuleStrings.clear();
 
     if (!impl) {
+        printf("[DEBUG] Worker::create - impl is null, returning exception\n");
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
+    printf("[DEBUG] Worker::create - impl created successfully\n");
     worker->impl_ = impl;
     worker->m_workerCreationTime = MonotonicTime::now();
 
@@ -224,6 +231,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
 Worker::~Worker()
 {
+    printf("[DEBUG] Worker::~Worker called\n");
     {
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
@@ -233,6 +241,7 @@ Worker::~Worker()
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
+    printf("[DEBUG] Worker::postMessage called\n");
     if (m_terminationFlags & TerminatedFlag)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
@@ -329,6 +338,7 @@ bool Worker::isOnline() const
 
 void Worker::dispatchEvent(Event& event)
 {
+    printf("[DEBUG] Worker::dispatchEvent called for event: %s\n", event.type().utf8().data());
     if (!m_terminationFlags)
         EventTargetWithInlineData::dispatchEvent(event);
 }
@@ -337,6 +347,7 @@ void Worker::dispatchEvent(Event& event)
 // This allows new wt.Worker().terminate() to actually resolve
 void Worker::dispatchCloseEvent(Event& event)
 {
+    printf("[DEBUG] Worker::dispatchCloseEvent called\n");
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
@@ -355,6 +366,7 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
 
 void Worker::drainEvents()
 {
+    printf("[DEBUG] Worker::drainEvents called\n");
     Locker lock(this->m_pendingTasksMutex);
     for (auto& task : m_pendingTasks)
         postTaskToWorkerGlobalScope(WTFMove(task));
@@ -363,6 +375,7 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
+    printf("[DEBUG] Worker::dispatchOnline called\n");
     auto* ctx = scriptExecutionContext();
     if (ctx) {
         ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
@@ -386,6 +399,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
+    printf("[DEBUG] Worker::fireEarlyMessages called\n");
     auto tasks = [&]() {
         Locker lock(this->m_pendingTasksMutex);
         return std::exchange(this->m_pendingTasks, {});
@@ -406,6 +420,7 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::dispatchErrorWithMessage(WTF::String message)
 {
+    printf("[DEBUG] Worker::dispatchErrorWithMessage called: %s\n", message.utf8().data());
     auto* ctx = scriptExecutionContext();
     if (!ctx) return;
 
@@ -420,6 +435,7 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    printf("[DEBUG] Worker::dispatchErrorWithValue called\n");
     auto* ctx = scriptExecutionContext();
     if (!ctx) return false;
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
@@ -468,6 +484,7 @@ void Worker::dispatchExit(int32_t exitCode)
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
+    printf("[DEBUG] Worker::postTaskToWorkerGlobalScope called\n");
     if (!(m_onlineClosingFlags & OnlineFlag)) {
         Locker lock(this->m_pendingTasksMutex);
         this->m_pendingTasks.append(WTFMove(task));

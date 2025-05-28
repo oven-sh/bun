@@ -263,7 +263,11 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     promise->fulfill(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
     promise = promise->then(globalObject, transformer, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
     return promise;
 }
 

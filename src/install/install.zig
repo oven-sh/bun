@@ -26,7 +26,6 @@ const FD = bun.FD;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
-
 const Api = @import("../api/schema.zig").Api;
 const Path = bun.path;
 const Command = @import("../cli.zig").Command;
@@ -58,7 +57,6 @@ pub const Lockfile = @import("./lockfile.zig");
 pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
-
 
 pub const bun_hash_tag = ".bun-tag-";
 pub const max_hex_hash_len: comptime_int = brk: {
@@ -8668,6 +8666,7 @@ pub const PackageManager = struct {
         outdated,
         pack,
         publish,
+        audit,
 
         // bin,
         // hash,
@@ -8692,6 +8691,16 @@ pub const PackageManager = struct {
                 .outdated => true,
                 .install => true,
                 // .pack => true,
+                // .add => true,
+                else => false,
+            };
+        }
+
+        pub fn supportsJsonOutput(this: Subcommand) bool {
+            return switch (this) {
+                .audit,
+                .pm,
+                => true,
                 else => false,
             };
         }
@@ -9740,9 +9749,13 @@ pub const PackageManager = struct {
     });
 
     const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
+        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
         clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
+    });
+
+    const audit_params: []const ParamType = &(shared_params ++ [_]ParamType{
+        clap.parseParam("--json                                 Output in JSON format") catch unreachable,
     });
 
     const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -10105,6 +10118,28 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .audit => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun audit<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Check installed packages for vulnerabilities.<r>
+                        \\  <b><green>bun audit<r>
+                        \\
+                        \\  <d>Output package vulnerabilities in JSON format.<r>
+                        \\  <b><green>bun audit --json<r>
+                        \\
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(PackageManager.audit_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -10124,6 +10159,7 @@ pub const PackageManager = struct {
                 .outdated => outdated_params,
                 .pack => pack_params,
                 .publish => publish_params,
+                .audit => audit_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -10204,16 +10240,17 @@ pub const PackageManager = struct {
                 cli.filters = args.options("--filter");
             }
 
-            if (comptime subcommand == .outdated) {
-                // fake --dry-run, we don't actually resolve+clean the lockfile
-                cli.dry_run = true;
+            if (comptime subcommand.supportsJsonOutput()) {
                 cli.json_output = args.flag("--json");
             }
 
+            if (comptime subcommand == .outdated) {
+                // fake --dry-run, we don't actually resolve+clean the lockfile
+                cli.dry_run = true;
+                // cli.json_output = args.flag("--json");
+            }
+
             if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
-                if (comptime subcommand == .pm) {
-                    cli.json_output = args.flag("--json");
-                }
                 if (comptime subcommand != .publish) {
                     if (args.option("--destination")) |dest| {
                         cli.pack_destination = dest;

@@ -62,18 +62,31 @@ const AuditResult = struct {
 };
 
 pub const AuditCommand = struct {
+    pub fn exec(ctx: Command.Context) !noreturn {
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
+        const manager, _ = PackageManager.init(ctx, cli, .pm) catch |err| {
+            if (err == error.MissingPackageJSON) {
+                var cwd_buf: bun.PathBuffer = undefined;
+                if (bun.getcwd(&cwd_buf)) |cwd| {
+                    Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
+                } else |_| {
+                    Output.errGeneric("No package.json was found", .{});
+                }
+                Output.note("Run \"bun init\" to initialize a project", .{});
+                Global.exit(1);
+            }
+
+            return err;
+        };
+
+        const code = try audit(ctx, manager, manager.options.json_output);
+        Global.exit(code);
+    }
+
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
-    pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) bun.OOM!u32 {
-        var json_output = false;
-        for (args) |arg| {
-            if (std.mem.eql(u8, arg, "--json")) {
-                json_output = true;
-                break;
-            }
-        }
-
+    pub fn audit(ctx: Command.Context, pm: *PackageManager, json_output: bool) bun.OOM!u32 {
         Output.prettyError(comptime Output.prettyFmt("<r><b>bun pm audit <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", true), .{});
         Output.flush();
 

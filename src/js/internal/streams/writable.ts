@@ -79,35 +79,6 @@ const kAfterWritePending = 1 << 28;
 const kBuffered = 1 << 29;
 const kEnded = 1 << 30;
 
-function fmtState(state) {
-  return [
-    state & kObjectMode ? "ObjectMode" : "",
-    state & kFinalCalled ? "FinalCalled" : "",
-    state & kNeedDrain ? "NeedDrain" : "",
-    state & kEnding ? "Ending" : "",
-    state & kEnded ? "Ended" : "",
-    state & kFinished ? "Finished" : "",
-    state & kDestroyed ? "Destroyed" : "",
-    state & kDecodeStrings ? "DecodeStrings" : "",
-    state & kWriting ? "Writing" : "",
-    state & kSync ? "Sync" : "",
-    state & kBufferProcessing ? "BufferProcessing" : "",
-    state & kConstructed ? "Constructed" : "",
-    state & kPrefinished ? "Prefinished" : "",
-    state & kErrorEmitted ? "ErrorEmitted" : "",
-    state & kEmitClose ? "EmitClose" : "",
-    state & kAutoDestroy ? "AutoDestroy" : "",
-    state & kClosed ? "Closed" : "",
-    state & kCloseEmitted ? "CloseEmitted" : "",
-    state & kAllBuffers ? "AllBuffers" : "",
-    state & kAllNoop ? "AllNoop" : "",
-  ]
-    .join(" ")
-    .replace(/\s+/g, ",")
-    .replace(/^,+/, "")
-    .replace(/,+$/, "");
-}
-
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
   return {
@@ -698,7 +669,6 @@ function afterWrite(stream, state, count, cb) {
     errorBuffer(state);
   }
 
-  $debug("afterWrite", fmtState(state[kState]));
   if ((state[kState] & kEnding) !== 0) {
     finishMaybe(stream, state, true);
   }

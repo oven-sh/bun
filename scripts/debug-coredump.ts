@@ -7,7 +7,6 @@ import { parseArgs } from "node:util";
 // -p <PID of the test that crashed> (buildkite should show this)
 // -b <URL to the bun-profile.zip artifact for the appropriate platform>
 // -c <URL to the bun-cores.tar.gz.age artifact for the appropriate platform>
-// -i <path to age identity to decrypt the cores>
 // -d <debugger> (default: lldb)
 const {
   values: {
@@ -31,7 +30,8 @@ if (stringPid === undefined) throw new Error("no PID given");
 const pid = parseInt(stringPid);
 if (buildUrl === undefined) throw new Error("no build-url given");
 if (coresUrl === undefined) throw new Error("no cores-url given");
-if (identityFile === undefined) throw new Error("no identity-file given");
+if (!process.env.AGE_CORES_IDENTITY?.startsWith("AGE-SECRET-KEY-"))
+  throw new Error("no identity given in $AGE_CORES_IDENTITY");
 
 const id = Bun.hash(buildUrl + coresUrl).toString(36);
 const dir = join(tmpdir(), `debug-coredump-${id}.tmp`);
@@ -48,7 +48,7 @@ if (!fs.existsSync(join(dir, "bun-profile")) || !fs.existsSync(join(dir, `bun-${
 
   console.log("downloading cores");
   const cores = await (await fetch(coresUrl)).arrayBuffer();
-  await Bun.$`age -d -i ${identityFile} < ${cores} | tar -zxvC ${dir}`;
+  await Bun.$`bash -c ${`age -d -i <(echo "$AGE_CORES_IDENTITY")`} < ${cores} | tar -zxvC ${dir}`;
 
   console.log("moving cores out of nested directory");
   for await (const file of new Bun.Glob("bun-cores-*/bun-*.core").scan(dir)) {

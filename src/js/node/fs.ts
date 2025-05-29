@@ -562,7 +562,23 @@ var access = function access(path, mode, callback) {
 
     return fs.readSync(fd, buffer, offset, length, position);
   },
-  writeSync = fs.writeSync.bind(fs),
+  writeSync = function writeSync(fd, buffer, offsetOrOptions, length, position) {
+    if ($isTypedArrayView(buffer)) {
+      let offset = offsetOrOptions;
+      if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
+        if (offsetOrOptions !== undefined) {
+          if (typeof offsetOrOptions !== "object" || $isArray(offsetOrOptions)) {
+            throw $ERR_INVALID_ARG_TYPE("options", "object", offsetOrOptions);
+          }
+        }
+        ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+      }
+
+      return fs.writeSync(fd, buffer, offset, length, position);
+    }
+
+    return fs.writeSync(fd, buffer, offsetOrOptions, length);
+  },
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),
   fdatasyncSync = fs.fdatasyncSync.bind(fs),

@@ -110,8 +110,10 @@ pub const GetAddrInfo = struct {
 
                     options.flags = flags.coerce(std.c.AI, globalObject);
 
-                    if (!options.flags.ALL and !options.flags.ADDRCONFIG and !options.flags.V4MAPPED)
-                        return error.InvalidFlags;
+                    // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                    const filter = ~@as(u32, @bitCast(std.c.AI{ .ALL = true, .ADDRCONFIG = true, .V4MAPPED = true }));
+                    const int = @as(u32, @bitCast(options.flags));
+                    if (int & filter != 0) return error.InvalidFlags;
                 }
 
                 return options;

@@ -1,0 +1,31 @@
+name: Cancel Buildkite Build
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cancel-build:
+    if: ${{ github.event.pull_request.merged == false }}
+    runs-on: ubuntu-latest
+    env:
+      ORG_SLUG: bun
+      PIPELINE_SLUG: bun
+    steps:
+      - name: Get Buildkite build number
+        id: build
+        run: |
+          set -euo pipefail
+          STATUS_URL="https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}"
+          BUILD_URL=$(curl -fsSL "$STATUS_URL" | jq -r '[.[].target_url] | map(select(test("buildkite.com"))) | first // ""')
+          if [ -z "$BUILD_URL" ]; then
+            exit 0
+          fi
+          BUILD_NUMBER=$(echo "$BUILD_URL" | grep -oE 'builds/[0-9]+' | cut -d/ -f2)
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+      - name: Cancel Buildkite build
+        if: ${{ steps.build.outputs.build_number }}
+        run: |
+          curl -fsS -X PUT "https://api.buildkite.com/v2/organizations/${ORG_SLUG}/pipelines/${PIPELINE_SLUG}/builds/${{ steps.build.outputs.build_number }}/cancel" \
+            -H "Authorization: Bearer ${{ secrets.BUILDKITE_API_TOKEN }}" \
+            -H "Content-Type: application/json"

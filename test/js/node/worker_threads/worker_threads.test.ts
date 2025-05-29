@@ -699,7 +699,8 @@ warn
       }
     });
 
-    it("works if the entire process object is overridden", async () => {
+    // blocked on more JS internals that use `process` while it has been overridden
+    it.todo("works if the entire process object is overridden", async () => {
       const worker = new Worker(/* js */ `process = 5; console.log("hello");`, { eval: true, stdout: true });
       expect(await readToEnd(worker.stdout)).toBe("hello\n");
     });

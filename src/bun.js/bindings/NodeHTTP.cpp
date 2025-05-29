@@ -21,6 +21,8 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
+#include <chrono>
+#include <ctime>
 
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -999,7 +1001,7 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
 }
 
 template<bool isSSL>
-static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res, bool* hasConnectionHeader = nullptr, bool* hasContentLengthHeader = nullptr, bool* hasDateHeader = nullptr)
 {
     auto& internalHeaders = headers.internalHeaders();
 
@@ -1020,6 +1022,17 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
+
+        // Track explicitly set headers if pointers are provided
+        if (hasConnectionHeader && header.key == WebCore::HTTPHeaderName::Connection) {
+            *hasConnectionHeader = true;
+        }
+        if (hasContentLengthHeader && header.key == WebCore::HTTPHeaderName::ContentLength) {
+            *hasContentLengthHeader = true;
+        }
+        if (hasDateHeader && header.key == WebCore::HTTPHeaderName::Date) {
+            *hasDateHeader = true;
+        }
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
         // Otherwise, you get this when using Fastify;
@@ -1052,6 +1065,17 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         const auto& name = header.key;
         const auto& value = header.value;
 
+        // Track explicitly set headers if pointers are provided
+        if (hasConnectionHeader && WTF::equalIgnoringASCIICase(name, "connection"_s)) {
+            *hasConnectionHeader = true;
+        }
+        if (hasContentLengthHeader && WTF::equalIgnoringASCIICase(name, "content-length"_s)) {
+            *hasContentLengthHeader = true;
+        }
+        if (hasDateHeader && WTF::equalIgnoringASCIICase(name, "date"_s)) {
+            *hasDateHeader = true;
+        }
+
         writeResponseHeader<isSSL>(res, name, value);
     }
 }
@@ -1073,54 +1097,100 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
+    // Track which headers have been explicitly set
+    bool hasConnectionHeader = false;
+    bool hasContentLengthHeader = false;
+    bool hasDateHeader = false;
+
     if (headersObject) {
         if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
-            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
-            return;
-        }
+            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response, &hasConnectionHeader, &hasContentLengthHeader, &hasDateHeader);
+        } else {
+            if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
+                headersObject->reifyAllStaticProperties(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
 
-        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
-            headersObject->reifyAllStaticProperties(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+            auto* structure = headersObject->structure();
 
-        auto* structure = headersObject->structure();
+            if (structure->canPerformFastPropertyEnumeration()) {
+                structure->forEachProperty(vm, [&](const auto& entry) {
+                    JSValue headerValue = headersObject->getDirect(entry.offset());
+                    if (!headerValue.isString()) {
 
-        if (structure->canPerformFastPropertyEnumeration()) {
-            structure->forEachProperty(vm, [&](const auto& entry) {
-                JSValue headerValue = headersObject->getDirect(entry.offset());
-                if (!headerValue.isString()) {
+                        return true;
+                    }
+
+                    String key = entry.key();
+                    String value = headerValue.toWTFString(globalObject);
+                    if (scope.exception()) {
+                        return false;
+                    }
+
+                    // Track explicitly set headers
+                    if (key.equalIgnoringASCIICase("connection"_s)) {
+                        hasConnectionHeader = true;
+                    } else if (key.equalIgnoringASCIICase("content-length"_s)) {
+                        hasContentLengthHeader = true;
+                    } else if (key.equalIgnoringASCIICase("date"_s)) {
+                        hasDateHeader = true;
+                    }
+
+                    writeResponseHeader<isSSL>(response, key, value);
 
                     return true;
-                }
-
-                String key = entry.key();
-                String value = headerValue.toWTFString(globalObject);
-                if (scope.exception()) {
-                    return false;
-                }
-
-                writeResponseHeader<isSSL>(response, key, value);
-
-                return true;
-            });
-        } else {
-            PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, void());
-
-            for (unsigned i = 0; i < propertyNames.size(); ++i) {
-                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
-                if (!headerValue.isString()) {
-                    continue;
-                }
-
-                String key = propertyNames[i].string();
-                String value = headerValue.toWTFString(globalObject);
+                });
+            } else {
+                PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, void());
-                writeResponseHeader<isSSL>(response, key, value);
+
+                for (unsigned i = 0; i < propertyNames.size(); ++i) {
+                    JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                    if (!headerValue.isString()) {
+                        continue;
+                    }
+
+                    String key = propertyNames[i].string();
+                    String value = headerValue.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, void());
+
+                    // Track explicitly set headers
+                    if (key.equalIgnoringASCIICase("connection"_s)) {
+                        hasConnectionHeader = true;
+                    } else if (key.equalIgnoringASCIICase("content-length"_s)) {
+                        hasContentLengthHeader = true;
+                    } else if (key.equalIgnoringASCIICase("date"_s)) {
+                        hasDateHeader = true;
+                    }
+
+                    writeResponseHeader<isSSL>(response, key, value);
+                }
             }
         }
+    }
+
+    // Add automatic headers that weren't explicitly set
+    if (!hasConnectionHeader) {
+        // For HTTP/1.1, default to keep-alive unless we should close
+        writeResponseHeader<isSSL>(response, "Connection"_s, "keep-alive"_s);
+    }
+
+    if (!hasContentLengthHeader) {
+        // If no content-length is set and no body will be written, set to 0
+        // This matches Node.js behavior for responses like res.end() with no body
+        writeResponseHeader<isSSL>(response, "Content-Length"_s, "0"_s);
+    }
+
+    if (!hasDateHeader) {
+        // Add current date header
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto* tm = std::gmtime(&time_t);
+        
+        char dateBuffer[64];
+        std::strftime(dateBuffer, sizeof(dateBuffer), "%a, %d %b %Y %H:%M:%S GMT", tm);
+        writeResponseHeader<isSSL>(response, "Date"_s, WTF::String::fromUTF8(dateBuffer));
     }
 
     RELEASE_AND_RETURN(scope, void());

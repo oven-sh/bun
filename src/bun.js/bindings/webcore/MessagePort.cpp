@@ -238,7 +238,14 @@ void MessagePort::start()
 
 void MessagePort::close()
 {
-    if (m_isDetached || m_messagesInFight > 0)
+    shouldClose = true;
+
+    tryClose();
+}
+
+void MessagePort::tryClose()
+{
+    if (!shouldClose|| m_isDetached || m_messagesInFlight > 0)
         return;
     m_isDetached = true;
     dispatchCloseEvent();
@@ -280,7 +287,7 @@ void MessagePort::dispatchMessages()
         auto* globalObject = defaultGlobalObject(context->globalObject());
         Ref vm = globalObject->vm();
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        protectedThis->m_messagesInFight += messages.size();
+        protectedThis->m_messagesInFlight += messages.size();
 
         for (auto& message : messages) {
             // close() in Worker onmessage handler should prevent next message from dispatching.
@@ -302,8 +309,8 @@ void MessagePort::dispatchMessages()
             ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTFMove(ports), message = WTFMove(message)](ScriptExecutionContext& context) mutable {
                 auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
                 protectedThis->dispatchEvent(event.event);
-                protectedThis->m_messagesInFight -= 1;
-                protectedThis->close();
+                protectedThis->m_messagesInFlight -= 1;
+                protectedThis->tryClose();
             });
         }
     };

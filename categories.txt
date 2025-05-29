@@ -1,0 +1,15 @@
+categories:
+
+- process kept alive when it shouldn't: test-tls-junk-server
+- different cipher list, support --tls-cipher-list: test-tls-cipher-list
+- after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
+- socket never closes? test-tls-js-stream.js
+- no cipher match: test-tls-multi-pfx, test-tls-psk-errors
+- missing addCACert: test-tls-addca
+- node never trips `ret !== false` branch: test-tlsp-ause.js
+- cluster stuff: test-tls-ticket-cluster
+- checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
+
+passes on mac:
+- test-tls-junk-closes-server
+- test-tls-onread-static-buffer

@@ -227,6 +227,7 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
     if (self._hadError) return;
     self._hadError = true;
+    self.connecting = false;
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -633,6 +634,7 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
+    self.connecting = false;
     socket[owner_symbol] = self;
     req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;

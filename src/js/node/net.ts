@@ -24,6 +24,7 @@ const Duplex = require("internal/streams/duplex");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
+const os = require("node:os");
 
 const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
   "socket.zig",
@@ -85,6 +86,20 @@ function isIP(s): 0 | 4 | 6 {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
   return 0;
+}
+
+function isLocalAddress(addr: string): boolean {
+  if (!addr) return false;
+  if (addr === '0.0.0.0' || addr === '::') return true;
+  const interfaces = os.networkInterfaces();
+  for (const name in interfaces) {
+    const list = interfaces[name];
+    if (!list) continue;
+    for (const info of list) {
+      if (info && info.address === addr) return true;
+    }
+  }
+  return false;
 }
 
 const bunTlsSymbol = Symbol.for("::buntls::");
@@ -1702,13 +1717,23 @@ function internalConnect(self, options, address, port, addressType, localAddress
   if (localAddress || localPort) {
     if (addressType === 4) {
       localAddress ||= DEFAULT_IPV4_ADDR;
-      // TODO:
-      // err = self._handle.bind(localAddress, localPort);
+      if (!isLocalAddress(localAddress)) {
+        const UV_EADDRNOTAVAIL = -4090;
+        const ex = new ExceptionWithHostPort(UV_EADDRNOTAVAIL, "bind", localAddress, localPort);
+        self.destroy(ex);
+        return;
+      }
+      // TODO: bind socket when supported
     } else {
       // addressType === 6
       localAddress ||= DEFAULT_IPV6_ADDR;
-      // TODO:
-      // err = self._handle.bind6(localAddress, localPort, flags);
+      if (!isLocalAddress(localAddress)) {
+        const UV_EADDRNOTAVAIL = -4090;
+        const ex = new ExceptionWithHostPort(UV_EADDRNOTAVAIL, "bind", localAddress, localPort);
+        self.destroy(ex);
+        return;
+      }
+      // TODO: bind6 socket when supported
     }
     $debug(
       "connect: binding to localAddress: %s and localPort: %d (addressType: %d)",

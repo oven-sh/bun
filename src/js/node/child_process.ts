@@ -1625,15 +1625,12 @@ function abortChildProcess(child, killSignal, reason) {
 }
 
 class SubprocessChannel extends EventEmitter implements NodeStreamPipe {
-  #hasRef: boolean = true;
-  #setRef: (enabled: boolean) => void;
+  #subprocess: ChildProcess;
   #closed: boolean = false;
-  #childProcess: ChildProcess | undefined;
 
-  public constructor(childProcess?: ChildProcess) {
+  public constructor(childProcess: ChildProcess) {
     super();
-    this.#setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
-    this.#childProcess = childProcess;
+    this.#subprocess = childProcess;
   }
 
   public close(): void {
@@ -1641,13 +1638,8 @@ class SubprocessChannel extends EventEmitter implements NodeStreamPipe {
 
     this.#closed = true;
 
-    if (this.#hasRef) {
-      this.#hasRef = false;
-      this.#setRef(false);
-    }
-
-    if (this.#childProcess) {
-      this.#childProcess.disconnect?.();
+    if (this.#subprocess.connected) {
+      this.#subprocess.disconnect?.();
     }
 
     process.nextTick(() => {
@@ -1656,21 +1648,22 @@ class SubprocessChannel extends EventEmitter implements NodeStreamPipe {
   }
 
   public hasRef(): boolean {
-    return this.#hasRef && !this.#closed;
+    if (this.#closed) return false;
+
+    const handle = this.#subprocess[kHandle];
+    if (!handle) return false;
+
+    return this.#subprocess.connected;
   }
 
   public ref(): void {
-    if (!this.#hasRef && !this.#closed) {
-      this.#hasRef = true;
-      this.#setRef(true);
-    }
+    if (this.#closed) return;
+    this.#subprocess.ref();
   }
 
   public unref(): void {
-    if (this.#hasRef) {
-      this.#hasRef = false;
-      this.#setRef(false);
-    }
+    if (this.#closed) return;
+    this.#subprocess.unref();
   }
 }
 

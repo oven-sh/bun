@@ -62,7 +62,7 @@
         "pg-gateway": "0.3.0-beta.4",
         "pino": "9.4.0",
         "pino-pretty": "11.2.2",
-        "piscina": "^5.0.0",
+        "piscina": "5.0.0",
         "postgres": "3.3.5",
         "prisma": "5.1.1",
         "prompts": "2.4.2",

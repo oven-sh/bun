@@ -90,14 +90,14 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        HTTPParser* parser = JSHTTPParser::toImpl(item);
         ASSERT(parser);
         if (!parser) {
             continue;
         }
 
         if (parser->lastMessageStart() == 0) {
-            result->putDirectIndex(globalObject, i++, parser);
+            result->putDirectIndex(globalObject, i++, item);
         }
     }
 
@@ -144,7 +144,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     JSValue item = iter->next(vm);
     size_t i = 0;
     while (!item.isEmpty()) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        HTTPParser* parser = JSHTTPParser::toImpl(item);
         ASSERT(parser);
         if (!parser) {
             item = iter->next(vm);
@@ -152,30 +152,30 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
         }
 
         if ((!parser->headersCompleted() && headersDeadline > 0 && parser->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->lastMessageStart() < requestDeadline)) {
-            result->putDirectIndex(globalObject, i++, parser);
-            active->remove(globalObject, parser);
+            result->putDirectIndex(globalObject, i++, item);
+            active->remove(globalObject, item);
         }
     }
 
     return result;
 }
 
-void JSConnectionsList::push(JSGlobalObject* globalObject, JSHTTPParser* parser)
+void JSConnectionsList::push(JSGlobalObject* globalObject, JSCell* parser)
 {
     allConnections()->add(globalObject, parser);
 }
 
-void JSConnectionsList::pop(JSGlobalObject* globalObject, JSHTTPParser* parser)
+void JSConnectionsList::pop(JSGlobalObject* globalObject, JSCell* parser)
 {
     allConnections()->remove(globalObject, parser);
 }
 
-void JSConnectionsList::pushActive(JSGlobalObject* globalObject, JSHTTPParser* parser)
+void JSConnectionsList::pushActive(JSGlobalObject* globalObject, JSCell* parser)
 {
     activeConnections()->add(globalObject, parser);
 }
 
-void JSConnectionsList::popActive(JSGlobalObject* globalObject, JSHTTPParser* parser)
+void JSConnectionsList::popActive(JSGlobalObject* globalObject, JSCell* parser)
 {
     activeConnections()->remove(globalObject, parser);
 }

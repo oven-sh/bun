@@ -129,14 +129,14 @@ static JSValue ProcessBindingHTTPParser_HTTPParser(VM& vm, JSObject* binding)
 {
     auto* lexicalGlobalObject = binding->globalObject();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    return globalObject->m_JSHTTPParserClassStructure.get(lexicalGlobalObject);
+    return globalObject->m_JSHTTPParserClassStructure.constructor(lexicalGlobalObject);
 }
 
 static JSValue ProcessBindingHTTPParser_ConnectionsList(VM& vm, JSObject* binding)
 {
     auto* lexicalGlobalObject = binding->globalObject();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    return globalObject->m_JSConnectionsListClassStructure.get(lexicalGlobalObject);
+    return globalObject->m_JSConnectionsListClassStructure.constructor(lexicalGlobalObject);
 }
 
 /* Source for ProcessBindingHTTPParser.lut.h

@@ -4,40 +4,9 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
-// #include "JSConnectionsList.h"
-#include "ProcessBindingHTTPParser.h"
+#include "HTTPParser.h"
 
 namespace Bun {
-
-// TODO: probably move all of this into HTTPParser.h/cpp
-#define HTTP_BOTH 0
-#define HTTP_REQUEST 1
-#define HTTP_RESPONSE 2
-
-const uint32_t kOnMessageBegin = 0;
-const uint32_t kOnHeaders = 1;
-const uint32_t kOnHeadersComplete = 2;
-const uint32_t kOnBody = 3;
-const uint32_t kOnMessageComplete = 4;
-const uint32_t kOnExecute = 5;
-const uint32_t kOnTimeout = 6;
-// Any more fields than this will be flushed into JS
-const size_t kMaxHeaderFieldsCount = 32;
-// Maximum size of chunk extensions
-const size_t kMaxChunkExtensionsSize = 16384;
-
-const uint32_t kLenientNone = 0;
-const uint32_t kLenientHeaders = 1 << 0;
-const uint32_t kLenientChunkedLength = 1 << 1;
-const uint32_t kLenientKeepAlive = 1 << 2;
-const uint32_t kLenientTransferEncoding = 1 << 3;
-const uint32_t kLenientVersion = 1 << 4;
-const uint32_t kLenientDataAfterClose = 1 << 5;
-const uint32_t kLenientOptionalLFAfterCR = 1 << 6;
-const uint32_t kLenientOptionalCRLFAfterChunk = 1 << 7;
-const uint32_t kLenientOptionalCRBeforeLF = 1 << 8;
-const uint32_t kLenientSpacesAfterChunkSize = 1 << 9;
-const uint32_t kLenientAll = kLenientHeaders | kLenientChunkedLength | kLenientKeepAlive | kLenientTransferEncoding | kLenientVersion | kLenientDataAfterClose | kLenientOptionalLFAfterCR | kLenientOptionalCRLFAfterChunk | kLenientOptionalCRBeforeLF | kLenientSpacesAfterChunkSize;
 
 class JSHTTPParser final : public JSC::JSDestructibleObject {
 public:
@@ -51,7 +20,7 @@ public:
 
     static JSHTTPParser* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, HTTPParserBindingData* bindingData)
     {
-        JSHTTPParser* instance = new (NotNull, JSC::allocateCell<JSHTTPParser>(vm)) JSHTTPParser(vm, structure, bindingData);
+        JSHTTPParser* instance = new (NotNull, JSC::allocateCell<JSHTTPParser>(vm)) JSHTTPParser(vm, globalObject, structure, bindingData);
         instance->finishCreation(vm);
         return instance;
     }
@@ -74,81 +43,24 @@ public:
 
     void finishCreation(JSC::VM&);
 
-    JSHTTPParser(JSC::VM& vm, JSC::Structure* structure, HTTPParserBindingData* bindingData)
+    JSHTTPParser(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, HTTPParserBindingData* bindingData)
         : Base(vm, structure)
-        , m_bindingData(bindingData)
     {
+        m_impl = new HTTPParser(globalObject, bindingData);
     }
 
-    inline bool headersCompleted() const { return m_headersCompleted; }
-    inline uint64_t lastMessageStart() const { return m_lastMessageStart; }
-    inline const char* currentBufferData() const { return m_currentBufferData; }
-    inline uint64_t currentBufferLen() const { return m_currentBufferLen; }
+    inline HTTPParser* impl() { return m_impl; }
 
-    inline bool freed() const { return m_freed; }
-
-    // llhttp_t m_parser;
-
-    // TODO: StringPtr equivalent
-    // StringPtr m_fields[kMaxHeaderFieldsCount];
-    // StringPtr m_values[kMaxHeaderFieldsCount];
-    // StringPtr m_url;
-    // StringPtr m_statusMessage;
-
-    size_t m_numFields;
-    size_t m_numValues;
-    bool m_haveFlushed;
-    bool m_gotException;
-    size_t m_currentBufferLen;
-    const char* m_currentBufferData;
-    bool m_headersCompleted = false;
-    bool m_pendingPause = false;
-    uint64_t m_headerNread = 0;
-    uint64_t m_chunkExtensionsNread = 0;
-    uint64_t m_maxHttpHeaderSize = 0;
-    uint64_t m_lastMessageStart = 0;
-
-    bool m_freed = false;
-
-    JSC::WriteBarrier<JSC::JSCell> m_connectionsList;
-
-    HTTPParserBindingData* m_bindingData;
-
-    void close();
-    void free();
-    void remove(JSC::JSGlobalObject*, JSC::JSValue parser);
-    void save();
-    void execute();
-    void finish();
-    void initialize();
-
-    void init(int32_t type, uint64_t maxHttpHeaderSize, uint32_t lenientFlags)
+    static HTTPParser* toImpl(JSC::JSValue value)
     {
-        // TODO: parser init??
-
-        m_headerNread = 0;
-        // m_url.reset();
-        // m_statusMessage.reset();
-        m_numFields = 0;
-        m_numValues = 0;
-        m_haveFlushed = false;
-        m_gotException = false;
-        m_headersCompleted = false;
-        m_maxHttpHeaderSize = maxHttpHeaderSize;
-    }
-
-    bool lessThan(JSHTTPParser& other) const
-    {
-        if (lastMessageStart() == 0 && other.lastMessageStart() == 0) {
-            return this < &other;
-        } else if (lastMessageStart() == 0) {
-            return true;
-        } else if (other.lastMessageStart() == 0) {
-            return false;
+        if (auto* wrapper = JSC::jsDynamicCast<JSHTTPParser*>(value)) {
+            return wrapper->impl();
         }
-
-        return lastMessageStart() < other.lastMessageStart();
+        return nullptr;
     }
+
+private:
+    HTTPParser* m_impl = nullptr;
 };
 
 void setupHTTPParserClassStructure(JSC::LazyClassStructure::Initializer&);

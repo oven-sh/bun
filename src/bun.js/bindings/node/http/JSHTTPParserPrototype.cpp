@@ -51,13 +51,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_close, (JSGlobalObject * globalObject, Cal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    // our HTTPParser is the js object itself
-    parser->m_freed = true;
+    delete parser;
 
     return JSValue::encode(jsUndefined());
 }
@@ -67,8 +66,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_free, (JSGlobalObject * globalObject, Call
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -84,19 +83,19 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_remove, (JSGlobalObject * globalObject, Ca
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    JSValue thisValue = callFrame->thisValue();
+
+    JSHTTPParser* thisParser = jsDynamicCast<JSHTTPParser*>(thisValue);
+    if (!thisParser) {
         return JSValue::encode(jsUndefined());
     }
 
-    if (JSCell* connectionsCell = parser->m_connectionsList.get()) {
-        if (JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(connectionsCell)) {
-            connections->pop(globalObject, parser);
-            connections->popActive(globalObject, parser);
-        }
+    HTTPParser* parser = thisParser->impl();
+    if (!parser) {
+        return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(parser->remove(globalObject, thisParser));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -104,12 +103,26 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
+    JSValue bufferValue = callFrame->argument(0);
+
+    if (auto* buffer = jsDynamicCast<JSArrayBufferView*>(bufferValue)) {
+        if (buffer->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return JSValue::encode(jsUndefined());
+        }
+
+        JSValue result = parser->execute(globalObject, reinterpret_cast<const char*>(buffer->vector()), buffer->byteLength());
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!result.isEmpty()) {
+            return JSValue::encode(result);
+        }
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -119,12 +132,17 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_finish, (JSGlobalObject * globalObject, Ca
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
+    JSValue result = parser->execute(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!result.isEmpty()) {
+        return JSValue::encode(result);
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -134,55 +152,57 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSConnectionsList* connections = nullptr;
     uint64_t maxHttpHeaderSize = 0;
     uint32_t lenientFlags = kLenientNone;
+    JSConnectionsList* connections = nullptr;
 
-    // TODO: TODO!
-    (void)lenientFlags;
-
-    JSValue maxHttpHeaderSizeValue = callFrame->argument(2);
-
-    if (maxHttpHeaderSizeValue.isNumber()) {
-        maxHttpHeaderSize = static_cast<uint64_t>(maxHttpHeaderSizeValue.asNumber());
+    if (callFrame->argumentCount() > 2) {
+        JSValue maxHttpHeaderSizeValue = callFrame->argument(2);
+        if (maxHttpHeaderSizeValue.isNumber()) {
+            maxHttpHeaderSize = static_cast<uint64_t>(maxHttpHeaderSizeValue.asNumber());
+        }
     }
+
     if (maxHttpHeaderSize == 0) {
         // TODO: TODO!
-        // maxHttpHeaderSize = ;
+        // maxHttpHeaderSize = env->maxHttpHeaderSize;
     }
 
-    JSValue lenientFlagsValue = callFrame->argument(3);
-    if (lenientFlagsValue.isInt32()) {
-        lenientFlags = lenientFlagsValue.asInt32();
+    if (callFrame->argumentCount() > 3) {
+        JSValue lenientFlagsValue = callFrame->argument(3);
+        if (lenientFlagsValue.isInt32()) {
+            lenientFlags = lenientFlagsValue.asInt32();
+        }
     }
 
     if (callFrame->argumentCount() > 4) {
         JSValue connectionsListValue = callFrame->argument(4);
-        connections = jsDynamicCast<JSConnectionsList*>(connectionsListValue);
+        if (!connectionsListValue.isUndefinedOrNull()) {
+            connections = jsDynamicCast<JSConnectionsList*>(connectionsListValue);
+            if (!connections) {
+                return JSValue::encode(jsUndefined());
+            }
+        }
     }
 
     JSValue typeValue = callFrame->argument(0);
 
-    int32_t type = static_cast<int32_t>(typeValue.asNumber());
+    llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.asNumber());
 
     ASSERT(type == HTTP_REQUEST || type == HTTP_RESPONSE);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    JSValue thisValue = callFrame->thisValue();
+
+    JSHTTPParser* thisParser = jsDynamicCast<JSHTTPParser*>(thisValue);
+    if (!thisParser) {
+        return JSValue::encode(jsUndefined());
+    }
+    HTTPParser* parser = JSHTTPParser::toImpl(thisValue);
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    if (connections) {
-        parser->m_connectionsList.set(vm, parser, connections);
-        parser->m_lastMessageStart = Bun::hrtime();
-
-        connections->push(globalObject, parser);
-        connections->pushActive(globalObject, parser);
-    } else {
-        parser->m_connectionsList.clear();
-    }
-
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(parser->initialize(globalObject, thisParser, type, maxHttpHeaderSize, lenientFlags, connections));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -190,14 +210,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, Cal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
-
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(parser->pause());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_resume, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -205,14 +223,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_resume, (JSGlobalObject * globalObject, Ca
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
-
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(parser->resume());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_consume, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -220,8 +236,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_consume, (JSGlobalObject * globalObject, C
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -235,8 +251,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_unconsume, (JSGlobalObject * globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -249,19 +265,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexica
 {
     VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    JSUint8Array* buffer = JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), parser->currentBufferLen());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    memcpy(buffer->vector(), parser->currentBufferData(), parser->currentBufferLen());
-
-    return JSValue::encode(buffer);
+    return JSValue::encode(parser->getCurrentBuffer(lexicalGlobalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -269,18 +279,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 
-    if (parser->lastMessageStart() == 0) {
-        return JSValue::encode(jsNumber(0));
-    }
-
-    double duration = (Bun::hrtime() - parser->lastMessageStart()) / 1e6;
-
-    return JSValue::encode(jsNumber(duration));
+    return JSValue::encode(parser->duration());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_headersCompleted, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -288,8 +292,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_headersCompleted, (JSGlobalObject * global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
-    if (!parser || parser->freed()) {
+    HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
+    if (!parser) {
         return JSValue::encode(jsUndefined());
     }
 

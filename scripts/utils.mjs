@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
@@ -442,7 +442,7 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
+  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared\\ntstatus.h";
   const nthStatus = readFile(ntStatusPath, { cache: true });
 
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
@@ -1342,13 +1342,16 @@ export async function getLastSuccessfulBuild() {
 }
 
 /**
- * @param {string} filename
- * @param {string} [cwd]
+ * @param {string} filename Absolute path to file to upload
  */
-export async function uploadArtifact(filename, cwd) {
+export async function uploadArtifact(filename) {
   if (isBuildkite) {
-    const relativePath = relative(cwd ?? process.cwd(), filename);
-    await spawnSafe(["buildkite-agent", "artifact", "upload", relativePath], { cwd, stdio: "inherit" });
+    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
+      cwd: dirname(filename),
+      stdio: "inherit",
+    });
+  } else {
+    console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
 }
 

@@ -567,7 +567,7 @@ function ClientRequest(input, options, cb) {
     try {
       const createConnection = this[kAgent]?.createConnection;
       if (typeof createConnection === "function" && createConnection.length > 1) {
-        createConnection.call(this[kAgent], connOptions, (err) => {
+        createConnection.call(this[kAgent], connOptions, err => {
           if (err) {
             if (!!$debug) globalReportError(err);
             this.emit("error", err);

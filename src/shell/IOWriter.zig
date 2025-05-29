@@ -480,8 +480,6 @@ pub inline fn setWriting(this: *IOWriter, writing: bool) void {
 const bun = @import("bun");
 const shell = bun.shell;
 const Interpreter = shell.Interpreter;
-const EnvMap = shell.EnvMap;
-const EnvStr = shell.EnvStr;
 const JSC = bun.JSC;
 const std = @import("std");
 const assert = bun.assert;

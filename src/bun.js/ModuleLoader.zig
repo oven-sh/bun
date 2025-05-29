@@ -2030,7 +2030,7 @@ fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8)
 
 fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
-    if (bun.getRuntimeFeatureFlag("BUN_DEBUG_NO_DUMP")) return;
+    if (bun.getRuntimeFeatureFlag(.BUN_DEBUG_NO_DUMP)) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
@@ -2632,7 +2632,6 @@ pub const FetchFlags = enum {
     }
 };
 
-const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
     bun,
@@ -3061,22 +3060,16 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
 }
 
 const std = @import("std");
-const StaticExport = @import("./bindings/static_export.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
-const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
@@ -3086,15 +3079,11 @@ const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
 const js_printer = bun.js_printer;
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const JSC = bun.JSC;
@@ -3102,22 +3091,8 @@ const JSValue = bun.JSC.JSValue;
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ConsoleObject = bun.JSC.ConsoleObject;
-const ZigException = bun.JSC.ZigException;
-const ZigStackTrace = bun.JSC.ZigStackTrace;
 const ResolvedSource = bun.JSC.ResolvedSource;
-const JSPromise = bun.JSC.JSPromise;
-const JSModuleLoader = bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = bun.JSC.ErrorableZigString;
-const VM = bun.JSC.VM;
-const JSFunction = bun.JSC.JSFunction;
-const Config = @import("./config.zig");
-const URL = @import("../url.zig").URL;
 const Bun = JSC.API.Bun;
-const EventLoop = JSC.EventLoop;
-const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
-const ThreadSafeFunction = bun.api.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = bun.JSC.VirtualMachine;

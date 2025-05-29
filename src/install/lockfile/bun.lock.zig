@@ -1,44 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const URL = bun.URL;
-const PackageManager = bun.install.PackageManager;
-const OOM = bun.OOM;
-const logger = bun.logger;
-const BinaryLockfile = bun.install.Lockfile;
-const JSON = bun.JSON;
-const Output = bun.Output;
-const Expr = bun.js_parser.Expr;
-const MutableString = bun.MutableString;
-const DependencySlice = BinaryLockfile.DependencySlice;
-const Install = bun.install;
-const Dependency = Install.Dependency;
-const PackageID = Install.PackageID;
-const Semver = bun.Semver;
-const String = Semver.String;
-const Resolution = Install.Resolution;
-const PackageNameHash = Install.PackageNameHash;
-const NameHashMap = BinaryLockfile.NameHashMap;
-const Repository = Install.Repository;
-const Progress = bun.Progress;
-const Environment = bun.Environment;
-const Global = bun.Global;
-const LoadResult = BinaryLockfile.LoadResult;
-const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const invalid_package_id = Install.invalid_package_id;
-const Npm = Install.Npm;
-const ExtractTarball = @import("./extract_tarball.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const Meta = BinaryLockfile.Package.Meta;
-const Negatable = Npm.Negatable;
-const DependencyID = Install.DependencyID;
-const invalid_dependency_id = Install.invalid_dependency_id;
-const DependencyIDSlice = BinaryLockfile.DependencyIDSlice;
-const Bin = Install.Bin;
-const ExternalString = Semver.ExternalString;
-
 pub const Version = enum(u32) {
     v0 = 0,
 
@@ -2175,3 +2134,35 @@ fn parseAppendDependencies(
 
     return .{ @intCast(off), @intCast(end - off) };
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const string = bun.string;
+const strings = bun.strings;
+const PackageManager = bun.install.PackageManager;
+const OOM = bun.OOM;
+const logger = bun.logger;
+const BinaryLockfile = bun.install.Lockfile;
+const JSON = bun.JSON;
+const Expr = bun.js_parser.Expr;
+const DependencySlice = BinaryLockfile.DependencySlice;
+const Install = bun.install;
+const Dependency = Install.Dependency;
+const PackageID = Install.PackageID;
+const Semver = bun.Semver;
+const String = Semver.String;
+const Resolution = Install.Resolution;
+const PackageNameHash = Install.PackageNameHash;
+const Repository = Install.Repository;
+const Environment = bun.Environment;
+const LoadResult = BinaryLockfile.LoadResult;
+const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
+const invalid_package_id = Install.invalid_package_id;
+const Npm = Install.Npm;
+const ExtractTarball = @import("../extract_tarball.zig");
+const Integrity = @import("../integrity.zig").Integrity;
+const Meta = BinaryLockfile.Package.Meta;
+const Negatable = Npm.Negatable;
+const DependencyID = Install.DependencyID;
+const Bin = Install.Bin;
+const ExternalString = Semver.ExternalString;

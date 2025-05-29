@@ -18,7 +18,6 @@ const IteratorError = error{ AccessDenied, SystemResources } || posix.Unexpected
 const mem = std.mem;
 const strings = bun.strings;
 const Maybe = JSC.Maybe;
-const File = std.fs.File;
 
 pub const IteratorResult = struct {
     name: PathString,

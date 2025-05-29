@@ -310,7 +310,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformancePrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformance::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -446,7 +446,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -466,7 +466,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -504,7 +504,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_setResourceTimi
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto maxSize = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument0.value());
@@ -524,7 +524,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -565,7 +565,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto measureName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -627,7 +627,7 @@ bool JSPerformanceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     ScriptExecutionContext* owner = WTF::getPtr(jsPerformance->wrapped().scriptExecutionContext());
     if (!owner)
         return false;
-    if (UNLIKELY(reason))
+    if (reason) [[unlikely]]
         *reason = "Reachable from ScriptExecutionContext"_s;
     return visitor.containsOpaqueRoot(&jsPerformance->wrapped());
 }

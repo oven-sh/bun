@@ -2,13 +2,11 @@ const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
 const string = bun.string;
-const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
-const JSC = bun.JSC;
 const OOM = bun.OOM;
 
 /// memmem is provided by libc on posix, but implemented in zig for windows.
@@ -4688,9 +4686,6 @@ pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
     return order(a, b) == .gt;
 }
-
-const sort_asc = std.sort.asc(u8);
-const sort_desc = std.sort.desc(u8);
 
 /// Every time you read a non^2 sized integer, Zig masks off the extra bits.
 /// This is a meaningful performance difference, including in release builds.

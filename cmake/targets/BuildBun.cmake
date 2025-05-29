@@ -744,7 +744,7 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
-if(NOT WIN32) 
+if(NOT WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
 endif()
 
@@ -877,7 +877,7 @@ if(NOT WIN32)
       -Wno-nullability-completeness
       -Werror
     )
-    
+
     if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
@@ -935,6 +935,7 @@ if(LINUX)
   if(NOT ABI STREQUAL "musl")
   target_link_options(${bun} PUBLIC
     -Wl,--wrap=exp
+    -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
     -Wl,--wrap=log
@@ -1057,6 +1058,7 @@ set(BUN_DEPENDENCIES
   TinyCC
   Zlib
   LibArchive # must be loaded after zlib
+  HdrHistogram # must be loaded after zlib
   Zstd
 )
 

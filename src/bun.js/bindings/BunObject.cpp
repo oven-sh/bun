@@ -103,7 +103,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-    if (UNLIKELY(!array)) {
+    if (!array) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
         return {};
     }
@@ -133,7 +133,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     // This is a small optimization
     MarkedArgumentBuffer args;
     args.ensureCapacity(arrayLength);
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
@@ -143,7 +143,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         RETURN_IF_EXCEPTION(throwScope, {});
 
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
-            if (UNLIKELY(typedArray->isDetached())) {
+            if (typedArray->isDetached()) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
             size_t current = typedArray->byteLength();
@@ -155,7 +155,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             }
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
-            if (UNLIKELY(!impl)) {
+            if (!impl) [[unlikely]] {
                 return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
 
@@ -179,7 +179,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     }
 
     auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
-    if (UNLIKELY(!buffer)) {
+    if (!buffer) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
         return {};
     }
@@ -239,7 +239,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+    if (callFrame->argumentCount() < 1) [[unlikely]] {
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
         return {};
     }
@@ -351,7 +351,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (UNLIKELY(!shell.isObject())) {
+    if (!shell.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
         return {};
     }
@@ -359,7 +359,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* bunShell = shell.getObject();
 
     auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
-    if (UNLIKELY(!ShellError.isObject())) {
+    if (!ShellError.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
         return {};
     }
@@ -644,7 +644,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     }
 
     /// cannot turn non-`file://` URLs into file paths
-    if (UNLIKELY(!url.protocolIsFile())) {
+    if (!url.protocolIsFile()) [[unlikely]] {
         Bun::ERR::INVALID_URL_SCHEME(scope, globalObject, "file"_s);
         return {};
     }
@@ -655,7 +655,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 #if !OS(WINDOWS)
     // file://host/path is illegal if `host` is not `localhost`.
     // Should be `file:///` instead
-    if (UNLIKELY(url.host().length() > 0 && url.host() != "localhost"_s)) {
+    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
 
 #if OS(DARWIN)
         Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
@@ -918,7 +918,7 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* object = globalObject->bunObject();
 
     // :'(
-    if (LIKELY(object->hasNonReifiedStaticProperties())) {
+    if (object->hasNonReifiedStaticProperties()) [[likely]] {
         object->reifyAllStaticProperties(lexicalGlobalObject);
     }
 

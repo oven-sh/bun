@@ -21,7 +21,7 @@ class MockTracker {
       throw new TypeError("object[methodName] is not a function");
     }
     const fn = function (this: any, ...args: any[]) {
-      return implementation.apply(this, args);
+      return implementation.$apply(this, args);
     } as any;
     (fn as any).wrappedMethod = original;
     this.#mocks.push({ object, method: methodName, original });

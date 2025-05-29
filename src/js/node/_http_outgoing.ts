@@ -19,6 +19,7 @@ const {
   Headers,
   getRawKeys,
   kOutHeaders,
+  emitCloseNT,
 } = require("internal/http");
 
 const {
@@ -175,6 +176,7 @@ function OutgoingMessage(options) {
   this[kBytesWritten] = 0;
   this.writable = true;
   this.destroyed = false;
+  this.errored = undefined;
   this._hasBody = true;
   this._trailer = "";
   this._contentLength = null;
@@ -498,13 +500,17 @@ const OutgoingMessagePrototype = {
   uncork() {
     this.socket.uncork();
   },
-  destroy(_err?: Error) {
+  destroy(err?: Error) {
     if (this.destroyed) return this;
     const handle = this[kHandle];
     this.destroyed = true;
     if (handle) {
       handle.abort();
     }
+    if (err !== undefined) {
+      this.errored = err;
+    }
+    emitCloseNT(this);
     return this;
   },
 };

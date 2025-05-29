@@ -442,7 +442,7 @@ export function spawnSyncSafe(command, options = {}) {
  * @returns {string | undefined}
  */
 export function getWindowsExitReason(exitCode) {
-  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
+  const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared\\ntstatus.h";
   const nthStatus = readFile(ntStatusPath, { cache: true });
 
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));

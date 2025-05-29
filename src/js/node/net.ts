@@ -1313,6 +1313,15 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   } else {
     this.destroy($ERR_SOCKET_CLOSED());
   }
+  const state = this._writableState;
+  if (state) {
+    // Node.js keeps the writable state "open" after reset so that
+    // subsequent writes fail with ERR_STREAM_DESTROYED rather than
+    // ERR_STREAM_WRITE_AFTER_END.
+    state.finalCalled = false;
+    state.ended = false;
+    state.ending = false;
+  }
   return this;
 };
 
@@ -1472,6 +1481,20 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   } else {
     this[kwriteCallback] = callback;
   }
+};
+
+Socket.prototype.write = function write(chunk, encoding?, cb?) {
+  if (typeof encoding === "function") {
+    cb = encoding;
+    encoding = undefined;
+  }
+  if (this.destroyed) {
+    const err = $ERR_STREAM_DESTROYED("write");
+    if (typeof cb === "function") process.nextTick(cb, err);
+    else this.emit("error", err);
+    return false;
+  }
+  return Duplex.prototype.write.$call(this, chunk, encoding, cb);
 };
 
 function createConnection(...args) {

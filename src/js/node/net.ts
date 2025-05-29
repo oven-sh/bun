@@ -117,7 +117,7 @@ function endNT(socket, callback, err) {
   socket.$end();
   callback(err);
 }
-function emitCloseNT(self, hasError = false) {
+function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
 function detachSocket(self) {
@@ -895,7 +895,7 @@ Socket.prototype.connect = function connect(...args) {
       }).catch(error => {
         if (!this.destroyed) {
           this.emit("error", error);
-          this.emit("close");
+          this.emit("close", true);
         }
       });
     }
@@ -2420,7 +2420,7 @@ function emitErrorNextTick(self, error) {
 
 function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
-  self.emit("close");
+  self.emit("close", true);
 }
 
 function addServerAbortSignalOption(self, options) {

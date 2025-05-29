@@ -63,6 +63,16 @@ describe("console.Console", () => {
     expect(await outValue()).toBe("hello world!\n");
     expect(await errValue()).toBe("uh oh!\n");
   });
+  test("console.trace should output to stderr", async () => {
+    const [out, outValue] = writable();
+    const [err, errValue] = writable();
+    const c = new Console({ stdout: out, stderr: err });
+    c.trace("hello world!");
+    out.end();
+    err.end();
+    expect(await outValue()).toBe("");
+    expect(await errValue()).toStartWith("Trace: hello world!\n");
+  });
 });
 
 test("console._stdout", () => {

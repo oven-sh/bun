@@ -841,6 +841,8 @@ pub const EventLoop = struct {
 
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
+    is_inside_spawn_sync: bool = false,
+
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
             if (VirtualMachine.getMainThreadVM()) |vm| {
@@ -933,6 +935,15 @@ pub const EventLoop = struct {
     extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
         JSC.markBinding(@src());
+
+        // this exists because while we're inside a spawnSync call, some tasks can actually
+        // still complete which leads to a case where module resolution can partially complete and
+        // some modules are only partialy evaluated which causes reference errors.
+        // TODO: A better fix here could be a second event loop so we can come off the main one
+        // while processing spawnSync, then resume back to here afterwards
+        if (this.is_inside_spawn_sync) {
+            return;
+        }
 
         jsc_vm.releaseWeakRefs();
         JSC__JSGlobalObject__drainMicrotasks(globalObject);

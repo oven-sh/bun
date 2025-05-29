@@ -1147,10 +1147,16 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         warning->putDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "stack"_s), reasonStack);
     }
     if (!reasonStack) {
-        reasonStack = JSValue::decode(reason).toString(globalObject);
-        if (scope.exception()) scope.clearException();
+        auto decodedReason = JSValue::decode(reason);
+        if (decodedReason.isSymbol()) {
+            reasonStack = jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString());
+            if (scope.exception()) scope.clearException();
+        } else {
+            reasonStack = decodedReason.toStringOrNull(globalObject);
+            if (scope.exception()) scope.clearException();
+        }
     }
-    if (!reasonStack) reasonStack = jsString(globalObject->vm(), String(""_s));
+    if (!reasonStack) reasonStack = jsUndefined();
 
     Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), String("UnhandledPromiseRejectionWarning"_s)), jsUndefined(), jsUndefined());
     if (scope.exception()) scope.clearException();

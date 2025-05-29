@@ -120,11 +120,9 @@ void MessagePort::notifyPortClosed(const MessagePortIdentifier& identifier)
             Locker locker { allMessagePortsLock };
             weakPort = allMessagePorts().get(identifier);
         }
+
         if (RefPtr port = weakPort.get()) {
-            // Only dispatch close event if the port has message event listeners
-            if (port->m_hasMessageEventListener) {
-                port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
-            }
+            port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
         }
     });
 }

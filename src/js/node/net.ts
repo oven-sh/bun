@@ -50,7 +50,32 @@ const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "g
 const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
+const newDetachedSocketRaw = $newZigFunction(
+  "node_net_binding.zig",
+  "newDetachedSocket",
+  1,
+);
+
+function wrapSocketHandle(socket) {
+  if (socket && typeof socket.close !== "function") {
+    Object.defineProperty(socket, "close", {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value() {
+        if (!socket.__closed) {
+          socket.__closed = true;
+          if (typeof socket.terminate === "function") socket.terminate();
+        }
+      },
+    });
+  }
+  return socket;
+}
+
+function newDetachedSocket(isTLS) {
+  return wrapSocketHandle(newDetachedSocketRaw(isTLS));
+}
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
 
 // IPv4 Segment
@@ -239,6 +264,7 @@ const SocketHandlers: SocketHandler = {
     const self = socket.data;
     if (!self) return;
     socket.timeout(Math.ceil(self.timeout / 1000));
+    wrapSocketHandle(socket);
 
     self._handle = socket;
     self.connecting = false;
@@ -514,6 +540,7 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
+    wrapSocketHandle(socket);
     $debug("self[kupgraded]", String(self[kupgraded]));
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
@@ -634,6 +661,7 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
+    wrapSocketHandle(socket);
     req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
   },
@@ -848,6 +876,7 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
+  wrapSocketHandle(socket);
   socket.timeout(Math.ceil(this.timeout / 1000));
   this._handle = socket;
   this.connecting = false;
@@ -1099,7 +1128,7 @@ Socket.prototype.connect = function connect(...args) {
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
   this._handle?.close();
 
-  this._handle = handle;
+  this._handle = wrapSocketHandle(handle);
   this._handle[owner_symbol] = this;
 
   initSocketHandle(this);
@@ -1460,6 +1489,10 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   const socket = this._handle;
   if (!socket) {
     callback($ERR_SOCKET_CLOSED());
+    return false;
+  }
+  if (socket.__closed) {
+    callback(new Error("write EBADF"));
     return false;
   }
   this._unrefTimer();

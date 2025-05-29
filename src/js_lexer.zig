@@ -2335,7 +2335,7 @@ fn NewLexer_(
                                 lexer.step();
 
                                 if (isIdentifierStart(lexer.code_point)) {
-                                    while (isIdentifierStart(lexer.code_point) or lexer.code_point == '-') {
+                                    while (isIdentifierContinue(lexer.code_point) or lexer.code_point == '-') {
                                         lexer.step();
                                     }
                                 } else {

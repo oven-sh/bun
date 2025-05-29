@@ -234,13 +234,6 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
-    if (error?.syscall === "connect") {
-      const ex = new ExceptionWithHostPort(error.errno, "connect", self._host, self._port);
-      self.emit("error", ex);
-      if (!self.destroyed) process.nextTick(destroyNT, self, ex);
-      return;
-    }
-
     self.emit("error", error);
   },
   open(socket) {

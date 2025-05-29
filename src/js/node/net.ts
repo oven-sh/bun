@@ -2220,7 +2220,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (typeof port === "function") {
       onListen = port;
       port = 0;
-    } else if (typeof port === "object") {
+    } else if (typeof port === "object" && port !== null) {
       const options = port;
       addServerAbortSignalOption(this, options);
 
@@ -2228,6 +2228,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       exclusive = options.exclusive;
       path = options.path;
       port = options.port;
+      if (typeof port === "string") {
+        const numPort = toNumber(port);
+        if (numPort !== false) port = numPort;
+      }
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
@@ -2239,7 +2243,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
 
       const isLinux = process.platform === "linux";
 
-      if (!Number.isSafeInteger(port) || port < 0) {
+      if (port === undefined && "port" in options) {
+        port = 0;
+      } else if (port === null) {
+        port = 0;
+      } else if (!Number.isSafeInteger(port) || port < 0) {
         if (path) {
           const isAbstractPath = path.startsWith("\0");
           if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {

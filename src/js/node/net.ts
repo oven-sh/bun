@@ -32,7 +32,8 @@ const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
-import type { ServerOpts } from "node:net";
+import type { Socket as NodeSocket, ServerOpts } from "node:net";
+import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
 const { NodeAggregateError, ErrnoException } = require("internal/shared");
@@ -92,6 +93,7 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
 const kServerSocket = Symbol("kServerSocket");
+const kServerCounted = Symbol("kServerCounted");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
@@ -324,7 +326,7 @@ const SocketEmitEndNT = (self, _err?) => {
   // }
 };
 
-const ServerHandlers: SocketHandler = {
+const ServerHandlers: SocketHandler<NodeSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -335,8 +337,13 @@ const ServerHandlers: SocketHandler = {
     }
   },
   close(socket, err) {
+    $debug("Bun.Server close");
     const data = this.data;
     if (!data) return;
+
+    // when a connection is dropped, either through a BlockList or exceeding the maxConnections count, it will be immediately closed.
+    // do not let those surplus connections affect the observable connection count.
+    if (!data[kServerCounted]) return;
 
     data.server._connections--;
     {
@@ -356,11 +363,12 @@ const ServerHandlers: SocketHandler = {
     SocketHandlers.end(socket);
   },
   open(socket) {
-    const self = this.data;
+    $debug("Bun.Server open");
+    const self = socket.data.server!;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({});
+    const _socket = new SClass({}) as NodeSocket | TLSSocket;
     _socket.isServer = true;
     _socket.server = self;
     _socket._requestCert = requestCert;
@@ -395,7 +403,6 @@ const ServerHandlers: SocketHandler = {
       };
 
       socket.end();
-
       self.emit("drop", data);
       return;
     }
@@ -403,6 +410,7 @@ const ServerHandlers: SocketHandler = {
     const bunTLS = _socket[bunTlsSymbol];
     const isTLS = typeof bunTLS === "function";
 
+    _socket[kServerCounted] = true;
     self._connections++;
 
     if (pauseOnConnect) {
@@ -422,7 +430,7 @@ const ServerHandlers: SocketHandler = {
     }
   },
   handshake(socket, success, verifyError) {
-    const { data: self } = socket;
+    const self = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       const err = new ConnResetException("socket hang up");
       self.emit("_tlsError", err);
@@ -436,7 +444,7 @@ const ServerHandlers: SocketHandler = {
     self.secureConnecting = false;
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
-    const server = self.server;
+    const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -509,9 +517,8 @@ const ServerHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-type SocketHandleData = NonNullable<import("node:net").Socket["_handle"]>["data"];
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: SocketHandler<SocketHandleData> = {
+const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -2377,6 +2384,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: { server: this },
     });
   } else if (fd != null) {
     this._handle = Bun.listen({
@@ -2388,6 +2396,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: { server: this },
     });
   } else {
     this._handle = Bun.listen({
@@ -2399,11 +2408,9 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
+      data: { server: this },
     });
   }
-
-  //make this instance available on handlers
-  this._handle.data = this;
 
   const addr = this.address();
   if (addr && typeof addr === "object") {

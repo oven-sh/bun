@@ -24,7 +24,6 @@
 // after http.globalAgent.maxSockets number of files.
 // See https://groups.google.com/forum/#!topic/nodejs-dev/V5fB69hFa9o
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const fixtures = require('../common/fixtures');
 const assert = require('assert');
 const http = require('http');

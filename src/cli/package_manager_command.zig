@@ -20,7 +20,6 @@ const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
-pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
 const Npm = Install.Npm;
 const PmViewCommand = @import("./pm_view_command.zig");
 const File = bun.sys.File;
@@ -247,9 +246,6 @@ pub const PackageManagerCommand = struct {
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "audit")) {
-            const code = try AuditCommand.exec(ctx, pm, args);
-            Global.exit(code);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();

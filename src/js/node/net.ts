@@ -89,6 +89,7 @@ function isIP(s): 0 | 4 | 6 {
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
+const bunSocketServerDropped = Symbol.for("::bunnetserverdropped::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
@@ -342,16 +343,17 @@ const ServerHandlers: SocketHandler = {
     const data = this.data;
     if (!data) return;
 
-    data.server[bunSocketServerConnections]--;
-    {
-      if (!data[kclosed]) {
-        data[kclosed] = true;
-        //socket cannot be used after close
-        detachSocket(data);
-        SocketEmitEndNT(data, err);
-        data.data = null;
-        socket[owner_symbol] = null;
-      }
+    if (!data[bunSocketServerDropped]) {
+      data.server[bunSocketServerConnections]--;
+    }
+
+    if (!data[kclosed]) {
+      data[kclosed] = true;
+      //socket cannot be used after close
+      detachSocket(data);
+      SocketEmitEndNT(data, err);
+      data.data = null;
+      socket[owner_symbol] = null;
     }
 
     data.server._emitCloseIfDrained();
@@ -383,6 +385,7 @@ const ServerHandlers: SocketHandler = {
           remotePort: _socket.remotePort,
           remoteFamily: _socket.remoteFamily || "IPv4",
         };
+        _socket[bunSocketServerDropped] = true;
         socket.end();
         self.emit("drop", data);
         return;
@@ -398,6 +401,7 @@ const ServerHandlers: SocketHandler = {
         remoteFamily: _socket.remoteFamily || "IPv4",
       };
 
+      _socket[bunSocketServerDropped] = true;
       socket.end();
 
       self.emit("drop", data);

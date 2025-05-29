@@ -117,12 +117,8 @@ function endNT(socket, callback, err) {
   socket.$end();
   callback(err);
 }
-function emitCloseNT(self, hasError) {
-  if (hasError) {
-    self.emit("close", hasError);
-  } else {
-    self.emit("close");
-  }
+function emitCloseNT(self, hasError = false) {
+  self.emit("close", hasError);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -1151,7 +1147,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this);
+    process.nextTick(emitCloseNT, this, false);
   }
 };
 

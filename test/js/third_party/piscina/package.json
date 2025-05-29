@@ -1,6 +1,6 @@
 {
   "name": "piscina-test",
   "dependencies": {
-    "piscina": "^5.0.0"
+    "piscina": "5.0.0"
   }
 }

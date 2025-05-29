@@ -534,8 +534,6 @@ describe("stdio", () => {
       });
     });
 
-    it.todo("ignores errors thrown by parent _write() implementation", () => {});
-
     it("worker write() doesn't wait for parent _write() to complete", async () => {
       const sharedBuffer = new SharedArrayBuffer(4);
       const sharedArray = new Int32Array(sharedBuffer);

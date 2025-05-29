@@ -1105,6 +1105,13 @@ async function getPipeline(options = {}) {
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
+        const imageKeyZig = getImageKey({
+          os: "linux",
+          arch: "aarch64",
+          abi: "musl",
+          distro: "alpine",
+          release: "3.21",
+        });
 
         return getStepWithDependsOn(
           {
@@ -1114,7 +1121,7 @@ async function getPipeline(options = {}) {
               ? [getBuildBunStep(target, options)]
               : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
           },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          imagePlatforms.has(imageKeyZig) ? `${imageKeyZig}-build-image` : undefined, // needed for build-zig
         );
       }),
     );

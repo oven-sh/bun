@@ -166,6 +166,9 @@ function callCloseCallback(self) {
 }
 function emitCloseNT(self) {
   if (!self._closed) {
+    if (self._ended !== undefined) {
+      self._ended = true;
+    }
     self.destroyed = true;
     self._closed = true;
     callCloseCallback(self);

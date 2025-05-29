@@ -272,9 +272,7 @@ const ServerResponsePrototype = {
     }
     this.detachSocket(socket);
     this.finished = true;
-    process.nextTick(self => {
-      self._ended = true;
-    }, this);
+    // Marking _ended happens on 'close' to align with Node.js behavior
     this.emit("prefinish");
     this._callPendingCallbacks();
 

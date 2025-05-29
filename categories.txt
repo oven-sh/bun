@@ -9,6 +9,7 @@ categories:
 - node never trips `ret !== false` branch: test-tlsp-ause.js
 - cluster stuff: test-tls-ticket-cluster
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
+- ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
 
 passes on mac:
 - test-tls-junk-closes-server

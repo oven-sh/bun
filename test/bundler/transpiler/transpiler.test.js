@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync } from "fs";
-import { bunEnv, bunExe, hideFromStackTrace, tmpdirSync } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {

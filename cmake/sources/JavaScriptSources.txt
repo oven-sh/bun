@@ -84,6 +84,7 @@ src/js/internal/streams/state.ts
 src/js/internal/streams/transform.ts
 src/js/internal/streams/utils.ts
 src/js/internal/streams/writable.ts
+src/js/internal/test/binding.ts
 src/js/internal/timers.ts
 src/js/internal/tls.ts
 src/js/internal/tty.ts

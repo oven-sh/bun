@@ -417,6 +417,10 @@ const ServerHandlers: SocketHandler = {
 
     self[bunSocketServerConnections]++;
 
+    if (pauseOnConnect) {
+      _socket.pause();
+    }
+
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
       if (!isTLS) {
@@ -471,7 +475,9 @@ const ServerHandlers: SocketHandler = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (!server.pauseOnConnect) {
+    if (server.pauseOnConnect) {
+      self.pause();
+    } else {
       self.resume();
     }
   },
@@ -525,6 +531,9 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     $debug("self[kupgraded]", String(self[kupgraded]));
     if (!self[kupgraded]) req!.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
+    if (self.pauseOnConnect) {
+      self.pause();
+    }
     if (self[kupgraded]) {
       self.connecting = false;
       const options = self[bunTLSConnectOptions];
@@ -916,7 +925,9 @@ Socket.prototype.connect = function connect(...args) {
       });
     }
     this.pauseOnConnect = pauseOnConnect;
-    if (!pauseOnConnect) {
+    if (pauseOnConnect) {
+      this.pause();
+    } else {
       process.nextTick(() => {
         this.resume();
       });

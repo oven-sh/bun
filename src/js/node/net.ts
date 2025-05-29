@@ -839,14 +839,9 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
         else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
       }
     } else if (data) {
-      if (typeof data === "string") {
-        bytes += Buffer.byteLength(data, this._pendingEncoding || "utf8");
-      } else if (data.byteLength !== undefined) {
-        bytes += data.byteLength;
-      } else {
-        // Fallback for Buffer or other typed arrays
-        bytes += Buffer.byteLength(data);
-      }
+      // Writes are either a string or a Buffer.
+      if (typeof data !== "string") bytes += data.length;
+      else bytes += Buffer.byteLength(data, this._pendingEncoding || "utf8");
     }
     return bytes;
   },

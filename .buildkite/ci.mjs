@@ -310,6 +310,19 @@ function getCppAgent(platform, options) {
 }
 
 /**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.21",
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Agent}
@@ -322,19 +335,9 @@ function getZigAgent(platform, options) {
   //   queue: "build-zig",
   // };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch: "aarch64",
-      abi: "musl",
-      distro: "alpine",
-      release: "3.21",
-    },
-    options,
-    {
-      instanceType: "r8g.large",
-    },
-  );
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
 }
 
 /**
@@ -477,10 +480,14 @@ function getBuildToolchain(target) {
  */
 function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
+  const hostPlatform = getZigPlatform();
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
+    depends_on: imagePlatforms.has(getImageKey(hostPlatform))
+      ? [`${getImageKey(hostPlatform)}-build-image`]
+      : undefined,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),

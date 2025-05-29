@@ -34,7 +34,7 @@ describe("setTimeout", () => {
     const promise = setTimeout(100, undefined, abortController);
     abortController.abort();
 
-    await expect(promise).rejects.toThrow("aborted");
+    await expect(promise).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
     expect(abortController.signal.aborted).toBe(true);
   });
 });

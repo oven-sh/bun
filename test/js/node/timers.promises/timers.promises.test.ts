@@ -25,8 +25,17 @@ describe("setTimeout", () => {
     expect(unhandledRejectionCaught).toBe(false);
   });
 
-  it("an instance of AbortController can be passed as the third argument", async () => {
-    await expect(async () => await setTimeout(0, undefined, new AbortController())).not.toThrow();
+  it("AbortController can be passed as the `options` argument", async () => {
+    expect(async () => await setTimeout(0, undefined, new AbortController())).not.toThrow();
+  });
+
+  it("should reject promise when AbortController is aborted", async () => {
+    const abortController = new AbortController();
+    const promise = setTimeout(100, undefined, abortController);
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow("aborted");
+    expect(abortController.signal.aborted).toBe(true);
   });
 });
 

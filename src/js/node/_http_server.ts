@@ -796,7 +796,6 @@ const ServerPrototype = {
       if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
       return;
     }
-    this[serverSymbol] = undefined;
     const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
     if (connectionsCheckingInterval) {
       connectionsCheckingInterval._destroyed = true;

@@ -4,7 +4,6 @@ const bun = @import("bun");
 const JSValue = JSC.JSValue;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
-
 const log = bun.Output.scoped(.napi, false);
 
 const Async = bun.Async;
@@ -408,7 +407,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
     result.set(env, string.toJS(env.toJS()));
     return env.ok();
 }
-pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+pub fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) callconv(.C) napi_status {
     const env = env_ orelse {
         return envIsNull();
     };
@@ -2497,3 +2496,10 @@ pub const NapiFinalizerTask = struct {
         this.runOnJSThread();
     }
 };
+
+//some .node dlibs could have weak symbols[__attribute__((weak))], ld64 requires making symbols weak to interpose them
+//see : https://dawn.googlesource.com/dawn/+/refs/heads/main/src/dawn/node/NapiSymbols.cpp
+//https://github.com/oven-sh/bun/issues/19336
+comptime {
+    @export(&napi_create_string_utf8, .{ .name = "napi_create_string_utf8", .linkage = if (bun.Environment.isMac) .weak else .strong });
+}

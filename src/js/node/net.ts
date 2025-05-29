@@ -849,7 +849,9 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
         else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
       }
     } else if (data) {
-      bytes += data.byteLength;
+      // Writes are either a string or a Buffer.
+      if (typeof data !== "string") bytes += data.length;
+      else bytes += Buffer.byteLength(data, this._pendingEncoding || "utf8");
     }
     return bytes;
   },

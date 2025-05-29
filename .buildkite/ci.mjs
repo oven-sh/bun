@@ -310,6 +310,19 @@ function getCppAgent(platform, options) {
 }
 
 /**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.21",
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Agent}
@@ -322,19 +335,9 @@ function getZigAgent(platform, options) {
   //   queue: "build-zig",
   // };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch: "aarch64",
-      abi: "musl",
-      distro: "alpine",
-      release: "3.21",
-    },
-    options,
-    {
-      instanceType: "r8g.large",
-    },
-  );
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
 }
 
 /**
@@ -1105,6 +1108,11 @@ async function getPipeline(options = {}) {
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
+        if (imagePlatforms.has(imageKey)) {
+          dependsOn.push(`${imageKey}-build-image`);
+        }
 
         return getStepWithDependsOn(
           {
@@ -1114,7 +1122,7 @@ async function getPipeline(options = {}) {
               ? [getBuildBunStep(target, options)]
               : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
           },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          ...dependsOn,
         );
       }),
     );

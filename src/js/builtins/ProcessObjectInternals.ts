@@ -30,12 +30,18 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
-export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdinFdType, isNodeWorkerThread: boolean) {
-  $assert(fd === 0 || fd === 1 || fd === 2, `Expected fd to be 0, 1, or 2, got ${fd}`);
+export function getStdioWriteStream(
+  process: typeof globalThis.process,
+  fd: number,
+  isTTY: boolean,
+  _fdType: BunProcessStdinFdType,
+  isNodeWorkerThread: boolean,
+) {
+  $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
   let stream;
   // workers do not handle stdin yet
-  if (!isNodeWorkerThread || fd === 0) {
+  if (!isNodeWorkerThread) {
     if (isTTY) {
       const tty = require("node:tty");
       stream = new tty.WriteStream(fd);
@@ -78,7 +84,13 @@ export function getStdioWriteStream(fd, isTTY: boolean, _fdType: BunProcessStdin
   return [stream, underlyingSink];
 }
 
-export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType) {
+export function getStdinStream(
+  process: typeof globalThis.process,
+  fd: number,
+  isTTY: boolean,
+  fdType: BunProcessStdinFdType,
+) {
+  $assert(fd === 0);
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -249,7 +261,12 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   return stream;
 }
-export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
+export function initializeNextTickQueue(
+  process: typeof globalThis.process,
+  nextTickQueue,
+  drainMicrotasksFn,
+  reportUncaughtExceptionFn,
+) {
   var queue;
   var process;
   var nextTickQueue = nextTickQueue;

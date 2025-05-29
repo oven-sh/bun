@@ -2030,7 +2030,7 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, int fd)
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, JSC::JSObject* processObject, int fd)
 {
     auto* globalObject = defaultGlobalObject(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -2038,6 +2038,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, in
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
     args.append(JSC::jsNumber(fd));
     args.append(jsBoolean(bun_stdio_tty[fd]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
@@ -2049,8 +2050,11 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, in
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
-    scope.assertNoExceptionExceptTermination();
-    CLEAR_AND_RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (auto* exception = scope.exception()) {
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        scope.clearException();
+        return jsUndefined();
+    }
 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
@@ -2084,12 +2088,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, in
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
-    return constructStdioWriteStream(processObject->globalObject(), 1);
+    return constructStdioWriteStream(processObject->globalObject(), processObject, 1);
 }
 
 static JSValue constructStderr(VM& vm, JSObject* processObject)
 {
-    return constructStdioWriteStream(processObject->globalObject(), 2);
+    return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
 }
 
 #if OS(WINDOWS)
@@ -2099,17 +2103,22 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
     args.append(JSC::jsNumber(STDIN_FILENO));
     args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
-    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+    JSC::CallData callData = JSC::getCallData(getStdinStream);
 
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
+    if (auto* exception = scope.exception()) {
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        scope.clearException();
+        return jsUndefined();
+    }
     return result;
 }
 

@@ -81,6 +81,14 @@ function isIPv6(s): boolean {
   )).test(s);
 }
 
+function isIPv6LinkLocal(address: string): boolean {
+  if (typeof address !== "string") return false;
+  address = address.toLowerCase();
+  if (!address.startsWith("fe")) return false;
+  const byte = parseInt(address.slice(2, 4), 16);
+  return byte >= 0x80 && byte <= 0xbf;
+}
+
 function isIP(s): 0 | 4 | 6 {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
@@ -2295,46 +2303,78 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     this.once("listening", onListen);
   }
 
-  try {
-    var tls = undefined;
-    var TLSSocketClass = undefined;
-    const bunTLS = this[bunTlsSymbol];
-    const options = this[bunSocketServerOptions];
-    let contexts: Map<string, any> | null = null;
-    if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
-      options.servername = tls.serverName;
-      options[kSocketClass] = TLSSocketClass;
-      contexts = tls.contexts;
-      if (!tls.requestCert) {
-        tls.rejectUnauthorized = false;
-      }
-    } else {
-      options[kSocketClass] = Socket;
-    }
+  const self = this;
 
-    listenInCluster(
-      this,
-      null,
-      port,
-      4,
-      backlog,
-      fd,
-      exclusive,
-      ipv6Only,
-      allowHalfOpen,
-      reusePort,
-      undefined,
-      undefined,
-      path,
-      hostname,
-      tls,
-      contexts,
-      onListen,
-    );
-  } catch (err) {
-    setTimeout(emitErrorNextTick, 1, this, err);
+  function doListen(host: string) {
+    try {
+      var tls = undefined;
+      var TLSSocketClass = undefined;
+      const bunTLS = self[bunTlsSymbol];
+      const options = self[bunSocketServerOptions];
+      let contexts: Map<string, any> | null = null;
+      if (typeof bunTLS === "function") {
+        [tls, TLSSocketClass] = bunTLS.$call(self, port, host, false);
+        options.servername = tls.serverName;
+        options[kSocketClass] = TLSSocketClass;
+        contexts = tls.contexts;
+        if (!tls.requestCert) {
+          tls.rejectUnauthorized = false;
+        }
+      } else {
+        options[kSocketClass] = Socket;
+      }
+
+      const addressType = isIP(host);
+
+      listenInCluster(
+        self,
+        null,
+        port,
+        addressType || 4,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        allowHalfOpen,
+        reusePort,
+        undefined,
+        undefined,
+        path,
+        host,
+        tls,
+        contexts,
+        onListen,
+      );
+    } catch (err) {
+      setTimeout(emitErrorNextTick, 1, self, err);
+    }
   }
+
+  const addressType = isIP(hostname);
+  if (!path && addressType === 0 && typeof hostname === "string") {
+    if (dns === undefined) dns = require("node:dns");
+    dns.lookup(hostname, { all: true }, (err, addresses) => {
+      if (err) {
+        setTimeout(emitErrorNextTick, 1, self, err);
+        return;
+      }
+      if (addresses.length > 1) {
+        const hasNonLinkLocal = addresses.some(
+          (a) => !(a.family === 6 && isIPv6LinkLocal(a.address)),
+        );
+        if (hasNonLinkLocal) {
+          addresses = addresses.filter(
+            (a) => !(a.family === 6 && isIPv6LinkLocal(a.address)),
+          );
+        }
+      }
+      const { address } = addresses[0];
+      doListen(address);
+    });
+    return this;
+  }
+
+  doListen(hostname);
   return this;
 };
 

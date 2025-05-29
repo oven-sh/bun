@@ -12,9 +12,36 @@ function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
 
-function mock() {
-  throwNotImplemented("mock()", 5090, "Use `bun:test` in the interim.");
+class MockTracker {
+  #mocks: { object: any; method: PropertyKey; original: any }[] = [];
+
+  method(object: any, methodName: any, implementation: (...args: any[]) => any) {
+    const original = object[methodName];
+    if (typeof original !== "function") {
+      throw new TypeError("object[methodName] is not a function");
+    }
+    const fn = function (this: any, ...args: any[]) {
+      return implementation.apply(this, args);
+    } as any;
+    (fn as any).wrappedMethod = original;
+    this.#mocks.push({ object, method: methodName, original });
+    object[methodName] = fn;
+    return fn;
+  }
+
+  restoreAll() {
+    for (const m of this.#mocks) {
+      m.object[m.method] = m.original;
+    }
+    this.#mocks.length = 0;
+  }
+
+  reset() {
+    this.restoreAll();
+  }
 }
+
+const mock = new MockTracker();
 
 function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
@@ -125,8 +152,7 @@ class TestContext {
   }
 
   get mock() {
-    throwNotImplemented("mock", 5090, "Use `bun:test` in the interim.");
-    return undefined;
+    return mock;
   }
 
   runOnly(_value?: boolean) {

@@ -90,7 +90,7 @@ function isIP(s): 0 | 4 | 6 {
 
 function isLocalAddress(addr: string): boolean {
   if (!addr) return false;
-  if (addr === '0.0.0.0' || addr === '::') return true;
+  if (addr === "0.0.0.0" || addr === "::") return true;
   const interfaces = os.networkInterfaces();
   for (const name in interfaces) {
     const list = interfaces[name];

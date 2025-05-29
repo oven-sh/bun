@@ -788,6 +788,8 @@ function Socket(options?) {
   if (handle) {
     this._handle = handle;
     initSocketHandle(this);
+    // We don't implement this, but some node tests expect a readStart function
+    // to exist. And user's code might too.
     if (typeof handle.readStart === "function") {
       handle.readStart();
     }

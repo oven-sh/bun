@@ -1140,7 +1140,7 @@ const ServerPrototype = {
         //   http_req.socket[kInternalSocketData] = [server, http_res, req];
         //   server.emit("connection", http_req.socket);
         //   const rejectFn = err => reject(err);
-        //   http_req.once("error", rejectFn);
+        //   http_res.once("error", rejectFn);
         //   http_res.once("error", rejectFn);
         //   if (upgrade) {
         //     server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
@@ -1548,6 +1548,17 @@ function _writeHead(statusCode, reason, obj, response) {
       }
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
+  }
+
+  // Automatically add connection: keep-alive header if not explicitly set
+  // This matches Node.js behavior for HTTP/1.1 responses
+  if (!response.hasHeader("connection") && response.shouldKeepAlive) {
+    response.setHeader("connection", "keep-alive");
+  }
+
+  // Automatically add Date header if not explicitly set (Node.js behavior)
+  if (!response.hasHeader("date") && response.sendDate) {
+    response.setHeader("date", new Date().toUTCString());
   }
 
   updateHasBody(response, statusCode);

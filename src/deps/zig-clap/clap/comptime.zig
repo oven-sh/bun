@@ -182,7 +182,7 @@ pub fn ComptimeClap(
                     }
                 }
 
-                @compileError(name ++ " is not a parameter.");
+                @compileError(name ++ " is not a parameter. Make sure it's defined in the params list.");
             }
         }
     };

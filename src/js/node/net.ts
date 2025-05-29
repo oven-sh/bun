@@ -228,7 +228,6 @@ const SocketHandlers: SocketHandler = {
       self[kwriteCallback] = null;
       callback(error);
     }
-
     self.emit("error", error);
   },
   open(socket) {
@@ -729,8 +728,6 @@ function Socket(options?) {
   this[kclosed] = false;
   this[kended] = false;
   this.connecting = false;
-  this._host = undefined;
-  this._port = undefined;
   this[bunTLSConnectOptions] = null;
   this.timeout = 0;
   this[kwriteCallback] = undefined;
@@ -1557,7 +1554,6 @@ function lookupAndConnect(self, options) {
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
   self._host = host;
-  self._port = port;
   const lookup = options.lookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {

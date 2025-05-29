@@ -5,7 +5,12 @@ const validators = @import("./util/validators.zig");
 //
 //
 
-pub var autoSelectFamilyDefault: bool = true;
+// Node.js defaults to `false` which means that network connections only try a
+// single address family unless `autoSelectFamily` is explicitly enabled. Using
+// `true` here results in duplicate connection attempts which causes extra
+// connection events to be emitted. This breaks tests expecting only one
+// connection, such as `test-net-large-string.js`.
+pub var autoSelectFamilyDefault: bool = false;
 
 pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "getDefaultAutoSelectFamily", (struct {

@@ -685,6 +685,7 @@ function Socket(options?) {
     noDelay = false,
     keepAlive = false,
     keepAliveInitialDelay = 0,
+    handle = null,
     ...opts
   } = options || {};
 
@@ -782,6 +783,14 @@ function Socket(options?) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", opts.blockList);
     }
     this.blockList = opts.blockList;
+  }
+
+  if (handle) {
+    this._handle = handle;
+    initSocketHandle(this);
+    if (typeof handle.readStart === "function") {
+      handle.readStart();
+    }
   }
 }
 $toClass(Socket, "Socket", Duplex);

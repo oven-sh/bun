@@ -2292,6 +2292,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         flags: NewFlags(debug_mode) = .{},
 
+        /// timeout in seconds set via IncomingMessage.setTimeout().
+        request_timeout_seconds: u8 = 0,
+
         upgrade_context: ?*uws.uws_socket_context_t = null,
 
         /// We can only safely free once the request body promise is finalized
@@ -4477,6 +4480,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             assert(this.resp == resp);
 
+            if (this.request_timeout_seconds > 0) {
+                resp.timeout(this.request_timeout_seconds);
+            }
+
             this.flags.is_waiting_for_request_body = last == false;
             if (this.isAbortedOrEnded() or this.flags.has_marked_complete) return;
             if (!last and chunk.len == 0) {
@@ -4647,8 +4654,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn setTimeout(this: *RequestContext, seconds: c_uint) bool {
             if (this.resp) |resp| {
-                resp.timeout(@min(seconds, 255));
-                if (seconds > 0) {
+                const secs: u8 = @truncate(@min(seconds, 255));
+                this.request_timeout_seconds = secs;
+                resp.timeout(secs);
+                if (secs > 0) {
 
                     // we only set the timeout callback if we wanna the timeout event to be triggered
                     // the connection will be closed so the abort handler will be called after the timeout
@@ -4659,6 +4668,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 } else {
                     // if the timeout is 0, we don't need to trigger the timeout event
+                    this.request_timeout_seconds = 0;
                     resp.clearTimeout();
                 }
                 return true;

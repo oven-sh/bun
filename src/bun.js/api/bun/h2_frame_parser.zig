@@ -657,7 +657,7 @@ pub const H2FrameParser = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
+    const ENABLE_AUTO_CORK = false; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
     const MAX_BUFFER_SIZE = 32768;
@@ -1677,6 +1677,7 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
         log("write {}", .{bytes.len});
         if (comptime ENABLE_AUTO_CORK) {
+            // TODO: make this use AutoFlusher
             this.cork();
             const available = CORK_BUFFER[CORK_OFFSET..];
             if (bytes.len > available.len) {

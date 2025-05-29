@@ -18,6 +18,7 @@ comptime {
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
     @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
+    @export(&allowRejectionHandledWarning, .{ .name = "Bun__VM__allowRejectionHandledWarning" });
 }
 
 global: *JSGlobalObject,
@@ -195,6 +196,9 @@ pub const OnException = fn (*ZigException) void;
 
 pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
     return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
+}
+pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
+    return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) callconv(.C) Api.UnhandledRejections {
     return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;

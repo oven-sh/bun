@@ -1178,6 +1178,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     return false;
 }
 
+extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
+
 extern "C" int Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
@@ -1187,6 +1189,10 @@ extern "C" int Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalOb
     auto* process = jsCast<Process*>(globalObject->processObject());
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
+
+    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
+        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+    }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;

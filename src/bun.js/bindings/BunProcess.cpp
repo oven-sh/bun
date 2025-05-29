@@ -1548,10 +1548,17 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
 
     Vector<StackFrame> stackTrace;
     const size_t framesToSkip = 1;
-    auto caller = ctor.toBoolean(globalObject) ? ctor : jsUndefined(); // TODO: process.emitWarning instead of jsUndefined
+    JSValue caller;
+    if (ctor.toBoolean(globalObject)) {
+        caller = ctor;
+    } else {
+        auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+        auto* process = globalObject->processObject();
+        caller = process->get(globalObject, Identifier::fromString(vm, String("emitWarning"_s)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     vm.interpreter.getStackTrace(errorInstance, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller.isCallable() ? caller.asCell() : nullptr);
     errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    // ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }

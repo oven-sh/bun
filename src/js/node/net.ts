@@ -788,9 +788,6 @@ function Socket(options?) {
   if (handle) {
     this._handle = handle;
     initSocketHandle(this);
-    if (typeof handle.readStart === "function") {
-      handle.readStart();
-    }
   }
 }
 $toClass(Socket, "Socket", Duplex);

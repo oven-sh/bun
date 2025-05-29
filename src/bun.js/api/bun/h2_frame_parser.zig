@@ -36,7 +36,6 @@ const MAX_WINDOW_SIZE = std.math.maxInt(i32);
 const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
-const MAX_HPACK_HEADER_SIZE = std.math.maxInt(u16);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 
 const PaddingStrategy = enum {
@@ -658,7 +657,7 @@ pub const H2FrameParser = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
+    const ENABLE_AUTO_CORK = false; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
     const MAX_BUFFER_SIZE = 32768;
@@ -1678,6 +1677,7 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
         log("write {}", .{bytes.len});
         if (comptime ENABLE_AUTO_CORK) {
+            // TODO: make this use AutoFlusher
             this.cork();
             const available = CORK_BUFFER[CORK_OFFSET..];
             if (bytes.len > available.len) {

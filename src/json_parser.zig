@@ -1,46 +1,26 @@
 const std = @import("std");
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("options.zig");
 const BabyList = @import("./baby_list.zig").BabyList;
-const fs = @import("fs.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
 
-const StmtNodeIndex = js_ast.StmtNodeIndex;
-const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
-const StmtNodeList = js_ast.StmtNodeList;
-const BindingNodeList = js_ast.BindingNodeList;
 const assert = bun.assert;
 
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
 const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 pub const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Indentation = js_printer.Options.Indentation;
 
 const LEXER_DEBUGGER_WORKAROUND = false;
@@ -1008,11 +988,7 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
 const js_printer = bun.js_printer;
-const renamer = @import("renamer.zig");
-const SymbolList = [][]Symbol;
 
-const Transpiler = bun.Transpiler;
-const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);

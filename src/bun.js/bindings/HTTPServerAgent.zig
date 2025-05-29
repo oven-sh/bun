@@ -177,10 +177,5 @@ pub const HTTPMethod = bun.http.Method;
 
 const std = @import("std");
 const bun = @import("bun");
-const string = bun.string;
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const ZigException = JSC.ZigException;
 const BunString = bun.String;

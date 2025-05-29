@@ -35,7 +35,7 @@ static Cookie* toCookieWrapped(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 {
     auto& vm = getVM(lexicalGlobalObject);
     auto* impl = JSCookie::toWrapped(vm, value);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         throwVMTypeError(lexicalGlobalObject, throwScope);
     return impl;
 }
@@ -48,7 +48,7 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 
     if (auto* dateInstance = jsDynamicCast<JSC::DateInstance*>(expiresValue)) {
         double date = dateInstance->internalNumber();
-        if (UNLIKELY(std::isnan(date) || std::isinf(date))) {
+        if (std::isnan(date) || std::isinf(date)) [[unlikely]] {
             throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Date (or Number)"_s));
             return Cookie::emptyExpiresAtValue;
         }
@@ -57,7 +57,7 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 
     if (expiresValue.isNumber()) {
         double expires = expiresValue.asNumber();
-        if (UNLIKELY(std::isnan(expires) || !std::isfinite(expires))) {
+        if (std::isnan(expires) || !std::isfinite(expires)) [[unlikely]] {
             throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "expires must be a valid Number (or Date)"_s));
             return Cookie::emptyExpiresAtValue;
         }
@@ -287,7 +287,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
     auto* castedThis = jsCast<JSCookieDOMConstructor*>(callFrame->jsCallee());
 
     // Check if this was called with 'new'
-    if (UNLIKELY(!callFrame->thisValue().isObject()))
+    if (!callFrame->thisValue().isObject()) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotAConstructorError(lexicalGlobalObject, callFrame->jsCallee()));
 
     // Static method: parse(cookieString)
@@ -296,7 +296,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookieString = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->argument(0));
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (UNLIKELY(!WebCore::isValidHTTPHeaderValue(cookieString))) {
+        if (!WebCore::isValidHTTPHeaderValue(cookieString)) [[unlikely]] {
             throwVMTypeError(lexicalGlobalObject, throwScope, "cookie string is not a valid HTTP header value"_s);
             RELEASE_AND_RETURN(throwScope, {});
         }
@@ -468,7 +468,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookieConstructor, (JSGlobalObject * lexicalGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSCookiePrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCookie::getConstructor(vm, prototype->globalObject()));
 }
@@ -533,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
         return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTFMove(cookie)));
     }
 
-    if (UNLIKELY(!WebCore::isValidHTTPHeaderValue(cookieString))) {
+    if (!WebCore::isValidHTTPHeaderValue(cookieString)) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "cookie string is not a valid HTTP header value"_s);
         RELEASE_AND_RETURN(throwScope, {});
     }
@@ -619,7 +619,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_name, (JSGlobalObject * lexical
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "name"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.name()));
@@ -630,7 +630,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_value, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "value"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.value()));
@@ -641,7 +641,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_value, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "value"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
@@ -655,7 +655,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_domain, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "domain"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, throwScope, impl.domain()));
@@ -666,7 +666,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_domain, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "domain"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
@@ -680,7 +680,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_path, (JSGlobalObject * lexical
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "path"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.path()));
@@ -691,7 +691,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_path, (JSGlobalObject * lexical
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "path"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
@@ -705,7 +705,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_expires, (JSGlobalObject * lexi
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "expires"_s);
     auto& impl = thisObject->wrapped();
     if (impl.hasExpiry()) {
@@ -728,7 +728,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_expires, (JSGlobalObject * lexi
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "expires"_s);
     auto& impl = thisObject->wrapped();
     auto value = getExpiresValue(lexicalGlobalObject, throwScope, JSValue::decode(encodedValue));
@@ -743,7 +743,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_secure, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "secure"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.secure()));
@@ -754,7 +754,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_secure, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "secure"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
@@ -768,7 +768,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_sameSite, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "sameSite"_s);
     auto& impl = thisObject->wrapped();
 
@@ -780,7 +780,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "sameSite"_s);
     auto& impl = thisObject->wrapped();
 
@@ -809,7 +809,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_httpOnly, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "httpOnly"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.httpOnly()));
@@ -820,7 +820,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_httpOnly, (JSGlobalObject * lex
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "httpOnly"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
@@ -835,7 +835,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_maxAge, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
     auto& impl = thisObject->wrapped();
     double maxAge = impl.maxAge();
@@ -849,7 +849,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge, (JSGlobalObject * lexic
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
     auto& impl = thisObject->wrapped();
     if (JSValue::decode(encodedValue).isUndefinedOrNull()) {
@@ -869,7 +869,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_partitioned, (JSGlobalObject * 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "partitioned"_s);
     auto& impl = thisObject->wrapped();
     return JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.partitioned()));
@@ -880,7 +880,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_partitioned, (JSGlobalObject * 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "partitioned"_s);
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));

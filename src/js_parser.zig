@@ -18,11 +18,8 @@ pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 
 const G = js_ast.G;
@@ -70,13 +67,11 @@ pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
 const Ref = @import("./ast/base.zig").Ref;
-const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -185,8 +180,6 @@ const arguments_str: string = "arguments";
 
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
-const JSXFactoryName = "JSX";
-const JSXAutomaticName = "jsx_module";
 // kept as a static reference
 const exports_string_name: string = "exports";
 
@@ -499,7 +492,6 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
         return e.left.loc;
     }
 }
-const ExportsStringName = "exports";
 
 const TransposeState = struct {
     is_await_target: bool = false,
@@ -2540,8 +2532,6 @@ const ExprIn = struct {
     property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
 };
 
-const Tup = std.meta.Tuple;
-
 // This function exists to tie all of these checks together in one place
 // This can sometimes show up on benchmarks as a small thing.
 fn isEvalOrArguments(name: string) bool {
@@ -2679,7 +2669,6 @@ const SymbolUseMap = js_ast.Part.SymbolUseMap;
 const SymbolPropertyUseMap = js_ast.Part.SymbolPropertyUseMap;
 const StringBoolMap = bun.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
-const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("./ast/base.zig").RefHashCtx, false);
 
 const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;
@@ -7461,7 +7450,7 @@ fn NewParser_(
                     .bin_pow => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = bun.pow(vals[0], vals[1]) }, v.loc);
+                                return p.newExpr(E.Number{ .value = JSC.math.pow(vals[0], vals[1]) }, v.loc);
                             }
                         }
                     },

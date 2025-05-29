@@ -1,8 +1,5 @@
-const bun = @import("bun");
-const std = @import("std");
 const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 const ErrorCode = @import("ErrorCode.zig").ErrorCode;
-const typeBaseName = @import("../../meta.zig").typeBaseName;
 
 pub fn Errorable(comptime Type: type) type {
     return extern struct {

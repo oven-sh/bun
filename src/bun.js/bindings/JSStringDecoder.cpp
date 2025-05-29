@@ -84,8 +84,9 @@ ALWAYS_INLINE bool isContinuation(uint8_t byte)
 static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue, WTF::ASCIILiteral functionName)
 {
     ASSERT(stringDecoderValue);
-    if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); LIKELY(cast))
+    if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); cast) [[likely]] {
         return cast;
+    }
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -93,9 +94,10 @@ static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject,
     if (JSC::JSObject* thisObject = stringDecoderValue.getObject()) {
         auto clientData = WebCore::clientData(vm);
         JSValue existingDecoderValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().decodePrivateName());
-        if (LIKELY(existingDecoderValue)) {
-            if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); LIKELY(cast))
+        if (existingDecoderValue) [[likely]] {
+            if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); cast) [[likely]] {
                 return cast;
+            }
         }
     }
 
@@ -411,7 +413,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         // What node does:
         // StringDecoder.prototype.write = function write(buf) {
         // if (typeof buf === 'string')
@@ -434,7 +436,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
@@ -451,7 +453,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
 
     auto buffer = callFrame->uncheckedArgument(0);
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
-    if (UNLIKELY(!view || view->isDetached())) {
+    if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }

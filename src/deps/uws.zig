@@ -14,7 +14,6 @@ pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
 const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
 const EventLoopTimer = @import("../bun.js/api/Timer.zig").EventLoopTimer;
 const WriteResult = union(enum) {
@@ -1995,25 +1994,25 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .null)
+            if (@typeInfo(@TypeOf(Type.onOpen)) != .null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .null)
+            if (@typeInfo(@TypeOf(Type.onClose)) != .null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
+            if (@typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(Type, "onFd") and @typeInfo(@TypeOf(Type.onFd)) != .null)
+            if (@typeInfo(@TypeOf(Type.onFd)) != .null)
                 us_socket_context_on_fd(ssl_int, ctx, SocketHandler.on_fd);
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
+            if (@typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
+            if (@typeInfo(@TypeOf(Type.onTimeout)) != .null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .null) {
+            if (@typeInfo(@TypeOf(Type.onConnectError)) != .null) {
                 us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
             }
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .null)
+            if (@typeInfo(@TypeOf(Type.onEnd)) != .null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .null)
+            if (@typeInfo(@TypeOf(Type.onHandshake)) != .null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
         }
 
@@ -2268,6 +2267,11 @@ pub const SocketContext = opaque {
         return this;
     }
 
+    pub fn unref(this: *SocketContext, comptime ssl: bool) *SocketContext {
+        us_socket_context_unref(@intFromBool(ssl), this);
+        return this;
+    }
+
     pub fn cleanCallbacks(ctx: *SocketContext, is_ssl: bool) void {
         const ssl_int: i32 = @intFromBool(is_ssl);
         // replace callbacks with dummy ones
@@ -2393,21 +2397,23 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn inc(this: *PosixLoop) void {
+        log("inc {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
     }
 
     pub fn dec(this: *PosixLoop) void {
+        log("dec {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
     }
 
     pub fn ref(this: *PosixLoop) void {
-        log("ref {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
+        log("ref {d} + 1 = {d} | {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1, this.active, this.active + 1 });
         this.num_polls += 1;
         this.active += 1;
     }
 
     pub fn unref(this: *PosixLoop) void {
-        log("unref {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
+        log("unref {d} - 1 = {d} | {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1, this.active, this.active -| 1 });
         this.num_polls -= 1;
         this.active -|= 1;
     }
@@ -2430,7 +2436,7 @@ pub const PosixLoop = extern struct {
 
     pub fn unrefCount(this: *PosixLoop, count: i32) void {
         log("unref x {d}", .{count});
-        this.num_polls -|= count;
+        this.num_polls -= count;
         this.active -|= @as(u32, @intCast(count));
     }
 

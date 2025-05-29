@@ -1409,9 +1409,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   setEncoding(_encoding) {
-    const err = new Error(
-      "Changing the socket encoding is not allowed per RFC7230 Section 3."
-    );
+    const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
     err.code = "ERR_HTTP_SOCKET_ENCODING";
     throw err;
   }

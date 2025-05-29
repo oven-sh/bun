@@ -478,6 +478,18 @@ function ClientRequest(input, options, cb) {
 
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      if (!this.hasHeader("Host")) {
+        let hostHeader = host;
+        const posColon = hostHeader.indexOf(":");
+        if (
+          posColon !== -1 &&
+          hostHeader.includes(":", posColon + 1) &&
+          hostHeader.charCodeAt(0) !== 91 /* '[' */
+        ) {
+          hostHeader = `[${hostHeader}]`;
+        }
+        this.setHeader("Host", `${hostHeader}:${port}`);
+      }
       const [url, proxy] = getURL(host);
       go(url, proxy, false);
       return true;
@@ -508,7 +520,16 @@ function ClientRequest(input, options, cb) {
         }
 
         if (!this.hasHeader("Host")) {
-          this.setHeader("Host", `${host}:${port}`);
+          let hostHeader = host;
+          const posColon = hostHeader.indexOf(":");
+          if (
+            posColon !== -1 &&
+            hostHeader.includes(":", posColon + 1) &&
+            hostHeader.charCodeAt(0) !== 91 /* '[' */
+          ) {
+            hostHeader = `[${hostHeader}]`;
+          }
+          this.setHeader("Host", `${hostHeader}:${port}`);
         }
 
         // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.

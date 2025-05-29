@@ -244,6 +244,31 @@ var InternalSecureContext = class SecureContext {
 
       this.secureOptions = secureOptions;
 
+      // Validate secureProtocol if provided
+      if (options.secureProtocol !== undefined) {
+        if (typeof options.secureProtocol !== "string") {
+          throw new TypeError("secureProtocol argument must be a string");
+        }
+        
+        // List of valid protocol methods supported by OpenSSL
+        const validProtocolMethods = [
+          'TLS_method',
+          'TLSv1_method',
+          'TLSv1_1_method', 
+          'TLSv1_2_method',
+          'TLSv1_3_method',
+          'SSLv3_method',
+          'SSLv23_method',
+          'DTLS_method',
+          'DTLSv1_method',
+          'DTLSv1_2_method'
+        ];
+        
+        if (!validProtocolMethods.includes(options.secureProtocol)) {
+          throw $ERR_TLS_INVALID_PROTOCOL_METHOD(`Unknown method: ${options.secureProtocol}`);
+        }
+      }
+
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
         if ($isUndefinedOrNull(options.privateKeyEngine)) {
           // prettier-ignore

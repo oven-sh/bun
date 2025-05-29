@@ -1550,6 +1550,12 @@ function _writeHead(statusCode, reason, obj, response) {
     }
   }
 
+  // Automatically add Connection: keep-alive header if shouldKeepAlive is true
+  // and no Connection header has been set
+  if (response.shouldKeepAlive && !response.hasHeader("connection")) {
+    response.setHeader("Connection", "keep-alive");
+  }
+
   updateHasBody(response, statusCode);
 }
 

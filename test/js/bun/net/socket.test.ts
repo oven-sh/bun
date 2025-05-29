@@ -699,7 +699,7 @@ it("upgradeTLS handles errors", async () => {
     socket.end();
   }
   Bun.gc(true);
-});
+}, 20_000); // only needed in debug mode
 it("should be able to upgrade to TLS", async () => {
   using server = Bun.serve({
     port: 0,

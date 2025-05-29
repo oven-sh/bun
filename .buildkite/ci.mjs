@@ -228,13 +228,7 @@ function getRetry(limit = 0) {
     manual: {
       permit_on_passed: true,
     },
-    automatic: [
-      { exit_status: 1, limit },
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
-      { signal_reason: "cancel", limit: 1 },
-      { signal_reason: "agent_stop", limit: 1 },
-    ],
+    automatic: false,
   };
 }
 
@@ -572,7 +566,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
-    timeout_in_minutes: profile === "asan" ? 90 : 30,
+    timeout_in_minutes: profile === "asan" ? 45 : 30,
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`

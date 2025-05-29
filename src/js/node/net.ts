@@ -2481,7 +2481,11 @@ function listenInCluster(
 
   if (cluster === undefined) cluster = require("node:cluster");
 
-  if (cluster.isPrimary || exclusive) {
+  if (
+    cluster.isPrimary ||
+    exclusive ||
+    cluster.schedulingPolicy === cluster.SCHED_NONE
+  ) {
     server[kRealListen](
       path,
       port,
@@ -2489,7 +2493,7 @@ function listenInCluster(
       exclusive,
       ipv6Only,
       allowHalfOpen,
-      reusePort,
+      reusePort || cluster.schedulingPolicy === cluster.SCHED_NONE,
       tls,
       contexts,
       onListen,

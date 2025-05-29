@@ -1,3 +1,5 @@
+import type { Pipe as NodeStreamPipe } from "node:stream";
+
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const OsModule = require("node:os");
@@ -1033,13 +1035,15 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  disconnect: undefined | (() => void);
 
   signalCode = null;
   exitCode = null;
   spawnfile;
   spawnargs;
   pid;
-  channel;
+
+  channel: NodeStreamPipe | undefined;
   killed = false;
 
   [Symbol.dispose]() {
@@ -1330,7 +1334,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new SubprocessChannel(this);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1620,9 +1624,53 @@ function abortChildProcess(child, killSignal, reason) {
   }
 }
 
-class Control extends EventEmitter {
-  constructor() {
+class SubprocessChannel extends EventEmitter implements NodeStreamPipe {
+  #hasRef: boolean = true;
+  #setRef: (enabled: boolean) => void;
+  #closed: boolean = false;
+  #childProcess: ChildProcess | undefined;
+
+  public constructor(childProcess?: ChildProcess) {
     super();
+    this.#setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+    this.#childProcess = childProcess;
+  }
+
+  public close(): void {
+    if (this.#closed) return;
+
+    this.#closed = true;
+
+    if (this.#hasRef) {
+      this.#hasRef = false;
+      this.#setRef(false);
+    }
+
+    if (this.#childProcess) {
+      this.#childProcess.disconnect?.();
+    }
+
+    process.nextTick(() => {
+      this.emit("close");
+    });
+  }
+
+  public hasRef(): boolean {
+    return this.#hasRef && !this.#closed;
+  }
+
+  public ref(): void {
+    if (!this.#hasRef && !this.#closed) {
+      this.#hasRef = true;
+      this.#setRef(true);
+    }
+  }
+
+  public unref(): void {
+    if (this.#hasRef) {
+      this.#hasRef = false;
+      this.#setRef(false);
+    }
   }
 }
 

@@ -25,7 +25,7 @@ describe("setTimeout", () => {
     expect(unhandledRejectionCaught).toBe(false);
   });
 
-  it("AbortController can be passed as the `options` argument", async () => {
+  it("AbortController can be passed as the `options` argument", () => {
     expect(async () => await setTimeout(0, undefined, new AbortController())).not.toThrow();
   });
 

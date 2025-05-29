@@ -372,6 +372,10 @@ const ServerHandlers: SocketHandler = {
 
     _socket[kAttach](this.localPort, socket);
 
+    if (self.noDelay) {
+      _socket.setNoDelay(self.noDelay);
+    }
+
     if (self.blockList) {
       const addressType = isIP(socket.remoteAddress);
       if (addressType && self.blockList.check(socket.remoteAddress, `ipv${addressType}`)) {

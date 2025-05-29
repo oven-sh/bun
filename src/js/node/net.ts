@@ -1493,7 +1493,7 @@ function createConnection(...args) {
       dnsopts.hints = dns.ADDRCONFIG;
     }
     process.nextTick(() => {
-      options.lookup(options.host, dnsopts, function(err, ip, addressType) {
+      options.lookup(options.host, dnsopts, function (err, ip, addressType) {
         socket.emit("lookup", err, ip, addressType, options.host);
         if (err) {
           process.nextTick(destroyNT, socket, err);

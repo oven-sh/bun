@@ -883,6 +883,11 @@ Socket.prototype.connect = function connect(...args) {
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+    if (this.destroyed) {
+      this._undestroy();
+      this.bytesRead = 0;
+      this[kBytesWritten] = undefined;
+    }
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;

@@ -1664,7 +1664,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str2 = arg2.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message));
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
+        err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
+        return JSC::JSValue::encode(err);
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
@@ -2216,12 +2219,28 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_AMBIGUOUS_ARGUMENT, message));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_FD_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unsupported fd type: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
     case Bun::ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString(str0, " maxBuffer length exceeded"_s);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
+    }
+
+    case Bun::ErrorCode::ERR_IP_BLOCKED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("IP("_s, str0, ") is blocked by net.BlockList"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IP_BLOCKED, message));
     }
 
     case Bun::ErrorCode::ERR_VM_MODULE_STATUS: {
@@ -2363,6 +2382,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT, "Socket connection timeout"_s));
+    case ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout"_s));
     case ErrorCode::ERR_VM_MODULE_ALREADY_LINKED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module has already been linked"_s));
     case ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA:

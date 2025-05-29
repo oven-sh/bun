@@ -1,9 +1,9 @@
-`bun pm audit` checks your installed packages for known security vulnerabilities.
+`bun audit` checks your installed packages for known security vulnerabilities.
 
 Run the command in a project with a `bun.lock` file:
 
 ```bash
-$ bun pm audit
+$ bun audit
 ```
 
 Bun sends the list of installed packages and versions to NPM, and prints a report of any vulnerabilities that were found. Packages installed from registries other than the default registry are skipped.
@@ -29,9 +29,9 @@ To update all dependencies to the latest versions (including breaking changes):
 Use the `--json` flag to print the raw JSON response from the registry instead of the formatted report:
 
 ```bash
-$ bun pm audit --json
+$ bun audit --json
 ```
 
 ### Exit code
 
-`bun pm audit` will exit with code `0` if no vulnerabilities are found and `1` if the report lists any vulnerabilities. This will still happen even if `--json` is passed.
+`bun audit` will exit with code `0` if no vulnerabilities are found and `1` if the report lists any vulnerabilities. This will still happen even if `--json` is passed.

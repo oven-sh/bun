@@ -481,11 +481,7 @@ function ClientRequest(input, options, cb) {
       if (!this.hasHeader("Host")) {
         let hostHeader = host;
         const posColon = hostHeader.indexOf(":");
-        if (
-          posColon !== -1 &&
-          hostHeader.includes(":", posColon + 1) &&
-          hostHeader.charCodeAt(0) !== 91 /* '[' */
-        ) {
+        if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 91 /* '[' */) {
           hostHeader = `[${hostHeader}]`;
         }
         this.setHeader("Host", `${hostHeader}:${port}`);
@@ -522,11 +518,7 @@ function ClientRequest(input, options, cb) {
         if (!this.hasHeader("Host")) {
           let hostHeader = host;
           const posColon = hostHeader.indexOf(":");
-          if (
-            posColon !== -1 &&
-            hostHeader.includes(":", posColon + 1) &&
-            hostHeader.charCodeAt(0) !== 91 /* '[' */
-          ) {
+          if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 91 /* '[' */) {
             hostHeader = `[${hostHeader}]`;
           }
           this.setHeader("Host", `${hostHeader}:${port}`);

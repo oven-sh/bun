@@ -10,6 +10,7 @@ categories:
 - cluster stuff: test-tls-ticket-cluster
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
 - ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
+- takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
 
 passes on mac:
 - test-tls-junk-closes-server

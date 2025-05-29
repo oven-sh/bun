@@ -388,7 +388,7 @@ const ServerHandlers: SocketHandler = {
         return;
       }
     }
-    if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
+    if (self.maxConnections != null && self[bunSocketServerConnections] >= self.maxConnections) {
       const data = {
         localAddress: _socket.localAddress,
         localPort: _socket.localPort || this.localPort,

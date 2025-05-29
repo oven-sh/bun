@@ -1483,6 +1483,29 @@ function createConnection(...args) {
     socket.setTimeout(options.timeout);
   }
 
+  if (typeof options.lookup === "function" && options.host && !isIP(options.host)) {
+    const dnsopts = {
+      family: socketToDnsFamily(options.family),
+      hints: options.hints || 0,
+    };
+    if (!isWindows && dnsopts.family !== 4 && dnsopts.family !== 6 && dnsopts.hints === 0) {
+      if (dns === undefined) dns = require("node:dns");
+      dnsopts.hints = dns.ADDRCONFIG;
+    }
+    process.nextTick(() => {
+      options.lookup(options.host, dnsopts, function(err, ip, addressType) {
+        socket.emit("lookup", err, ip, addressType, options.host);
+        if (err) {
+          process.nextTick(destroyNT, socket, err);
+        } else {
+          socket._unrefTimer();
+          internalConnect(socket, options, ip, options.port | 0, addressType, options.localAddress, options.localPort);
+        }
+      });
+    });
+    return socket;
+  }
+
   return socket.connect(normalized);
 }
 

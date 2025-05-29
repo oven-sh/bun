@@ -559,7 +559,7 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
 
 pub fn doPause(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, _: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
     log("doPause", .{});
-    if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
+    if (this.flags.request_has_completed or this.flags.socket_closed) {
         return .false;
     }
     if (this.body_read_ref.has and js.onDataGetCached(thisValue) == null) {
@@ -589,7 +589,7 @@ fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *JSC
 
 pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     log("doResume", .{});
-    if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended) {
+    if (this.flags.request_has_completed or this.flags.socket_closed) {
         return .false;
     }
 

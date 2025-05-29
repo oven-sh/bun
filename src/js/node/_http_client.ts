@@ -90,6 +90,9 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  this.timeoutCb = () => {
+    this.emit("timeout");
+  };
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
@@ -566,7 +569,13 @@ function ClientRequest(input, options, cb) {
     if (this.destroyed) return;
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
-      this.emit("socket", this.socket);
+      const socket = this.socket;
+      const agentTimeout = this[kAgent]?.timeout;
+      if (agentTimeout !== undefined) {
+        socket.setTimeout(agentTimeout);
+        socket.on("timeout", this.timeoutCb);
+      }
+      this.emit("socket", socket);
     }
   };
 

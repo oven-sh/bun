@@ -93,6 +93,7 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
 const kServerSocket = Symbol("kServerSocket");
+const kServerCounted = Symbol("kServerCounted");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
@@ -342,7 +343,10 @@ const ServerHandlers: SocketHandler = {
     const data = this.data;
     if (!data) return;
 
-    data.server[bunSocketServerConnections]--;
+    if (data[kServerCounted]) {
+      data.server[bunSocketServerConnections]--;
+      data[kServerCounted] = false;
+    }
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
@@ -408,6 +412,7 @@ const ServerHandlers: SocketHandler = {
     const isTLS = typeof bunTLS === "function";
 
     self[bunSocketServerConnections]++;
+    _socket[kServerCounted] = true;
 
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;

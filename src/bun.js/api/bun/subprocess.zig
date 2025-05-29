@@ -1692,6 +1692,10 @@ pub fn spawnMaybeSync(
         defer {
             jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
         }
+
+        jsc_vm.eventLoop().is_inside_spawn_sync = true;
+        defer jsc_vm.eventLoop().is_inside_spawn_sync = false;
+
         while (subprocess.hasPendingActivityNonThreadsafe()) {
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();

@@ -313,6 +313,8 @@ pub const SocketConfig = struct {
     allowHalfOpen: bool = false,
     reusePort: bool = false,
     ipv6Only: bool = false,
+    readableAll: bool = false,
+    writableAll: bool = false,
 
     pub fn socketFlags(this: *const SocketConfig) i32 {
         var flags: i32 = if (this.exclusive)
@@ -328,6 +330,12 @@ pub const SocketConfig = struct {
         if (this.ipv6Only) {
             flags |= uws.LIBUS_SOCKET_IPV6_ONLY;
         }
+        if (this.readableAll) {
+            flags |= uws.LIBUS_LISTEN_READABLE_ALL;
+        }
+        if (this.writableAll) {
+            flags |= uws.LIBUS_LISTEN_WRITABLE_ALL;
+        }
 
         return flags;
     }
@@ -341,6 +349,8 @@ pub const SocketConfig = struct {
         var allowHalfOpen = false;
         var reusePort = false;
         var ipv6Only = false;
+        var readableAll = false;
+        var writableAll = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -403,6 +413,12 @@ pub const SocketConfig = struct {
 
             if (try opts.getBooleanLoose(globalObject, "ipv6Only")) |ipv6_only| {
                 ipv6Only = ipv6_only;
+            }
+            if (try opts.getBooleanLoose(globalObject, "readableAll")) |readable_all| {
+                readableAll = readable_all;
+            }
+            if (try opts.getBooleanLoose(globalObject, "writableAll")) |writable_all| {
+                writableAll = writable_all;
             }
 
             if (try opts.getStringish(globalObject, "hostname") orelse try opts.getStringish(globalObject, "host")) |hostname| {
@@ -473,6 +489,8 @@ pub const SocketConfig = struct {
             .allowHalfOpen = allowHalfOpen,
             .reusePort = reusePort,
             .ipv6Only = ipv6Only,
+            .readableAll = readableAll,
+            .writableAll = writableAll,
         };
     }
 };

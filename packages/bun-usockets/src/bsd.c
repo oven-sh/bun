@@ -1131,6 +1131,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     }
 #endif
 
+#ifndef _WIN32
+    if (listenFd != LIBUS_SOCKET_ERROR && (options & (LIBUS_LISTEN_READABLE_ALL | LIBUS_LISTEN_WRITABLE_ALL))) {
+        mode_t mode = 0;
+        if (options & LIBUS_LISTEN_READABLE_ALL) {
+            mode |= S_IRUSR | S_IRGRP | S_IROTH;
+        }
+        if (options & LIBUS_LISTEN_WRITABLE_ALL) {
+            mode |= S_IWUSR | S_IWGRP | S_IWOTH;
+        }
+        chmod(path, mode);
+    }
+#endif
+
     return listenFd;
 }
 

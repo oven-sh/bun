@@ -2359,6 +2359,8 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      readableAll: this[bunSocketServerOptions]?.readableAll || false,
+      writableAll: this[bunSocketServerOptions]?.writableAll || false,
       socket: ServerHandlers,
     });
   } else if (fd != null) {

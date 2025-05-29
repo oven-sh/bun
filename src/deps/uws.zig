@@ -8,6 +8,8 @@ pub const LIBUS_LISTEN_REUSE_PORT: i32 = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
+pub const LIBUS_LISTEN_READABLE_ALL: i32 = 64;
+pub const LIBUS_LISTEN_WRITABLE_ALL: i32 = 128;
 
 pub const Socket = @import("uws/socket.zig").Socket;
 pub const ConnectingSocket = opaque {};

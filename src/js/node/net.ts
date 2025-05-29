@@ -839,7 +839,14 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
         else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
       }
     } else if (data) {
-      bytes += data.byteLength;
+      if (typeof data === "string") {
+        bytes += Buffer.byteLength(data, this._pendingEncoding || "utf8");
+      } else if (data.byteLength !== undefined) {
+        bytes += data.byteLength;
+      } else {
+        // Fallback for Buffer or other typed arrays
+        bytes += Buffer.byteLength(data);
+      }
     }
     return bytes;
   },

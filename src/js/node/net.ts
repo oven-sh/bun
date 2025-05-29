@@ -2359,13 +2359,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         return;
       }
       if (addresses.length > 1) {
-        const hasNonLinkLocal = addresses.some(
-          (a) => !(a.family === 6 && isIPv6LinkLocal(a.address)),
-        );
+        const hasNonLinkLocal = addresses.some(a => !(a.family === 6 && isIPv6LinkLocal(a.address)));
         if (hasNonLinkLocal) {
-          addresses = addresses.filter(
-            (a) => !(a.family === 6 && isIPv6LinkLocal(a.address)),
-          );
+          addresses = addresses.filter(a => !(a.family === 6 && isIPv6LinkLocal(a.address)));
         }
       }
       const { address } = addresses[0];

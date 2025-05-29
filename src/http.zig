@@ -2275,7 +2275,8 @@ pub const Flags = packed struct(u16) {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
-    _padding: u5 = 0,
+    disable_default_headers: bool = false,
+    _padding: u4 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -2559,6 +2560,7 @@ pub const AsyncHTTP = struct {
         verbose: ?HTTPVerboseLevel = null,
         disable_keepalive: ?bool = null,
         disable_decompression: ?bool = null,
+        disable_default_headers: ?bool = null,
         reject_unauthorized: ?bool = null,
         tls_props: ?*SSLConfig = null,
     };
@@ -2658,6 +2660,9 @@ pub const AsyncHTTP = struct {
         }
         if (options.disable_decompression) |val| {
             this.client.flags.disable_decompression = val;
+        }
+        if (options.disable_default_headers) |val| {
+            this.client.flags.disable_default_headers = val;
         }
         if (options.disable_keepalive) |val| {
             this.client.flags.disable_keepalive = val;
@@ -3005,14 +3010,16 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!override_user_agent) {
-        request_headers_buf[header_count] = user_agent_header;
-        header_count += 1;
-    }
+    if (!this.flags.disable_default_headers) {
+        if (!override_user_agent) {
+            request_headers_buf[header_count] = user_agent_header;
+            header_count += 1;
+        }
 
-    if (!override_accept_header) {
-        request_headers_buf[header_count] = accept_header;
-        header_count += 1;
+        if (!override_accept_header) {
+            request_headers_buf[header_count] = accept_header;
+            header_count += 1;
+        }
     }
 
     if (!override_host_header) {
@@ -3023,10 +3030,12 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (!override_accept_encoding and !this.flags.disable_decompression) {
-        request_headers_buf[header_count] = accept_encoding_header;
+    if (!this.flags.disable_default_headers) {
+        if (!override_accept_encoding and !this.flags.disable_decompression) {
+            request_headers_buf[header_count] = accept_encoding_header;
 
-        header_count += 1;
+            header_count += 1;
+        }
     }
 
     if (body_len > 0 or this.method.hasRequestBody()) {

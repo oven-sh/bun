@@ -1223,6 +1223,7 @@ pub const FetchTasklet = struct {
                 .disable_timeout = fetch_options.disable_timeout,
                 .disable_keepalive = fetch_options.disable_keepalive,
                 .disable_decompression = fetch_options.disable_decompression,
+                .disable_default_headers = fetch_options.disable_default_headers,
                 .reject_unauthorized = fetch_options.reject_unauthorized,
                 .verbose = fetch_options.verbose,
                 .tls_props = fetch_options.ssl_config,
@@ -1297,6 +1298,7 @@ pub const FetchTasklet = struct {
         disable_timeout: bool,
         disable_keepalive: bool,
         disable_decompression: bool,
+        disable_default_headers: bool,
         reject_unauthorized: bool,
         url: ZigURL,
         verbose: http.HTTPVerboseLevel = .none,
@@ -1567,6 +1569,7 @@ pub fn Bun__fetch_(
     var disable_timeout = false;
     var disable_keepalive = false;
     var disable_decompression = false;
+    var disable_default_headers = false;
     var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
     if (verbose == .none) {
         verbose = vm.getVerboseFetch();
@@ -1781,6 +1784,38 @@ pub fn Bun__fetch_(
         }
 
         break :extract_disable_decompression disable_decompression;
+    };
+
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
+    // defaultHeaders: boolean | undefined
+    disable_default_headers = extract_disable_default_headers: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "defaultHeaders")) |dh_value| {
+                    if (dh_value.isBoolean()) {
+                        break :extract_disable_default_headers !dh_value.asBoolean();
+                    } else if (dh_value.isNumber()) {
+                        break :extract_disable_default_headers dh_value.to(i32) == 0;
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+
+        break :extract_disable_default_headers disable_default_headers;
     };
 
     if (globalThis.hasException()) {
@@ -2675,6 +2710,7 @@ pub fn Bun__fetch_(
             .disable_keepalive = disable_keepalive,
             .disable_timeout = disable_timeout,
             .disable_decompression = disable_decompression,
+            .disable_default_headers = disable_default_headers,
             .reject_unauthorized = reject_unauthorized,
             .redirect_type = redirect_type,
             .verbose = verbose,

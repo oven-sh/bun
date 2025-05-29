@@ -305,6 +305,8 @@ function ClientRequest(input, options, cb) {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        // Do not set Bun's default headers
+        defaultHeaders: false,
         keepalive,
       };
       let keepOpen = false;

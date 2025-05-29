@@ -2185,6 +2185,7 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  const argsLength = arguments.length;
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -2212,9 +2213,15 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = undefined;
     port = undefined;
   } else {
-    if (typeof hostname === "function") {
+    if (typeof hostname === "number") {
+      backlog = hostname;
+      hostname = undefined;
+    } else if (typeof hostname === "function") {
       onListen = hostname;
       hostname = undefined;
+    } else if (typeof hostname === "string" && typeof onListen === "number") {
+      backlog = onListen;
+      onListen = argsLength > 3 ? arguments[3] : undefined;
     }
 
     if (typeof port === "function") {
@@ -2231,6 +2238,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       ipv6Only = options.ipv6Only;
       allowHalfOpen = options.allowHalfOpen;
       reusePort = options.reusePort;
+      backlog = options.backlog;
 
       if (typeof options.fd === "number" && options.fd >= 0) {
         fd = options.fd;

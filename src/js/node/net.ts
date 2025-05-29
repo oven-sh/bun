@@ -867,7 +867,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay]);
   }
 
   if (!this[kupgraded]) {

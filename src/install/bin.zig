@@ -762,7 +762,16 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
-                    _ = bun.sys.chmod(abs_target, umask | 0o777);
+                    // An extra stat() is cheaper than a copy-up of potentially large executables in Docker.
+                    switch (bun.sys.stat(abs_target)) {
+                        .result => |*stat| {
+                            const desired_mode = umask | 0o777;
+                            if ((stat.mode & 0o777) != desired_mode) {
+                                _ = bun.sys.chmod(abs_target, desired_mode);
+                            }
+                        },
+                        .err => {},
+                    }
                 }
             }
 

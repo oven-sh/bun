@@ -620,65 +620,60 @@ asyncTest('setImmediate + promise microtasks is too late to attach a catch' +
   });
 });
 
-// TODO: drain nextTick queue before doing anything else after an event handler callback returns
-// asyncTest('nextTick is immediately scheduled when called inside an event' +
-//           ' handler', function(done) {
-//   clean();
-//   const e = new Error('error');
-//   process.on('unhandledRejection', function(reason, promise) {
-//     const order = [];
-//     process.nextTick(function() {
-//       order.push(1);
-//     });
-//     setTimeout(function() {
-//       order.push(2);
-//       assert.deepStrictEqual([1, 2], order);
-//       done();
-//     }, 1);
-//   });
-//   Promise.reject(e);
-// });
+asyncTest('nextTick is immediately scheduled when called inside an event' +
+          ' handler', function(done) {
+  clean();
+  const e = new Error('error');
+  process.on('unhandledRejection', function(reason, promise) {
+    const order = [];
+    process.nextTick(function() {
+      order.push(1);
+    });
+    setTimeout(function() {
+      order.push(2);
+      assert.deepStrictEqual([1, 2], order);
+      done();
+    }, 1);
+  });
+  Promise.reject(e);
+});
 
-// TODO: support rejectionHandled event
-// rejectionHandled occurs when a formerly unhandled rejection becomes handled
-// This test requires unhandled-rejections=none because it does not add an unhandledRejection listener
-// asyncTest('Throwing an error inside a rejectionHandled handler goes to' +
-//           ' unhandledException, and does not cause .catch() to throw an ' +
-//           'exception', function(done) {
-//   clean();
-//   const e = new Error();
-//   const e2 = new Error();
-//   const tearDownException = setupException(function(err) {
-//     assert.strictEqual(err, e2);
-//     tearDownException();
-//     done();
-//   });
-//   process.on('rejectionHandled', function() {
-//     throw e2;
-//   });
-//   const p = Promise.reject(e);
-//   setTimeout(function() {
-//     try {
-//       p.catch(function() {});
-//     } catch {
-//       done(new Error('fail'));
-//     }
-//   }, 1);
-// });
+asyncTest('Throwing an error inside a rejectionHandled handler goes to' +
+          ' unhandledException, and does not cause .catch() to throw an ' +
+          'exception', function(done) {
+  clean();
+  const e = new Error();
+  const e2 = new Error();
+  const tearDownException = setupException(function(err) {
+    assert.strictEqual(err, e2);
+    tearDownException();
+    done();
+  });
+  process.on('rejectionHandled', function() {
+    throw e2;
+  });
+  const p = Promise.reject(e);
+  setTimeout(function() {
+    try {
+      p.catch(function() {});
+    } catch {
+      done(new Error('fail'));
+    }
+  }, 1);
+});
 
-// TODO: inside unhandledRejection handler, drain nextTick before microtask queue?
-// asyncTest('Rejected promise inside unhandledRejection allows nextTick loop' +
-//           ' to proceed first', function(done) {
-//   clean();
-//   Promise.reject(0);
-//   let didCall = false;
-//   process.on('unhandledRejection', () => {
-//     assert(!didCall);
-//     didCall = true;
-//     const promise = Promise.reject(0);
-//     process.nextTick(() => promise.catch(() => done()));
-//   });
-// });
+asyncTest('Rejected promise inside unhandledRejection allows nextTick loop' +
+          ' to proceed first', function(done) {
+  clean();
+  Promise.reject(0);
+  let didCall = false;
+  process.on('unhandledRejection', () => {
+    assert(!didCall);
+    didCall = true;
+    const promise = Promise.reject(0);
+    process.nextTick(() => promise.catch(() => done()));
+  });
+});
 
 asyncTest(
   'Promise rejection triggers unhandledRejection immediately',

@@ -539,6 +539,8 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
         return true;
     }
 
+    defer this.eventLoop().drainMicrotasks();
+
     switch (this.unhandledRejectionsMode()) {
         .bun => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;

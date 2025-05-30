@@ -508,8 +508,17 @@ extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
 extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
 extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
 
+fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
+    const result = Bun__promises__isErrorLike(globalObject, reason);
+    if (globalObject.hasException()) return error.JSError;
+    return result;
+}
+
 fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject, reason: JSValue) JSValue {
-    if (Bun__promises__isErrorLike(globalObject, reason)) return reason;
+    if (isErrorLike(globalObject, reason) catch blk: {
+        if (globalObject.hasException()) globalObject.clearException();
+        break :blk false;
+    }) return reason;
     const reasonStr = reason.toString(globalObject);
     if (globalObject.hasException()) globalObject.clearException();
     return globalObject.ERR(.UNHANDLED_REJECTION, "This error originated either by throwing inside of an async function without a catch block, " ++

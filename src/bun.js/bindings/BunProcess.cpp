@@ -1117,34 +1117,31 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     //   return typeof obj === 'object' &&
     //      obj !== null &&
     //      ObjectPrototypeHasOwnProperty(obj, 'stack');
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!obj.isObject()) return false;
 
     auto* object = JSC::jsCast<JSC::JSObject*>(obj);
-    auto propertyKey = Identifier::fromString(globalObject->vm(), "stack"_s);
-    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);
-    if (scope.exception()) {
-        scope.clearException();
-        return false;
-    }
-    return result;
+    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack);
+    RELEASE_AND_RETURN(scope, result);
 }
 
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
 {
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
-    warning->putDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "name"_s), jsString(globalObject->vm(), String("UnhandledPromiseRejectionWarning"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String("UnhandledPromiseRejectionWarning"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
     if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
-        reasonStack = JSValue::decode(reason).get(globalObject, Identifier::fromString(globalObject->vm(), "stack"_s));
+        reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
         if (scope.exception()) scope.clearException();
-        warning->putDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "stack"_s), reasonStack);
+        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         auto decodedReason = JSValue::decode(reason);

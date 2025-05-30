@@ -29,16 +29,27 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Get changed files and sync tests
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            test/js/node/test/parallel/**/*.{js,mjs,ts}
+            test/js/node/test/sequential/**/*.{js,mjs,ts}
+
+      - name: Sync tests
+        if: steps.changed-files.outputs.any_changed == 'true'
         shell: bash
         run: |
-          # Get the list of changed files from the PR
-          git diff --name-only origin/main...HEAD | while read -r file; do
-            if [[ "$file" =~ ^test/js/node/test/(parallel|sequential)/(.+)\.(js|mjs|ts)$ ]]; then
-              test_name="${BASH_REMATCH[2]}"
-              echo "Syncing test: $test_name"
-              bun node:test:cp "$test_name"
-            fi
+          echo "Changed test files:"
+          echo "${{ steps.changed-files.outputs.all_changed_files }}"
+
+          # Process each changed test file
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Extract test name from file path
+            test_name=$(basename "$file" | sed 's/\.[^.]*$//')
+            echo "Syncing test: $test_name"
+            bun node:test:cp "$test_name"
           done
 
       - name: Commit changes

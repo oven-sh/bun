@@ -1733,7 +1733,7 @@ pub const Api = struct {
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
-            var this = std.mem.zeroes(TransformOptions); //
+            var this = std.mem.zeroes(TransformOptions);
 
             while (true) {
                 switch (try reader.readByte()) {

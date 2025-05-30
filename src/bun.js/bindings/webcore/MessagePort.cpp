@@ -258,22 +258,22 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
 {
     auto& vm = context.vm();
     auto* globalObject = defaultGlobalObject(context.globalObject());
-    
+
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running) {
         completionCallback();
         return;
     }
 
     Vector<MessageWithMessagePorts> deferredMessages;
-    
+
     for (auto&& message : messages) {
         if (!context.canSendMessage()) {
             deferredMessages.append(WTFMove(message));
             continue;
         }
-        
+
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        
+
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
         auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
         dispatchEvent(event.event);

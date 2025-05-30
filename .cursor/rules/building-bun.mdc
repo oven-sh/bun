@@ -1,6 +1,6 @@
 ---
 description:
-globs: src/**/*.cpp,src/**/*.zig
+globs: src/**/*.cpp,src/**/*.zig,**/*.ts,**/*.c
 alwaysApply: false
 ---
 
@@ -22,6 +22,12 @@ bun bd <file> <...args>
 ```
 
 **CRITICAL**: Never use `bun <file>` directly. It will not have your changes.
+
+You can also pass arguments to `bun bd` as if it were a regular build of bun. For example:
+
+```bash
+bun bd test math-utils.test.ts
+```
 
 ### Logging
 

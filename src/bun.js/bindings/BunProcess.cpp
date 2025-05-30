@@ -2335,7 +2335,7 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
     return globalObject->processEnvObject();
 }
 
-#if !OS(WINDOWS)
+#if OS(DARWIN) || OS(LINUX)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functiongetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -2524,6 +2524,59 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto result = setgroups(count, groupsStack);
     if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
     RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue user = callFrame->argument(0);
+    JSValue extraGroup = callFrame->argument(1);
+
+    if (!user.isNumber() && !user.isString())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "number or string"_s, user);
+
+    if (!extraGroup.isNumber() && !extraGroup.isString())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "extraGroup"_s, "number or string"_s, extraGroup);
+
+    gid_t gid = 0;
+    if (extraGroup.isNumber()) {
+        Bun::V::validateInteger(scope, globalObject, extraGroup, "extraGroup"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &gid);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        extraGroup = maybe_gid_by_name(scope, globalObject, extraGroup);
+        RETURN_IF_EXCEPTION(scope, {});
+        gid = extraGroup.toUInt32(globalObject);
+    }
+
+    const char* username = nullptr;
+    struct passwd pwd;
+    struct passwd* pp = nullptr;
+    char buf[8192];
+    if (user.isNumber()) {
+        uint32_t uid = 0;
+        Bun::V::validateInteger(scope, globalObject, user, "user"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &uid);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (getpwuid_r(uid, &pwd, buf, sizeof(buf), &pp) != 0 || pp == nullptr) {
+            auto message = makeString("User identifier does not exist: "_s, String::number(uid));
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+        username = pp->pw_name;
+    } else {
+        JSString* str = user.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto utf8 = str->utf8();
+        username = utf8.data();
+    }
+
+    int result = initgroups(username, gid);
+    if (result != 0) {
+        throwSystemError(scope, globalObject, "initgroups"_s, errno);
+        return {};
+    }
+
     return JSValue::encode(jsNumber(result));
 }
 
@@ -3658,7 +3711,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   version                          constructVersion                                    PropertyCallback
   versions                         constructVersions                                   PropertyCallback
 
-#if !OS(WINDOWS)
+#if OS(DARWIN) || OS(LINUX)
   getegid                          Process_functiongetegid                             Function 0
   geteuid                          Process_functiongeteuid                             Function 0
   getgid                           Process_functiongetgid                              Function 0
@@ -3669,6 +3722,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   seteuid                          Process_functionseteuid                             Function 1
   setgid                           Process_functionsetgid                              Function 1
   setgroups                        Process_functionsetgroups                           Function 1
+  initgroups                       Process_functioninitgroups                               Function 2
   setuid                           Process_functionsetuid                              Function 1
 #endif
 @end

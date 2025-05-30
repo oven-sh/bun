@@ -159,6 +159,48 @@ if (process.argv.length === 2 &&
   }
 }
 
+// Support for V8 native syntax used in some tests when the
+// `--allow-natives-syntax` flag is provided. Bun does not
+// natively parse these intrinsics so emulate a subset needed by
+// tests through an eval wrapper.
+if (process.execArgv.some((f) => f === '--allow_natives_syntax' || f === '--allow-natives-syntax')) {
+  const originalEval = global.eval;
+  function haveSameMap(a, b) {
+    if (a === b) return true;
+    if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+    const keysA = Reflect.ownKeys(a);
+    const keysB = Reflect.ownKeys(b);
+    if (keysA.length !== keysB.length) return false;
+    for (let i = 0; i < keysA.length; i++) {
+      if (keysA[i] !== keysB[i]) return false;
+    }
+    return true;
+  }
+  global.eval = function nativeEval(code) {
+    if (typeof code === 'string' && code.trim().startsWith('%')) {
+      const match = /^%([A-Za-z0-9_]+)\((.*)\)$/.exec(code.trim());
+      if (match) {
+        const args = originalEval(`[${match[2]}]`);
+        switch (match[1]) {
+          case 'HaveSameMap':
+            return haveSameMap(args[0], args[1]);
+          case 'CollectGarbage':
+            if (typeof global.gc === 'function') {
+              global.gc();
+            } else if (typeof Bun?.gc === 'function') {
+              Bun.gc(true);
+            }
+            return;
+          case 'DebugPrint':
+            console.debug(args[0]);
+            return;
+        }
+      }
+    }
+    return originalEval(code);
+  };
+}
+
 const isWindows = process.platform === 'win32';
 const isSunOS = process.platform === 'sunos';
 const isFreeBSD = process.platform === 'freebsd';

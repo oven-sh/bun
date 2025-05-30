@@ -267,9 +267,9 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
             scope.clearExceptionExceptTermination();
         }
 
-        // if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
+        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
             globalObject->drainMicrotasks();
-        // }
+        }
     }
 
     if (messageCount > maxMessagesPerTick) {

@@ -603,9 +603,11 @@ pub const Loader = struct {
             },
         }
 
-        if (dir.hasComptimeQuery(".env.local")) {
-            try this.loadEnvFile(dir_handle, ".env.local", false);
-            Analytics.Features.dotenv += 1;
+        if (comptime suffix != .@"test") {
+            if (dir.hasComptimeQuery(".env.local")) {
+                try this.loadEnvFile(dir_handle, ".env.local", false);
+                Analytics.Features.dotenv += 1;
+            }
         }
 
         switch (comptime suffix) {
@@ -632,6 +634,13 @@ pub const Loader = struct {
         if (dir.hasComptimeQuery(".env")) {
             try this.loadEnvFile(dir_handle, ".env", false);
             Analytics.Features.dotenv += 1;
+        }
+
+        if (comptime suffix == .@"test") {
+            if (dir.hasComptimeQuery(".env.local")) {
+                try this.loadEnvFile(dir_handle, ".env.local", false);
+                Analytics.Features.dotenv += 1;
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-#include "HTTPParser.h"
+#include "NodeHTTPParser.h"
 #include "BunBuiltinNames.h"
 #include "helpers.h"
 #include "JSConnectionsList.h"
@@ -10,18 +10,18 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-#define DEFINE_LLHTTP_CALLBACK(name)                                                   \
-    static int name(llhttp_t* data)                                                    \
-    {                                                                                  \
-        HTTPParser* parser = (HTTPParser*)(data - offsetof(HTTPParser, m_parserData)); \
-        return parser->name();                                                         \
+#define DEFINE_LLHTTP_CALLBACK(name)                                                                            \
+    static int name(llhttp_t* data)                                                                             \
+    {                                                                                                           \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
+        return parser->name();                                                                                  \
     }
 
-#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                              \
-    static int name(llhttp_t* data, const char* at, size_t length)                     \
-    {                                                                                  \
-        HTTPParser* parser = (HTTPParser*)(data - offsetof(HTTPParser, m_parserData)); \
-        return parser->name(at, length);                                               \
+#define DEFINE_LLHTTP_DATA_CALLBACK(name)                                                                       \
+    static int name(llhttp_t* data, const char* at, size_t length)                                              \
+    {                                                                                                           \
+        HTTPParser* parser = (HTTPParser*)(reinterpret_cast<char*>(data) - offsetof(HTTPParser, m_parserData)); \
+        return parser->name(at, length);                                                                        \
     }
 
 DEFINE_LLHTTP_CALLBACK(onMessageBegin);
@@ -463,7 +463,7 @@ int HTTPParser::onHeadersComplete()
         }
     });
 
-    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, Identifier::fromString(vm, "kOnHeadersComplete"_s));
+    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeadersComplete));
     RETURN_IF_EXCEPTION(scope, -1);
 
     if (!onHeadersCompleteCallback.isCallable()) {

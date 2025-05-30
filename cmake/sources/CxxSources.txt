@@ -145,7 +145,7 @@ src/bun.js/bindings/node/crypto/JSSign.cpp
 src/bun.js/bindings/node/crypto/JSVerify.cpp
 src/bun.js/bindings/node/crypto/KeyObject.cpp
 src/bun.js/bindings/node/crypto/node_crypto_binding.cpp
-src/bun.js/bindings/node/http/HTTPParser.cpp
+src/bun.js/bindings/node/http/NodeHTTPParser.cpp
 src/bun.js/bindings/node/http/JSConnectionsList.cpp
 src/bun.js/bindings/node/http/JSConnectionsListConstructor.cpp
 src/bun.js/bindings/node/http/JSConnectionsListPrototype.cpp

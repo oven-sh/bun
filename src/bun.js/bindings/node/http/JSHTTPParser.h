@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
-#include "HTTPParser.h"
+#include "NodeHTTPParser.h"
 
 namespace Bun {
 

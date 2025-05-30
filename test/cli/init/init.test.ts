@@ -19,6 +19,7 @@ test("bun init works", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
   expect(pkg).toEqual({
     "name": path.basename(temp).toLowerCase(),
+    "version": "0.0.0",
     "module": "index.ts",
     "type": "module",
     "private": true,
@@ -57,6 +58,7 @@ test("bun init with piped cli", () => {
   expect(pkg).toEqual({
     "name": path.basename(temp).toLowerCase(),
     "module": "index.ts",
+    "version": "0.0.0",
     "private": true,
     "type": "module",
     "devDependencies": {

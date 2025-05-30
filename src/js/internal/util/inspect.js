@@ -345,6 +345,49 @@ const codes = {}; // exported from errors.js
     return error;
   };
 }
+{
+  // Add ERR_INVALID_THIS error code
+  const messages = new SafeMap();
+  const sym = "ERR_INVALID_THIS";
+  messages.set(sym, (type) => {
+    return `Value of "this" must be of type ${type}`;
+  });
+  codes[sym] = function NodeError(...args) {
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    const error = new TypeError();
+    Error.stackTraceLimit = limit; // Reset the limit and setting the name property.
+
+    const msg = messages.get(sym);
+    assert(typeof msg === "function");
+    assert(
+      msg.length <= args.length, // Default options do not count.
+      `Code: ${sym}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`,
+    );
+    const message = msg.$apply(error, args);
+
+    ObjectDefineProperty(error, "message", { value: message, enumerable: false, writable: true, configurable: true });
+    ObjectDefineProperty(error, "toString", {
+      value() {
+        return `${this.name} [${sym}]: ${this.message}`;
+      },
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    // addCodeToName + captureLargerStackTrace
+    let err = error;
+    const userStackTraceLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = Infinity;
+    ErrorCaptureStackTrace(err);
+    Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
+    err.name = `${TypeError.name} [${sym}]`; // Add the error code to the name to include it in the stack trace.
+    err.stack; // Access the stack to generate the error message including the error code from the name.
+    delete err.name; // Reset the name to the actual name.
+    error.code = sym;
+    return error;
+  };
+}
 /**
  * @param {unknown} value
  * @param {string} name
@@ -2299,12 +2342,29 @@ function formatIterator(braces, ctx, value, recurseTimes) {
 }
 
 function formatURLSearchParamsIterator(braces, ctx, value, recurseTimes) {
-  const entries = [];
+  const items = [];
+  let isEntries = false;
+  
+  // Consume the iterator to determine the format
   for (const item of value) {
-    entries.push(item[0], item[1]);
+    items.push(item);
+    // Check if the first item is an array (entries iterator)
+    if (items.length === 1) {
+      isEntries = Array.isArray(item) && item.length === 2;
+    }
   }
-  braces[0] = RegExpPrototypeSymbolReplace(/ Iterator] {$/, braces[0], " Entries] {");
-  return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);
+  
+  if (isEntries) {
+    // Entries iterator: convert to flat array for formatMapIterInner
+    const entries = [];
+    for (const [key, val] of items) {
+      entries.push(key, val);
+    }
+    return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);
+  } else {
+    // Keys or values iterator: format as simple list
+    return formatSetIterInner(ctx, recurseTimes, items, kIterator);
+  }
 }
 
 function formatPromise(ctx, value, recurseTimes) {
@@ -2772,6 +2832,38 @@ function internalGetConstructorName(val) {
   const str = ObjectPrototypeToString(val);
   const m = StringPrototypeMatch(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";
+}
+
+// Add custom inspect method to URLSearchParams
+if (typeof URLSearchParams !== 'undefined') {
+  URLSearchParams.prototype[customInspectSymbol] = function urlSearchParamsCustomInspect(depth, options, inspect) {
+    if (this == null || typeof this.forEach !== 'function') {
+      throw codes.ERR_INVALID_THIS('URLSearchParams');
+    }
+    
+    if (depth != null && depth < 0) {
+      return '[Object]';
+    }
+
+    const entries = [];
+    this.forEach((value, key) => {
+      entries.push(`'${key}' => '${value}'`);
+    });
+
+    if (entries.length === 0) {
+      return 'URLSearchParams {}';
+    }
+
+    const inner = entries.join(', ');
+    
+    // Handle breakLength for multiline formatting
+    if (options && options.breakLength != null && inner.length > options.breakLength) {
+      const formattedEntries = entries.join(',\n  ');
+      return `URLSearchParams {\n  ${formattedEntries}\n}`;
+    }
+    
+    return `URLSearchParams { ${inner} }`;
+  };
 }
 
 export default {

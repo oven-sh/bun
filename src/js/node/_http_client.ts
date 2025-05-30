@@ -93,7 +93,7 @@ function ClientRequest(input, options, cb) {
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
-    if (writeCount > 1) {
+    if (writeCount > 0) {
       startFetch();
     }
     resolveNextChunk?.(false);

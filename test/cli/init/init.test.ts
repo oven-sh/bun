@@ -214,6 +214,7 @@ test("bun init twice", async () => {
       },
       "private": true,
       "type": "module",
+      "version": "0.0.0",
     }
   `);
   expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(

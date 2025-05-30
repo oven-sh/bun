@@ -21,9 +21,7 @@ Promise.reject(null);
 process.on('warning', common.mustNotCall('warning'));
 process.on('rejectionHandled', common.mustNotCall('rejectionHandled'));
 process.on('exit', assert.strictEqual.bind(null, 0));
-process.on('uncaughtException', e => {
-  console.log("%%uncaughtException", e);
-});
+process.on('uncaughtException', common.mustNotCall('uncaughtException'));
 
 const timer = setTimeout(() => console.log(ref), 1000);
 

@@ -4263,11 +4263,9 @@ pub const H2FrameParser = struct {
 
         switch (native_socket) {
             inline .tcp, .tls => |socket| {
-                socket.poll_ref.unref(this.globalThis.bunVM());
                 socket.detachNativeCallback();
             },
             inline .tcp_writeonly, .tls_writeonly => |socket| {
-                socket.poll_ref.unref(this.globalThis.bunVM());
                 socket.deref();
             },
             .none => {},

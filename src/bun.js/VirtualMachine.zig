@@ -200,7 +200,7 @@ pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
 pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
-pub fn unhandledRejectionsMode(this: *VirtualMachine) callconv(.C) Api.UnhandledRejections {
+pub fn unhandledRejectionsMode(this: *VirtualMachine) Api.UnhandledRejections {
     return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
 }
 

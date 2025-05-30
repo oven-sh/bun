@@ -1,3 +1,5 @@
+// Spec documentation http://httpwg.github.io/specs/rfc7231.html#header.expect
+'use strict';
 const common = require('../common');
 const assert = require('assert');
 const http = require('http');

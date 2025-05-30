@@ -11,7 +11,7 @@ const JSTCPSocket = JSC.Codegen.JSTCPSocket;
 const JSValue = JSC.JSValue;
 const BinaryType = JSC.ArrayBuffer.BinaryType;
 
-pub const AutoFlusher = @import("../../webcore/streams.zig").AutoFlusher;
+const AutoFlusher = JSC.WebCore.AutoFlusher;
 const lshpack = @import("./lshpack.zig");
 const TLSSocket = @import("./socket.zig").TLSSocket;
 const TCPSocket = @import("./socket.zig").TCPSocket;
@@ -735,9 +735,10 @@ pub const H2FrameParser = struct {
 
     hpack: ?*lshpack.HPACK = null,
 
-    autouncork_registered: bool = false,
     has_nonnative_backpressure: bool = false,
     ref_count: RefCount,
+
+    auto_flusher: AutoFlusher = .{},
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
@@ -934,6 +935,7 @@ pub const H2FrameParser = struct {
             }
         }
         pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) FlushState {
+            defer client.checkIfShouldAutoFlush();
             if (this.canSendData()) {
                 // try to flush one frame
                 if (this.dataFrameQueue.peekFront()) |frame| {
@@ -983,7 +985,7 @@ pub const H2FrameParser = struct {
                             const max_size = @min(@min(frame_slice.len, this.remoteWindowSize - this.remoteUsedWindowSize, client.remoteWindowSize - client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                             if (max_size == 0) {
                                 is_flow_control_limited = true;
-                                log("dataFrame flow control limited", .{});
+                                log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
                                 // we are flow control limited lets return backpressure if is limited in the connection so we short circuit the flush
                                 return if (client.remoteWindowSize == client.remoteUsedWindowSize) .backpressure else .no_action;
                             }
@@ -1063,6 +1065,7 @@ pub const H2FrameParser = struct {
 
         pub fn queueFrame(this: *Stream, client: *H2FrameParser, bytes: []const u8, callback: JSC.JSValue, end_stream: bool) void {
             const globalThis = client.globalThis;
+            defer client.checkIfShouldAutoFlush();
 
             if (this.dataFrameQueue.peekLast()) |last_frame| {
                 if (bytes.len == 0) {
@@ -1238,6 +1241,7 @@ pub const H2FrameParser = struct {
     /// https://datatracker.ietf.org/doc/html/rfc7540#section-6.9.1
     fn ajustWindowSize(this: *H2FrameParser, stream: ?*Stream, payloadSize: u32) void {
         this.usedWindowSize +|= payloadSize;
+        log("ajustWindowSize {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, payloadSize });
         if (this.usedWindowSize > this.windowSize) {
             // we are receiving more data than we are allowed to
             this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
@@ -1260,18 +1264,23 @@ pub const H2FrameParser = struct {
         var total_increment: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
+            log("incrementWindowSizeIfNeeded stream {} {} {} {}", .{ stream.id, stream.usedWindowSize, stream.windowSize, this.isServer });
             if (stream.usedWindowSize >= stream.windowSize / 2) {
                 stream.windowSize += WINDOW_INCREMENT_SIZE;
+                log("incrementWindowSizeIfNeeded stream {} {} {}", .{ stream.id, stream.windowSize, this.isServer });
                 this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(WINDOW_INCREMENT_SIZE), false));
                 total_increment += 1;
             }
         }
+        log("incrementWindowSizeIfNeeded connection {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, total_increment });
         if (this.usedWindowSize >= this.windowSize / 2) {
             if (total_increment < 1) {
                 total_increment = 1;
             }
-            this.windowSize += WINDOW_INCREMENT_SIZE * total_increment; // we will need at least this many increments to send all the streams
-            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(WINDOW_INCREMENT_SIZE * total_increment), false));
+            const increment = WINDOW_INCREMENT_SIZE * total_increment;
+            this.windowSize += increment; // we will need at least this many increments to send all the streams
+            log("incrementWindowSizeIfNeeded connection {} {} {}", .{ this.windowSize, increment, this.isServer });
+            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(increment), false));
         }
     }
 
@@ -1670,6 +1679,7 @@ pub const H2FrameParser = struct {
         log("flush", .{});
         this.ref();
         defer this.deref();
+        defer this.checkIfShouldAutoFlush();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -1710,6 +1720,7 @@ pub const H2FrameParser = struct {
     pub fn _write(this: *H2FrameParser, bytes: []const u8) bool {
         this.ref();
         defer this.deref();
+        defer this.checkIfShouldAutoFlush();
         return switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
@@ -1764,10 +1775,32 @@ pub const H2FrameParser = struct {
         }
     }
 
-    fn onAutoUncork(this: *H2FrameParser) void {
-        this.autouncork_registered = false;
-        this.flushCorked();
+    fn registerAutoFlush(this: *H2FrameParser) void {
+        if (this.auto_flusher.registered) return;
+        this.ref();
+        AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(H2FrameParser, this, this.globalThis.bunVM());
+    }
+    fn unregisterAutoFlush(this: *H2FrameParser) void {
+        if (!this.auto_flusher.registered) return;
+        AutoFlusher.unregisterDeferredMicrotaskWithTypeUnchecked(H2FrameParser, this, this.globalThis.bunVM());
         this.deref();
+    }
+
+    fn checkIfShouldAutoFlush(this: *H2FrameParser) void {
+        log("writeBuffer.len {} {}", .{ this.writeBuffer.slice()[this.writeBufferOffset..].len, this.isServer });
+        const corkedBuffer = if (CORKED_H2) |corked| if (@intFromPtr(corked) == @intFromPtr(this)) CORK_OFFSET else 0 else 0;
+        if (corkedBuffer > 0) {
+            this.registerAutoFlush();
+        } else {
+            this.unregisterAutoFlush();
+        }
+    }
+    pub fn onAutoFlush(this: *@This()) bool {
+        this.ref();
+        defer this.deref();
+        _ = this.flush();
+        // we will unregister ourselves when the buffer is empty
+        return true;
     }
 
     pub fn write(this: *H2FrameParser, bytes: []const u8) bool {
@@ -1790,11 +1823,7 @@ pub const H2FrameParser = struct {
                 @memcpy(available[0..bytes.len], bytes);
 
                 // register auto uncork
-                if (!this.autouncork_registered) {
-                    this.autouncork_registered = true;
-                    this.ref();
-                    bun.uws.Loop.get().nextTick(*H2FrameParser, this, H2FrameParser.onAutoUncork);
-                }
+                this.registerAutoFlush();
                 // corked
                 return true;
             }
@@ -1854,7 +1883,7 @@ pub const H2FrameParser = struct {
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             // at this point we try to send more data because we received a window update
-            defer _ = this.flushStreamQueue();
+            defer _ = this.flush();
             const payload = content.data;
             const windowSizeIncrement = UInt31WithReserved.fromBytes(payload);
             this.readBuffer.reset();
@@ -1997,7 +2026,7 @@ pub const H2FrameParser = struct {
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
-            this.ajustWindowSize(stream, @truncate(payload.len));
+            this.ajustWindowSize(stream, frame.length);
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
             emitted = true;
         } else {
@@ -2375,15 +2404,15 @@ pub const H2FrameParser = struct {
 
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             } else {
+                defer _ = this.flush();
+                defer this.incrementWindowSizeIfNeeded();
                 log("empty settings has remoteSettings? {}", .{this.remoteSettings != null});
                 if (this.remoteSettings == null) {
 
                     // ok empty settings so default settings
                     const remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
-                    defer this.incrementWindowSizeIfNeeded();
                     if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                        defer _ = this.flushStreamQueue();
                         this.remoteWindowSize = remoteSettings.initialWindowSize;
                         var it = this.streams.valueIterator();
                         while (it.next()) |stream| {
@@ -2399,6 +2428,8 @@ pub const H2FrameParser = struct {
             return 0;
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            defer _ = this.flush();
+            defer this.incrementWindowSizeIfNeeded();
             var remoteSettings: FullSettingsPayload = this.remoteSettings orelse .{};
             var i: usize = 0;
             const payload = content.data;
@@ -2411,10 +2442,8 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
-            defer this.incrementWindowSizeIfNeeded();
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                defer _ = this.flushStreamQueue();
                 this.remoteWindowSize = remoteSettings.initialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |stream| {
@@ -3252,7 +3281,7 @@ pub const H2FrameParser = struct {
                 }
                 const size = @min(payload.len - offset, max_size);
                 defer if (!is_flow_control_limited) {
-                    log("remoteUsedWindowSize += {} {} {}", .{ size, stream.remoteUsedWindowSize, this.remoteUsedWindowSize });
+                    log("remoteUsedWindowSize += {} {} {} {}", .{ size, stream.remoteUsedWindowSize, this.remoteUsedWindowSize, this.isServer });
                     stream.remoteUsedWindowSize += size;
                     this.remoteUsedWindowSize += size;
                 };
@@ -4431,10 +4460,12 @@ pub const H2FrameParser = struct {
     /// this function can be called multiple times, it will erase stream info
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
         this.flushCorked();
+        this.unregisterAutoFlush();
         this.detachNativeSocket();
         this.strong_ctx.deinit();
         this.handlers.deinit();
         this.readBuffer.deinit();
+
         {
             var writeBuffer = this.writeBuffer;
             this.writeBuffer = .{};

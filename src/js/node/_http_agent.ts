@@ -72,6 +72,10 @@ function Agent(options = kEmptyObject) {
   this.totalSocketCount = 0;
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
+
+  // Minimal queue implementation used for Node.js tests.
+  this._queue = [];
+  this._active = 0;
 }
 $toClass(Agent, "Agent", EventEmitter);
 
@@ -140,6 +144,25 @@ Agent.prototype.reuseSocket = function () {
 
 Agent.prototype.destroy = function () {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
+};
+
+// Queue management helpers for limited sockets
+Agent.prototype._enqueue = function (req, start) {
+  if (this._active < (this.maxSockets || Infinity)) {
+    this._active++;
+    start();
+  } else {
+    this._queue.push([req, start]);
+  }
+};
+
+Agent.prototype._requestFinished = function () {
+  if (this._active > 0) this._active--;
+  const next = this._queue.shift();
+  if (next) {
+    this._active++;
+    next[1]();
+  }
 };
 
 var globalAgent = new Agent();

@@ -248,6 +248,7 @@ function ClientRequest(input, options, cb) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
+    finishAgentRequest();
   };
 
   let fetching = false;
@@ -390,6 +391,7 @@ function ClientRequest(input, options, cb) {
           }));
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
+          res.on("end", finishAgentRequest);
           let timer;
           res.setTimeout = (msecs, callback) => {
             if (timer) {
@@ -463,6 +465,7 @@ function ClientRequest(input, options, cb) {
             } catch (_err) {
               void _err;
             }
+            finishAgentRequest();
           })
           .finally(() => {
             if (!keepOpen) {
@@ -540,6 +543,13 @@ function ClientRequest(input, options, cb) {
 
   let onEnd = () => {};
   let handleResponse: (() => void) | undefined = () => {};
+  let finishedAgent = false;
+  const finishAgentRequest = () => {
+    if (!finishedAgent) {
+      finishedAgent = true;
+      this[kAgent]?._requestFinished?.();
+    }
+  };
 
   const send = () => {
     this.finished = true;
@@ -548,16 +558,25 @@ function ClientRequest(input, options, cb) {
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
-    try {
-      startFetch(body);
-      onEnd = () => {
-        handleResponse?.();
-      };
-    } catch (err) {
-      if (!!$debug) globalReportError(err);
-      this.emit("error", err);
-    } finally {
-      process.nextTick(maybeEmitFinish.bind(this));
+    const doStart = () => {
+      try {
+        startFetch(body);
+        onEnd = () => {
+          handleResponse?.();
+        };
+      } catch (err) {
+        if (!!$debug) globalReportError(err);
+        this.emit("error", err);
+        finishAgentRequest();
+      } finally {
+        process.nextTick(maybeEmitFinish.bind(this));
+      }
+    };
+
+    if (this[kAgent]?._enqueue) {
+      this[kAgent]._enqueue(this, doStart);
+    } else {
+      doStart();
     }
   };
 

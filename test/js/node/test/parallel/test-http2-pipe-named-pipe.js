@@ -16,9 +16,7 @@ tmpdir.refresh();
 const loc = fixtures.path('person-large.jpg');
 const fn = tmpdir.resolve('person-large.jpg');
 
-const server = http2.createServer({
-  // initialWindowSize: 655360,
-});
+const server = http2.createServer();
 
 server.on('stream', common.mustCall((stream) => {
   console.log("stream");

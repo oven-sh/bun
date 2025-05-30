@@ -1606,9 +1606,8 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onTimeout(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onTimeout {s}", .{if (this.handlers.is_server) "S" else "C"});
             if (this.socket.isDetached()) return;
-
+            log("onTimeout {s}", .{if (this.handlers.is_server) "S" else "C"});
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
             if (callback == .zero or this.flags.finalizing) return;
@@ -1756,7 +1755,6 @@ fn NewSocket(comptime ssl: bool) type {
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = socket;
             JSC.markBinding(@src());
-            log("onOpen {s} ssl: {}", .{ if (this.handlers.is_server) "S" else "C", ssl });
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
@@ -1845,8 +1843,8 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onEnd(this: *This, _: Socket) void {
             JSC.markBinding(@src());
-            log("onEnd {s}", .{if (this.handlers.is_server) "S" else "C"});
             if (this.socket.isDetached()) return;
+            log("onEnd {s}", .{if (this.handlers.is_server) "S" else "C"});
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -1875,10 +1873,11 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            log("onHandshake {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", success });
             JSC.markBinding(@src());
             this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
+            log("onHandshake {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", success });
+
             const authorized = if (success == 1) true else false;
 
             this.flags.authorized = authorized;
@@ -1989,9 +1988,8 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
-            log("onData {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", data.len });
             if (this.socket.isDetached()) return;
-
+            log("onData {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", data.len });
             if (this.native_callback.onData(data)) return;
 
             const handlers = this.handlers;
@@ -2609,7 +2607,6 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-            log("ref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
             if (this.socket.isDetached()) this.ref_pollref_on_connect = true;
             if (this.socket.isDetached()) return JSValue.jsUndefined();
@@ -2618,7 +2615,6 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-            log("unref {s}", .{if (this.handlers.is_server) "S" else "C"});
             JSC.markBinding(@src());
             if (this.socket.isDetached()) this.ref_pollref_on_connect = false;
             this.poll_ref.unref(globalObject.bunVM());

@@ -252,13 +252,16 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
     size_t i = 0;
     auto& vm = context.vm();
 
-    for (; i < messageCount && i < maxMessagesPerTick; ++i) {
-        auto& message = messages[i];
-        auto* globalObject = defaultGlobalObject(context.globalObject());
-        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
-            return;
+    auto* globalObject = defaultGlobalObject(context.globalObject());
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running) {
+        completionCallback();
+        return;
+    }
 
+    for (; i < messageCount && i < maxMessagesPerTick; ++i) {
         auto scope = DECLARE_CATCH_SCOPE(vm);
+
+        auto& message = messages[i];
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
         auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
         dispatchEvent(event.event);

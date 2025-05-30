@@ -193,7 +193,6 @@ describe("Server", () => {
               Buffer.from("abc"),
               { deadline: deadline },
               (callError2, result) => {
-                console.log("callError2", callError2);
                 assert(callError2);
                 // DEADLINE_EXCEEDED means that the server is unreachable
                 assert(

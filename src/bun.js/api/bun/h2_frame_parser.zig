@@ -934,7 +934,6 @@ pub const H2FrameParser = struct {
             }
         }
         pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) FlushState {
-            defer client.checkIfShouldAutoFlush();
             if (this.canSendData()) {
                 // try to flush one frame
                 if (this.dataFrameQueue.peekFront()) |frame| {
@@ -1064,7 +1063,6 @@ pub const H2FrameParser = struct {
 
         pub fn queueFrame(this: *Stream, client: *H2FrameParser, bytes: []const u8, callback: JSC.JSValue, end_stream: bool) void {
             const globalThis = client.globalThis;
-            defer client.checkIfShouldAutoFlush();
 
             if (this.dataFrameQueue.peekLast()) |last_frame| {
                 if (bytes.len == 0) {
@@ -1551,10 +1549,12 @@ pub const H2FrameParser = struct {
                 return;
             }
             // force uncork
-            corked.flushCorked();
+            corked.uncork();
         }
         // cork
         CORKED_H2 = this;
+        this.ref();
+        this.registerAutoFlush();
         log("cork {*}", .{this});
         CORK_OFFSET = 0;
     }
@@ -1669,7 +1669,7 @@ pub const H2FrameParser = struct {
         log("flush", .{});
         this.ref();
         defer this.deref();
-        defer this.checkIfShouldAutoFlush();
+        this.uncork();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -1710,7 +1710,6 @@ pub const H2FrameParser = struct {
     pub fn _write(this: *H2FrameParser, bytes: []const u8) bool {
         this.ref();
         defer this.deref();
-        defer this.checkIfShouldAutoFlush();
         return switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
@@ -1751,16 +1750,18 @@ pub const H2FrameParser = struct {
         return this.writeBuffer.len > 0 or this.has_nonnative_backpressure;
     }
 
-    fn flushCorked(this: *H2FrameParser) void {
+    fn uncork(_: *H2FrameParser) void {
         if (CORKED_H2) |corked| {
-            if (@intFromPtr(corked) == @intFromPtr(this)) {
-                log("uncork {*}", .{this});
+            defer corked.deref();
+            corked.unregisterAutoFlush();
+            log("uncork {*}", .{corked});
 
-                const bytes = CORK_BUFFER[0..CORK_OFFSET];
-                CORK_OFFSET = 0;
-                if (bytes.len > 0) {
-                    _ = this._write(bytes);
-                }
+            const bytes = CORK_BUFFER[0..CORK_OFFSET];
+            CORK_OFFSET = 0;
+            CORKED_H2 = null;
+
+            if (bytes.len > 0) {
+                _ = corked._write(bytes);
             }
         }
     }
@@ -1776,14 +1777,6 @@ pub const H2FrameParser = struct {
         this.deref();
     }
 
-    fn checkIfShouldAutoFlush(this: *H2FrameParser) void {
-        const corkedBuffer = if (CORKED_H2) |corked| if (@intFromPtr(corked) == @intFromPtr(this)) CORK_OFFSET else 0 else 0;
-        if (corkedBuffer > 0) {
-            this.registerAutoFlush();
-        } else {
-            this.unregisterAutoFlush();
-        }
-    }
     pub fn onAutoFlush(this: *@This()) bool {
         this.ref();
         defer this.deref();
@@ -1796,24 +1789,19 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
         log("write {}", .{bytes.len});
         if (comptime ENABLE_AUTO_CORK) {
-            // TODO: make this use AutoFlusher
             this.cork();
             const available = CORK_BUFFER[CORK_OFFSET..];
             if (bytes.len > available.len) {
                 // not worth corking
                 if (CORK_OFFSET != 0) {
                     // clean already corked data
-                    this.flushCorked();
+                    this.uncork();
                 }
                 return this._write(bytes);
             } else {
                 // write at the cork buffer
                 CORK_OFFSET += @truncate(bytes.len);
                 @memcpy(available[0..bytes.len], bytes);
-
-                // register auto uncork
-                this.registerAutoFlush();
-                // corked
                 return true;
             }
         } else {
@@ -4446,13 +4434,17 @@ pub const H2FrameParser = struct {
     }
     pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
-        this.detach(false);
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
+            stream.freeResources(this, false);
+        }
+        this.detach();
         return .undefined;
     }
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
-    pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
-        this.flushCorked();
+    pub fn detach(this: *H2FrameParser) void {
+        this.uncork();
         this.unregisterAutoFlush();
         this.detachNativeSocket();
         this.strong_ctx.deinit();
@@ -4469,15 +4461,6 @@ pub const H2FrameParser = struct {
             hpack.deinit();
             this.hpack = null;
         }
-        if (finalizing) {
-            var it = this.streams.valueIterator();
-            while (it.next()) |stream| {
-                stream.freeResources(this, finalizing);
-            }
-            var streams = this.streams;
-            defer streams.deinit();
-            this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
-        }
     }
 
     fn deinit(this: *H2FrameParser) void {
@@ -4490,7 +4473,14 @@ pub const H2FrameParser = struct {
                 bun.destroy(this);
             }
         }
-        this.detach(true);
+        this.detach();
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
+            stream.freeResources(this, true);
+        }
+        var streams = this.streams;
+        defer streams.deinit();
+        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
     pub fn finalize(this: *H2FrameParser) void {

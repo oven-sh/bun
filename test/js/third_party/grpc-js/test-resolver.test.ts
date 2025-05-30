@@ -266,7 +266,7 @@ describe("Name Resolver", () => {
     });
     /* TODO(murgatroid99): re-enable this test, once we can get the IPv6 result
      * consistently */
-    it("Should resolve a DNS name to an IPv6 address", done => {
+    it.todo("Should resolve a DNS name to an IPv6 address", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback6.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (

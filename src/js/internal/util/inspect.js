@@ -349,7 +349,7 @@ const codes = {}; // exported from errors.js
   // Add ERR_INVALID_THIS error code
   const messages = new SafeMap();
   const sym = "ERR_INVALID_THIS";
-  messages.set(sym, (type) => {
+  messages.set(sym, type => {
     return `Value of "this" must be of type ${type}`;
   });
   codes[sym] = function NodeError(...args) {
@@ -2344,7 +2344,7 @@ function formatIterator(braces, ctx, value, recurseTimes) {
 function formatURLSearchParamsIterator(braces, ctx, value, recurseTimes) {
   const items = [];
   let isEntries = false;
-  
+
   // Consume the iterator to determine the format
   for (const item of value) {
     items.push(item);
@@ -2353,7 +2353,7 @@ function formatURLSearchParamsIterator(braces, ctx, value, recurseTimes) {
       isEntries = Array.isArray(item) && item.length === 2;
     }
   }
-  
+
   if (isEntries) {
     // Entries iterator: convert to flat array for formatMapIterInner
     const entries = [];
@@ -2835,14 +2835,14 @@ function internalGetConstructorName(val) {
 }
 
 // Add custom inspect method to URLSearchParams
-if (typeof URLSearchParams !== 'undefined') {
+if (typeof URLSearchParams !== "undefined") {
   URLSearchParams.prototype[customInspectSymbol] = function urlSearchParamsCustomInspect(depth, options, inspect) {
-    if (this == null || typeof this.forEach !== 'function') {
-      throw codes.ERR_INVALID_THIS('URLSearchParams');
+    if (this == null || typeof this.forEach !== "function") {
+      throw codes.ERR_INVALID_THIS("URLSearchParams");
     }
-    
+
     if (depth != null && depth < 0) {
-      return '[Object]';
+      return "[Object]";
     }
 
     const entries = [];
@@ -2851,17 +2851,17 @@ if (typeof URLSearchParams !== 'undefined') {
     });
 
     if (entries.length === 0) {
-      return 'URLSearchParams {}';
+      return "URLSearchParams {}";
     }
 
-    const inner = entries.join(', ');
-    
+    const inner = entries.join(", ");
+
     // Handle breakLength for multiline formatting
     if (options && options.breakLength != null && inner.length > options.breakLength) {
-      const formattedEntries = entries.join(',\n  ');
+      const formattedEntries = entries.join(",\n  ");
       return `URLSearchParams {\n  ${formattedEntries}\n}`;
     }
-    
+
     return `URLSearchParams { ${inner} }`;
   };
 }

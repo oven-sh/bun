@@ -1259,28 +1259,19 @@ pub const H2FrameParser = struct {
     }
 
     fn incrementWindowSizeIfNeeded(this: *H2FrameParser) void {
-        // We wait until half of the window size is used before incrementing to speed up the window size updates
-        // each increment is 64KiB
-        var total_increment: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
             log("incrementWindowSizeIfNeeded stream {} {} {} {}", .{ stream.id, stream.usedWindowSize, stream.windowSize, this.isServer });
-            if (stream.usedWindowSize >= stream.windowSize / 2) {
-                stream.windowSize += WINDOW_INCREMENT_SIZE;
+            if (stream.usedWindowSize >= stream.windowSize) {
+                stream.usedWindowSize = 0;
                 log("incrementWindowSizeIfNeeded stream {} {} {}", .{ stream.id, stream.windowSize, this.isServer });
-                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(WINDOW_INCREMENT_SIZE), false));
-                total_increment += 1;
+                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(stream.windowSize), false));
             }
         }
-        log("incrementWindowSizeIfNeeded connection {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, total_increment });
-        if (this.usedWindowSize >= this.windowSize / 2) {
-            if (total_increment < 1) {
-                total_increment = 1;
-            }
-            const increment = WINDOW_INCREMENT_SIZE * total_increment;
-            this.windowSize += increment; // we will need at least this many increments to send all the streams
-            log("incrementWindowSizeIfNeeded connection {} {} {}", .{ this.windowSize, increment, this.isServer });
-            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(increment), false));
+        log("incrementWindowSizeIfNeeded connection {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer });
+        if (this.usedWindowSize >= this.windowSize) {
+            this.usedWindowSize = 0;
+            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(this.windowSize), false));
         }
     }
 
@@ -2023,6 +2014,7 @@ pub const H2FrameParser = struct {
         // ignore padding
         if (data_needed > padding) {
             data_needed -= padding;
+            log("data received {} {}", .{ padding, payload.len });
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
@@ -2412,6 +2404,8 @@ pub const H2FrameParser = struct {
                     // ok empty settings so default settings
                     const remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
+                    log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
+
                     if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                         this.remoteWindowSize = remoteSettings.initialWindowSize;
                         var it = this.streams.valueIterator();
@@ -3280,7 +3274,7 @@ pub const H2FrameParser = struct {
                     max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
                 }
                 const size = @min(payload.len - offset, max_size);
-                defer if (!is_flow_control_limited) {
+                defer if (!enqueued) {
                     log("remoteUsedWindowSize += {} {} {} {}", .{ size, stream.remoteUsedWindowSize, this.remoteUsedWindowSize, this.isServer });
                     stream.remoteUsedWindowSize += size;
                     this.remoteUsedWindowSize += size;

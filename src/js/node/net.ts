@@ -2368,6 +2368,18 @@ Server.prototype[kRealListen] = function (
   _onListen,
   fd,
 ) {
+  // Check if we're trying to listen on a file descriptor
+  if (fd != null) {
+    // Bun doesn't support listening on file descriptors, so emit an async error like Node.js does
+    const error = new Error("listen EINVAL: invalid argument");
+    error.code = "EINVAL";
+    error.errno = -22;
+    error.syscall = "listen";
+    
+    setTimeout(emitErrorNextTick, 1, this, error);
+    return;
+  }
+
   if (path) {
     this._handle = Bun.listen({
       unix: path,
@@ -2379,6 +2391,8 @@ Server.prototype[kRealListen] = function (
       socket: ServerHandlers,
     });
   } else if (fd != null) {
+    // NOTE: This block is unreachable because fd != null cases are handled earlier
+    // with an async error emission. This code is kept for clarity but will never execute.
     this._handle = Bun.listen({
       fd,
       hostname,

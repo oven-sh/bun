@@ -113,7 +113,7 @@ describe(".env file is loaded", () => {
       "index.test.ts": "console.log(process.env.FAILED);",
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`, {});
-    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "false");
+    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "true");
   });
   test(".env.development and .env.production ignored when bun test", () => {
     const dir = tempDirWithFiles("dotenv", {

@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isMainThread, MessageChannel, MessagePort, parentPort, Worker } from "node:worker_threads";
+import { MessageChannel, MessagePort, parentPort, Worker } from "node:worker_threads";
 
 interface StartupMessage {
   port: MessagePort;

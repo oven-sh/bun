@@ -321,10 +321,7 @@ const OutgoingMessagePrototype = {
   },
 
   _renderHeaders() {
-    if (
-      (this._header !== undefined && this._header !== null) ||
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent
-    ) {
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
       throw $ERR_HTTP_HEADERS_SENT("render");
     }
 

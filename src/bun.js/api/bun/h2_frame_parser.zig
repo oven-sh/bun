@@ -138,7 +138,11 @@ const UInt31WithReserved = packed struct(u32) {
     }
 
     pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) bool {
-        var value: u32 = @bitCast(this);
+        var value: u32 = this.uint31;
+        if (this.reserved) {
+            value |= 0x80000000;
+        }
+
         value = @byteSwap(value);
 
         return (writer.write(std.mem.asBytes(&value)) catch 0) != 0;

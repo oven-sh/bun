@@ -575,7 +575,13 @@ function onNodeHTTPServerSocketTimeout() {
   const resTimeout = res && res.emit("timeout", this);
   const serverTimeout = this.server.emit("timeout", this);
 
-  if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
+  if (!reqTimeout && !resTimeout && !serverTimeout) {
+    if (req && !req.complete && res && !res.headersSent) {
+      res.writeHead(408, { Connection: "close" });
+      res.end();
+    }
+    this.destroy();
+  }
 }
 
 function emitRequestCloseNT(self) {
@@ -1041,6 +1047,9 @@ const ServerPrototype = {
           }
 
           socket[kRequest] = http_req;
+          if (server.requestTimeout > 0) {
+            http_req.setTimeout(server.requestTimeout);
+          }
           const is_upgrade = http_req.headers.upgrade;
           if (!is_upgrade) {
             if (canUseInternalAssignSocket) {

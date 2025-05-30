@@ -8411,7 +8411,7 @@ describe("outdated", () => {
     expect(out).toContain("prereleases-1");
   });
 
-  test.only("scoped workspace names", async () => {
+  test("scoped workspace names", async () => {
     await Promise.all([
       write(
         packageJson,

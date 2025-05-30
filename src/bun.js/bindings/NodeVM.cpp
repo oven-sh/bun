@@ -880,7 +880,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        if (!notContextified && JSObject::getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot)) {
+        if (!notContextified && contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
             return true;
         }
 

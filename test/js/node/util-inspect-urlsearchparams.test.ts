@@ -20,7 +20,7 @@ describe("util.inspect URLSearchParams", () => {
   it("should respect breakLength option for multiline formatting", () => {
     const sp = new URLSearchParams("?a=a&b=b&b=c");
     expect(util.inspect(sp, { breakLength: 1 })).toBe(
-      "URLSearchParams {\n  'a' => 'a',\n  'b' => 'b',\n  'b' => 'c'\n}"
+      "URLSearchParams {\n  'a' => 'a',\n  'b' => 'b',\n  'b' => 'c'\n}",
     );
   });
 
@@ -36,27 +36,21 @@ describe("util.inspect URLSearchParams", () => {
 
   it("should format URLSearchParams keys iterator with breakLength", () => {
     const sp = new URLSearchParams("?a=a&b=b&b=c");
-    expect(util.inspect(sp.keys(), { breakLength: 1 })).toBe(
-      "URLSearchParams Iterator {\n  'a',\n  'b',\n  'b'\n}"
-    );
+    expect(util.inspect(sp.keys(), { breakLength: 1 })).toBe("URLSearchParams Iterator {\n  'a',\n  'b',\n  'b'\n}");
   });
 
   it("should format URLSearchParams entries iterator", () => {
     const sp = new URLSearchParams("?a=a&b=b&b=c");
     const iterator = sp.entries();
-    expect(util.inspect(iterator)).toBe(
-      "URLSearchParams Iterator { [ 'a', 'a' ], [ 'b', 'b' ], [ 'b', 'c' ] }"
-    );
+    expect(util.inspect(iterator)).toBe("URLSearchParams Iterator { [ 'a', 'a' ], [ 'b', 'b' ], [ 'b', 'c' ] }");
   });
 
   it("should format URLSearchParams entries iterator after consuming entries", () => {
     const sp = new URLSearchParams("?a=a&b=b&b=c");
     const iterator = sp.entries();
     iterator.next(); // consume first entry
-    expect(util.inspect(iterator)).toBe(
-      "URLSearchParams Iterator { [ 'b', 'b' ], [ 'b', 'c' ] }"
-    );
-    
+    expect(util.inspect(iterator)).toBe("URLSearchParams Iterator { [ 'b', 'b' ], [ 'b', 'c' ] }");
+
     iterator.next(); // consume second entry
     iterator.next(); // consume third entry
     expect(util.inspect(iterator)).toBe("URLSearchParams Iterator {  }");
@@ -65,7 +59,7 @@ describe("util.inspect URLSearchParams", () => {
   it("should throw error when custom inspect is called incorrectly", () => {
     const sp = new URLSearchParams("?a=a&b=b");
     expect(() => sp[util.inspect.custom].call()).toThrow({
-      code: "ERR_INVALID_THIS"
+      code: "ERR_INVALID_THIS",
     });
   });
 

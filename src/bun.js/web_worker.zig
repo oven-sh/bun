@@ -357,6 +357,7 @@ pub fn start(
 /// Deinit will clean up vm and everything.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
 fn deinit(this: *WebWorker) void {
+    log("[{d}] deinit", .{this.execution_context_id});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
@@ -506,12 +507,14 @@ fn spin(this: *WebWorker) void {
     // always doing a first tick so we call CppTask without delay after dispatchOnline
     vm.tick();
 
-    while (!this.hasRequestedTerminate() and vm.isEventLoopAlive()) {
+    while (vm.isEventLoopAlive()) {
         vm.tick();
         if (this.hasRequestedTerminate()) break;
         vm.eventLoop().autoTickActive();
         if (this.hasRequestedTerminate()) break;
     }
+
+    log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
     // Only call "beforeExit" if we weren't from a .terminate
     if (!this.hasRequestedTerminate()) {
@@ -521,6 +524,7 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs();
     this.exitAndDeinit();
+    log("[{d}] spin done", .{this.execution_context_id});
 }
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
@@ -528,11 +532,11 @@ pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
     if (this.hasRequestedTerminate()) {
         return;
     }
+
     this.setRefInternal(value);
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
-    log("[{d}] setRefInternal({}) called", .{ this.execution_context_id, value });
     if (value) {
         this.parent_poll_ref.ref(this.parent);
     } else {
@@ -558,7 +562,11 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
+        // TODO(@190n) notifyNeedTermination
     }
+
+    // TODO(@190n) delete
+    this.setRefInternal(false);
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.
@@ -569,12 +577,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     this.setStatus(.terminated);
     bun.Analytics.Features.workers_terminated += 1;
 
+    log("[{d}] exitAndDeinit", .{this.execution_context_id});
     const cpp_worker = this.cpp_worker;
     var exit_code: i32 = 0;
     var globalObject: ?*jsc.JSGlobalObject = null;
     var vm_to_deinit: ?*jsc.VirtualMachine = null;
     var loop: ?*bun.uws.Loop = null;
-
     if (this.vm) |vm| {
         loop = vm.uwsLoop();
         this.vm = null;
@@ -584,18 +592,18 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         globalObject = vm.global;
         vm_to_deinit = vm;
     }
-
     var arena = this.arena;
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
+
     bun.uws.onThreadExit();
     this.deinit();
+
     if (vm_to_deinit) |vm| {
-        vm.deinit();
+        vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
     if (arena) |*arena_| {

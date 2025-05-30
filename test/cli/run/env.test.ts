@@ -190,7 +190,7 @@ describe("dotenv priority", () => {
     const { stdout: stdout_prod } = bunRun(`${dir}/index.ts`, { NODE_ENV: "production" });
     expect(stdout_prod).toBe(".env.local");
     const { stdout: stdout_test } = bunTest(`${dir}/index.test.ts`, {});
-    expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.test");
+    expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.local");
   });
   test(".env.{NODE_ENV} overrides .env", () => {
     const dir = tempDirWithFiles("dotenv", {

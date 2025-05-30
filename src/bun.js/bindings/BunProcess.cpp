@@ -1379,6 +1379,27 @@ static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC:
     return view == literal;
 }
 
+static bool processNoWarnings(JSC::JSGlobalObject* globalObject)
+{
+    if (Bun__Node__ProcessNoWarnings)
+        return true;
+
+    static bool checked = false;
+    static bool result = false;
+    if (!checked) {
+        checked = true;
+        ZigString name = { reinterpret_cast<const unsigned char*>("NODE_NO_WARNINGS"), sizeof("NODE_NO_WARNINGS") - 1 };
+        ZigString value = { nullptr, 0 };
+        if (Bun__getEnvValue(globalObject, &name, &value)) {
+            if (value.len == 1 && value.ptr[0] == '1') {
+                result = true;
+                Bun__Node__ProcessNoWarnings = true;
+            }
+        }
+    }
+    return result;
+}
+
 extern "C" void Bun__Process__emitWarning(Zig::GlobalObject* globalObject, EncodedJSValue warning, EncodedJSValue type, EncodedJSValue code, EncodedJSValue ctor)
 {
     // ignoring return value -- emitWarning only ever returns undefined or throws
@@ -1396,6 +1417,10 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = globalObject->processObject();
+
+    if (processNoWarnings(globalObject)) {
+        return jsUndefined();
+    }
 
     auto warningName = errorInstance.get(lexicalGlobalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1425,6 +1450,10 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue detail = jsUndefined();
+
+    if (processNoWarnings(globalObject)) {
+        return jsUndefined();
+    }
 
     if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         return jsUndefined();
@@ -3309,6 +3338,17 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessNoDeprecation, (JSC::JSGlobalObject * globalO
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(processNoProcessWarnings, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    return JSValue::encode(jsBoolean(Bun__Node__ProcessNoWarnings));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessNoProcessWarnings, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    Bun__Node__ProcessNoWarnings = JSC::JSValue::decode(encodedValue).toBoolean(globalObject);
+    return true;
+}
+
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
     // {
@@ -3649,6 +3689,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   noDeprecation                    processNoDeprecation                                CustomAccessor
+  noProcessWarnings                    processNoProcessWarnings
+       CustomAccessor
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback

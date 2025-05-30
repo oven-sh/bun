@@ -15,3 +15,4 @@ categories:
 passes on mac:
 - test-tls-junk-closes-server
 - test-tls-onread-static-buffer
+- test-tls-lookup

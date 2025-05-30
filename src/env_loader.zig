@@ -645,13 +645,6 @@ pub const Loader = struct {
             try this.loadEnvFile(dir_handle, ".env", false);
             Analytics.Features.dotenv += 1;
         }
-
-        if (comptime suffix == .@"test") {
-            if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false);
-                Analytics.Features.dotenv += 1;
-            }
-        }
     }
 
     pub fn printLoaded(this: *Loader, start: i128) void {

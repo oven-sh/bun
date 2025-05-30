@@ -2269,7 +2269,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
 
           hostname = path;
           port = undefined;
-        } else {
+        } else if (fd == null) {
           let message = 'The argument \'options\' must have the property "port" or "path"';
           try {
             message = `${message}. Received ${JSON.stringify(options)}`;
@@ -2282,16 +2282,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       } else if (port === undefined) {
         port = 0;
       }
-
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
       if (typeof options.callback === "function") onListen = options?.callback;
     } else if (!Number.isSafeInteger(port) || port < 0) {
@@ -2379,6 +2369,21 @@ Server.prototype[kRealListen] = function (
       socket: ServerHandlers,
     });
   } else if (fd != null) {
+    // Validate that the file descriptor is suitable for listening
+    // File descriptor 0 (stdin), 1 (stdout), 2 (stderr) are not valid for listening
+    if (fd >= 0 && fd <= 2) {
+      // Emit an async error similar to what Node.js does
+      setTimeout(() => {
+        const error = new Error("Invalid file descriptor for listening");
+        error.code = "EINVAL";
+        error.errno = -22; // EINVAL errno
+        error.syscall = "listen";
+        error.fd = fd;
+        this.emit("error", error);
+      }, 1);
+      return;
+    }
+
     this._handle = Bun.listen({
       fd,
       hostname,

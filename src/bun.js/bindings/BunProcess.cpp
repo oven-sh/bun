@@ -1135,7 +1135,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
-    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String("UnhandledPromiseRejectionWarning"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
     if (Bun__promises__isErrorLike(globalObject, JSValue::decode(reason))) {
@@ -1155,7 +1155,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     }
     if (!reasonStack) reasonStack = jsUndefined();
 
-    Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), String("UnhandledPromiseRejectionWarning"_s)), jsUndefined(), jsUndefined());
+    Process::emitWarning(globalObject, reasonStack, jsString(globalObject->vm(), "UnhandledPromiseRejectionWarning"_str), jsUndefined(), jsUndefined());
     if (scope.exception()) scope.clearException();
     Process::emitWarningErrorInstance(globalObject, warning);
     if (scope.exception()) scope.clearException();

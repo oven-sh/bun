@@ -715,7 +715,7 @@ pub const Arguments = struct {
 
             if (args.option("--unhandled-rejections")) |unhandled_rejections| {
                 const resolved = Api.UnhandledRejections.map.get(unhandled_rejections) orelse {
-                    Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"\n", .{unhandled_rejections});
+                    Output.errGeneric("Invalid value for --unhandled-rejections: \"{s}\". Must be one of \"strict\", \"throw\", \"warn\", \"none\", \"warn-with-error-code\", or \"bun\"\n", .{unhandled_rejections});
                     Global.exit(1);
                 };
                 opts.unhandled_rejections = resolved;

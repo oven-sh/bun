@@ -1374,6 +1374,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>audit<r>                          Check installed packages for vulnerabilities
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
@@ -1766,6 +1767,7 @@ pub const Command = struct {
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
             RootCommandMatcher.case("publish") => .PublishCommand,
+            RootCommandMatcher.case("audit") => .AuditCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1914,6 +1916,13 @@ pub const Command = struct {
 
                 try PublishCommand.exec(ctx);
                 return;
+            },
+            .AuditCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AuditCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .AuditCommand);
+
+                try AuditCommand.exec(ctx);
+                unreachable;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
@@ -2342,6 +2351,7 @@ pub const Command = struct {
         PatchCommitCommand,
         OutdatedCommand,
         PublishCommand,
+        AuditCommand,
 
         /// Used by crash reports.
         ///
@@ -2375,6 +2385,7 @@ pub const Command = struct {
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
                 .PublishCommand => 'k',
+                .AuditCommand => 'A',
             };
         }
 
@@ -2626,10 +2637,11 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .PublishCommand => {
+                .OutdatedCommand, .PublishCommand, .AuditCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
                         .PublishCommand => .publish,
+                        .AuditCommand => .audit,
                     });
                 },
                 else => {
@@ -2650,6 +2662,7 @@ pub const Command = struct {
                 .PatchCommitCommand,
                 .OutdatedCommand,
                 .PublishCommand,
+                .AuditCommand,
                 => true,
                 else => false,
             };
@@ -2669,6 +2682,7 @@ pub const Command = struct {
                 .PatchCommitCommand,
                 .OutdatedCommand,
                 .PublishCommand,
+                .AuditCommand,
                 => true,
                 else => false,
             };
@@ -2690,6 +2704,7 @@ pub const Command = struct {
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
+            .AuditCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2705,6 +2720,7 @@ pub const Command = struct {
             .BunxCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
+            .AuditCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2721,6 +2737,7 @@ pub const Command = struct {
             .BunxCommand = false,
             .OutdatedCommand = false,
             .PublishCommand = false,
+            .AuditCommand = false,
         });
     };
 };

@@ -1,5 +1,8 @@
+// Hardcoded module "node:tty"
+
 // Note: please keep this module's loading constrants light, as some users
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
+
 const {
   setRawMode: ttySetMode,
   isatty,

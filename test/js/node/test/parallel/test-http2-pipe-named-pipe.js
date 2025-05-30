@@ -19,17 +19,14 @@ const fn = tmpdir.resolve('person-large.jpg');
 const server = http2.createServer();
 
 server.on('stream', common.mustCall((stream) => {
-  console.log("stream");
   const dest = stream.pipe(fs.createWriteStream(fn));
 
   stream.on('end', common.mustCall(() => {
-    console.log("end");
     stream.respond();
     stream.end();
   }));
 
   dest.on('finish', common.mustCall(() => {
-    console.log("finish");
     assert.strictEqual(fs.readFileSync(fn).length,
                        fs.readFileSync(loc).length);
   }));

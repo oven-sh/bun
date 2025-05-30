@@ -1,3 +1,4 @@
+'use strict';
 const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
@@ -28,29 +29,32 @@ const clientConfigs = [
 
 const serverConfig = {
   secureProtocol: 'TLS_method',
-  ciphers: 'RSA@SECLEVEL=0',
   key: fixtures.readKey('agent2-key.pem'),
   cert: fixtures.readKey('agent2-cert.pem')
 };
 
+if (!process.features.openssl_is_boringssl) {
+  serverConfig.ciphers = 'RSA@SECLEVEL=0';
+}
+
 const server = tls.createServer(serverConfig, common.mustCall(clientConfigs.length))
-  .listen(0, common.localhostIPv4, function() {
-    let connected = 0;
-    for (const v of clientConfigs) {
-      tls.connect({
-        host: common.localhostIPv4,
-        port: server.address().port,
-        ciphers: v.ciphers,
-        rejectUnauthorized: false,
-        secureProtocol: v.secureProtocol
-      }, common.mustCall(function() {
-        assert.strictEqual(this.getProtocol(), v.version);
-        this.on('end', common.mustCall());
-        this.on('close', common.mustCall(function() {
-          assert.strictEqual(this.getProtocol(), null);
-        })).end();
-        if (++connected === clientConfigs.length)
-          server.close();
-      }));
-    }
-  });
+.listen(0, common.localhostIPv4, function() {
+  let connected = 0;
+  for (const v of clientConfigs) {
+    tls.connect({
+      host: common.localhostIPv4,
+      port: server.address().port,
+      ciphers: v.ciphers,
+      rejectUnauthorized: false,
+      secureProtocol: v.secureProtocol
+    }, common.mustCall(function() {
+      assert.strictEqual(this.getProtocol(), v.version);
+      this.on('end', common.mustCall());
+      this.on('close', common.mustCall(function() {
+        assert.strictEqual(this.getProtocol(), null);
+      })).end();
+      if (++connected === clientConfigs.length)
+        server.close();
+    }));
+  }
+});

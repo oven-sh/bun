@@ -2,6 +2,7 @@
 #include "JSHTTPParser.h"
 #include "JSConnectionsList.h"
 #include "ZigGlobalObject.h"
+#include "JSDOMExceptionHandling.h"
 
 namespace Bun {
 
@@ -53,7 +54,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_close, (JSGlobalObject * globalObject, Cal
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "close"_s);
+        return {};
     }
 
     delete parser;
@@ -68,7 +70,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_free, (JSGlobalObject * globalObject, Call
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "free"_s);
+        return {};
     }
 
     // TODO: TODO!
@@ -87,7 +90,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_remove, (JSGlobalObject * globalObject, Ca
 
     JSHTTPParser* thisParser = jsDynamicCast<JSHTTPParser*>(thisValue);
     if (!thisParser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "remove"_s);
+        return {};
     }
 
     HTTPParser* parser = thisParser->impl();
@@ -105,7 +109,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "execute"_s);
+        return {};
     }
 
     JSValue bufferValue = callFrame->argument(0);
@@ -134,7 +139,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_finish, (JSGlobalObject * globalObject, Ca
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "finish"_s);
+        return {};
     }
 
     JSValue result = parser->execute(globalObject, nullptr, 0);
@@ -196,7 +202,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
 
     JSHTTPParser* thisParser = jsDynamicCast<JSHTTPParser*>(thisValue);
     if (!thisParser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "initialize"_s);
+        return {};
     }
     HTTPParser* parser = JSHTTPParser::toImpl(thisValue);
     if (!parser) {
@@ -213,7 +220,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, Cal
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "pause"_s);
+        return {};
     }
 
     return JSValue::encode(parser->pause());
@@ -226,7 +234,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_resume, (JSGlobalObject * globalObject, Ca
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "resume"_s);
+        return {};
     }
 
     return JSValue::encode(parser->resume());
@@ -239,7 +248,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_consume, (JSGlobalObject * globalObject, C
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "consume"_s);
+        return {};
     }
 
     // TODO: TODO!
@@ -254,7 +264,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_unconsume, (JSGlobalObject * globalObject,
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "unconsume"_s);
+        return {};
     }
 
     // TODO: TODO!
@@ -269,7 +280,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexica
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*lexicalGlobalObject, scope, "HTTPParser"_s, "getCurrentBuffer"_s);
+        return {};
     }
 
     return JSValue::encode(parser->getCurrentBuffer(lexicalGlobalObject));
@@ -282,7 +294,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, 
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "duration"_s);
+        return {};
     }
 
     return JSValue::encode(parser->duration());
@@ -295,7 +308,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_headersCompleted, (JSGlobalObject * global
 
     HTTPParser* parser = JSHTTPParser::toImpl(callFrame->thisValue());
     if (!parser) {
-        return JSValue::encode(jsUndefined());
+        throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "headersCompleted"_s);
+        return {};
     }
 
     return JSValue::encode(jsBoolean(parser->headersCompleted()));

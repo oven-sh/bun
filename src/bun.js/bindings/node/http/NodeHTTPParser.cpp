@@ -505,13 +505,10 @@ int HTTPParser::onHeadersComplete()
     JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, onHeadersCompleteCallback, callData, thisParser, args);
     RETURN_IF_EXCEPTION(scope, -1);
 
-    auto ret = result.tryGetAsInt32();
+    int32_t ret = result.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, -1);
 
-    if (!ret) {
-        return -1;
-    }
-
-    return *ret;
+    return ret;
 }
 
 int HTTPParser::onBody(const char* at, size_t length)

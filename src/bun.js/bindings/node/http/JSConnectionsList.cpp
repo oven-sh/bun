@@ -92,7 +92,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         ASSERT(parser);
-        if (!parser || !parser->impl()) {
+        if (!parser) {
             continue;
         }
 
@@ -146,7 +146,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     while (!item.isEmpty()) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         ASSERT(parser);
-        if (!parser || !parser->impl()) {
+        if (!parser) {
             item = iter->next(vm);
             continue;
         }

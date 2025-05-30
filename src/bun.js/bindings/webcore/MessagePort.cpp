@@ -86,44 +86,18 @@ bool MessagePort::isMessagePortAliveForTesting(const MessagePortIdentifier& iden
 void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier)
 {
     std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
+    ThreadSafeWeakPtr<MessagePort> weakPort;
     {
         Locker locker { allMessagePortsLock };
         scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
+        weakPort = allMessagePorts().get(identifier);
     }
     if (!scriptExecutionContextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [identifier](auto&) {
-        ThreadSafeWeakPtr<MessagePort> weakPort;
-        {
-            Locker locker { allMessagePortsLock };
-            weakPort = allMessagePorts().get(identifier);
-        }
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
         if (RefPtr port = weakPort.get())
             port->messageAvailable();
-    });
-}
-
-void MessagePort::notifyPortClosed(const MessagePortIdentifier& identifier)
-{
-    std::optional<ScriptExecutionContextIdentifier> scriptExecutionContextIdentifier;
-    {
-        Locker locker { allMessagePortsLock };
-        scriptExecutionContextIdentifier = portToContextIdentifier().getOptional(identifier);
-    }
-    if (!scriptExecutionContextIdentifier)
-        return;
-
-    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [identifier](auto&) {
-        ThreadSafeWeakPtr<MessagePort> weakPort;
-        {
-            Locker locker { allMessagePortsLock };
-            weakPort = allMessagePorts().get(identifier);
-        }
-
-        if (RefPtr port = weakPort.get()) {
-            port->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
-        }
     });
 }
 
@@ -225,11 +199,6 @@ TransferredMessagePort MessagePort::disentangle()
     context.destroyedMessagePort(*this);
     // context.willDestroyActiveDOMObject(*this);
     context.willDestroyDestructionObserver(*this);
-
-    // Dispatch close event when the port is transferred if the port has message event listeners
-    if (m_hasMessageEventListener) {
-        dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
-    }
 
     observeContext(nullptr);
 
@@ -458,7 +427,6 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
-        // Always start the port when a message event listener is added
         start();
         m_hasMessageEventListener = true;
     }

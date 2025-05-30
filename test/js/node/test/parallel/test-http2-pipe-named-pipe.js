@@ -16,21 +16,27 @@ tmpdir.refresh();
 const loc = fixtures.path('person-large.jpg');
 const fn = tmpdir.resolve('person-large.jpg');
 
-const server = http2.createServer();
+const server = http2.createServer({
+  // initialWindowSize: 655360,
+});
 
 server.on('stream', common.mustCall((stream) => {
+  console.log("stream");
   const dest = stream.pipe(fs.createWriteStream(fn));
 
   stream.on('end', common.mustCall(() => {
+    console.log("end");
     stream.respond();
     stream.end();
   }));
 
   dest.on('finish', common.mustCall(() => {
+    console.log("finish");
     assert.strictEqual(fs.readFileSync(fn).length,
                        fs.readFileSync(loc).length);
   }));
 }));
+
 server.listen(common.PIPE, common.mustCall(() => {
   const client = http2.connect('http://localhost', {
     createConnection(url) {

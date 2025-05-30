@@ -1787,7 +1787,6 @@ pub const H2FrameParser = struct {
     }
 
     fn checkIfShouldAutoFlush(this: *H2FrameParser) void {
-        log("writeBuffer.len {} {}", .{ this.writeBuffer.slice()[this.writeBufferOffset..].len, this.isServer });
         const corkedBuffer = if (CORKED_H2) |corked| if (@intFromPtr(corked) == @intFromPtr(this)) CORK_OFFSET else 0 else 0;
         if (corkedBuffer > 0) {
             this.registerAutoFlush();
@@ -1994,6 +1993,7 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
             return data.len;
         }
+
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
 
@@ -2026,7 +2026,7 @@ pub const H2FrameParser = struct {
             payload = payload[0..@min(@as(usize, @intCast(data_needed)), payload.len)];
             const chunk = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             // its fine to truncate because is not possible to receive more data than  u32 here, usize is only because of slices in size
-            this.ajustWindowSize(stream, frame.length);
+            this.ajustWindowSize(stream, @truncate(payload.len));
             this.dispatchWithExtra(.onStreamData, stream.getIdentifier(), chunk);
             emitted = true;
         } else {

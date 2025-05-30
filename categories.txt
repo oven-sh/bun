@@ -11,7 +11,10 @@ categories:
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
 - ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
 - takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
-- never gets a client conection? test-tls-over-http-tunnel.js
+
+http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
+that to `localhost:${port}localhost:${port}` which is an invalid url
+  - test-tls-over-http-tunnel.js
 
 passes on mac:
 - test-tls-junk-closes-server

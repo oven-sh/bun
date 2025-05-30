@@ -95,6 +95,7 @@ const owner_symbol = Symbol("owner_symbol");
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
+const bunTLSServerSession = Symbol.for("::bunTLSServerSession::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
@@ -439,6 +440,16 @@ const ServerHandlers: SocketHandler = {
     self.servername = socket.getServername();
     const server = self.server;
     self.alpnProtocol = socket.alpnProtocol;
+    if (!server[bunTLSServerSession]) {
+      server[bunTLSServerSession] = true;
+      if (server.listenerCount("newSession") > 0) {
+        const done = () => {};
+        server.emit("newSession", Buffer.alloc(0), self.getSession(), done);
+      }
+    } else if (server.listenerCount("resumeSession") > 0) {
+      const cb = () => {};
+      server.emit("resumeSession", Buffer.alloc(0), cb);
+    }
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
@@ -2094,6 +2105,7 @@ function Server(options?, connectionListener?) {
 
   this[bunSocketServerConnections] = 0;
   this[bunSocketServerOptions] = undefined;
+  this[bunTLSServerSession] = false;
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = keepAlive;
   this.keepAliveInitialDelay = keepAliveInitialDelay;

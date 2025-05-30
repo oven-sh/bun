@@ -1579,6 +1579,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const res = this.initInstallDir(&state, destination_dir, .copyfile);
             if (res.isFail()) return res;
             defer state.deinit();
+            const path_buffer = if (Environment.isPosix) bun.PathBufferPool.get() else void{};
+            defer if (Environment.isPosix) bun.PathBufferPool.put(path_buffer);
 
             const FileCopier = struct {
                 pub fn copy(
@@ -1589,6 +1591,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     head1: if (Environment.isWindows) []u16 else void,
                     to_copy_into2: if (Environment.isWindows) []u16 else void,
                     head2: if (Environment.isWindows) []u16 else void,
+                    path_buf: if (Environment.isPosix) *bun.PathBuffer else void,
                 ) !u32 {
                     var real_file_count: u32 = 0;
 
@@ -1647,41 +1650,63 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         } else {
                             if (entry.kind != .file) continue;
                             real_file_count += 1;
-                            const openFile = std.fs.Dir.openFile;
-                            const createFile = std.fs.Dir.createFile;
 
-                            var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                            const in_file = try bun.sys.openatA(.fromStdDir(entry.dir), entry.basename, bun.O.RDONLY, 0).unwrap();
                             defer in_file.close();
 
-                            debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
-                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                            // In the case where it's a newly created directory,
+                            // we can reuse the path buffer to get 1 less memcpy
+                            // into the path buffer.
+                            @memcpy(path_buf[0..entry.path.len], entry.path);
+                            path_buf[entry.path.len] = 0;
+                            const entry_path = path_buf[0..entry.path.len :0];
+
+                            // Optimization: skip the fchmod syscall.
+                            const mode = (try in_file.stat().unwrap()).mode;
+
+                            // Since we're not manually truncating it,
+                            // we should technically rely on O_TRUNC in
+                            // the extremely unlikely race condition
+                            // scenario.
+                            const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC;
+
+                            const outfile = bun.sys.openat(
+                                .fromStdDir(destination_dir_),
+                                entry_path,
+                                flags,
+                                mode,
+                            ).unwrap() catch brk: {
+                                // Usually if this fails it's because the parent directory hasn't been created yet.
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry_path)) |entry_dirname| {
                                     bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+
+                                // Retry after creating the parent directory.
+                                break :brk bun.sys.openat(
+                                    .fromStdDir(destination_dir_),
+                                    entry_path,
+                                    flags,
+                                    mode,
+                                ).unwrap() catch |err| {
                                     if (do_progress) {
                                         progress_.root.end();
                                         progress_.refresh();
                                     }
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                    // And if that fails, there's nothing we can really do.
+                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry_path, .{}) });
                                     Global.crash();
                                 };
                             };
                             defer outfile.close();
 
-                            if (comptime Environment.isPosix) {
-                                const stat = in_file.stat() catch continue;
-                                _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
-                            }
-
-                            bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
+                            bun.copyFileWithState(in_file, outfile, &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
                                 }
 
-                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry_path, .{}) });
                                 Global.crash();
                             };
                         }
@@ -1699,6 +1724,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 if (Environment.isWindows) &state.buf else void{},
                 if (Environment.isWindows) state.to_copy_buf2 else void{},
                 if (Environment.isWindows) &state.buf2 else void{},
+                if (Environment.isPosix) path_buffer else void{},
             ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
 
             return .success;
@@ -2490,7 +2516,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             if (supported_method_to_use != .copyfile) return .success;
 
-            // TODO: linux io_uring
             return this.installWithCopyfile(destination_dir);
         }
     };

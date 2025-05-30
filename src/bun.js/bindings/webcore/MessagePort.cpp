@@ -44,6 +44,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include "SerializedScriptValue.h"
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -243,8 +244,52 @@ void MessagePort::close()
     removeAllEventListeners();
 }
 
-void MessagePort::dispatchMessages()
-{
+// Helper function to process a batch of messages and recursively post tasks for remaining messages
+void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback) {
+    constexpr size_t maxMessagesPerTick = 1000;
+    size_t messageCount = messages.size();
+    size_t i = 0;
+    auto &vm = context.vm();
+
+    for (; i < messageCount && i < maxMessagesPerTick; ++i) {
+        auto& message = messages[i];
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+            return;
+
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
+        auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
+        dispatchEvent(event.event);
+
+        if (scope.exception())  [[unlikely]] {
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
+            globalObject->drainMicrotasks();
+        }
+    }
+
+    if (messageCount > maxMessagesPerTick) {
+        Vector<MessageWithMessagePorts> remainingMessages;
+        remainingMessages.reserveInitialCapacity(messageCount - maxMessagesPerTick);
+        for (; i < messageCount; ++i) {
+            remainingMessages.append(WTFMove(messages[i]));
+        }
+
+        context.postTask(
+            [protectedThis = Ref{*this}, remaining = WTFMove(remainingMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
+                protectedThis->processMessageBatch(ctx, WTFMove(remaining), WTFMove(completionCallback));
+            });
+    } else {
+        completionCallback();
+    }
+}
+
+// In the original dispatchMessages function, replace the nested message processing logic with a call to the helper function
+void MessagePort::dispatchMessages() {
     // Messages for contexts that are not fully active get dispatched too, but JSAbstractEventListener::handleEvent() doesn't call handlers for these.
     // The HTML5 spec specifies that any messages sent to a document that is not fully active should be dropped, so this behavior is OK.
     ASSERT(started());
@@ -254,41 +299,16 @@ void MessagePort::dispatchMessages()
         return;
 
     auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
-        auto scopeExit = makeScopeExit(WTFMove(completionCallback));
-
-        // LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", m_identifier.logString().utf8().data(), this, messages.size());
-
         RefPtr<ScriptExecutionContext> context = scriptExecutionContext();
-        if (!context || !context->globalObject())
+        if (!context || !context->globalObject()) {
+            WTFMove(completionCallback)();
             return;
+        }
 
         ASSERT(context->isContextThread());
         auto* globalObject = defaultGlobalObject(context->globalObject());
         Ref vm = globalObject->vm();
-        auto scope = DECLARE_CATCH_SCOPE(vm);
-
-        for (auto& message : messages) {
-            // close() in Worker onmessage handler should prevent next message from dispatching.
-            if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
-                return;
-
-            auto ports = MessagePort::entanglePorts(*context, WTFMove(message.transferredPorts));
-            if (scope.exception()) [[unlikely]] {
-                // Currently, we assume that the only way we can get here is if we have a termination.
-                RELEASE_ASSERT(vm->hasPendingTerminationException());
-                return;
-            }
-
-            // Per specification, each MessagePort object has a task source called the port message queue.
-            // queueTaskKeepingObjectAlive(context, *this, TaskSource::PostedMessageQueue, [this, event = WTFMove(event)] {
-            //     dispatchEvent(event.event);
-            // });
-
-            ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTFMove(ports), message = WTFMove(message)](ScriptExecutionContext& context) mutable {
-                auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
-                protectedThis->dispatchEvent(event.event);
-            });
-        }
+        processMessageBatch(*context, WTFMove(messages), WTFMove(completionCallback));
     };
 
     MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));

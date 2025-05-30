@@ -824,7 +824,9 @@ pub const EventLoop = struct {
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+    immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
     next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+    next_immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSC.JSGlobalObject = undefined,
@@ -1427,7 +1429,11 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+        var to_run_now_cpp = this.immediate_cpp_tasks.items;
         var to_run_now = this.immediate_tasks;
+
+        this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
+        this.next_immediate_cpp_tasks = .{};
 
         this.immediate_tasks = this.next_immediate_tasks;
         this.next_immediate_tasks = .{};
@@ -1441,6 +1447,27 @@ pub const EventLoop = struct {
         if (exception_thrown) {
             this.maybeDrainMicrotasks();
         }
+
+        const global = virtual_machine.global;
+        for (to_run_now_cpp.items) |task| {
+            task.run(global);
+        }
+
+        if (this.next_immediate_cpp_tasks.capacity > 0) {
+            // this would only occur if we were recursively running tickImmediateTasks.
+            @branchHint(.unlikely);
+            this.immediate_cpp_tasks.appendSlice(bun.default_allocator, this.next_immediate_cpp_tasks.items) catch bun.outOfMemory();
+            this.next_immediate_cpp_tasks.deinit(bun.default_allocator);
+        }
+
+        if (to_run_now_cpp.capacity > 1024 * 128) {
+            // once in a while, deinit the array to free up memory
+            to_run_now_cpp.clearAndFree(bun.default_allocator);
+        } else {
+            to_run_now_cpp.clearRetainingCapacity();
+        }
+
+        this.next_immediate_cpp_tasks = to_run_now_cpp;
 
         if (this.next_immediate_tasks.capacity > 0) {
             // this would only occur if we were recursively running tickImmediateTasks.
@@ -1748,6 +1775,10 @@ pub const EventLoop = struct {
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
         this.tasks.writeItem(task) catch unreachable;
+    }
+
+    pub fn enqueueImmediateCppTask(this: *EventLoop, task: *CppTask) void {
+        this.immediate_cpp_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
     }
 
     pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {

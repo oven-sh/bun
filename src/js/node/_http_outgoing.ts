@@ -320,6 +320,29 @@ const OutgoingMessagePrototype = {
     this[headersSymbol] = new Headers(value);
   },
 
+  _renderHeaders() {
+    if (
+      (this._header !== undefined && this._header !== null) ||
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent
+    ) {
+      throw $ERR_HTTP_HEADERS_SENT("render");
+    }
+
+    const out = this[kOutHeaders];
+    if (out == null) return {};
+
+    const keys = ObjectKeys(out);
+    if (keys.length === 0) return {};
+
+    const ret = { __proto__: null } as any;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const arr = out[key];
+      ret[arr[0]] = arr[1];
+    }
+    return ret;
+  },
+
   addTrailers(headers) {
     this._trailer = "";
     const keys = Object.keys(headers);

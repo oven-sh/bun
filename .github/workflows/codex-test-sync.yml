@@ -5,14 +5,15 @@ on:
     types: [labeled, opened]
 
 env:
-  BUN_VERSION: "canary"
+  BUN_VERSION: "1.2.15"
 
 jobs:
   sync-node-tests:
     runs-on: ubuntu-latest
     if: |
       (github.event.action == 'labeled' && github.event.label.name == 'codex') ||
-      (github.event.action == 'opened' && contains(github.event.pull_request.labels.*.name, 'codex'))
+      (github.event.action == 'opened' && contains(github.event.pull_request.labels.*.name, 'codex')) ||
+      contains(github.head_ref, 'codex')
     permissions:
       contents: write
       pull-requests: write
@@ -29,10 +30,11 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Get changed files and sync tests
+        shell: bash
         run: |
           # Get the list of changed files from the PR
           git diff --name-only origin/main...HEAD | while read -r file; do
-            if [[ "$file" =~ ^test/js/node/test/(parallel|sequential)/(.+)\.js$ ]]; then
+            if [[ "$file" =~ ^test/js/node/test/(parallel|sequential)/(.+)\.(js|mjs|ts)$ ]]; then
               test_name="${BASH_REMATCH[2]}"
               echo "Syncing test: $test_name"
               bun node:test:cp "$test_name"

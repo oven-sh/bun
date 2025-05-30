@@ -1441,10 +1441,8 @@ pub const EventLoop = struct {
         this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
         this.next_immediate_cpp_tasks = .{};
 
-        log("running cpp tasks", .{});
-
         for (to_run_now_cpp.items) |task| {
-            log("running cpp task", .{});
+            log("running immediate cpp task", .{});
             task.run(virtual_machine.global);
         }
 

@@ -920,7 +920,9 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(() => {
         this.resume();
       });
-      this.connecting = true;
+      if (!connection && !fd) {
+        this.connecting = true;
+      }
     }
     if (fd) {
       return this;

@@ -108,26 +108,29 @@ const SettingsType = enum(u16) {
     _, // we can have more unsupported extension settings types
 };
 
+inline fn u32FromBytes(src: []const u8) u32 {
+    var dst: u32 = 0;
+    @memcpy(@as(*[4]u8, @ptrCast(&dst)), src);
+    return @byteSwap(dst);
+}
+
 const UInt31WithReserved = packed struct(u32) {
     reserved: bool = false,
     uint31: u31 = 0,
 
-    pub fn from(value: u32) UInt31WithReserved {
-        return .{
-            .reserved = false,
-            .uint31 = @truncate(value),
-        };
+    const log = Output.scoped(.UInt31WithReserved, false);
+
+    pub inline fn from(value: u32) UInt31WithReserved {
+        return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
     }
 
-    pub fn toUInt32(value: UInt31WithReserved) u32 {
+    pub inline fn toUInt32(value: UInt31WithReserved) u32 {
         return @bitCast(value);
     }
 
     pub inline fn fromBytes(src: []const u8) UInt31WithReserved {
-        var dst: u32 = 0;
-        @memcpy(@as(*[4]u8, @ptrCast(&dst)), src);
-        dst = @byteSwap(dst);
-        return @bitCast(dst);
+        const value: u32 = u32FromBytes(src);
+        return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
     }
 
     pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) bool {
@@ -662,7 +665,7 @@ pub const H2FrameParser = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    const ENABLE_AUTO_CORK = false; // ENABLE CORK OPTIMIZATION
+    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
     const MAX_BUFFER_SIZE = 32768;
@@ -986,7 +989,7 @@ pub const H2FrameParser = struct {
                                 this.remoteUsedWindowSize += able_to_send.len;
                                 client.remoteUsedWindowSize += able_to_send.len;
 
-                                log("dataFrame partial flushed {} {}", .{ able_to_send.len, frame.end_stream });
+                                log("dataFrame partial flushed {} {} {} {} {} {} {}", .{ able_to_send.len, frame.end_stream, client.queuedDataSize, this.remoteUsedWindowSize, client.remoteUsedWindowSize, this.remoteWindowSize, client.remoteWindowSize });
 
                                 const padding = this.getPadding(able_to_send.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
                                 const payload_size = able_to_send.len + (if (padding != 0) padding + 1 else 0);
@@ -1839,6 +1842,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleWindowUpdateFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream: ?*Stream) usize {
+        log("handleWindowUpdateFrame {}", .{frame.streamIdentifier});
         // must be always 4 bytes (https://datatracker.ietf.org/doc/html/rfc7540#section-6.9)
         if (frame.length != 4) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
@@ -1856,7 +1860,7 @@ pub const H2FrameParser = struct {
             } else {
                 this.remoteWindowSize += windowSizeIncrement.uint31;
             }
-            log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement.uint31 });
+            log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement });
             return content.end;
         }
         // needs more data
@@ -2035,7 +2039,7 @@ pub const H2FrameParser = struct {
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            const error_code = UInt31WithReserved.fromBytes(payload[4..8]).toUInt32();
+            const error_code = u32FromBytes(payload[4..8]);
             const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject);
             this.readBuffer.reset();
             this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
@@ -2157,7 +2161,7 @@ pub const H2FrameParser = struct {
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            const rst_code = UInt31WithReserved.fromBytes(payload).toUInt32();
+            const rst_code = u32FromBytes(payload);
             stream.rstCode = rst_code;
             this.readBuffer.reset();
             stream.state = .CLOSED;
@@ -2368,17 +2372,19 @@ pub const H2FrameParser = struct {
 
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             } else {
+                log("empty settings has remoteSettings? {}", .{this.remoteSettings != null});
                 if (this.remoteSettings == null) {
+
                     // ok empty settings so default settings
                     const remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
                     defer this.incrementWindowSizeIfNeeded();
-                    if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
+                    if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                         defer _ = this.flushStreamQueue();
                         this.remoteWindowSize = remoteSettings.initialWindowSize;
                         var it = this.streams.valueIterator();
                         while (it.next()) |stream| {
-                            if (remoteSettings.initialWindowSize >= stream.remoteUsedWindowSize) {
+                            if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
                                 stream.remoteWindowSize = remoteSettings.initialWindowSize;
                             }
                         }
@@ -2404,12 +2410,12 @@ pub const H2FrameParser = struct {
             this.remoteSettings = remoteSettings;
             defer this.incrementWindowSizeIfNeeded();
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
-            if (remoteSettings.initialWindowSize >= this.remoteUsedWindowSize) {
+            if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                 defer _ = this.flushStreamQueue();
                 this.remoteWindowSize = remoteSettings.initialWindowSize;
                 var it = this.streams.valueIterator();
                 while (it.next()) |stream| {
-                    if (remoteSettings.initialWindowSize >= stream.remoteUsedWindowSize) {
+                    if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
                         stream.remoteWindowSize = remoteSettings.initialWindowSize;
                     }
                 }

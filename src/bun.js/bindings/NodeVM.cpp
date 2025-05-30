@@ -244,7 +244,7 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) {
+    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -252,6 +252,7 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
 
         if (JSObject* object = argument.getObject()) {
             JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
+            RETURN_IF_EXCEPTION(scope, {});
             if (result && !result.isUndefinedOrNull()) {
                 return JSValue::encode(result);
             }

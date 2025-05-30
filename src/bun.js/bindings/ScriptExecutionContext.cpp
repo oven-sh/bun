@@ -382,6 +382,28 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
     reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
+// Executes the task on context's thread immediately.
+void ScriptExecutionContext::postImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
+}
+// Executes the task on context's thread immediately.
+void ScriptExecutionContext::postImmediateCppTask(EventLoopTask* task)
+{
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
+{
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    postTaskOnTimeout(task, timeout);
+}
 
 // Zig bindings
 extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)

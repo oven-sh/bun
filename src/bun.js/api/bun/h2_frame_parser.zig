@@ -124,6 +124,10 @@ const UInt31WithReserved = packed struct(u32) {
         return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
     }
 
+    pub inline fn init(value: u31, reserved: bool) UInt31WithReserved {
+        return .{ .uint31 = value, .reserved = reserved };
+    }
+
     pub inline fn toUInt32(value: UInt31WithReserved) u32 {
         return @bitCast(value);
     }
@@ -665,7 +669,7 @@ pub const H2FrameParser = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
+    const ENABLE_AUTO_CORK = false; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
     const MAX_BUFFER_SIZE = 32768;
@@ -1254,7 +1258,7 @@ pub const H2FrameParser = struct {
         while (it.next()) |stream| {
             if (stream.usedWindowSize >= stream.windowSize / 2) {
                 stream.windowSize += WINDOW_INCREMENT_SIZE;
-                this.sendWindowUpdate(stream.id, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE));
+                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(WINDOW_INCREMENT_SIZE), false));
                 total_increment += 1;
             }
         }
@@ -1263,7 +1267,7 @@ pub const H2FrameParser = struct {
                 total_increment = 1;
             }
             this.windowSize += WINDOW_INCREMENT_SIZE * total_increment; // we will need at least this many increments to send all the streams
-            this.sendWindowUpdate(0, UInt31WithReserved.from(WINDOW_INCREMENT_SIZE * total_increment));
+            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(WINDOW_INCREMENT_SIZE * total_increment), false));
         }
     }
 
@@ -1370,7 +1374,7 @@ pub const H2FrameParser = struct {
             .length = @intCast(8 + debug_data.len),
         };
         _ = frame.write(@TypeOf(writer), writer);
-        var last_id = UInt31WithReserved.from(lastStreamID);
+        var last_id = UInt31WithReserved.init(@truncate(lastStreamID), false);
         _ = last_id.write(@TypeOf(writer), writer);
         var value: u32 = @intFromEnum(rstCode);
         value = @byteSwap(value);
@@ -1485,12 +1489,7 @@ pub const H2FrameParser = struct {
             .length = 4,
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
-        // always clear reserved bit
-        const cleanWindowSize: UInt31WithReserved = .{
-            .reserved = false,
-            .uint31 = windowSize.uint31,
-        };
-        _ = cleanWindowSize.write(@TypeOf(writer), writer);
+        _ = windowSize.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
     }
 

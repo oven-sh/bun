@@ -1,4 +1,4 @@
 {
   "terminals": [],
-  "install": "bash scripts/bootstrap.sh"
+  "install": "git clone https://github.com/oven-sh/bun.git && cd bun && bash scripts/bootstrap.sh"
 }

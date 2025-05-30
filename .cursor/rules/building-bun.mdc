@@ -1,6 +1,6 @@
 ---
-description: How to build Bun
-globs:
+description: 
+globs: **/*.zig,**/*.ts,**/*.cpp,**/*.c
 alwaysApply: false
 ---
 
@@ -10,4 +10,10 @@ Run:
 
 ```bash
 bun bd
+```
+
+You can also pass arguments to `bun bd` as if it were a regular build of bun. For example:
+
+```bash
+bun bd test math-utils.test.ts
 ```

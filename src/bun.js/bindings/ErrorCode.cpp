@@ -1985,6 +1985,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION, message));
     }
 
+    case Bun::ErrorCode::ERR_TLS_INVALID_PROTOCOL_METHOD: {
+        auto arg0 = callFrame->argument(1);
+        auto message = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_PROTOCOL_METHOD, message));
+    }
+
     case Bun::ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);

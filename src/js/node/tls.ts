@@ -6,6 +6,35 @@ const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
 
+function validateSecureProtocol(proto: string) {
+  switch (proto) {
+    case "SSLv23_method":
+    case "SSLv23_client_method":
+    case "SSLv23_server_method":
+    case "TLSv1_method":
+    case "TLSv1_client_method":
+    case "TLSv1_server_method":
+    case "TLSv1_1_method":
+    case "TLSv1_1_client_method":
+    case "TLSv1_1_server_method":
+    case "TLSv1_2_method":
+    case "TLSv1_2_client_method":
+    case "TLSv1_2_server_method":
+    case "TLS_method":
+      return;
+    case "SSLv2_method":
+    case "SSLv2_client_method":
+    case "SSLv2_server_method":
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD("SSLv2 methods disabled");
+    case "SSLv3_method":
+    case "SSLv3_client_method":
+    case "SSLv3_server_method":
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD("SSLv3 methods disabled");
+    default:
+      throw $ERR_TLS_INVALID_PROTOCOL_METHOD(`Unknown method: ${proto}`);
+  }
+}
+
 const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
@@ -271,6 +300,9 @@ function SecureContext(options): void {
 }
 
 function createSecureContext(options) {
+  if (options && typeof options === "object" && options.secureProtocol) {
+    validateSecureProtocol(options.secureProtocol);
+  }
   return new SecureContext(options);
 }
 

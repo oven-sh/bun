@@ -57,7 +57,7 @@
   "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
     "editor.tabSize": 4,
-    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.defaultFormatter": "xaver.clang-format",
   },
   "[c]": {
     "editor.tabSize": 4,

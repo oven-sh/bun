@@ -1,3 +1,4 @@
+'use strict';
 const common = require('../common');
 const assert = require('assert');
 const http = require('http');

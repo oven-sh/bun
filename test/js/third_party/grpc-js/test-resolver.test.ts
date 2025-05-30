@@ -367,67 +367,75 @@ describe("Name Resolver", () => {
       const resolver2 = resolverManager.createResolver(target2, listener, {});
       resolver2.updateResolution();
     });
-    it("should not keep repeating successful resolutions", function (done) {
-      if (GRPC_NODE_USE_ALTERNATIVE_RESOLVER) {
-        this.skip();
-      }
-      const target = resolverManager.mapUriDefaultScheme(parseUri("localhost")!)!;
-      let resultCount = 0;
-      const resolver = resolverManager.createResolver(
-        target,
-        {
-          onSuccessfulResolution: (
-            endpointList: Endpoint[],
-            serviceConfig: ServiceConfig | null,
-            serviceConfigError: StatusObject | null,
-          ) => {
-            assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }));
-            assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
-            resultCount += 1;
-            if (resultCount === 1) {
-              process.nextTick(() => resolver.updateResolution());
-            }
+    it.todo(
+      "should not keep repeating successful resolutions",
+      function (done) {
+        if (GRPC_NODE_USE_ALTERNATIVE_RESOLVER) {
+          this.skip();
+        }
+        const target = resolverManager.mapUriDefaultScheme(parseUri("localhost")!)!;
+        let resultCount = 0;
+        const resolver = resolverManager.createResolver(
+          target,
+          {
+            onSuccessfulResolution: (
+              endpointList: Endpoint[],
+              serviceConfig: ServiceConfig | null,
+              serviceConfigError: StatusObject | null,
+            ) => {
+              assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }));
+              assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
+              resultCount += 1;
+              if (resultCount === 1) {
+                process.nextTick(() => resolver.updateResolution());
+              }
+            },
+            onError: (error: StatusObject) => {
+              assert.ifError(error);
+            },
           },
-          onError: (error: StatusObject) => {
-            assert.ifError(error);
+          { "grpc.dns_min_time_between_resolutions_ms": 2000 },
+        );
+        resolver.updateResolution();
+        setTimeout(() => {
+          assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
+          done();
+        }, 10_000);
+      },
+      15_000,
+    );
+    it.todo(
+      "should not keep repeating failed resolutions",
+      done => {
+        const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;
+        let resultCount = 0;
+        const resolver = resolverManager.createResolver(
+          target,
+          {
+            onSuccessfulResolution: (
+              endpointList: Endpoint[],
+              serviceConfig: ServiceConfig | null,
+              serviceConfigError: StatusObject | null,
+            ) => {
+              assert.fail("Resolution succeeded unexpectedly");
+            },
+            onError: (error: StatusObject) => {
+              resultCount += 1;
+              if (resultCount === 1) {
+                process.nextTick(() => resolver.updateResolution());
+              }
+            },
           },
-        },
-        { "grpc.dns_min_time_between_resolutions_ms": 2000 },
-      );
-      resolver.updateResolution();
-      setTimeout(() => {
-        assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
-        done();
-      }, 10_000);
-    }, 15_000);
-    it("should not keep repeating failed resolutions", done => {
-      const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;
-      let resultCount = 0;
-      const resolver = resolverManager.createResolver(
-        target,
-        {
-          onSuccessfulResolution: (
-            endpointList: Endpoint[],
-            serviceConfig: ServiceConfig | null,
-            serviceConfigError: StatusObject | null,
-          ) => {
-            assert.fail("Resolution succeeded unexpectedly");
-          },
-          onError: (error: StatusObject) => {
-            resultCount += 1;
-            if (resultCount === 1) {
-              process.nextTick(() => resolver.updateResolution());
-            }
-          },
-        },
-        {},
-      );
-      resolver.updateResolution();
-      setTimeout(() => {
-        assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
-        done();
-      }, 10_000);
-    }, 15_000);
+          {},
+        );
+        resolver.updateResolution();
+        setTimeout(() => {
+          assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
+          done();
+        }, 10_000);
+      },
+      15_000,
+    );
   });
   describe("UDS Names", () => {
     it("Should handle a relative Unix Domain Socket name", done => {

@@ -188,7 +188,7 @@ describe("Name Resolver", () => {
     });
     // Created DNS TXT record using TXT sample from https://github.com/grpc/proposal/blob/master/A2-service-configs-in-dns.md
     // "grpc_config=[{\"serviceConfig\":{\"loadBalancingPolicy\":\"round_robin\",\"methodConfig\":[{\"name\":[{\"service\":\"MyService\",\"method\":\"Foo\"}],\"waitForReady\":true}]}}]"
-    it.skip("Should resolve a name with TXT service config", done => {
+    it("Should resolve a name with TXT service config", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("grpctest.kleinsch.com")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -208,7 +208,7 @@ describe("Name Resolver", () => {
       const resolver = resolverManager.createResolver(target, listener, {});
       resolver.updateResolution();
     });
-    it.skip("Should not resolve TXT service config if we disabled service config", done => {
+    it("Should not resolve TXT service config if we disabled service config", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("grpctest.kleinsch.com")!)!;
       let count = 0;
       const listener: resolverManager.ResolverListener = {
@@ -241,7 +241,7 @@ describe("Name Resolver", () => {
      * as a regression test for https://github.com/grpc/grpc-node/issues/1044,
      * and the test 'Should resolve gRPC interop servers' tests the same thing.
      */
-    it.skip("Should resolve a name with multiple dots", done => {
+    it("Should resolve a name with multiple dots", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback4.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -266,7 +266,7 @@ describe("Name Resolver", () => {
     });
     /* TODO(murgatroid99): re-enable this test, once we can get the IPv6 result
      * consistently */
-    it.skip("Should resolve a DNS name to an IPv6 address", done => {
+    it("Should resolve a DNS name to an IPv6 address", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback6.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -289,7 +289,7 @@ describe("Name Resolver", () => {
     /* This DNS name resolves to only the IPv4 address on Windows, and only the
      * IPv6 address on Mac. There is no result that we can consistently test
      * for here. */
-    it.skip("Should resolve a DNS name to IPv4 and IPv6 addresses", done => {
+    it("Should resolve a DNS name to IPv4 and IPv6 addresses", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("loopback46.unittest.grpc.io")!)!;
       const listener: resolverManager.ResolverListener = {
         onSuccessfulResolution: (
@@ -367,43 +367,39 @@ describe("Name Resolver", () => {
       const resolver2 = resolverManager.createResolver(target2, listener, {});
       resolver2.updateResolution();
     });
-    it.todo(
-      "should not keep repeating successful resolutions",
-      function (done) {
-        if (GRPC_NODE_USE_ALTERNATIVE_RESOLVER) {
-          this.skip();
-        }
-        const target = resolverManager.mapUriDefaultScheme(parseUri("localhost")!)!;
-        let resultCount = 0;
-        const resolver = resolverManager.createResolver(
-          target,
-          {
-            onSuccessfulResolution: (
-              endpointList: Endpoint[],
-              serviceConfig: ServiceConfig | null,
-              serviceConfigError: StatusObject | null,
-            ) => {
-              assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }));
-              assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
-              resultCount += 1;
-              if (resultCount === 1) {
-                process.nextTick(() => resolver.updateResolution());
-              }
-            },
-            onError: (error: StatusObject) => {
-              assert.ifError(error);
-            },
+    it("should not keep repeating successful resolutions", function (done) {
+      if (GRPC_NODE_USE_ALTERNATIVE_RESOLVER) {
+        this.skip();
+      }
+      const target = resolverManager.mapUriDefaultScheme(parseUri("localhost")!)!;
+      let resultCount = 0;
+      const resolver = resolverManager.createResolver(
+        target,
+        {
+          onSuccessfulResolution: (
+            endpointList: Endpoint[],
+            serviceConfig: ServiceConfig | null,
+            serviceConfigError: StatusObject | null,
+          ) => {
+            assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }));
+            assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
+            resultCount += 1;
+            if (resultCount === 1) {
+              process.nextTick(() => resolver.updateResolution());
+            }
           },
-          { "grpc.dns_min_time_between_resolutions_ms": 2000 },
-        );
-        resolver.updateResolution();
-        setTimeout(() => {
-          assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
-          done();
-        }, 10_000);
-      },
-      15_000,
-    );
+          onError: (error: StatusObject) => {
+            assert.ifError(error);
+          },
+        },
+        { "grpc.dns_min_time_between_resolutions_ms": 2000 },
+      );
+      resolver.updateResolution();
+      setTimeout(() => {
+        assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
+        done();
+      }, 10_000);
+    }, 15_000);
     it("should not keep repeating failed resolutions", done => {
       const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;
       let resultCount = 0;

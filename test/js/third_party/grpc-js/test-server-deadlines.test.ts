@@ -90,7 +90,7 @@ describe("Server deadlines", () => {
   });
 });
 
-describe.todo("Cancellation", () => {
+describe("Cancellation", () => {
   let server: Server;
   let client: ServiceClient;
   let inHandler = false;

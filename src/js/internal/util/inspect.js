@@ -363,19 +363,11 @@ function isURL(value) {
 }
 
 function isURLSearchParams(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value[Symbol.toStringTag] === "URLSearchParams"
-  );
+  return value !== null && typeof value === "object" && value[Symbol.toStringTag] === "URLSearchParams";
 }
 
 function isURLSearchParamsIterator(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value[Symbol.toStringTag] === "URLSearchParams Iterator"
-  );
+  return value !== null && typeof value === "object" && value[Symbol.toStringTag] === "URLSearchParams Iterator";
 }
 
 const builtInObjects = new SafeSet(

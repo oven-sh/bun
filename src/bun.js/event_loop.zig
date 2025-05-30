@@ -1429,7 +1429,9 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        var to_run_now_cpp = this.immediate_cpp_tasks.items;
+        const global = virtual_machine.global;
+
+        var to_run_now_cpp = this.immediate_cpp_tasks;
         var to_run_now = this.immediate_tasks;
 
         this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
@@ -1448,7 +1450,6 @@ pub const EventLoop = struct {
             this.maybeDrainMicrotasks();
         }
 
-        const global = virtual_machine.global;
         for (to_run_now_cpp.items) |task| {
             task.run(global);
         }

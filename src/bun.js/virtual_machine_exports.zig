@@ -80,7 +80,7 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
 pub export fn Bun__queueImmediateCppTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    global.bunVM().eventLoop().enqueueImmediateCppTask(JSC.Task.init(task));
+    global.bunVM().eventLoop().enqueueImmediateCppTask(task);
 }
 
 pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {

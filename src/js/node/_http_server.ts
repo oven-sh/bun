@@ -1082,7 +1082,7 @@ const ServerPrototype = {
             } else if (server.listenerCount("checkExpectation") > 0) {
               server.emit("checkExpectation", http_req, http_res);
             } else {
-              http_res.statusCode = 417;
+              http_res.writeHead(417);
               http_res.end();
             }
           } else {

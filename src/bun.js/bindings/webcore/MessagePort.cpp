@@ -244,7 +244,7 @@ void MessagePort::close()
     removeAllEventListeners();
 }
 
-// Helper function to process a batch of messages and recursively post tasks for remaining messages
+// at MOST 1000 messages per event loop tick so we dont starve the event loop
 void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback) {
     constexpr size_t maxMessagesPerTick = 1000;
     size_t messageCount = messages.size();
@@ -267,9 +267,9 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
             scope.clearExceptionExceptTermination();
         }
 
-        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
+        // if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
             globalObject->drainMicrotasks();
-        }
+        // }
     }
 
     if (messageCount > maxMessagesPerTick) {
@@ -279,10 +279,11 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
             remainingMessages.append(WTFMove(messages[i]));
         }
 
-        context.postTask(
-            [protectedThis = Ref{*this}, remaining = WTFMove(remainingMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
+        context.postImmediateCppTask(
+            [protectedThis = Ref { *this }, remaining = WTFMove(remainingMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
                 protectedThis->processMessageBatch(ctx, WTFMove(remaining), WTFMove(completionCallback));
-            });
+            }
+        );
     } else {
         completionCallback();
     }

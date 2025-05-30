@@ -532,6 +532,12 @@ pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void
     bun.handleOom(this.immediate_tasks.append(bun.default_allocator, task));
 }
 
+pub fn enqueueImmediateCppTask(this: *EventLoop, task: *jsc.CppTask) void {
+    // For now, just enqueue as a regular task
+    // TODO: implement proper immediate C++ task handling
+    this.enqueueTask(jsc.Task.init(task));
+}
+
 pub fn ensureWaker(this: *EventLoop) void {
     jsc.markBinding(@src());
     if (this.virtual_machine.event_loop_handle == null) {

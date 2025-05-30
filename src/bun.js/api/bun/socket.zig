@@ -941,6 +941,11 @@ pub const Listener = struct {
     fn doStop(this: *Listener, force_close: bool) void {
         if (this.listener == .none) return;
         const listener = this.listener;
+        defer switch (listener) {
+            .uws => |socket| socket.close(this.ssl),
+            .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
+            .none => {},
+        };
         this.listener = .none;
 
         // if we already have no active connections, we can deinit the context now
@@ -960,13 +965,6 @@ pub const Listener = struct {
                 // close all connections in this context and wait for them to close
                 if (this.socket_context) |ctx| {
                     ctx.close(this.ssl);
-                }
-            } else {
-                // only close the listener and wait for the connections to close by it self
-                switch (listener) {
-                    .uws => |socket| socket.close(this.ssl),
-                    .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
-                    .none => {},
                 }
             }
         }

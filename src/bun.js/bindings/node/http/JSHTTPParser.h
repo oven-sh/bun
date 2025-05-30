@@ -51,12 +51,12 @@ public:
 
     inline HTTPParser* impl() { return m_impl; }
 
-    static HTTPParser* toImpl(JSC::JSValue value)
+    inline void freeImpl()
     {
-        if (auto* wrapper = JSC::jsDynamicCast<JSHTTPParser*>(value)) {
-            return wrapper->impl();
+        if (m_impl) {
+            delete m_impl;
+            m_impl = nullptr;
         }
-        return nullptr;
     }
 
 private:

@@ -90,14 +90,14 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
-        HTTPParser* parser = JSHTTPParser::toImpl(item);
+        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         ASSERT(parser);
-        if (!parser) {
+        if (!parser || !parser->impl()) {
             continue;
         }
 
-        if (parser->lastMessageStart() == 0) {
-            result->putDirectIndex(globalObject, i++, item);
+        if (parser->impl()->lastMessageStart() == 0) {
+            result->putDirectIndex(globalObject, i++, parser);
         }
     }
 
@@ -144,14 +144,14 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     JSValue item = iter->next(vm);
     size_t i = 0;
     while (!item.isEmpty()) {
-        HTTPParser* parser = JSHTTPParser::toImpl(item);
+        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         ASSERT(parser);
-        if (!parser) {
+        if (!parser || !parser->impl()) {
             item = iter->next(vm);
             continue;
         }
 
-        if ((!parser->headersCompleted() && headersDeadline > 0 && parser->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->lastMessageStart() < requestDeadline)) {
+        if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
             active->remove(globalObject, item);
         }

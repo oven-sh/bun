@@ -184,6 +184,16 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), WTFMove(transferredPorts) };
 
+    auto* context = scriptExecutionContext();
+    if (!context->canSendMessage()) {
+        context->postImmediateCppTask([protectedThis = Ref { *this }, message = WTFMove(message)](ScriptExecutionContext& ctx) mutable {
+            if (protectedThis->isEntangled()) {
+                MessagePortChannelProvider::fromContext(ctx).postMessageToRemote(WTFMove(message), protectedThis->m_remoteIdentifier);
+            }
+        });
+        return {};
+    }
+
     MessagePortChannelProvider::fromContext(*protectedScriptExecutionContext()).postMessageToRemote(WTFMove(message), m_remoteIdentifier);
     return {};
 }

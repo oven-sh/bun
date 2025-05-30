@@ -504,7 +504,7 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
 extern fn Bun__handleUnhandledRejection(*JSGlobalObject, reason: JSValue, promise: JSValue) c_int;
 extern fn Bun__wrapUnhandledRejectionErrorForUncaughtException(*JSGlobalObject, reason: JSValue) JSValue;
-extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) c_int;
+extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) i32;
 extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
 extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
 

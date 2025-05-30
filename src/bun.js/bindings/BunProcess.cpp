@@ -1183,7 +1183,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
 
 extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
-extern "C" int Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
+extern "C" int32_t Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))

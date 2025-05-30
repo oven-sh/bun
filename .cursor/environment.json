@@ -1,3 +1,4 @@
 {
-  "terminals": []
+  "terminals": [],
+  "install": "bash scripts/bootstrap.sh"
 }

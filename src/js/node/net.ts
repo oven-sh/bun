@@ -2313,10 +2313,17 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options[kSocketClass] = Socket;
     }
 
+    let address = hostname;
+    let portOrPath = port;
+    if (path) {
+      address = path;
+      portOrPath = -1;
+    }
+
     listenInCluster(
       this,
-      null,
-      port,
+      address,
+      portOrPath,
       4,
       backlog,
       fd,

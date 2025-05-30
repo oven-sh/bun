@@ -23,28 +23,19 @@
 const std = @import("std");
 const bun = @import("bun");
 
-const eqlComptime = @import("../string_immutable.zig").eqlComptime;
-const expect = std.testing.expect;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const math = std.math;
 const mem = std.mem;
 const isWindows = @import("builtin").os.tag == .windows;
 
-const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 const ArrayList = std.ArrayListUnmanaged;
-const ArrayListManaged = std.ArrayList;
 const BunString = bun.String;
 const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
-const Dirent = @import("../bun.js/node/types.zig").Dirent;
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const EntryKind = @import("../bun.js/node/types.zig").Dirent.Kind;
 const match = @import("./match.zig").match;
 const JSC = bun.JSC;
 const Maybe = JSC.Maybe;
-const PathLike = @import("../bun.js/node/types.zig").PathLike;
-const PathString = @import("../string_types.zig").PathString;
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const Syscall = bun.sys;
 const ZigString = bun.JSC.ZigString;

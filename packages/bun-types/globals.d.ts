@@ -10,6 +10,7 @@ declare module "bun" {
 
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
+    type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
 
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
@@ -884,6 +885,8 @@ declare var CryptoKey: {
   new (): CryptoKey;
 };
 
+interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
+
 interface Position {
   lineText: string;
   file: string;
@@ -953,13 +956,6 @@ interface ErrorConstructor {
    * Create .stack property on a target object
    */
   captureStackTrace(targetObject: object, constructorOpt?: Function): void;
-
-  /**
-   * Optional override for formatting stack traces
-   *
-   * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-   */
-  prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
 
   /**
    * The maximum number of stack frames to capture.

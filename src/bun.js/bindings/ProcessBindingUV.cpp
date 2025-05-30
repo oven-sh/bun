@@ -362,7 +362,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     // Node.js crashes here:
     // However, we should ensure this function never throws
     // That's why we do not call toPrimitive here or throw on invalid input.
-    if (UNLIKELY(!arg0.isInt32AsAnyInt())) {
+    if (!arg0.isInt32AsAnyInt()) [[unlikely]] {
         return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
     }
 

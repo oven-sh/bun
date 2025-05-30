@@ -92,7 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         }
 
         if (!generatorValue.isNumber()) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, "Second argument must be an int32"_s, false));
+            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, "Second argument must be an int32"_s));
         }
 
         int32_t generator = 0;

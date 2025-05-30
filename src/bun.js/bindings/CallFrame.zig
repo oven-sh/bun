@@ -226,9 +226,8 @@ pub const CallFrame = opaque {
 
         pub fn unprotect(slice: *ArgumentsSlice) void {
             var iter = slice.protected.iterator(.{});
-            const ctx = slice.vm.global;
             while (iter.next()) |i| {
-                JSC.C.JSValueUnprotect(ctx, slice.all[i].asObjectRef());
+                slice.all[i].unprotect();
             }
             slice.protected = bun.bit_set.IntegerBitSet(32).initEmpty();
         }
@@ -242,7 +241,7 @@ pub const CallFrame = opaque {
             if (slice.remaining.len == 0) return;
             const index = slice.all.len - slice.remaining.len;
             slice.protected.set(index);
-            JSC.C.JSValueProtect(slice.vm.global, slice.all[index].asObjectRef());
+            slice.all[index].protect();
             slice.eat();
         }
 

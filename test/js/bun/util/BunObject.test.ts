@@ -1,6 +1,6 @@
+import { env } from "bun";
 import { hasNonReifiedStatic } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { env } from "bun";
 test("hasNonReifiedStatic", () => {
   expect(hasNonReifiedStatic(Bun), "do not eagerly initialize the Bun object. This will make Bun much slower.").toBe(
     true,

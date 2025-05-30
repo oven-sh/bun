@@ -31,23 +31,12 @@
 namespace WebCore {
 namespace Process {
 
-static std::optional<ProcessIdentifier> globalIdentifier;
-
-void setIdentifier(ProcessIdentifier processIdentifier)
-{
-    ASSERT(isUIThread());
-    globalIdentifier = processIdentifier;
-}
+// Bun only has 1 process
+static ProcessIdentifier globalIdentifier { 1 };
 
 ProcessIdentifier identifier()
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        if (!globalIdentifier)
-            globalIdentifier = ProcessIdentifier::generate();
-    });
-
-    return *globalIdentifier;
+    return globalIdentifier;
 }
 
 } // namespace ProcessIdent

@@ -687,3 +687,51 @@ resp.text().then((a) => {
     delete URL.prototype.ok;
   }
 });
+
+test("can't use export syntax in vm.Script", () => {
+  expect(() => {
+    const script = new Script("export default {};");
+    script.runInThisContext();
+  }).toThrow({ name: "SyntaxError", message: "Unexpected keyword 'export'" });
+
+  expect(() => {
+    const script = new Script("export default {};");
+    script.createCachedData();
+  }).toThrow({ message: "createCachedData failed" });
+});
+
+test("rejects invalid bytecode", () => {
+  const cachedData = Buffer.from("fhqwhgads");
+  const script = new Script("1 + 1;", {
+    cachedData,
+  });
+  expect(script.cachedDataRejected).toBeTrue();
+  expect(script.runInThisContext()).toBe(2);
+});
+
+test("accepts valid bytecode", () => {
+  const source = "1 + 1;";
+  const firstScript = new Script(source, {
+    produceCachedData: false,
+  });
+  const cachedData = firstScript.createCachedData();
+  expect(cachedData).toBeDefined();
+  expect(cachedData).toBeInstanceOf(Buffer);
+  const secondScript = new Script(source, {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeFalse();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(2);
+});
+
+test("can't use bytecode from a different script", () => {
+  const firstScript = new Script("1 + 1;");
+  const cachedData = firstScript.createCachedData();
+  const secondScript = new Script("2 + 2;", {
+    cachedData,
+  });
+  expect(secondScript.cachedDataRejected).toBeTrue();
+  expect(firstScript.runInThisContext()).toBe(2);
+  expect(secondScript.runInThisContext()).toBe(4);
+});

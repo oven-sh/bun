@@ -53,7 +53,7 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 
 const EventEmitter = require("node:events");
 

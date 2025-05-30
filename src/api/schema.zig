@@ -1707,6 +1707,9 @@ pub const Api = struct {
         serve_hmr: ?bool = null,
         serve_define: ?StringMap = null,
 
+        // from --no-addons. null == true
+        allow_addons: ?bool = null,
+
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {

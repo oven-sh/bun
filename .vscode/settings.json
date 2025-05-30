@@ -43,6 +43,9 @@
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "never",
+    },
   },
 
   // lldb
@@ -136,9 +139,6 @@
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
     "**/*.i": true,
-
-    // uws WebSocket.cpp conflicts with webcore WebSocket.cpp
-    "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
     "*.css": "tailwindcss",

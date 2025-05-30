@@ -33,7 +33,7 @@ if (cluster.isPrimary) {
   bunRun(joinP(dir, "index.ts"), bunEnv);
 });
 
-test("cloneable and non-transferable not-equals", () => {
+test("cloneable and non-transferable not-equals (BunFile)", () => {
   const dir = tempDirWithFiles("bun-test", {
     "index.ts": `
 import cluster from "cluster";
@@ -56,6 +56,40 @@ if (cluster.isPrimary) {
     expect(file.name).toBeUndefined();
     expect(file.type).toBeUndefined();
     expect(file).toBeEmptyObject();
+    process.exit(0);
+  });
+} else {
+  process.on("message", msg => {
+    console.log("W", msg);
+    process.send!(msg);
+  });
+}
+`,
+  });
+  bunRun(joinP(dir, "index.ts"), bunEnv);
+});
+
+test("cloneable and non-transferable not-equals (net.BlockList)", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "index.ts": `
+import cluster from "cluster";
+import net from "net";
+import { expect } from "bun:test";
+if (cluster.isPrimary) {
+  cluster.settings.serialization = "advanced";
+  const worker = cluster.fork();
+  const blocklist = new net.BlockList();
+  console.log("P", "O", blocklist);
+  blocklist.addAddress("123.123.123.123");
+  worker.on("online", function () {
+    worker.send({ blocklist });
+  });
+  worker.on("message", function (data) {
+    worker.kill();
+    const { blocklist } = data;
+    console.log("P", "M", blocklist);
+    expect(blocklist.rules).toBeUndefined();
+    expect(blocklist).toBeEmptyObject();
     process.exit(0);
   });
 } else {

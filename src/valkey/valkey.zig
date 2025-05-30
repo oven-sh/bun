@@ -967,7 +967,5 @@ const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("bun");
 const protocol = @import("valkey_protocol.zig");
-const js_valkey = @import("js_valkey.zig");
 const debug = bun.Output.scoped(.Redis, false);
 const uws = bun.uws;
-const Slice = JSC.ZigString.Slice;

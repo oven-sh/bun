@@ -1,5 +1,5 @@
-import { randomUUIDv7, RedisClient } from "bun";
-import { describe, expect, test, beforeEach, afterEach, afterAll } from "bun:test";
+import { randomUUIDv7 } from "bun";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
 /**

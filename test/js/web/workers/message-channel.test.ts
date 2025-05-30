@@ -277,8 +277,7 @@ test("cloneable and transferable equals", async () => {
   await promise;
 });
 
-test("cloneable and non-transferable equals", async () => {
-  const assert = require("assert");
+test("cloneable and non-transferable equals (BunFile)", async () => {
   const mc = new MessageChannel();
   const file = Bun.file(import.meta.filename);
   expect(file).toBeInstanceOf(Blob); // Bun.BunFile isnt exposed to JS
@@ -298,5 +297,29 @@ test("cloneable and non-transferable equals", async () => {
     }
   };
   mc.port2.postMessage(file);
+  await promise;
+});
+
+test("cloneable and non-transferable equals (net.BlockList)", async () => {
+  const net = require("node:net");
+  const mc = new MessageChannel();
+  const blocklist = new net.BlockList();
+  blocklist.addAddress("123.123.123.123");
+  const { promise, resolve, reject } = Promise.withResolvers();
+  mc.port1.onmessage = ({ data }) => {
+    try {
+      expect(data).toBeInstanceOf(net.BlockList);
+      expect(data.check("123.123.123.123")).toBeTrue();
+      expect(!data.check("123.123.123.124")).toBeTrue();
+      data.addAddress("123.123.123.124");
+      expect(blocklist.check("123.123.123.124")).toBeTrue();
+      expect(data.check("123.123.123.124")).toBeTrue();
+      mc.port1.close();
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  };
+  mc.port2.postMessage(blocklist);
   await promise;
 });

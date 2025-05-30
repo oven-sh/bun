@@ -250,10 +250,13 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     }
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),
@@ -278,7 +281,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         ASSERT(callData.type == JSC::CallData::Type::JS);
         NakedPtr<JSC::Exception> returnedException = nullptr;
         JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
-        if (UNLIKELY(returnedException)) {
+        if (returnedException) [[unlikely]] {
             throwException(globalObject, scope, returnedException->value());
             return JSC::JSValue::encode({});
         }

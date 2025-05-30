@@ -146,16 +146,23 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(binding);
+    auto domainToAsciiFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public);
+    ASSERT(domainToAsciiFunction);
+    auto domainToUnicodeFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public);
+    ASSERT(domainToUnicodeFunction);
     binding->putByIndexInline(
         globalObject,
         (unsigned)0,
-        JSC::JSFunction::create(vm, globalObject, 1, "domainToAscii"_s, jsDomainToASCII, ImplementationVisibility::Public),
+        domainToAsciiFunction,
         false);
     binding->putByIndexInline(
         globalObject,
         (unsigned)1,
-        JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public),
+        domainToUnicodeFunction,
         false);
     return binding;
 }

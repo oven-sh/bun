@@ -17,23 +17,23 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
-import assert from "assert";
+import { StatusObject } from "@grpc/grpc-js/build/src/call-interface";
+import { GRPC_NODE_USE_ALTERNATIVE_RESOLVER } from "@grpc/grpc-js/build/src/environment";
 import * as resolverManager from "@grpc/grpc-js/build/src/resolver";
 import * as resolver_dns from "@grpc/grpc-js/build/src/resolver-dns";
-import * as resolver_uds from "@grpc/grpc-js/build/src/resolver-uds";
 import * as resolver_ip from "@grpc/grpc-js/build/src/resolver-ip";
+import * as resolver_uds from "@grpc/grpc-js/build/src/resolver-uds";
 import { ServiceConfig } from "@grpc/grpc-js/build/src/service-config";
-import { StatusObject } from "@grpc/grpc-js/build/src/call-interface";
-import { isIPv6 } from "harness";
 import {
   Endpoint,
   SubchannelAddress,
   endpointToString,
   subchannelAddressEqual,
 } from "@grpc/grpc-js/build/src/subchannel-address";
-import { parseUri, GrpcUri } from "@grpc/grpc-js/build/src/uri-parser";
-import { GRPC_NODE_USE_ALTERNATIVE_RESOLVER } from "@grpc/grpc-js/build/src/environment";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { GrpcUri, parseUri } from "@grpc/grpc-js/build/src/uri-parser";
+import assert from "assert";
+import { beforeAll as before, describe, it } from "bun:test";
+import { isIPv6 } from "harness";
 
 function hasMatchingAddress(endpointList: Endpoint[], expectedAddress: SubchannelAddress): boolean {
   for (const endpoint of endpointList) {

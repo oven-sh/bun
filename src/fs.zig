@@ -2,7 +2,6 @@ const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -11,9 +10,7 @@ const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const sync = @import("sync.zig");
 const Mutex = bun.Mutex;
-const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
@@ -800,8 +797,6 @@ pub const FileSystem = struct {
         pub const Limit = struct {
             pub var handles: usize = 0;
             pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
-            pub var stack: usize = 0;
-            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -810,19 +805,6 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            blk: {
-                const resource = std.posix.rlimit_resource.STACK;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.stack_before = limit;
-                if (limit.cur < limit.max) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = limit.max;
-                    new_limit.max = limit.max;
-
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    Limit.stack = limit.max;
-                }
-            }
             var file_limit: usize = 0;
             blk: {
                 const resource = std.posix.rlimit_resource.NOFILE;

@@ -67,7 +67,7 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
   );
 
   if (getConfig("debugTerminal.enabled")) {
-    injectDebugTerminal2().then(context.subscriptions.push)
+    injectDebugTerminal2().then(context.subscriptions.push);
   }
 }
 
@@ -136,15 +136,17 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
 }
 
 async function injectDebugTerminal2() {
-  const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
+  const jsDebugExt =
+    vscode.extensions.getExtension("ms-vscode.js-debug-nightly") ||
+    vscode.extensions.getExtension("ms-vscode.js-debug");
   if (!jsDebugExt) {
-    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal);
   }
 
-  await jsDebugExt.activate()
-  const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
+  await jsDebugExt.activate();
+  const jsDebug: import("@vscode/js-debug").IExports = jsDebugExt.exports;
   if (!jsDebug) {
-    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal);
   }
 
   return jsDebug.registerDebugTerminalOptionsProvider({
@@ -331,7 +333,7 @@ class FileDebugSession extends DebugSession {
     }
 
     this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => { }),
+      this.sendRequest(command, args, 5000, () => {}),
     );
 
     adapters.set(url, this);

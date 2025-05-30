@@ -622,8 +622,8 @@ describe("bundler", () => {
       '(flag == 1234 || unbound, "c")',
       // || is not inserted since the condition is always true, can simplify '1234' to '0'
       '(flag == 0, unbound, "c")',
-      '123',
-      '456',
+      "123",
+      "456",
     ],
   });
 });

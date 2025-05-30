@@ -43,7 +43,6 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
             return SourceOrigin(WTF::URL(makeString("builtin://"_s, sourceURL)));
         }
     }
-
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 

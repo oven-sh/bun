@@ -1,16 +1,16 @@
-import { file, write, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { beforeEach, describe, expect, test, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { cp, mkdir, rm, exists } from "fs/promises";
+import { cp, exists, mkdir, rm } from "fs/promises";
 import {
+  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
+  readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
-  assertManifestsPopulated,
   VerdaccioRegistry,
-  readdirSorted,
 } from "harness";
 import { join } from "path";
 const { parseLockfile } = install_test_helpers;

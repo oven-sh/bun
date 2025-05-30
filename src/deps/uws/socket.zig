@@ -134,6 +134,13 @@ pub const Socket = opaque {
         return rc;
     }
 
+    pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FD) i32 {
+        if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
+        const rc = us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
+        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
+        return rc;
+    }
+
     pub fn write2(this: *Socket, ssl: bool, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len);
         debug("us_socket_write2({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), first.len, second.len, rc });
@@ -153,6 +160,10 @@ pub const Socket = opaque {
         us_socket_sendfile_needs_more(this);
     }
 
+    pub fn getFd(this: *Socket) bun.FD {
+        return .fromNative(us_socket_get_fd(this));
+    }
+
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
     extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
@@ -168,6 +179,7 @@ pub const Socket = opaque {
     extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 
     extern fn us_socket_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
+    extern fn us_socket_ipc_write_fd(s: ?*Socket, data: [*c]const u8, length: i32, fd: i32) i32;
     extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
     extern fn us_socket_raw_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
     extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;
@@ -184,4 +196,9 @@ pub const Socket = opaque {
     extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 
     extern fn us_socket_sendfile_needs_more(socket: *Socket) void;
+    extern fn us_socket_get_fd(s: ?*Socket) LIBUS_SOCKET_DESCRIPTOR;
+    const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
+        true => *anyopaque,
+        false => i32,
+    };
 };

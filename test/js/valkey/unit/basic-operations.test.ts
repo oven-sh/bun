@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { ctx, expectType, createClient, ConnectionType, isEnabled } from "../test-utils";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering basic Redis operations

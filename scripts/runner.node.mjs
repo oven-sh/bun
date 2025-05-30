@@ -14,28 +14,37 @@ import {
   appendFileSync,
   existsSync,
   constants as fs,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
+  symlinkSync,
   unlink,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  getAbi,
+  getAbiVersion,
+  getArch,
   getBranch,
   getBuildLabel,
   getBuildUrl,
   getCommit,
+  getDistro,
+  getDistroVersion,
   getEnv,
   getFileUrl,
   getHostname,
   getLoggedInUserCountOrDetails,
+  getOs,
   getSecret,
   getShell,
   getWindowsExitReason,
@@ -123,7 +132,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "4" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",
@@ -156,7 +165,116 @@ if (options["quiet"]) {
 }
 
 /**
- *
+ * @typedef {Object} TestExpectation
+ * @property {string} filename
+ * @property {string[]} expectations
+ * @property {string[] | undefined} bugs
+ * @property {string[] | undefined} modifiers
+ * @property {string | undefined} comment
+ */
+
+/**
+ * @returns {TestExpectation[]}
+ */
+function getTestExpectations() {
+  const expectationsPath = join(cwd, "test", "expectations.txt");
+  if (!existsSync(expectationsPath)) {
+    return [];
+  }
+  const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
+
+  /** @type {TestExpectation[]} */
+  const expectations = [];
+
+  for (const line of lines) {
+    const content = line.trim();
+    if (!content || content.startsWith("#")) {
+      continue;
+    }
+
+    let comment;
+    const commentIndex = content.indexOf("#");
+    let cleanLine = content;
+    if (commentIndex !== -1) {
+      comment = content.substring(commentIndex + 1).trim();
+      cleanLine = content.substring(0, commentIndex).trim();
+    }
+
+    let modifiers = [];
+    let remaining = cleanLine;
+    let modifierMatch = remaining.match(/^\[(.*?)\]/);
+    if (modifierMatch) {
+      modifiers = modifierMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(modifierMatch[0].length).trim();
+    }
+
+    let expectationValues = ["Skip"];
+    const expectationMatch = remaining.match(/\[(.*?)\]$/);
+    if (expectationMatch) {
+      expectationValues = expectationMatch[1].trim().split(/\s+/);
+      remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
+    }
+
+    const filename = remaining.trim();
+    if (filename) {
+      expectations.push({
+        filename,
+        expectations: expectationValues,
+        bugs: undefined,
+        modifiers: modifiers.length ? modifiers : undefined,
+        comment,
+      });
+    }
+  }
+
+  return expectations;
+}
+
+/**
+ * @param {string} testPath
+ * @returns {string[]}
+ */
+function getTestModifiers(testPath) {
+  const ext = extname(testPath);
+  const filename = basename(testPath, ext);
+  const modifiers = filename.split("-").filter(value => value !== "bun");
+
+  const os = getOs();
+  const arch = getArch();
+  modifiers.push(os, arch, `${os}-${arch}`);
+
+  const distro = getDistro();
+  if (distro) {
+    modifiers.push(distro, `${os}-${distro}`, `${os}-${arch}-${distro}`);
+    const distroVersion = getDistroVersion();
+    if (distroVersion) {
+      modifiers.push(
+        distroVersion,
+        `${distro}-${distroVersion}`,
+        `${os}-${distro}-${distroVersion}`,
+        `${os}-${arch}-${distro}-${distroVersion}`,
+      );
+    }
+  }
+
+  const abi = getAbi();
+  if (abi) {
+    modifiers.push(abi, `${os}-${abi}`, `${os}-${arch}-${abi}`);
+    const abiVersion = getAbiVersion();
+    if (abiVersion) {
+      modifiers.push(
+        abiVersion,
+        `${abi}-${abiVersion}`,
+        `${os}-${abi}-${abiVersion}`,
+        `${os}-${arch}-${abi}-${abiVersion}`,
+      );
+    }
+  }
+
+  return modifiers.map(value => value.toUpperCase());
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -168,10 +286,14 @@ async function runTests() {
   }
   !isQuiet && console.log("Bun:", execPath);
 
+  const expectations = getTestExpectations();
+  const modifiers = getTestModifiers(execPath);
+  !isQuiet && console.log("Modifiers:", modifiers);
+
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
   /** @type {VendorTest[] | undefined} */
@@ -626,7 +748,9 @@ async function spawnSafe(options) {
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
     (error = /panic: (.*) at address/i.exec(buffer)) ||
-    (error = /oh no: Bun has crashed/i.exec(buffer))
+    (error = /oh no: Bun has crashed/i.exec(buffer)) ||
+    (error = /(ERROR: AddressSanitizer)/.exec(buffer)) ||
+    (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
@@ -667,13 +791,38 @@ async function spawnSafe(options) {
   };
 }
 
+let _combinedPath = "";
+function getCombinedPath(execPath) {
+  if (!_combinedPath) {
+    _combinedPath = addPath(realpathSync(dirname(execPath)), process.env.PATH);
+    // If we're running bun-profile.exe, try to make a symlink to bun.exe so
+    // that anything looking for "bun" will find it
+    if (isCI && basename(execPath, extname(execPath)).toLowerCase() !== "bun") {
+      const existingPath = execPath;
+      const newPath = join(dirname(execPath), "bun" + extname(execPath));
+      try {
+        // On Windows, we might run into permissions issues with symlinks.
+        // If that happens, fall back to a regular hardlink.
+        symlinkSync(existingPath, newPath, "file");
+      } catch (error) {
+        try {
+          linkSync(existingPath, newPath);
+        } catch (error) {
+          console.warn(`Failed to link bun`, error);
+        }
+      }
+    }
+  }
+  return _combinedPath;
+}
+
 /**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
-  const path = addPath(dirname(execPath), process.env.PATH);
+  const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
@@ -693,9 +842,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
-    // Used in Node.js tests.
-    TEST_TMPDIR: tmpdirPath,
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
   };
+
+  if (basename(execPath).includes("asan")) {
+    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1";
+  }
+
+  if (isWindows && bunEnv.Path) {
+    delete bunEnv.Path;
+  }
 
   if (env) {
     Object.assign(bunEnv, env);
@@ -1072,9 +1228,6 @@ function isHidden(path) {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
-/** Files with these extensions are not treated as test cases */
-const IGNORED_EXTENSIONS = new Set([".md"]);
-
 /**
  * @param {string} cwd
  * @returns {string[]}
@@ -1084,13 +1237,14 @@ function getTests(cwd) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
-      const ext = name.slice(name.lastIndexOf("."));
       const filename = join(path, name);
-      if (isHidden(filename) || IGNORED_EXTENSIONS.has(ext)) {
+      if (isHidden(filename)) {
         continue;
       }
-      if (entry.isFile() && isTest(filename)) {
-        yield filename;
+      if (entry.isFile()) {
+        if (isTest(filename)) {
+          yield filename;
+        }
       } else if (entry.isDirectory()) {
         yield* getFiles(cwd, filename);
       }
@@ -1226,9 +1380,11 @@ async function getVendorTests(cwd) {
 
 /**
  * @param {string} cwd
+ * @param {string[]} testModifiers
+ * @param {TestExpectation[]} testExpectations
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
+function getRelevantTests(cwd, testModifiers, testExpectations) {
   let tests = getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
@@ -1269,6 +1425,25 @@ function getRelevantTests(cwd) {
         }
       }
       !isQuiet && console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const skipExpectations = testExpectations
+    .filter(
+      ({ modifiers, expectations }) =>
+        !modifiers?.length || testModifiers.some(modifier => modifiers?.includes(modifier)),
+    )
+    .map(({ filename }) => filename.replace("test/", ""));
+  if (skipExpectations.length) {
+    const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
+    if (skippedTests.length) {
+      for (const testPath of skippedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      !isQuiet && console.log("Skipping tests:", skipExpectations, skippedTests.length, "/", availableTests.length);
     }
   }
 
@@ -1368,13 +1543,17 @@ async function getExecPathFromBuildKite(target, buildId) {
     await spawnSafe({
       command: "buildkite-agent",
       args,
+      timeout: 60000,
     });
 
-    for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-      if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
-        zipPath = join(releasePath, entry);
-        break downloadLoop;
-      }
+    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+      .filter(filename => /^bun.*\.zip$/i.test(filename))
+      .map(filename => join(releasePath, filename))
+      .sort((a, b) => b.includes("profile") - a.includes("profile"))
+      .at(0);
+
+    if (zipPath) {
+      break downloadLoop;
     }
 
     console.warn(`Waiting for ${target}.zip to be available...`);
@@ -1390,12 +1569,12 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+    if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;
     }
   }
 
-  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`);
+  console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
@@ -1687,9 +1866,15 @@ function getExitCode(outcome) {
 
 // A flaky segfault, sigtrap, or sigill must never be ignored.
 // If it happens in CI, it will happen to our users.
+// Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
   error = ((error || "") + "").toLowerCase().trim();
-  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
+  return (
+    error.includes("segmentation fault") ||
+    error.includes("illegal instruction") ||
+    error.includes("sigtrap") ||
+    error.includes("error: addresssanitizer")
+  );
 }
 
 /**

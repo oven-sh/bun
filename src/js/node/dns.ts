@@ -1,7 +1,7 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 const {
   validateFunction,
   validateArray,
@@ -645,9 +645,7 @@ var InternalResolver = class Resolver {
 function Resolver(options) {
   return new InternalResolver(options);
 }
-Resolver.prototype = {};
-Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
-Object.setPrototypeOf(Resolver, InternalResolver);
+$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,

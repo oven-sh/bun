@@ -918,14 +918,12 @@ fn writeOrEnd(
     }
 }
 
-pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (this.isDone() or value == .undefined) {
         js.onWritableSetCached(thisValue, globalObject, .undefined);
     } else {
         js.onWritableSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
-
-    return true;
 }
 
 pub fn getOnWritable(_: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -939,9 +937,9 @@ pub fn getOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlo
     return js.onAbortedGetCached(thisValue) orelse .undefined;
 }
 
-pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (this.flags.socket_closed) {
-        return true;
+        return;
     }
 
     if (this.isDone() or value == .undefined) {
@@ -949,8 +947,6 @@ pub fn setOnAbort(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject:
     } else {
         js.onAbortedSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
-
-    return true;
 }
 
 pub fn getOnData(_: *NodeHTTPResponse, thisValue: JSC.JSValue, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -965,9 +961,8 @@ pub fn getUpgraded(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue 
     return JSC.jsBoolean(this.flags.upgraded);
 }
 
-pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) void {
     this.flags.hasCustomOnData = value.toBoolean();
-    return true;
 }
 
 fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) void {
@@ -983,7 +978,7 @@ fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalOb
     }
 }
 
-pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
+pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSValue) void {
     if (value == .undefined or this.flags.ended or this.flags.socket_closed or this.body_read_state == .none or this.flags.is_data_buffered_during_pause_last) {
         js.onDataSetCached(thisValue, globalObject, .undefined);
         defer {
@@ -1000,7 +995,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
             },
             .none => {},
         }
-        return true;
+        return;
     }
 
     js.onDataSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
@@ -1012,8 +1007,6 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: JSC.JSValue, globalObject: 
         this.ref();
         this.body_read_ref.ref(globalObject.bunVM());
     }
-
-    return true;
 }
 
 pub fn write(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -1135,18 +1128,13 @@ pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void 
 }
 
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const bun = @import("bun");
 const string = []const u8;
-const Bun = JSC.API.Bun;
-const max_addressable_memory = bun.max_addressable_memory;
 const Environment = bun.Environment;
 const std = @import("std");
-const assert = bun.assert;
 const ZigString = JSC.ZigString;
-const WebSocketServer = @import("../server.zig").WebSocketServer;
 const uws = bun.uws;
 const Output = bun.Output;
 const AnyServer = JSC.API.AnyServer;

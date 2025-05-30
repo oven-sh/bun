@@ -42,7 +42,7 @@ CookieMap* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exc
     auto& vm = getVM(&lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* impl = JSCookieMap::toWrapped(vm, value);
-    if (UNLIKELY(!impl))
+    if (!impl) [[unlikely]]
         exceptionThrower(lexicalGlobalObject, scope);
     return impl;
 }
@@ -267,7 +267,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookieMapConstructor, (JSGlobalObject * lexicalGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSCookieMapPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCookieMap::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -277,7 +277,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size, (JSGlobalObject * lexi
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsDynamicCast<JSCookieMap*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(jsNumber(thisObject->wrapped().size()));
 }

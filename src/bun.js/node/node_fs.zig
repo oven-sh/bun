@@ -1986,7 +1986,7 @@ pub const Arguments = struct {
     };
 
     fn getEncoding(object: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!Encoding {
-        if (object.fastGet(globalObject, .encoding)) |value| {
+        if (try object.fastGet(globalObject, .encoding)) |value| {
             return Encoding.assert(value, globalObject, default);
         }
 
@@ -4007,7 +4007,7 @@ pub const NodeFS = struct {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
-                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, path)) },
+                    .result = .{ .string = bun.String.createFromOSPath(path) },
                 };
             },
         }
@@ -4029,6 +4029,20 @@ pub const NodeFS = struct {
                         working_mem[i] = std.fs.path.sep;
                         switch (err.getErrno()) {
                             .EXIST => {
+                                // On Windows, this may happen if trying to mkdir replacing a file
+                                if (bun.Environment.isWindows) {
+                                    switch (bun.sys.directoryExistsAt(bun.invalid_fd, parent)) {
+                                        .err => {},
+                                        .result => |res| {
+                                            // is a directory. break.
+                                            if (!res) return .{ .err = .{
+                                                .errno = @intFromEnum(bun.sys.E.NOTDIR),
+                                                .syscall = .mkdir,
+                                                .path = this.osPathIntoSyncErrorBuf(strings.withoutNTPrefix(bun.OSPathChar, path[0..len])),
+                                            } };
+                                        },
+                                    }
+                                }
                                 // Handle race condition
                                 break;
                             },
@@ -4106,7 +4120,7 @@ pub const NodeFS = struct {
             return .{ .result = .{ .none = {} } };
         }
         return .{
-            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(bun.OSPathChar, working_mem[0..first_match])) },
+            .result = .{ .string = bun.String.createFromOSPath(working_mem[0..first_match]) },
         };
     }
 
@@ -5906,9 +5920,6 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
-
         return switch (Syscall.utimens(
             args.path.sliceZ(&this.sync_error_buf),
             args.atime,
@@ -6926,7 +6937,6 @@ const Environment = bun.Environment;
 const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 const FileDescriptor = bun.FileDescriptor;
 const FD = bun.FD;
@@ -6935,14 +6945,11 @@ const AbortSignal = bun.webcore.AbortSignal;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const builtin = @import("builtin");
 const posix = std.posix;
-const darwin = std.os.darwin;
 const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
-const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 const ArgumentsSlice = JSC.CallFrame.ArgumentsSlice;
 const TimeLike = JSC.Node.TimeLike;
@@ -6953,6 +6960,5 @@ const gid_t = JSC.Node.gid_t;
 const ReadPosition = i64;
 const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
-const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
 const SystemErrno = bun.sys.SystemErrno;

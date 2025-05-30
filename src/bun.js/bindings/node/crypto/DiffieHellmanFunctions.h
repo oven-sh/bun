@@ -23,7 +23,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "generateKeys"_s);
         return {};
     }
@@ -48,7 +48,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "computeSecret"_s);
         return {};
     }
@@ -126,7 +126,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPrime"_s);
         return {};
     }
@@ -152,7 +152,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getGenerator"_s);
         return {};
     }
@@ -178,7 +178,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPublicKey"_s);
         return {};
     }
@@ -204,7 +204,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPrivateKey"_s);
         return {};
     }
@@ -229,7 +229,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "setPublicKey"_s);
         return {};
     }
@@ -266,7 +266,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "setPrivateKey"_s);
         return {};
     }

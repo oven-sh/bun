@@ -1,6 +1,8 @@
 const { Stream } = require("internal/stream");
-const { validateFunction, isUint8Array, validateString } = require("internal/validators");
-
+const { isUint8Array, validateString } = require("internal/validators");
+const { deprecate } = require("node:util");
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectKeys = Object.keys;
 const {
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -11,13 +13,12 @@ const {
   kEmitState,
   ClientRequestEmitState,
   kEmptyObject,
-  validateMsecs,
-  timeoutTimerSymbol,
   kHandle,
   getHeader,
   setHeader,
   Headers,
   getRawKeys,
+  kOutHeaders,
 } = require("internal/http");
 
 const {
@@ -92,6 +93,9 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
 
     msg[kBytesWritten] += len;
+  } else {
+    len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+    msg[kBytesWritten] += len;
   }
 
   function connectionUnCorkNT(conn) {
@@ -154,7 +158,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   } else {
     ret = msg._send(chunk, encoding, callback, len);
   }
-
   return ret;
 }
 
@@ -169,7 +172,7 @@ function OutgoingMessage(options) {
   this.finished = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kAbortController] = null;
-
+  this[kBytesWritten] = 0;
   this.writable = true;
   this.destroyed = false;
   this._hasBody = true;
@@ -197,7 +200,7 @@ const OutgoingMessagePrototype = {
   _removedConnection: false,
   usesChunkedEncodingByDefault: true,
   _closed: false,
-
+  _headerNames: undefined,
   appendHeader(name, value) {
     validateString(name, "name");
     var headers = (this[headersSymbol] ??= new Headers());
@@ -222,6 +225,11 @@ const OutgoingMessagePrototype = {
     }
 
     return write_(this, chunk, encoding, callback, false);
+  },
+
+  pipe() {
+    // OutgoingMessage should be write-only. Piping from it is disabled.
+    this.emit("error", $ERR_STREAM_CANNOT_PIPE());
   },
 
   getHeaderNames() {
@@ -357,28 +365,16 @@ const OutgoingMessagePrototype = {
   },
 
   setTimeout(msecs, callback) {
-    if (this.destroyed) return this;
+    if (this.callback) {
+      this.emit("timeout", callback);
+    }
 
-    this.timeout = msecs = validateMsecs(msecs, "timeout");
-
-    // Attempt to clear an existing timer in both cases -
-    //  even if it will be rescheduled we don't want to leak an existing timer.
-    clearTimeout(this[timeoutTimerSymbol]);
-
-    if (msecs === 0) {
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.removeListener("timeout", callback);
-      }
-
-      this[timeoutTimerSymbol] = undefined;
+    if (!this[fakeSocketSymbol]) {
+      this.once("socket", function socketSetTimeoutOnConnect(socket) {
+        socket.setTimeout(msecs, callback);
+      });
     } else {
-      this[timeoutTimerSymbol] = setTimeout(onTimeout.bind(this), msecs).unref();
-
-      if (callback != null) {
-        if (!$isCallable(callback)) validateFunction(callback, "callback");
-        this.once("timeout", callback);
-      }
+      this.socket.setTimeout(msecs);
     }
 
     return this;
@@ -413,7 +409,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableLength() {
-    return 0;
+    return this.finished ? 0 : this[kBytesWritten] || 0;
   },
 
   get writableHighWaterMark() {
@@ -492,6 +488,16 @@ const OutgoingMessagePrototype = {
   end(_chunk, _encoding, _callback) {
     return this;
   },
+  get writableCorked() {
+    return this.socket.writableCorked;
+  },
+  set writableCorked(value) {},
+  cork() {
+    this.socket.cork();
+  },
+  uncork() {
+    this.socket.uncork();
+  },
   destroy(_err?: Error) {
     if (this.destroyed) return this;
     const handle = this[kHandle];
@@ -503,19 +509,74 @@ const OutgoingMessagePrototype = {
   },
 };
 OutgoingMessage.prototype = OutgoingMessagePrototype;
-
+ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
+  __proto__: null,
+  get: deprecate(
+    function () {
+      const headers = this.getHeaders();
+      if (headers !== null) {
+        const out = { __proto__: null };
+        const keys = ObjectKeys(headers);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const key = keys[i];
+          out[key] = key;
+        }
+        return out;
+      }
+      return null;
+    },
+    "OutgoingMessage.prototype._headerNames is deprecated",
+    "DEP0066",
+  ),
+  set: deprecate(
+    function (val) {
+      if (typeof val === "object" && val !== null) {
+        const headers = this.getHeaders();
+        if (!headers) return;
+        const keys = ObjectKeys(val);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const header = headers[keys[i]];
+          if (header) header[keys[i]] = val[keys[i]];
+        }
+      }
+    },
+    "OutgoingMessage.prototype._headerNames is deprecated",
+    "DEP0066",
+  ),
+});
+ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
+  __proto__: null,
+  get: deprecate(
+    function () {
+      return this.getHeaders();
+    },
+    "OutgoingMessage.prototype._headers is deprecated",
+    "DEP0066",
+  ),
+  set: deprecate(
+    function (val) {
+      if (val == null) {
+        this[kOutHeaders] = null;
+      } else if (typeof val === "object") {
+        const headers = (this[kOutHeaders] = { __proto__: null });
+        const keys = ObjectKeys(val);
+        // Retain for(;;) loop for performance reasons
+        // Refs: https://github.com/nodejs/node/pull/30958
+        for (let i = 0; i < keys.length; ++i) {
+          const name = keys[i];
+          headers[name.toLowerCase()] = [name, val[name]];
+        }
+      }
+    },
+    "OutgoingMessage.prototype._headers is deprecated",
+    "DEP0066",
+  ),
+});
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
-
-function onTimeout() {
-  this[timeoutTimerSymbol] = undefined;
-  this[kAbortController]?.abort();
-  const handle = this[kHandle];
-
-  this.emit("timeout");
-  if (handle) {
-    handle.abort();
-  }
-}
 
 export default {
   OutgoingMessage,

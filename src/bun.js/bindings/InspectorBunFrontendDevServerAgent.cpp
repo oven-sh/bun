@@ -125,6 +125,14 @@ void InspectorBunFrontendDevServerAgent::graphUpdate(int devServerId, const Stri
     // m_frontendDispatcher->graphUpdate(devServerId, visualizerPayloadBase64);
 }
 
+void InspectorBunFrontendDevServerAgent::consoleLog(int devServerId, char kind, const String& data)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    m_frontendDispatcher->consoleLog(devServerId, kind, data);
+}
+
 // C API implementations for Zig
 extern "C" {
 
@@ -177,6 +185,11 @@ void InspectorBunFrontendDevServerAgent__notifyClientErrorReported(InspectorBunF
 void InspectorBunFrontendDevServerAgent__notifyGraphUpdate(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* visualizerPayloadBase64)
 {
     agent->graphUpdate(devServerId, visualizerPayloadBase64->toWTFString());
+}
+
+void InspectorBunFrontendDevServerAgent__notifyConsoleLog(InspectorBunFrontendDevServerAgent* agent, int devServerId, char kind, BunString* data)
+{
+    agent->consoleLog(devServerId, kind, data->toWTFString());
 }
 }
 

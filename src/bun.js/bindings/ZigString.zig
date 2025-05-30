@@ -1,18 +1,14 @@
 const std = @import("std");
 const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
 const strings = bun.strings;
 const JSC = bun.JSC;
 const String = bun.String;
 const NullableAllocator = bun.NullableAllocator;
-const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSString = @import("JSString.zig").JSString;
 const C_API = bun.JSC.C;
-const JSError = bun.JSError;
 const Environment = bun.Environment;
 const Mimalloc = bun.Mimalloc;
 
@@ -861,6 +857,11 @@ pub const ZigString = extern struct {
     extern fn ZigString__toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
         return ZigString__toTypeErrorInstance(this, global);
+    }
+
+    extern fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: u8) JSValue;
+    pub fn toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: JSC.WebCore.DOMExceptionCode) JSValue {
+        return ZigString__toDOMExceptionInstance(this, global, @intFromEnum(code));
     }
 
     extern fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;

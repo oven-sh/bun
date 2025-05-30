@@ -25,6 +25,7 @@
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
+#include "JSDOMExceptionHandling.h"
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
@@ -100,37 +101,30 @@ namespace Bun {
 using namespace JSC;
 using namespace WTF;
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype)
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
     JSC::JSObject* prototype;
 
-    // Inherit from DOMException
-    // But preserve the error.stack property.
-    if (isDOMExceptionPrototype) {
-        auto* domGlobalObject = defaultGlobalObject(globalObject);
-        prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
-    } else {
-        switch (type) {
-        case JSC::ErrorType::TypeError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::RangeError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::Error:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
-            break;
-        case JSC::ErrorType::URIError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
-            break;
-        case JSC::ErrorType::SyntaxError:
-            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
-            break;
-        default: {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
-            break;
-        }
-        }
+    switch (type) {
+    case JSC::ErrorType::TypeError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::RangeError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::Error:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
+        break;
+    case JSC::ErrorType::URIError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_URIErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SyntaxError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
+        break;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+        break;
+    }
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
@@ -187,18 +181,18 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
 }
 
 // clang-format on
-static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype)
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
-    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code, isDOMExceptionPrototype);
+    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
-JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options, bool isDOMExceptionPrototype)
+JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code, isDOMExceptionPrototype);
+        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
@@ -206,44 +200,44 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined(), isDOMExceptionPrototype);
+    return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
 
-JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return createError(globalObject->vm(), globalObject, code, message, isDOMExceptionPrototype);
+    return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return createError(vm, defaultGlobalObject(globalObject), code, message, isDOMExceptionPrototype);
+    return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message, bool isDOMExceptionPrototype)
+JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
     if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject))
-        return createError(vm, zigGlobalObject, code, message, jsUndefined(), isDOMExceptionPrototype);
+        return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code, isDOMExceptionPrototype);
+    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
     return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
-JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options, bool isDOMExceptionPrototype)
+JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
-    return errorCache(globalObject)->createError(vm, globalObject, code, message, options, isDOMExceptionPrototype);
+    return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
 
-JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message, bool isDOMExceptionPrototype)
+JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
-    return createError(globalObject->vm(), globalObject, code, message, isDOMExceptionPrototype);
+    return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message, bool isDOMExceptionPrototype)
+JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
 {
     auto& vm = JSC::getVM(globalObject);
-    return createError(vm, globalObject, code, message, isDOMExceptionPrototype);
+    return createError(vm, globalObject, code, message);
 }
 
 extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
@@ -409,7 +403,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             view = str->substring(0, 25);
         }
         builder.append("type string ("_s);
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
                 const auto span = view.span<LChar>();
@@ -437,7 +431,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        if (UNLIKELY(needsEscape)) {
+        if (needsEscape) [[unlikely]] {
             builder.append('"');
         } else {
             builder.append('\'');
@@ -843,7 +837,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s, false);
+    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
     auto error = JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
     throwScope.throwException(globalObject, error);
     return {};
@@ -1417,6 +1411,12 @@ JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return {};
 }
 
+JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_DLOPEN_DISABLED, message));
+    return {};
+}
+
 } // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
@@ -1502,6 +1502,25 @@ void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& s
 
 } // namespace Bun
 
+extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue causeParam)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto cause = JSC::JSValue::decode(causeParam);
+
+    if (cause.isUndefined()) {
+        return JSC::JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, JSC::JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
+    }
+
+    auto message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "cause"_s), cause);
+
+    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
+    return JSC::JSValue::encode(error);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1512,28 +1531,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
-        return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject)), false));
+        return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));
     }
 
     if (message.isUndefined()) message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
-    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options, false);
+    auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options);
     return JSC::JSValue::encode(error);
 }
 
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
 {
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationWasAbortedString(globalObject), true);
+        return createDOMException(globalObject, ExceptionCode::TimeoutError, "The operation timed out."_s);
     }
     case CommonAbortReason::UserAbort: {
-        // This message is a standardized error message. We cannot change it.
-        // https://webidl.spec.whatwg.org/#idl-DOMException:~:text=The%20operation%20was%20aborted.
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationWasAbortedString(globalObject), true);
+        return createDOMException(globalObject, ExceptionCode::AbortError, "The operation was aborted."_s);
     }
     case CommonAbortReason::ConnectionClosed: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().ConnectionWasClosedString(globalObject), true);
+        return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
     default: {
         break;
@@ -1584,7 +1600,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     JSC::JSValue codeValue = callFrame->argument(0);
     RETURN_IF_EXCEPTION(scope, {});
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (!codeValue.isNumber()) {
         JSC::throwTypeError(globalObject, scope, "First argument to $ERR_ must be a number"_s);
         return {};
@@ -1593,7 +1609,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     int code = codeValue.toInt32(globalObject);
 
-#if BUN_DEBUG
+#if ASSERT_ENABLED
     if (code > Bun::NODE_ERROR_COUNT - 1 || code < 0) {
         JSC::throwTypeError(globalObject, scope, "Invalid error code. Use $ERR_* constants"_s);
         return {};
@@ -1648,7 +1664,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto str2 = arg2.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message));
+        auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
+        err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
+        return JSC::JSValue::encode(err);
     }
 
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
@@ -2200,12 +2219,48 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_AMBIGUOUS_ARGUMENT, message));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_FD_TYPE: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Unsupported fd type: "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_FD_TYPE, message));
+    }
+
     case Bun::ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString(str0, " maxBuffer length exceeded"_s);
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, message));
+    }
+
+    case Bun::ErrorCode::ERR_IP_BLOCKED: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("IP("_s, str0, ") is blocked by net.BlockList"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IP_BLOCKED, message));
+    }
+
+    case Bun::ErrorCode::ERR_VM_MODULE_STATUS: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Module status "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_STATUS, message));
+    }
+
+    case Bun::ErrorCode::ERR_VM_MODULE_LINK_FAILURE: {
+        auto arg0 = callFrame->argument(1);
+        auto message = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto cause = callFrame->argument(2);
+        JSObject* error = createError(globalObject, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
+        RETURN_IF_EXCEPTION(scope, {});
+        error->putDirect(vm, Identifier::fromString(vm, "cause"_s), cause);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(error);
     }
 
     case ErrorCode::ERR_IPC_DISCONNECTED:
@@ -2232,6 +2287,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Socket is not running"_s));
     case ErrorCode::ERR_INVALID_CURSOR_POS:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
+    case ErrorCode::ERR_INVALID_HANDLE_TYPE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent"_s));
     case ErrorCode::ERR_MULTIPLE_CALLBACK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MULTIPLE_CALLBACK, "Callback called multiple times"_s));
     case ErrorCode::ERR_STREAM_PREMATURE_CLOSE:
@@ -2266,6 +2323,17 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+
+        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
+
+        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
+
+        return JSC::JSValue::encode(err);
+    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:
@@ -2314,6 +2382,18 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
+    case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT, "Socket connection timeout"_s));
+    case ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout"_s));
+    case ErrorCode::ERR_VM_MODULE_ALREADY_LINKED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_ALREADY_LINKED, "Module has already been linked"_s));
+    case ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA, "Cached data cannot be created for a module which has been evaluated"_s));
+    case ErrorCode::ERR_VM_MODULE_NOT_MODULE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+    case ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_VM_MODULE_DIFFERENT_CONTEXT, "Linked modules must use the same context"_s));
 
     default: {
         break;

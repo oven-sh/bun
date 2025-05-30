@@ -13,10 +13,6 @@ const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
-const JSType = JSValue.JSType;
-const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 const ZigString = JSC.ZigString;
 const Environment = bun.Environment;
@@ -42,7 +38,6 @@ pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
 
-const log = bun.Output.scoped(.expect, false);
 
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
@@ -169,22 +164,22 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         this.flags.promise = switch (this.flags.promise) {
             .resolves, .none => .resolves,
             .rejects => {
-                return globalThis.throw("Cannot chain .resolves() after .rejects()", .{}) catch .zero;
+                return globalThis.throw("Cannot chain .resolves() after .rejects()", .{});
             },
         };
 
         return thisValue;
     }
 
-    pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         this.flags.promise = switch (this.flags.promise) {
             .none, .rejects => .rejects,
             .resolves => {
-                return globalThis.throw("Cannot chain .rejects() after .resolves()", .{}) catch .zero;
+                return globalThis.throw("Cannot chain .rejects() after .resolves()", .{});
             },
         };
 
@@ -366,7 +361,7 @@ pub const Expect = struct {
 
         var custom_label = bun.String.empty;
         if (arguments.len > 1) {
-            if (arguments[1].isString() or arguments[1].implementsToString(globalThis)) {
+            if (arguments[1].isString() or try arguments[1].implementsToString(globalThis)) {
                 const label = try arguments[1].toBunString(globalThis);
                 if (globalThis.hasException()) return .zero;
                 custom_label = label;
@@ -2099,7 +2094,7 @@ pub const Expect = struct {
             return .undefined;
         }
 
-        const expected_diff = std.math.pow(f64, 10, -precision) / 2;
+        const expected_diff = bun.pow(10, -precision) / 2;
         const actual_diff = @abs(received - expected);
         var pass = actual_diff < expected_diff;
 
@@ -2248,11 +2243,9 @@ pub const Expect = struct {
 
             if (expected_value.isString()) {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
+                    try result.fastGet(globalThis, .message)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
 
                 // TODO: remove this allocation
@@ -2273,11 +2266,9 @@ pub const Expect = struct {
 
             if (expected_value.isRegExp()) {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
+                    try result.fastGet(globalThis, .message)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
 
                 if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
@@ -2292,13 +2283,11 @@ pub const Expect = struct {
                 });
             }
 
-            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+            if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const received_message: JSValue = (if (result.isObject())
-                    result.fastGet(globalThis, .message)
-                else if (result.toStringOrNull(globalThis)) |js_str|
-                    JSValue.fromCell(js_str)
+                    try result.fastGet(globalThis, .message)
                 else
-                    .undefined) orelse .undefined;
+                    JSValue.fromCell(try result.toJSString(globalThis))) orelse .jsUndefined();
                 if (globalThis.hasException()) return .zero;
 
                 // no partial match for this case
@@ -2311,7 +2300,7 @@ pub const Expect = struct {
 
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
-            const received_message = result.fastGet(globalThis, .message) orelse .undefined;
+            const received_message = (try result.fastGet(globalThis, .message)) orelse .undefined;
             return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
         }
 
@@ -2324,11 +2313,9 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
-                result.fastGet(globalThis, .message)
-            else if (result.toStringOrNull(globalThis)) |js_str|
-                JSValue.fromCell(js_str)
+                try result.fastGet(globalThis, .message)
             else
-                null;
+                JSValue.fromCell(try result.toJSString(globalThis));
 
             if (expected_value.isString()) {
                 if (_received_message) |received_message| {
@@ -2407,7 +2394,7 @@ pub const Expect = struct {
             // If it's not an object, we are going to crash here.
             assert(expected_value.isObject());
 
-            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+            if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
@@ -2485,7 +2472,7 @@ pub const Expect = struct {
             return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
         }
 
-        if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+        if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
             return this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
         }
@@ -2765,7 +2752,7 @@ pub const Expect = struct {
             }
         }
         const end_indent = if (std.mem.lastIndexOfScalar(u8, str_in, '\n')) |c| c + 1 else return give_up_2; // there has to have been at least a single newline to get here
-        for (str_in[end_indent..]) |c| if (c != ' ' and c != 't') return give_up_2; // we already checked, but the last line is not all whitespace again
+        for (str_in[end_indent..]) |c| if (c != ' ' and c != '\t') return give_up_2; // we already checked, but the last line is not all whitespace again
 
         // done
         return .{ .trimmed = trimmed_buf[0 .. trimmed_buf.len - dst.len], .start_indent = indent_str, .end_indent = str_in[end_indent..] };
@@ -4637,15 +4624,15 @@ pub const Expect = struct {
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
 
-    pub fn getStaticNot(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) JSValue {
+    pub fn getStaticNot(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
         return ExpectStatic.create(globalThis, .{ .not = true });
     }
 
-    pub fn getStaticResolvesTo(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) JSValue {
+    pub fn getStaticResolvesTo(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
         return ExpectStatic.create(globalThis, .{ .promise = .resolves });
     }
 
-    pub fn getStaticRejectsTo(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) JSValue {
+    pub fn getStaticRejectsTo(globalThis: *JSGlobalObject, _: JSValue, _: JSValue) bun.JSError!JSValue {
         return ExpectStatic.create(globalThis, .{ .promise = .rejects });
     }
 
@@ -4831,7 +4818,7 @@ pub const Expect = struct {
                 if (try result.get(globalThis, "pass")) |pass_value| {
                     pass = pass_value.toBoolean();
 
-                    if (result.fastGet(globalThis, .message)) |message_value| {
+                    if (try result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable()) {
                             break :valid false;
                         }
@@ -5026,10 +5013,8 @@ pub const ExpectStatic = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn create(globalThis: *JSGlobalObject, flags: Expect.Flags) JSValue {
-        var expect = globalThis.bunVM().allocator.create(ExpectStatic) catch {
-            return globalThis.throwOutOfMemoryValue();
-        };
+    pub fn create(globalThis: *JSGlobalObject, flags: Expect.Flags) bun.JSError!JSValue {
+        var expect = try globalThis.bunVM().allocator.create(ExpectStatic);
         expect.flags = flags;
 
         const value = expect.toJS(globalThis);
@@ -5037,27 +5022,27 @@ pub const ExpectStatic = struct {
         return value;
     }
 
-    pub fn getNot(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn getNot(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         var flags = this.flags;
         flags.not = !this.flags.not;
         return create(globalThis, flags);
     }
 
-    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalThis, flags, "resolvesTo") catch .zero;
+        if (flags.promise != .none) return asyncChainingError(globalThis, flags, "resolvesTo");
         flags.promise = .resolves;
         return create(globalThis, flags);
     }
 
-    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) JSValue {
+    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         var flags = this.flags;
-        if (flags.promise != .none) return asyncChainingError(globalThis, flags, "rejectsTo") catch .zero;
+        if (flags.promise != .none) return asyncChainingError(globalThis, flags, "rejectsTo");
         flags.promise = .rejects;
         return create(globalThis, flags);
     }
 
-    fn asyncChainingError(globalThis: *JSGlobalObject, flags: Expect.Flags, name: string) bun.JSError!JSValue {
+    fn asyncChainingError(globalThis: *JSGlobalObject, flags: Expect.Flags, name: string) bun.JSError {
         @branchHint(.cold);
         const str = switch (flags.promise) {
             .resolves => "resolvesTo",
@@ -5678,13 +5663,13 @@ pub const ExpectMatcherUtils = struct {
                 is_not = val.coerce(bool, globalThis);
             }
             if (try options.get(globalThis, "comment")) |val| {
-                comment = val.toStringOrNull(globalThis);
+                comment = try val.toJSString(globalThis);
             }
             if (try options.get(globalThis, "promise")) |val| {
-                promise = val.toStringOrNull(globalThis);
+                promise = try val.toJSString(globalThis);
             }
             if (try options.get(globalThis, "secondArgument")) |val| {
-                second_argument = val.toStringOrNull(globalThis);
+                second_argument = try val.toJSString(globalThis);
             }
         }
 

@@ -42,7 +42,6 @@ $ set FOO=helloworld && bun run dev
 $ $env:FOO="helloworld"; bun run dev
 ```
 
-{% /codetabs %}
----
+## {% /codetabs %}
 
 See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.

@@ -676,41 +676,37 @@ pub fn NewSource(
                 return .undefined;
             }
 
-            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
                     this.close_jsvalue.deinit();
-                    return true;
+                    return;
                 }
 
                 if (!value.isCallable()) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function") catch {};
-                    return false;
+                    return globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function");
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
                 this.close_jsvalue.set(globalObject, cb);
-                return true;
             }
 
-            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
+            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!void {
                 JSC.markBinding(@src());
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
                     js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
-                    return true;
+                    return;
                 }
 
                 if (!value.isCallable()) {
-                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function") catch {};
-                    return false;
+                    return globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function");
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
                 js.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
-                return true;
             }
 
             pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {

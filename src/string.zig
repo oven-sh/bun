@@ -849,6 +849,14 @@ pub const String = extern struct {
         return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
     }
 
+    pub fn createFormatForJS(globalObject: *JSC.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSC.JSValue {
+        JSC.markBinding(@src());
+        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        defer builder.deinit();
+        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        return BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
+    }
+
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
         JSC.markBinding(@src());
         return Bun__parseDate(globalObject, this);

@@ -1,7 +1,7 @@
-import { promises as fs, constants } from "node:fs";
-import path from "node:path";
-import { tmpdirSync } from "harness";
 import type { BunFile } from "bun";
+import { tmpdirSync } from "harness";
+import { constants, promises as fs } from "node:fs";
+import path from "node:path";
 
 // 0o644
 const default_mode = constants.S_IWUSR | constants.S_IRUSR | constants.S_IRGRP | constants.S_IROTH;

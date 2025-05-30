@@ -1,5 +1,5 @@
-import { describe, beforeAll, it, expect } from "bun:test";
 import type { BuildConfig } from "bun";
+import { beforeAll, describe, expect, it } from "bun:test";
 import type { CompileOptions } from "svelte/compiler";
 
 import { getBaseCompileOptions, validateOptions, type SvelteOptions } from "./options";

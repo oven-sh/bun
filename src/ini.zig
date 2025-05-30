@@ -875,7 +875,7 @@ pub fn loadNpmrcConfig(
     }
 
     for (npmrc_paths) |npmrc_path| {
-        const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        const source = bun.sys.File.toSource(npmrc_path, allocator, .{ .convert_bom = true }).unwrap() catch |err| {
             if (auto_loaded) continue;
             Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
             Global.crash();

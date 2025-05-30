@@ -1,18 +1,18 @@
 import { $, file, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
+import { chmodSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
   bunEnv as env,
   isWindows,
+  readdirSorted,
+  stderrForInstall,
   tempDirWithFiles,
   tmpdirSync,
-  stderrForInstall,
-  readdirSorted,
 } from "harness";
 import { join } from "path";
-import { chmodSync } from "fs";
 
 let run_dir: string;
 

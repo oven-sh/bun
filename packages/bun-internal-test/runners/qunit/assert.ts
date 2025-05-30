@@ -1,5 +1,5 @@
-import type { Assert } from "./qunit.d";
 import type { BunExpect } from "bun-test";
+import type { Assert } from "./qunit.d";
 
 export { $Assert as Assert };
 

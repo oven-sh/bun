@@ -116,7 +116,7 @@ using namespace Zig;
 // Return an error code if arg is null. Only use for input validation.
 #define NAPI_CHECK_ARG(_env, arg)                               \
     do {                                                        \
-        if (UNLIKELY((arg) == nullptr)) {                       \
+        if ((arg) == nullptr) [[unlikely]] {                    \
             return napi_set_last_error(_env, napi_invalid_arg); \
         }                                                       \
     } while (0)
@@ -587,7 +587,7 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    if (LIKELY(result)) {
+    if (result) [[likely]] {
         *result = deleteResult;
     }
     // we checked for an exception above
@@ -665,7 +665,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
     auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer));
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    if (LIKELY(data && jsArrayBuffer->impl())) {
+    if (data && jsArrayBuffer->impl()) [[likely]] {
         *data = jsArrayBuffer->impl()->data();
     }
     *result = toNapi(jsArrayBuffer, globalObject);
@@ -700,11 +700,11 @@ extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* 
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
 // because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                  \
-    size_t utf8Len = strlen(utf8Name);                                                                                           \
-    WTF::String nameString = LIKELY(WTF::charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8Name), utf8Len })) \
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                              \
-        : WTF::String::fromUTF8(utf8Name);                                                                                       \
+#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                          \
+    size_t utf8Len = strlen(utf8Name);                                                                                   \
+    WTF::String nameString = WTF::charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8Name), utf8Len }) \
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                      \
+        : WTF::String::fromUTF8(utf8Name);                                                                               \
     JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
@@ -1264,7 +1264,7 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
 
     NapiRef* napiRef = toJS(ref);
     napiRef->unref();
-    if (LIKELY(result)) {
+    if (result) [[likely]] {
         *result = napiRef->refCount;
     }
     NAPI_RETURN_SUCCESS(env);
@@ -1294,7 +1294,7 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
     napiRef->ref();
-    if (LIKELY(result)) {
+    if (result) [[likely]] {
         *result = napiRef->refCount;
     }
     NAPI_RETURN_SUCCESS(env);
@@ -1380,7 +1380,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
 
-    if (UNLIKELY(!result)) {
+    if (!result) [[unlikely]] {
         return napi_set_last_error(env, napi_invalid_arg);
     }
 
@@ -1710,7 +1710,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         napi = jsDynamicCast<NapiClass*>(constructorTarget);
     }
 
-    if (UNLIKELY(!napi)) {
+    if (!napi) [[unlikely]] {
         JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor called on an object that is not a NapiClass"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -2180,12 +2180,12 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
         return napi_set_last_error(env, napi_ok);
     }
 
-    if (UNLIKELY(bufsize == 0)) {
+    if (bufsize == 0) [[unlikely]] {
         if (writtenPtr) *writtenPtr = 0;
         return napi_set_last_error(env, napi_ok);
     }
 
-    if (UNLIKELY(bufsize == NAPI_AUTO_LENGTH)) {
+    if (bufsize == NAPI_AUTO_LENGTH) [[unlikely]] {
         if (writtenPtr) *writtenPtr = 0;
         buf[0] = '\0';
         return napi_set_last_error(env, napi_ok);
@@ -2295,7 +2295,7 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
     JSObject* jsObject = jsValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_object_expected);
 
-    if (LIKELY(result)) {
+    if (result) [[likely]] {
         *result = jsObject->methodTable()->deletePropertyByIndex(jsObject, toJS(env), index);
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
@@ -2724,7 +2724,7 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
         return napi_set_last_error(env, napi_pending_exception);
     }
 
-    if (UNLIKELY(!constructorObject->structure()->typeInfo().implementsHasInstance())) {
+    if (!constructorObject->structure()->typeInfo().implementsHasInstance()) [[unlikely]] {
         *result = false;
     } else {
         *result = constructorObject->hasInstance(globalObject, objectValue);
@@ -2810,7 +2810,7 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     if (found_tag && found_tag->matches(*type_tag)) {
         match = true;
     }
-    if (LIKELY(result)) {
+    if (result) [[likely]] {
         *result = match;
     }
     NAPI_RETURN_SUCCESS(env);
@@ -2915,7 +2915,7 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (LIKELY(function != nullptr) && !env->globalObject()->vm().hasTerminationRequest()) {
+    if (function != nullptr && !env->globalObject()->vm().hasTerminationRequest()) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 

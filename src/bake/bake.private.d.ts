@@ -24,9 +24,13 @@ interface Config {
    * the framework entry point, as well as every client component.
    */
   roots: FileIndex[];
+  /**
+   * If true, the client will receive console logs from the server.
+   */
+  console: boolean;
 }
 
-/** 
+/**
  * Set globally in debug builds.
  * Removed using --drop=ASSERT in releases.
  */
@@ -104,8 +108,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
 
 declare module "react-server-dom-bun/server.node.unbundled.js" {
   import type { ReactServerManifest } from "bun:bake/server";
-  import type { ReactElement, ReactElement } from "react";
-  import type { Writable } from "node:stream";
+  import type { ReactElement } from "react";
 
   export interface PipeableStream<T> {
     /** Returns the input, which should match the Node.js writable interface */
@@ -130,8 +133,8 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 }
 
 declare module "react-dom/server.node" {
-  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
   import type { ReactElement } from "react";
+  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 
   export type RenderToPipeableStreamOptions = any;
   export function renderToPipeableStream(

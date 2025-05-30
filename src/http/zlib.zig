@@ -1,8 +1,5 @@
-const Lock = bun.Mutex;
 const std = @import("std");
 const MutableString = bun.MutableString;
-const getAllocator = @import("../http.zig").getAllocator;
-const ZlibPool = @This();
 const Zlib = @import("../zlib.zig");
 const bun = @import("bun");
 

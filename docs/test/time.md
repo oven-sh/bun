@@ -84,10 +84,10 @@ import { test, expect, jest } from "bun:test";
 test("get the current mocked time", () => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
-  
+
   expect(Date.now()).toBe(1577836800000); // Jan 1, 2020 timestamp
   expect(jest.now()).toBe(1577836800000); // Same value
-  
+
   jest.useRealTimers();
 });
 ```

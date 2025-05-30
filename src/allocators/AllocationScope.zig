@@ -97,10 +97,12 @@ const vtable: Allocator.VTable = .{
 pub const trace_limits: bun.crash_handler.WriteStackTraceLimits = .{
     .frame_count = 6,
     .stop_at_jsc_llint = true,
+    .skip_stdlib = true,
 };
 pub const free_trace_limits: bun.crash_handler.WriteStackTraceLimits = .{
     .frame_count = 3,
     .stop_at_jsc_llint = true,
+    .skip_stdlib = true,
 };
 
 fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {

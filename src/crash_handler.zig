@@ -117,7 +117,7 @@ pub const Action = union(enum) {
     print: []const u8,
 
     /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
-    bundle_generate_chunk: if (bun.Environment.isDebug) struct {
+    bundle_generate_chunk: if (bun.Environment.show_crash_trace) struct {
         context: *const anyopaque, // unfortunate dependency loop workaround
         chunk: *const bun.bundle_v2.Chunk,
         part_range: *const bun.bundle_v2.PartRange,
@@ -127,7 +127,7 @@ pub const Action = union(enum) {
         }
     } else void,
 
-    resolver: if (bun.Environment.isDebug) struct {
+    resolver: if (bun.Environment.show_crash_trace) struct {
         source_dir: []const u8,
         import_path: []const u8,
         kind: bun.ImportKind,
@@ -140,7 +140,7 @@ pub const Action = union(enum) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
             .print => |path| try writer.print("printing {s}", .{path}),
-            .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
+            .bundle_generate_chunk => |data| if (bun.Environment.show_crash_trace) {
                 try writer.print(
                     \\generating bundler chunk
                     \\  chunk entry point: {?s}
@@ -159,7 +159,7 @@ pub const Action = union(enum) {
                     },
                 );
             },
-            .resolver => |res| if (bun.Environment.isDebug) {
+            .resolver => |res| if (bun.Environment.show_crash_trace) {
                 try writer.print("resolving {s} from {s} ({s})", .{
                     res.import_path,
                     res.source_dir,
@@ -217,7 +217,7 @@ pub fn crashHandler(
                 //
                 // To make the release-mode behavior easier to demo, debug mode
                 // checks for this CLI flag.
-                const debug_trace = bun.Environment.isDebug and check_flag: {
+                const debug_trace = bun.Environment.show_crash_trace and check_flag: {
                     for (bun.argv) |arg| {
                         if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                             break :check_flag false;
@@ -482,7 +482,7 @@ pub fn crashHandler(
 /// This is called when `main` returns a Zig error.
 /// We don't want to treat it as a crash under certain error codes.
 pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    var show_trace = bun.Environment.isDebug;
+    var show_trace = bun.Environment.show_crash_trace;
 
     switch (err) {
         error.OutOfMemory => bun.outOfMemory(),
@@ -722,7 +722,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         else => {
             Output.errGeneric(
-                if (bun.Environment.isDebug)
+                if (bun.Environment.show_crash_trace)
                     "'main' returned <red>error.{s}<r>"
                 else
                     "An internal error occurred (<red>{s}<r>)",
@@ -815,7 +815,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
 var did_register_sigaltstack = false;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
-pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
+fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
     if (act) |act_| {
         if (!did_register_sigaltstack) {
             var stack: std.c.stack_t = .{
@@ -840,6 +840,7 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 var windows_segfault_handle: ?windows.HANDLE = null;
 
 pub fn resetOnPosix() void {
+    if (bun.Environment.enable_asan) return;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
         .mask = std.posix.empty_sigset,
@@ -863,6 +864,7 @@ pub fn init() void {
 
 pub fn resetSegfaultHandler() void {
     if (!enable) return;
+    if (bun.Environment.enable_asan) return;
 
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
@@ -1370,6 +1372,9 @@ fn isReportingEnabled() bool {
     if (bun.Environment.isDebug)
         return false;
 
+    if (bun.Environment.enable_asan)
+        return false;
+
     // Honor DO_NOT_TRACK
     if (!bun.analytics.isEnabled())
         return false;
@@ -1589,13 +1594,14 @@ inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.
 pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }
+extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
     const stderr = std.io.getStdErr().writer();
-    if (!bun.Environment.isDebug) {
+    if (!bun.Environment.show_crash_trace) {
         // debug symbols aren't available, lets print a tracestring
         stderr.print("View Debug Trace: {}\n", .{TraceString{
             .action = .view_trace,
@@ -1621,6 +1627,8 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
             // TODO(@paperclover): see if zig 0.14 fixes this
+            WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+            return;
         },
         else => {
             // Assume debug symbol tooling is reliable.
@@ -1881,6 +1889,9 @@ pub const SourceAtAddress = struct {
 pub const WriteStackTraceLimits = struct {
     frame_count: usize = std.math.maxInt(usize),
     stop_at_jsc_llint: bool = false,
+    skip_stdlib: bool = false,
+    skip_file_patterns: []const []const u8 = &.{},
+    skip_function_patterns: []const []const u8 = &.{},
 };
 
 /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a
@@ -1919,6 +1930,25 @@ pub fn writeStackTrace(
             continue;
         };
 
+        if (limits.skip_stdlib) {
+            if (source.source_location) |sl| {
+                if (bun.strings.includes(sl.file_name, "lib/std")) {
+                    continue;
+                }
+            }
+        }
+        for (limits.skip_file_patterns) |pattern| {
+            if (source.source_location) |sl| {
+                if (bun.strings.includes(sl.file_name, pattern)) {
+                    continue;
+                }
+            }
+        }
+        for (limits.skip_function_patterns) |pattern| {
+            if (bun.strings.includes(source.symbol_name, pattern)) {
+                continue;
+            }
+        }
         if (limits.stop_at_jsc_llint and bun.strings.includes(source.symbol_name, "_llint_")) {
             break;
         }
@@ -2110,7 +2140,12 @@ fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, so
     };
     const before = line_without_newline[0..left];
     const highlight = line_without_newline[left..right];
-    const after = line_without_newline[right..];
+    var after_before_comment = line_without_newline[right..];
+    var comment: []const u8 = "";
+    if (bun.strings.indexOf(after_before_comment, "//")) |pos| {
+        comment = after_before_comment[pos..];
+        after_before_comment = after_before_comment[0..pos];
+    }
     try tty_config.setColor(out_stream, .red);
     try tty_config.setColor(out_stream, .dim);
     try out_stream.writeAll(before);
@@ -2118,7 +2153,12 @@ fn printLineFromFileAnyOs(out_stream: anytype, tty_config: std.io.tty.Config, so
     try tty_config.setColor(out_stream, .red);
     try out_stream.writeAll(highlight);
     try tty_config.setColor(out_stream, .dim);
-    try out_stream.writeAll(after);
+    try out_stream.writeAll(after_before_comment);
+    if (comment.len > 0) {
+        try tty_config.setColor(out_stream, .reset);
+        try tty_config.setColor(out_stream, .bright_cyan);
+        try out_stream.writeAll(comment);
+    }
     try tty_config.setColor(out_stream, .reset);
     try out_stream.writeByte('\n');
 }

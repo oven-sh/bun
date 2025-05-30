@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import fsPromises from "fs/promises";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
-import fsPromises from "fs/promises";
 
 test("delete() and stat() should work with unicode paths", async () => {
   const dir = tempDirWithFiles("delete-stat-unicode-path", {

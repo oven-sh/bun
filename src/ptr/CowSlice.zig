@@ -275,7 +275,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
 
 const cow_str_assertions = Environment.isDebug;
 const DebugData = if (cow_str_assertions) struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
     allocator: Allocator,
     /// number of active borrows
     borrows: usize = 0,

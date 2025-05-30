@@ -71,7 +71,7 @@ node_modules/evil/index.js:3:1 50
 Your application code can still import macros from `node_modules` and invoke them.
 
 ```ts
-import {macro} from "some-package" with { type: "macro" };
+import { macro } from "some-package" with { type: "macro" };
 
 macro();
 ```
@@ -95,8 +95,8 @@ When shipping a library containing a macro to `npm` or another package registry,
 With this configuration, users can consume your package at runtime or at bundle-time using the same import specifier:
 
 ```ts
-import pkg from "my-package";                            // runtime import
-import {macro} from "my-package" with { type: "macro" }; // macro import
+import pkg from "my-package"; // runtime import
+import { macro } from "my-package" with { type: "macro" }; // macro import
 ```
 
 The first import will resolve to `./node_modules/my-package/index.js`, while the second will be resolved by Bun's bundler to `./node_modules/my-package/index.macro.js`.
@@ -122,7 +122,7 @@ export function returnFalse() {
 ...then bundling the following file will produce an empty bundle, provided that the minify syntax option is enabled.
 
 ```ts
-import {returnFalse} from './returnFalse.ts' with { type: 'macro' };
+import { returnFalse } from "./returnFalse.ts" with { type: "macro" };
 
 if (returnFalse()) {
   console.log("This code is eliminated");
@@ -179,7 +179,7 @@ export function getText(url: string) {
 Macros can accept inputs, but only in limited cases. The value must be statically known. For example, the following is not allowed:
 
 ```ts
-import {getText} from './getText.ts' with { type: 'macro' };
+import { getText } from "./getText.ts" with { type: "macro" };
 
 export function howLong() {
   // the value of `foo` cannot be statically known
@@ -193,8 +193,8 @@ export function howLong() {
 However, if the value of `foo` is known at bundle-time (say, if it's a constant or the result of another macro) then it's allowed:
 
 ```ts
-import {getText} from './getText.ts' with { type: 'macro' };
-import {getFoo} from './getFoo.ts' with { type: 'macro' };
+import { getText } from "./getText.ts" with { type: "macro" };
+import { getFoo } from "./getFoo.ts" with { type: "macro" };
 
 export function howLong() {
   // this works because getFoo() is statically known
@@ -271,7 +271,9 @@ export async function extractMetaTags(url: string) {
     .on("meta", {
       element(element) {
         const name =
-          element.getAttribute("name") || element.getAttribute("property") || element.getAttribute("itemprop");
+          element.getAttribute("name") ||
+          element.getAttribute("property") ||
+          element.getAttribute("itemprop");
 
         if (name) meta[name] = element.getAttribute("content");
       },

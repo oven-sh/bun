@@ -69,7 +69,6 @@ The **`--no-clear-screen`** flag is useful in scenarios where you don’t want t
 
 {% /callout %}
 
-
 ## `--hot` mode
 
 Use `bun --hot` to enable hot reloading when executing code with Bun. This is distinct from `--watch` mode in that Bun does not hard-restart the entire process. Instead, it detects code changes and updates its internal module cache with the new code.

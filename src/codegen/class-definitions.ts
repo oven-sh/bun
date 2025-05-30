@@ -7,6 +7,8 @@ interface PropertyAttribute {
    * from the prototype hash table, instead setting it using `putDirect()`.
    */
   privateSymbol?: string;
+  publicSymbol?: string;
+  name?: string;
 }
 
 /**
@@ -202,7 +204,8 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number };
+  inspectCustom?: boolean;
 
   callbacks?: Record<string, string>;
 
@@ -245,10 +248,19 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
-    structuredClone = false,
+    structuredClone,
+    inspectCustom = false,
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): ClassDefinition {
+  if (inspectCustom) {
+    proto.inspectCustom = {
+      fn: "inspectCustom",
+      length: 2,
+      publicSymbol: "inspectCustom",
+      name: "[nodejs.util.inspect.custom]",
+    };
+  }
   return new ClassDefinition({
     ...rest,
     call,

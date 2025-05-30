@@ -1,14 +1,14 @@
-import { spawn, write, file } from "bun";
-import { expect, it, beforeAll, afterAll } from "bun:test";
-import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
-  VerdaccioRegistry,
+  readdirSorted,
   runBunInstall,
   toBeValidBin,
-  readdirSorted,
+  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
 

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
 
 // Helper function to generate test key pairs for various curves

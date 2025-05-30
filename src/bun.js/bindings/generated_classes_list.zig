@@ -81,9 +81,9 @@ pub const Classes = struct {
     pub const NodeHTTPResponse = api.NodeHTTPResponse;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
     pub const DNSResolver = api.DNS.DNSResolver;
-
     pub const S3Client = webcore.S3Client;
     pub const S3Stat = webcore.S3Stat;
     pub const HTMLBundle = api.HTMLBundle;
     pub const RedisClient = api.Valkey;
+    pub const BlockList = api.BlockList;
 };

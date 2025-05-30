@@ -98,33 +98,34 @@ pub const JSValue = enum(i64) {
         ModuleEnvironment = 55,
         StrictEvalActivation = 56,
         WithScope = 57,
-        ModuleNamespaceObject = 58,
-        ShadowRealm = 59,
-        RegExpObject = 60,
-        JSDate = 61,
-        ProxyObject = 62,
-        Generator = 63,
-        AsyncGenerator = 64,
-        JSArrayIterator = 65,
-        Iterator = 66,
-        IteratorHelper = 67,
-        MapIterator = 68,
-        SetIterator = 69,
-        StringIterator = 70,
-        WrapForValidIterator = 71,
-        RegExpStringIterator = 72,
-        AsyncFromSyncIterator = 73,
-        JSPromise = 74,
-        Map = 75,
-        Set = 76,
-        WeakMap = 77,
-        WeakSet = 78,
-        WebAssemblyModule = 79,
-        WebAssemblyInstance = 80,
-        WebAssemblyGCObject = 81,
-        StringObject = 82,
-        DerivedStringObject = 83,
-        InternalFieldTuple = 84,
+        DisposableStack = 58,
+        ModuleNamespaceObject = 59,
+        ShadowRealm = 60,
+        RegExpObject = 61,
+        JSDate = 62,
+        ProxyObject = 63,
+        Generator = 64,
+        AsyncGenerator = 65,
+        JSArrayIterator = 66,
+        Iterator = 67,
+        IteratorHelper = 68,
+        MapIterator = 69,
+        SetIterator = 70,
+        StringIterator = 71,
+        WrapForValidIterator = 72,
+        RegExpStringIterator = 73,
+        AsyncFromSyncIterator = 74,
+        JSPromise = 75,
+        Map = 76,
+        Set = 77,
+        WeakMap = 78,
+        WeakSet = 79,
+        WebAssemblyModule = 80,
+        WebAssemblyInstance = 81,
+        WebAssemblyGCObject = 82,
+        StringObject = 83,
+        DerivedStringObject = 84,
+        InternalFieldTuple = 85,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -845,7 +846,10 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
-    /// Protects a JSValue from garbage collection.
+    extern "c" fn Bun__JSValue__protect(value: JSValue) void;
+    extern "c" fn Bun__JSValue__unprotect(value: JSValue) void;
+
+    /// Protects a JSValue from garbage collection by storing it in a hash table that is strongly referenced and incrementing a reference count.
     ///
     /// This is useful when you want to store a JSValue in a global or on the
     /// heap, where the garbage collector will not be able to discover your
@@ -853,20 +857,24 @@ pub const JSValue = enum(i64) {
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn protect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__protect(this);
     }
 
-    /// Unprotects a JSValue from garbage collection.
+    /// Unprotects a JSValue from garbage collection by removing it from the hash table and decrementing a reference count.
     ///
     /// A value may be protected multiple times and must be unprotected an
     /// equal number of times before becoming eligible for garbage collection.
     ///
     /// This is the inverse of `protect`.
+    ///
+    /// Note: The isCell check is not done here because it's done in the
+    /// bindings.cpp file.
     pub fn unprotect(this: JSValue) void {
-        if (!this.isCell()) return;
-        JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
+        Bun__JSValue__unprotect(this);
     }
 
     extern fn JSC__JSValue__JSONValueFromString(
@@ -1446,10 +1454,6 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    pub fn toJSString(globalObject: *JSC.JSGlobalObject, slice_: []const u8) JSC.JSValue {
-        return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
-    }
-
     extern fn JSC__JSValue__asCell(this: JSValue) *JSCell;
     pub fn asCell(this: JSValue) *JSCell {
         // NOTE: asCell already asserts this, but since we're crossing an FFI
@@ -1574,8 +1578,8 @@ pub const JSValue = enum(i64) {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
-    // On exception, this returns the empty string.
     extern fn JSC__JSValue__toString(this: JSValue, globalThis: *JSGlobalObject) *JSString;
+    /// On exception, this returns the empty string.
     pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
         return JSC__JSValue__toString(this, globalThis);
     }
@@ -1584,10 +1588,11 @@ pub const JSValue = enum(i64) {
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
         return JSC__JSValue__jsonStringify(this, globalThis, indent, out);
     }
+
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
-    /// On exception, this returns null, to make exception checks clearer.
-    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
-        return JSC__JSValue__toStringOrNull(this, globalThis);
+    // Calls JSValue::toStringOrNull. Returns error on exception.
+    pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
+        return JSC__JSValue__toStringOrNull(this, globalThis) orelse return error.JSError;
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -1627,7 +1632,7 @@ pub const JSValue = enum(i64) {
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
+        var str = this.toJSString(globalThis) catch return null;
         return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
             globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
@@ -1668,6 +1673,7 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__eqlCell(this, other);
     }
 
+    /// This must match the enum in C++ in src/bun.js/bindings/bindings.cpp BuiltinNamesMap
     pub const BuiltinName = enum(u8) {
         method,
         headers,
@@ -1692,6 +1698,7 @@ pub const JSValue = enum(i64) {
         ignoreBOM,
         type,
         signal,
+        cmd,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
@@ -1703,7 +1710,7 @@ pub const JSValue = enum(i64) {
     };
 
     pub fn fastGetOrElse(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName, alternate: ?JSC.JSValue) ?JSValue {
-        return this.fastGet(global, builtin_name) orelse {
+        return (try this.fastGet(global, builtin_name)) orelse {
             if (alternate) |alt| return alt.fastGet(global, builtin_name);
 
             return null;
@@ -1712,24 +1719,13 @@ pub const JSValue = enum(i64) {
 
     // `this` must be known to be an object
     // intended to be more lightweight than ZigString.
-    pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
-        if (bun.Environment.isDebug)
-            bun.assert(this.isObject());
-
-        return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
-            .zero, .undefined, .property_does_not_exist_on_object => null,
-            else => |val| val,
-        };
-    }
-
-    pub fn fastGetWithError(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
+    pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
 
         return switch (JSC__JSValue__fastGet(this, global, @intFromEnum(builtin_name))) {
             .zero => error.JSError,
-            .undefined => null,
-            .property_does_not_exist_on_object => null,
+            .undefined, .property_does_not_exist_on_object => null,
             else => |val| val,
         };
     }
@@ -1835,7 +1831,7 @@ pub const JSValue = enum(i64) {
         // This call requires `get` to be `inline`
         if (bun.isComptimeKnown(property_slice)) {
             if (comptime BuiltinName.get(property_slice)) |builtin_name| {
-                return target.fastGetWithError(global, builtin_name);
+                return target.fastGet(global, builtin_name);
             }
         }
 
@@ -1877,11 +1873,11 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    /// Safe to use on any JSValue
-    pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
+    /// Safe to use on any JSValue, can error.
+    pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bun.JSError!bool {
         if (!this.isObject())
             return false;
-        const function = this.fastGet(global, BuiltinName.toString) orelse
+        const function = (try this.fastGet(global, BuiltinName.toString)) orelse
             return false;
         return function.isCell() and function.isCallable();
     }
@@ -1921,7 +1917,7 @@ pub const JSValue = enum(i64) {
     // TODO: replace calls to this function with `getOptional`
     pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) bun.JSError!?JSValue {
         if (comptime BuiltinName.has(property)) {
-            return truthyPropertyValue(fastGet(this, global, @field(BuiltinName, property)) orelse return null);
+            return truthyPropertyValue(try fastGet(this, global, @field(BuiltinName, property)) orelse return null);
         }
 
         return getTruthy(this, global, property);
@@ -2010,7 +2006,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) JSError!?Enum {
         if (comptime BuiltinName.has(property_name)) {
-            if (fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+            if (try fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
                 if (prop.isEmptyOrUndefinedOrNull())
                     return null;
                 return try toEnum(prop, globalThis, property_name, Enum);
@@ -2783,10 +2779,7 @@ const JSC = bun.JSC;
 
 const MutableString = bun.MutableString;
 const String = bun.String;
-const strings = bun.strings;
-const ErrorableString = JSC.ErrorableString;
 const JSError = bun.JSError;
-const napi = @import("../../napi/napi.zig");
 
 const ZigString = JSC.ZigString;
 const VM = JSC.VM;
@@ -2795,7 +2788,6 @@ const JSPromise = JSC.JSPromise;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSObject = JSC.JSObject;
-const JSMap = JSC.JSMap;
 const JSArrayIterator = JSC.JSArrayIterator;
 const JSFunction = JSC.JSFunction;
 const JSCell = JSC.JSCell;
@@ -2807,7 +2799,6 @@ const JSInternalPromise = JSC.JSInternalPromise;
 const ZigException = JSC.ZigException;
 const ArrayBuffer = JSC.ArrayBuffer;
 const toJSHostFunction = JSC.toJSHostFn;
-const JSHostFunctionType = JSC.JSHostFn;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 const FetchHeaders = bun.webcore.FetchHeaders;

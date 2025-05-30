@@ -3143,8 +3143,20 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::Process>::Initializer& init) {
             auto* globalObject = defaultGlobalObject(init.owner);
 
+            // Create an EventEmitter instance to serve as the prototype of the
+            // process object. The prototype itself should be an instance of
+            // EventEmitter, matching Node.js behaviour.
+            auto emitter = WebCore::EventEmitter::create(*globalObject->scriptExecutionContext());
+            auto* protoStructure = WebCore::JSEventEmitter::createStructure(
+                init.vm,
+                init.owner,
+                WebCore::JSEventEmitter::prototype(init.vm, *globalObject));
+            protoStructure->setMayBePrototype(true);
+            auto* prototype = WebCore::JSEventEmitter::create(protoStructure, *globalObject, WTFMove(emitter));
+
             auto* process = Bun::Process::create(
-                *globalObject, Bun::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
+                *globalObject,
+                Bun::Process::createStructure(init.vm, init.owner, prototype));
 
             init.set(process);
         });

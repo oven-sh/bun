@@ -13,8 +13,8 @@ server.on('stream', (stream) => {
   stream.end('ok');
 });
 
-server.listen(0, common.mustCall(() => {
-  const client = h2.connect(`http://localhost:${server.address().port}`);
+server.listen(0, "127.0.0.1", common.mustCall(() => {
+  const client = h2.connect(`http://127.0.0.1:${server.address().port}`);
   const req = client.request();
   const closeCode = 1;
 

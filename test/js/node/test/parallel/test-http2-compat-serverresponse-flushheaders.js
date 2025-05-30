@@ -11,7 +11,7 @@ const h2 = require('http2');
 let serverResponse;
 
 const server = h2.createServer();
-server.listen(0, common.mustCall(function() {
+server.listen(0, "127.0.0.1", common.mustCall(function() {
   const port = server.address().port;
   server.once('request', common.mustCall(function(request, response) {
     assert.strictEqual(response.headersSent, false);
@@ -36,7 +36,7 @@ server.listen(0, common.mustCall(function() {
     serverResponse = response;
   }));
 
-  const url = `http://localhost:${port}`;
+  const url = `http://127.0.0.1:${port}`;
   const client = h2.connect(url, common.mustCall(function() {
     const headers = {
       ':path': '/',

@@ -245,11 +245,12 @@ void MessagePort::close()
 }
 
 // at MOST 1000 messages per event loop tick so we dont starve the event loop
-void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback) {
+void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback)
+{
     constexpr size_t maxMessagesPerTick = 1000;
     size_t messageCount = messages.size();
     size_t i = 0;
-    auto &vm = context.vm();
+    auto& vm = context.vm();
 
     for (; i < messageCount && i < maxMessagesPerTick; ++i) {
         auto& message = messages[i];
@@ -262,13 +263,13 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
         auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
         dispatchEvent(event.event);
 
-        if (scope.exception())  [[unlikely]] {
+        if (scope.exception()) [[unlikely]] {
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
             scope.clearExceptionExceptTermination();
         }
 
         // if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
-            globalObject->drainMicrotasks();
+        globalObject->drainMicrotasks();
         // }
     }
 
@@ -282,15 +283,15 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
         context.postImmediateCppTask(
             [protectedThis = Ref { *this }, remaining = WTFMove(remainingMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
                 protectedThis->processMessageBatch(ctx, WTFMove(remaining), WTFMove(completionCallback));
-            }
-        );
+            });
     } else {
         completionCallback();
     }
 }
 
 // In the original dispatchMessages function, replace the nested message processing logic with a call to the helper function
-void MessagePort::dispatchMessages() {
+void MessagePort::dispatchMessages()
+{
     // Messages for contexts that are not fully active get dispatched too, but JSAbstractEventListener::handleEvent() doesn't call handlers for these.
     // The HTML5 spec specifies that any messages sent to a document that is not fully active should be dropped, so this behavior is OK.
     ASSERT(started());

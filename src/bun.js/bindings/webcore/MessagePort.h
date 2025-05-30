@@ -144,7 +144,7 @@ private:
     MessagePortIdentifier m_remoteIdentifier;
 
     mutable std::atomic<unsigned> m_refCount { 1 };
-    void processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback);
+    void processMessages(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback);
 
     bool m_hasRef { false };
     uint32_t m_messageEventCount { 0 };

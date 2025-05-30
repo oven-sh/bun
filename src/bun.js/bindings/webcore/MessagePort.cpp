@@ -254,24 +254,26 @@ void MessagePort::close()
     removeAllEventListeners();
 }
 
-// at MOST 1000 messages per event loop tick so we dont starve the event loop
-void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback)
+void MessagePort::processMessages(ScriptExecutionContext& context, Vector<MessageWithMessagePorts>&& messages, Function<void()>&& completionCallback)
 {
-    constexpr size_t maxMessagesPerTick = 1000;
-    size_t messageCount = messages.size();
-    size_t i = 0;
     auto& vm = context.vm();
-
     auto* globalObject = defaultGlobalObject(context.globalObject());
+    
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running) {
         completionCallback();
         return;
     }
 
-    for (; i < messageCount && i < maxMessagesPerTick; ++i) {
+    Vector<MessageWithMessagePorts> deferredMessages;
+    
+    for (auto&& message : messages) {
+        if (!context.canSendMessage()) {
+            deferredMessages.append(WTFMove(message));
+            continue;
+        }
+        
         auto scope = DECLARE_CATCH_SCOPE(vm);
-
-        auto& message = messages[i];
+        
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
         auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
         dispatchEvent(event.event);
@@ -286,23 +288,17 @@ void MessagePort::processMessageBatch(ScriptExecutionContext& context, Vector<Me
         }
     }
 
-    if (messageCount > maxMessagesPerTick) {
-        Vector<MessageWithMessagePorts> remainingMessages;
-        remainingMessages.reserveInitialCapacity(messageCount - maxMessagesPerTick);
-        for (; i < messageCount; ++i) {
-            remainingMessages.append(WTFMove(messages[i]));
-        }
-
+    if (!deferredMessages.isEmpty()) {
+        // remaining messages should happen on da next tick
         context.postImmediateCppTask(
-            [protectedThis = Ref { *this }, remaining = WTFMove(remainingMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
-                protectedThis->processMessageBatch(ctx, WTFMove(remaining), WTFMove(completionCallback));
+            [protectedThis = Ref { *this }, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
+                protectedThis->processMessages(ctx, WTFMove(deferred), WTFMove(completionCallback));
             });
     } else {
         completionCallback();
     }
 }
 
-// In the original dispatchMessages function, replace the nested message processing logic with a call to the helper function
 void MessagePort::dispatchMessages()
 {
     // Messages for contexts that are not fully active get dispatched too, but JSAbstractEventListener::handleEvent() doesn't call handlers for these.
@@ -321,9 +317,7 @@ void MessagePort::dispatchMessages()
         }
 
         ASSERT(context->isContextThread());
-        auto* globalObject = defaultGlobalObject(context->globalObject());
-        Ref vm = globalObject->vm();
-        processMessageBatch(*context, WTFMove(messages), WTFMove(completionCallback));
+        processMessages(*context, WTFMove(messages), WTFMove(completionCallback));
     };
 
     MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));

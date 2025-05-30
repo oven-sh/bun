@@ -40,7 +40,7 @@ static StringView extractCookieName(const StringView& cookie)
 {
     auto nameEnd = cookie.find('=');
     if (nameEnd == notFound)
-        return String();
+        return emptyString();
     return cookie.substring(0, nameEnd);
 }
 
@@ -240,7 +240,7 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
         unsigned count = m_setCookieHeaders.size();
         switch (count) {
         case 0:
-            return String();
+            return emptyString();
         case 1:
             return m_setCookieHeaders[0];
         default: {
@@ -281,7 +281,7 @@ HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(const String& name) const
 String HTTPHeaderMap::getIndex(HTTPHeaderMap::HeaderIndex index) const
 {
     if (index.index == notFound)
-        return String();
+        return emptyString();
     if (index.isCommon)
         return m_commonHeaders[index.index].value;
     return m_uncommonHeaders[index.index].value;

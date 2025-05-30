@@ -328,7 +328,7 @@ int HTTPParser::onMessageBegin()
         connections->pushActive(globalObject, thisParser);
     }
 
-    JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::fromString(vm, "kOnMessageBegin"_s));
+    JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageBegin));
     RETURN_IF_EXCEPTION(scope, 0);
     if (onMessageBeginCallback.isCallable()) {
         CallData callData = getCallData(onMessageBeginCallback);
@@ -525,7 +525,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::fromString(vm, "kOnBody"_s));
+    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
     RETURN_IF_EXCEPTION(scope, 0);
     if (!onBodyCallback.isCallable()) {
         return 0;
@@ -573,7 +573,7 @@ int HTTPParser::onMessageComplete()
         RETURN_IF_EXCEPTION(scope, 0);
     }
 
-    JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::fromString(vm, "kOnMessageComplete"_s));
+    JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageComplete));
     RETURN_IF_EXCEPTION(scope, 0);
 
     if (!onMessageCompleteCallback.isCallable()) {
@@ -622,7 +622,7 @@ void HTTPParser::flush()
 
     JSHTTPParser* thisParser = m_thisParser;
 
-    JSValue onHeadersCallback = thisParser->get(globalObject, Identifier::fromString(vm, "kOnHeaders"_s));
+    JSValue onHeadersCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeaders));
     RETURN_IF_EXCEPTION(scope, );
 
     if (!onHeadersCallback.isCallable()) {

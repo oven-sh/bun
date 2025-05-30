@@ -4228,6 +4228,7 @@ pub const H2FrameParser = struct {
         this.detachNativeSocket();
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
+            defer _ = this.flush();
             if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tls = socket };
             } else {
@@ -4239,6 +4240,7 @@ pub const H2FrameParser = struct {
             this.has_nonnative_backpressure = false;
         } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
             log("TCPSocket attached", .{});
+            defer _ = this.flush();
 
             if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tcp = socket };
@@ -4259,9 +4261,11 @@ pub const H2FrameParser = struct {
 
         switch (native_socket) {
             inline .tcp, .tls => |socket| {
+                socket.poll_ref.unref(this.globalThis.bunVM());
                 socket.detachNativeCallback();
             },
             inline .tcp_writeonly, .tls_writeonly => |socket| {
+                socket.poll_ref.unref(this.globalThis.bunVM());
                 socket.deref();
             },
             .none => {},
@@ -4335,6 +4339,7 @@ pub const H2FrameParser = struct {
         if (try options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
                 log("TLSSocket attached", .{});
+                defer _ = this.flush();
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tls = socket };
                 } else {
@@ -4344,6 +4349,7 @@ pub const H2FrameParser = struct {
                 }
             } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
                 log("TCPSocket attached", .{});
+                defer _ = this.flush();
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tcp = socket };
                 } else {

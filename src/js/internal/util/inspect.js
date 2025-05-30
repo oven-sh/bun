@@ -362,6 +362,22 @@ function isURL(value) {
   return typeof value.href === "string" && value instanceof URL;
 }
 
+function isURLSearchParams(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    value[Symbol.toStringTag] === "URLSearchParams"
+  );
+}
+
+function isURLSearchParamsIterator(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    value[Symbol.toStringTag] === "URLSearchParams Iterator"
+  );
+}
+
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
     ObjectGetOwnPropertyNames(globalThis),
@@ -1300,6 +1316,13 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
           : FunctionPrototypeBind(formatMap, null, MapPrototypeEntries(value));
       if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
       braces = [`${prefix}{`, "}"];
+    } else if (isURLSearchParams(value)) {
+      const size = value.size;
+      const prefix = getPrefix(constructor, tag, "URLSearchParams");
+      keys = getKeys(value, ctx.showHidden);
+      formatter = FunctionPrototypeBind(formatMap, null, value);
+      if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
+      braces = [`${prefix}{`, "}"];
     } else if (isTypedArray(value)) {
       keys = getOwnNonIndexProperties(value, filter);
       let bound = value;
@@ -1327,6 +1350,10 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       braces = getIteratorBraces("Set", tag);
       // Add braces to the formatter parameters.
       formatter = FunctionPrototypeBind(formatIterator, null, braces);
+    } else if (isURLSearchParamsIterator(value)) {
+      keys = getKeys(value, ctx.showHidden);
+      braces = getIteratorBraces("URLSearchParams", tag);
+      formatter = FunctionPrototypeBind(formatURLSearchParamsIterator, null, braces);
     } else {
       noIterator = true;
     }
@@ -2277,6 +2304,15 @@ function formatIterator(braces, ctx, value, recurseTimes) {
   }
 
   return formatSetIterInner(ctx, recurseTimes, entries, kIterator);
+}
+
+function formatURLSearchParamsIterator(braces, ctx, value, recurseTimes) {
+  const entries = [];
+  for (const item of value) {
+    entries.push(item[0], item[1]);
+  }
+  braces[0] = RegExpPrototypeSymbolReplace(/ Iterator] {$/, braces[0], " Entries] {");
+  return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);
 }
 
 function formatPromise(ctx, value, recurseTimes) {

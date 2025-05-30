@@ -52,7 +52,6 @@ src/js/internal/debugger.ts
 src/js/internal/errors.ts
 src/js/internal/fifo.ts
 src/js/internal/fixed_queue.ts
-src/js/internal/freelist.ts
 src/js/internal/fs/cp-sync.ts
 src/js/internal/fs/cp.ts
 src/js/internal/fs/glob.ts

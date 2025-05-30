@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 const { HTTPParser, ConnectionsList } = process.binding("http_parser");
 
 describe("HTTPParser.prototype.close", () => {

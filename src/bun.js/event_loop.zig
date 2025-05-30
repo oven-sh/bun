@@ -823,6 +823,9 @@ pub const EventLoop = struct {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
+    /// We also have immediate_cpp_tasks and next_immediate_cpp_tasks which are basically
+    /// exactly the same thing, except these just come from c++ code. The behaviour and theory
+    /// for executing them is the same. You can call "Bun__queueImmediateCppTask" to queue a task from cpp
     immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
     immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
     next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
@@ -1429,16 +1432,21 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        const global = virtual_machine.global;
-
-        var to_run_now_cpp = this.immediate_cpp_tasks;
         var to_run_now = this.immediate_tasks;
+        var to_run_now_cpp = this.immediate_cpp_tasks;
+
+        this.immediate_tasks = this.next_immediate_tasks;
+        this.next_immediate_tasks = .{};
 
         this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
         this.next_immediate_cpp_tasks = .{};
 
-        this.immediate_tasks = this.next_immediate_tasks;
-        this.next_immediate_tasks = .{};
+        log("running cpp tasks", .{});
+
+        for (to_run_now_cpp.items) |task| {
+            log("running cpp task", .{});
+            task.run(virtual_machine.global);
+        }
 
         var exception_thrown = false;
         for (to_run_now.items) |task| {
@@ -1448,10 +1456,6 @@ pub const EventLoop = struct {
         // make sure microtasks are drained if the last task had an exception
         if (exception_thrown) {
             this.maybeDrainMicrotasks();
-        }
-
-        for (to_run_now_cpp.items) |task| {
-            task.run(global);
         }
 
         if (this.next_immediate_cpp_tasks.capacity > 0) {

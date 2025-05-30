@@ -14,6 +14,7 @@ const server = h2.createServer();
 server.listen(0, "127.0.0.1", common.mustCall(function() {
   const port = server.address().port;
   server.once('request', common.mustCall(function(request, response) {
+    serverResponse = response;
     assert.strictEqual(response.headersSent, false);
     assert.strictEqual(response._header, false); // Alias for headersSent
     response.flushHeaders();
@@ -33,7 +34,6 @@ server.listen(0, "127.0.0.1", common.mustCall(function() {
         response.flushHeaders(); // Idempotent
       });
     }));
-    serverResponse = response;
   }));
 
   const url = `http://127.0.0.1:${port}`;

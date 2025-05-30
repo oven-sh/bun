@@ -2565,9 +2565,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
         }
         username = pp->pw_name;
     } else {
-        JSString* str = user.getString(globalObject);
+        auto userString = user.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto utf8 = str->utf8();
+        auto utf8 = userString.utf8();
         username = utf8.data();
     }
 

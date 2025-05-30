@@ -202,6 +202,8 @@ var InternalSecureContext = class SecureContext {
   passphrase;
   servername;
   secureOptions;
+  minVersion;
+  maxVersion;
 
   constructor(options) {
     const context = {};
@@ -243,6 +245,9 @@ var InternalSecureContext = class SecureContext {
       }
 
       this.secureOptions = secureOptions;
+
+      if (options.minVersion !== undefined) this.minVersion = options.minVersion;
+      if (options.maxVersion !== undefined) this.maxVersion = options.maxVersion;
 
       if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
         if ($isUndefinedOrNull(options.privateKeyEngine)) {
@@ -310,6 +315,8 @@ function TLSSocket(socket?, options?) {
   const isNetSocketOrDuplex = socket instanceof Duplex;
 
   options = isNetSocketOrDuplex ? { ...options, allowHalfOpen: false } : options || socket || {};
+
+  applySecureProtocol(options);
 
   NetSocket.$call(this, options);
 
@@ -508,6 +515,8 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
+  this.minVersion = undefined;
+  this.maxVersion = undefined;
   this._rejectUnauthorized = rejectUnauthorizedDefault;
   this._requestCert = undefined;
   this.servername = undefined;
@@ -535,6 +544,7 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      applySecureProtocol(options);
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
@@ -577,6 +587,9 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
+      if (options.minVersion !== undefined) this.minVersion = options.minVersion;
+      if (options.maxVersion !== undefined) this.maxVersion = options.maxVersion;
+
       const requestCert = options.requestCert || false;
 
       if (requestCert) this._requestCert = requestCert;
@@ -617,6 +630,8 @@ function Server(options, secureConnectionListener): void {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
+        minVersion: this.minVersion,
+        maxVersion: this.maxVersion,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
@@ -639,6 +654,32 @@ const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
+
+function applySecureProtocol(opts) {
+  const proto = opts && opts.secureProtocol;
+  if (typeof proto !== "string") return;
+  switch (proto) {
+    case "TLSv1_method":
+      opts.minVersion = "TLSv1";
+      opts.maxVersion = "TLSv1";
+      break;
+    case "TLSv1_1_method":
+      opts.minVersion = "TLSv1.1";
+      opts.maxVersion = "TLSv1.1";
+      break;
+    case "TLSv1_2_method":
+      opts.minVersion = "TLSv1.2";
+      opts.maxVersion = "TLSv1.2";
+      break;
+    case "TLSv1_3_method":
+      opts.minVersion = "TLSv1.3";
+      opts.maxVersion = "TLSv1.3";
+      break;
+    default:
+      // TLS_method or unknown methods fall back to defaults
+      break;
+  }
+}
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

@@ -233,6 +233,8 @@ struct us_bun_socket_context_options_t {
     const char **ca;
     unsigned int ca_count;
     unsigned int secure_options;
+    unsigned int min_version;
+    unsigned int max_version;
     int reject_unauthorized;
     int request_cert;
     unsigned int client_renegotiation_limit;

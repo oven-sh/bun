@@ -74,6 +74,8 @@ namespace uWS {
         const char **ca = nullptr;
         unsigned int ca_count = 0;
         unsigned int secure_options = 0;
+        unsigned int min_version = 0;
+        unsigned int max_version = 0;
         int reject_unauthorized = 0;
         int request_cert = 0;
         unsigned int client_renegotiation_limit = 3;

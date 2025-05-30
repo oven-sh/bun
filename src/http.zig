@@ -690,6 +690,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
+                .min_version = 0,
+                .max_version = 0,
             };
 
             try this.initWithOpts(&opts);
@@ -702,6 +704,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
+                    .min_version = 0,
+                    .max_version = 0,
                 };
                 var err: uws.create_bun_socket_error_t = .none;
                 this.us_socket_context = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;

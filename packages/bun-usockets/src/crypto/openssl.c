@@ -770,8 +770,15 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  if (options.min_version) {
+    SSL_CTX_set_min_proto_version(ssl_context, options.min_version);
+  } else {
+    /* Anything below TLS 1.2 is disabled */
+    SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  }
+  if (options.max_version) {
+    SSL_CTX_set_max_proto_version(ssl_context, options.max_version);
+  }
 
   /* The following are helpers. You may easily implement whatever you want by
    * using the native handle directly */
@@ -1146,8 +1153,14 @@ SSL_CTX *create_ssl_context_from_bun_options(
    * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-  /* Anything below TLS 1.2 is disabled */
-  SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  if (options.min_version) {
+    SSL_CTX_set_min_proto_version(ssl_context, options.min_version);
+  } else {
+    SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  }
+  if (options.max_version) {
+    SSL_CTX_set_max_proto_version(ssl_context, options.max_version);
+  }
 
   /* The following are helpers. You may easily implement whatever you want by
    * using the native handle directly */

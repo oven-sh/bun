@@ -41,6 +41,14 @@ const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
 const BoringSSL = bun.BoringSSL.c;
 const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
+
+fn parseTLSVersion(str: []const u8) ?u16 {
+    if (strings.eqlComptime(str, "TLSv1")) return BoringSSL.TLS1_VERSION;
+    if (strings.eqlComptime(str, "TLSv1.1")) return BoringSSL.TLS1_1_VERSION;
+    if (strings.eqlComptime(str, "TLSv1.2")) return BoringSSL.TLS1_2_VERSION;
+    if (strings.eqlComptime(str, "TLSv1.3")) return BoringSSL.TLS1_3_VERSION;
+    return null;
+}
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
     socket_fd: bun.FileDescriptor = bun.invalid_fd,
@@ -661,6 +669,8 @@ pub const ServerConfig = struct {
         ca_count: u32 = 0,
 
         secure_options: u32 = 0,
+        min_version: u16 = 0,
+        max_version: u16 = 0,
         request_cert: i32 = 0,
         reject_unauthorized: i32 = 0,
         ssl_ciphers: ?[*:0]const u8 = null,
@@ -704,6 +714,8 @@ pub const ServerConfig = struct {
             }
             ctx_opts.request_cert = this.request_cert;
             ctx_opts.reject_unauthorized = this.reject_unauthorized;
+            ctx_opts.min_version = this.min_version;
+            ctx_opts.max_version = this.max_version;
 
             return ctx_opts;
         }
@@ -1174,6 +1186,22 @@ pub const ServerConfig = struct {
                 if (try obj.getTruthy(global, "secureOptions")) |secure_options| {
                     if (secure_options.isNumber()) {
                         result.secure_options = secure_options.toU32();
+                    }
+                }
+
+                if (try obj.getStringish(global, "minVersion")) |minv| {
+                    var slice = try minv.toSlice(global, bun.default_allocator);
+                    defer slice.deinit();
+                    if (parseTLSVersion(slice.slice())) |ver| {
+                        result.min_version = ver;
+                    }
+                }
+
+                if (try obj.getStringish(global, "maxVersion")) |maxv| {
+                    var slice = try maxv.toSlice(global, bun.default_allocator);
+                    defer slice.deinit();
+                    if (parseTLSVersion(slice.slice())) |ver| {
+                        result.max_version = ver;
                     }
                 }
 

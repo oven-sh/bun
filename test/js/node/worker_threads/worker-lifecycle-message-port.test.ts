@@ -7,7 +7,14 @@ interface StartupMessage {
   port: MessagePort;
 }
 
-if (isMainThread) {
+if (parentPort) {
+  parentPort.on("message", (message: StartupMessage) => {
+    console.log("Worker received startup message");
+
+    message.port.postMessage("hello");
+    message.port.close();
+  });
+} else {
   test("worker lifecycle message port", async () => {
     const worker = new Worker(fileURLToPath(import.meta.url));
 
@@ -38,12 +45,5 @@ if (isMainThread) {
     });
 
     assert.equal(await promise, "hello");
-  });
-} else {
-  parentPort!.on("message", (message: StartupMessage) => {
-    console.log("Worker received startup message");
-
-    message.port.postMessage("hello");
-    message.port.close();
   });
 }

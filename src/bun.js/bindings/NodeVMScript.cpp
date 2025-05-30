@@ -9,6 +9,7 @@
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
+#include "NodeVMScriptFetcher.h"
 #include "../vm/SigintWatcher.h"
 
 #include <bit>
@@ -62,7 +63,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (importModuleDynamicallyValue && importModuleDynamicallyValue.isCallable()) {
+        if (importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
             this->importer = importModuleDynamicallyValue;
             any = true;
         }
@@ -106,7 +107,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer));
+
+    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
 
     const bool produceCachedData = options.produceCachedData;
@@ -527,8 +530,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     VM& vm = JSC::getVM(globalObject);
     NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
-    // TODO: options
-    // JSValue optionsObjectValue = callFrame->argument(1);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!script) {
@@ -536,24 +537,35 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    if (contextObjectValue.isUndefined()) {
-        contextObjectValue = JSC::constructEmptyObject(globalObject);
-    }
+    bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
 
     if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
 
-    // we don't care about options for now
-    // TODO: options
-    // bool didThrow = false;
+    JSValue contextOptionsArg = callFrame->argument(1);
+    NodeVMContextOptions contextOptions {};
 
-    auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration")) {
+        return *encodedException;
+    }
+
+    contextOptions.notContextified = notContextified;
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobal->NodeVMGlobalObjectStructure(),
-        {});
+        zigGlobalObject->NodeVMGlobalObjectStructure(),
+        contextOptions);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        RETURN_IF_EXCEPTION(scope, {});
+        targetContext->setSpecialSandbox(specialSandbox);
+        return runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1));
+    }
 
     return runInContext(targetContext, script, context, callFrame->argument(1));
 }

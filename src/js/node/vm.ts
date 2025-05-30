@@ -88,7 +88,7 @@ function measureMemory() {
 }
 
 function validateContext(contextifiedObject) {
-  if (!isContext(contextifiedObject) && contextifiedObject !== constants.DONT_CONTEXTIFY) {
+  if (contextifiedObject !== constants.DONT_CONTEXTIFY && !isContext(contextifiedObject)) {
     const error = new Error('The "contextifiedObject" argument must be an vm.Context');
     error.code = "ERR_INVALID_ARG_TYPE";
     error.name = "TypeError";
@@ -442,8 +442,8 @@ class SyntheticModule extends Module {
 
 const constants = {
   __proto__: null,
-  USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol("vm_dynamic_import_main_context_default"),
-  DONT_CONTEXTIFY: Symbol("vm_context_no_contextify"),
+  USE_MAIN_CONTEXT_DEFAULT_LOADER: 42,
+  DONT_CONTEXTIFY: 64,
 };
 
 function isModule(object) {

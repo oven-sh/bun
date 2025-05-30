@@ -558,6 +558,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             return true;
         },
         .throw => {
+            if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;
             // continue to default handler

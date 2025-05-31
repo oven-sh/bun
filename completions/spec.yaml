@@ -137,6 +137,30 @@ subcommands:
         enum: ["clonefile", "copyfile", "hardlink", "clonefile_each_dir"]
       - name: link-native-bins
         summary: 'Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo'
+      - name: ca
+        type: string
+        summary: "Provide a Certificate Authority signing certificate"
+      - name: cafile
+        type: string
+        summary: "The same as --ca, but is a file path to the certificate"
+      - name: network-concurrency
+        type: int
+        summary: "Maximum number of concurrent network requests"
+      - name: save-text-lockfile
+        type: boolean
+        summary: "Save a text-based lockfile"
+      - name: omit
+        type: string
+        summary: "Exclude dev, optional, or peer dependencies from install"
+      - name: lockfile-only
+        type: boolean
+        summary: "Generate a lockfile without installing dependencies"
+      - name: trust
+        type: boolean
+        summary: "Add to trustedDependencies in the project's package.json and install the package(s)"
+      - name: concurrent-scripts
+        type: int
+        summary: "Maximum number of concurrent jobs for lifecycle scripts (default 5)"
   add:
     summary: Add a dependency to package.json
     options:
@@ -215,6 +239,107 @@ subcommands:
         multiple: true
         type: string
         required: true
+
+  test:
+    summary: Run unit tests with Bun
+    options:
+      - name: timeout
+        type: int
+        summary: "Set the per-test timeout in milliseconds, default is 5000."
+      - name: update-snapshots
+        type: boolean
+        summary: "Update snapshot files"
+      - name: rerun-each
+        type: int
+        summary: "Re-run each test file <NUMBER> times, helps catch certain bugs"
+      - name: only
+        type: boolean
+        summary: "Only run tests that are marked with 'test.only()'"
+      - name: todo
+        type: boolean
+        summary: "Include tests that are marked with 'test.todo()'"
+      - name: coverage
+        type: boolean
+        summary: "Generate a coverage profile"
+      - name: coverage-reporter
+        type: string
+        summary: "Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."
+      - name: coverage-dir
+        type: string
+        summary: "Directory for coverage files. Defaults to 'coverage'."
+      - name: bail
+        type: int
+        summary: "Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+      - name: test-name-pattern
+        type: string
+        summary: "Run only tests with a name that matches the given regex."
+
+  build:
+    summary: Build and bundle files with Bun
+    options:
+      - name: minify
+        type: boolean
+        summary: "Enable all minification flags"
+      - name: minify-syntax
+        type: boolean
+        summary: "Minify syntax and inline data"
+      - name: minify-whitespace
+        type: boolean
+        summary: "Minify whitespace"
+      - name: minify-identifiers
+        type: boolean
+        summary: "Minify identifiers"
+      - name: sourcemap
+        type: string
+        summary: "Generate sourcemaps"
+      - name: target
+        type: string
+        summary: "The intended execution environment for the bundle. 'browser', 'bun' or 'node'"
+      - name: splitting
+        type: boolean
+        summary: "Whether to enable code splitting (requires --outdir)"
+      - name: compile
+        type: boolean
+        summary: "Generate a standalone binary from a TypeScript or JavaScript file"
+      - name: format
+        type: string
+        summary: "Specifies the module format to be used in the generated bundles"
+      - name: env-file
+        type: string
+        summary: "Load environment variables from the specified file(s)"
+      - name: inspect
+        type: boolean
+        summary: "Activate Bun's Debugger"
+      - name: inspect-wait
+        type: boolean
+        summary: "Activate Bun's Debugger, wait for a connection before executing"
+      - name: inspect-brk
+        type: boolean
+        summary: "Activate Bun's Debugger, set breakpoint on first line of code and wait"
+      - name: hot
+        type: boolean
+        summary: "Enable auto reload in bun's JavaScript runtime"
+      - name: watch
+        type: boolean
+        summary: "Automatically restart bun's JavaScript runtime on file change"
+      - name: no-install
+        type: boolean
+        summary: "Disable auto install in bun's JavaScript runtime"
+      - name: install
+        type: string
+        summary: "Install dependencies automatically when no node_modules are present, default: 'auto'. 'force' to ignore node_modules, fallback to install any missing"
+      - name: prefer-offline
+        type: boolean
+        summary: "Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk"
+      - name: prefer-latest
+        type: boolean
+        summary: "Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm"
+      - name: dump-environment-variables
+        type: boolean
+        summary: "Dump environment variables from .env and process as JSON and quit. Useful for debugging"
+      - name: dump-limits
+        type: boolean
+        summary: "Dump system limits. Useful for debugging"
 
 parameters:
   - name: sasdasdds

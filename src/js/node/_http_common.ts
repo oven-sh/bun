@@ -1,8 +1,9 @@
 const { checkIsHttpToken } = require("internal/validators");
-
 const FreeList = require("internal/freelist");
-
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
+const incoming = require("node:_http_incoming");
+
+const { IncomingMessage, readStart, readStop } = incoming;
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
@@ -106,7 +107,7 @@ function parserOnHeadersComplete(
   let n = headers.length;
 
   // If parser.maxHeaderPairs <= 0 assume that there's no limit.
-  if (parser.maxHeaderPairs > 0) n = MathMin(n, parser.maxHeaderPairs);
+  if (parser.maxHeaderPairs > 0) n = Math.min(n, parser.maxHeaderPairs);
 
   incoming._addHeaderLines(headers, n);
 
@@ -223,6 +224,8 @@ function prepareError(err, parser, rawPacket) {
   err.rawPacket = rawPacket || parser.getCurrentBuffer();
   if (typeof err.reason === "string") err.message = `Parse Error: ${err.reason}`;
 }
+
+let warnedLenient = false;
 
 function isLenient() {
   if (insecureHTTPParser && !warnedLenient) {

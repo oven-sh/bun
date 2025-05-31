@@ -1,9 +1,10 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 import { buildNoThrow } from "./buildNoThrow";
+import { tmpdirSync } from "harness";
 
 describe("Bun.build", () => {
   test("css works", async () => {
@@ -611,6 +612,51 @@ describe("Bun.build", () => {
     // Verify our plugin modified the HTML
     const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
     expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+  });
+
+  test("__dirname and __filename don't conflict across modules", async () => {
+    let testDir = tmpdirSync();
+
+    await Bun.write(join(testDir, "./nested/index.ts"), `
+      export function nested() {
+        console.log(__filename);
+        console.log(__dirname);
+      }
+    `);
+
+    await Bun.write(join(testDir, "index.ts"), `
+      import { nested } from "./nested/index.ts";
+      console.log(__filename);
+      console.log(__dirname);
+      nested();
+    `);
+
+    testDir = realpathSync(testDir);
+
+    // Output the code to a single file
+    await Bun.build({
+      entrypoints: [join(testDir, "index.ts")],
+      outdir: join(testDir, "out"),
+    });
+
+    const builtCode = await Bun.file(join(testDir, "out/index.js")).text();
+
+    // The instances of __dirname and __filename should be inlined with unique
+    // identifiers so that they don't collide with each other
+    expect(builtCode).toInclude(JSON.stringify(join(testDir, "index.ts")));
+    expect(builtCode).toInclude(JSON.stringify(join(testDir, "")));
+    expect(builtCode).toInclude(JSON.stringify(join(testDir, "nested/index.ts")));
+    expect(builtCode).toInclude(JSON.stringify(join(testDir, "nested")));
+
+    expect(builtCode).toMatch(/__filename_[a-f0-9]+/);
+    expect(builtCode).toMatch(/__dirname_[a-f0-9]+/);
+
+    const dirnameMatches = builtCode.match(/__dirname_[a-f0-9]+/g);
+    const filenameMatches = builtCode.match(/__filename_[a-f0-9]+/g);
+    expect(dirnameMatches?.length).toBeGreaterThan(1);
+    expect(filenameMatches?.length).toBeGreaterThan(1);
+    expect(new Set(dirnameMatches).size).toBeGreaterThan(1);
+    expect(new Set(filenameMatches).size).toBeGreaterThan(1);
   });
 });
 

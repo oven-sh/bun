@@ -18,9 +18,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSHTTPParser* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, HTTPParserBindingData* bindingData)
+    static JSHTTPParser* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
     {
-        JSHTTPParser* instance = new (NotNull, JSC::allocateCell<JSHTTPParser>(vm)) JSHTTPParser(vm, globalObject, structure, bindingData);
+        JSHTTPParser* instance = new (NotNull, JSC::allocateCell<JSHTTPParser>(vm)) JSHTTPParser(vm, globalObject, structure);
         instance->finishCreation(vm);
         return instance;
     }
@@ -43,10 +43,10 @@ public:
 
     void finishCreation(JSC::VM&);
 
-    JSHTTPParser(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, HTTPParserBindingData* bindingData)
+    JSHTTPParser(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, structure)
     {
-        m_impl = new HTTPParser(globalObject, bindingData);
+        m_impl = new HTTPParser(globalObject);
     }
 
     inline HTTPParser* impl() { return m_impl; }

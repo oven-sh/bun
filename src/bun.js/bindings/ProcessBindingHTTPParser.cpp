@@ -81,14 +81,4 @@ void ProcessBindingHTTPParser::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-template<typename Visitor>
-void ProcessBindingHTTPParser::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    ProcessBindingHTTPParser* thisObject = jsCast<ProcessBindingHTTPParser*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(ProcessBindingHTTPParser);
-
 } // namespace Bun

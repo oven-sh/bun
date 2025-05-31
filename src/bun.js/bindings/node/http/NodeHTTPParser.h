@@ -128,11 +128,10 @@ struct HTTPParser {
     WTF_MAKE_TZONE_ALLOCATED(HTTPParser);
 
 public:
-    HTTPParser(JSC::JSGlobalObject* globalObject, HTTPParserBindingData* bindingData)
+    HTTPParser(JSC::JSGlobalObject* globalObject)
         : m_currentBufferData(nullptr)
         , m_currentBufferLen(0)
         , m_globalObject(globalObject)
-        , m_bindingData(bindingData)
     {
     }
 
@@ -196,8 +195,6 @@ public:
     uint64_t m_chunkExtensionsNread = 0;
     uint64_t m_maxHttpHeaderSize = 0;
     uint64_t m_lastMessageStart = 0;
-
-    HTTPParserBindingData* m_bindingData;
 
 private:
 };

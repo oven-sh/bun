@@ -65,7 +65,6 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
     size_t i = 0;
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
-        ASSERT(parser);
         if (!parser) {
             continue;
         }
@@ -91,7 +90,6 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     size_t i = 0;
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
-        ASSERT(parser);
         if (!parser) {
             continue;
         }
@@ -119,7 +117,6 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
     size_t i = 0;
     while (iter->next(globalObject, item)) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
-        ASSERT(parser);
         if (!parser) {
             continue;
         }
@@ -145,7 +142,6 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     size_t i = 0;
     while (!item.isEmpty()) {
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
-        ASSERT(parser);
         if (!parser) {
             item = iter->next(vm);
             continue;

@@ -7,9 +7,9 @@
 
 namespace Bun {
 
-class JSConnectionsList final : public JSC::JSDestructibleObject {
+class JSConnectionsList final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSC::Structure*

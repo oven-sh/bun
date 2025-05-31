@@ -18,7 +18,7 @@ void JSHTTPParser::finishCreation(VM& vm)
     // llhttp callbacks need JSHTTParser for the connections list.
     // The pointer does not need to be kept alive with WriteBarrier because
     // this is basically a self-reference.
-    m_impl->m_thisParser = this;
+    m_impl.m_thisParser = this;
 }
 
 template<typename Visitor>
@@ -27,9 +27,7 @@ void JSHTTPParser::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSHTTPParser* thisObject = jsCast<JSHTTPParser*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    if (thisObject->m_impl) {
-        visitor.append(thisObject->m_impl->m_connectionsList);
-    }
+    visitor.append(thisObject->m_impl.m_connectionsList);
 }
 
 DEFINE_VISIT_CHILDREN(JSHTTPParser);

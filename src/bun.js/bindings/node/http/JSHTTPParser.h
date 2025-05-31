@@ -45,22 +45,20 @@ public:
 
     JSHTTPParser(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, structure)
+        , m_impl(globalObject)
     {
-        m_impl = new HTTPParser(globalObject);
     }
 
-    inline HTTPParser* impl() { return m_impl; }
+    inline HTTPParser* impl() { return m_freed ? nullptr : &m_impl; }
 
     inline void freeImpl()
     {
-        if (m_impl) {
-            delete m_impl;
-            m_impl = nullptr;
-        }
+        m_freed = true;
     }
 
 private:
-    HTTPParser* m_impl = nullptr;
+    bool m_freed = false;
+    HTTPParser m_impl;
 };
 
 void setupHTTPParserClassStructure(JSC::LazyClassStructure::Initializer&);

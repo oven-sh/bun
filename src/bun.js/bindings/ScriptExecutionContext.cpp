@@ -122,6 +122,25 @@ void ScriptExecutionContext::unrefEventLoop()
     Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
 }
 
+bool ScriptExecutionContext::canSendMessage()
+{
+    us_loop_t* loop = (us_loop_t*)uws_get_loop();
+    long long currentTickNr = static_cast<long long>(us_loop_iteration_number(loop));
+
+    if (lastSendTickNr != currentTickNr) {
+        messagesSentThisTick = 0;
+        lastSendTickNr = currentTickNr;
+    }
+
+    constexpr long long MAX_MESSAGES_PER_TICK = 1000;
+    if (messagesSentThisTick >= MAX_MESSAGES_PER_TICK) {
+        return false;
+    }
+
+    messagesSentThisTick++;
+    return true;
+}
+
 ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
@@ -378,6 +397,17 @@ void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& 
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
     reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+// Executes the task on context's thread immediately.
+void ScriptExecutionContext::postImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
+}
+// Executes the task on context's thread immediately.
+void ScriptExecutionContext::postImmediateCppTask(EventLoopTask* task)
+{
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)

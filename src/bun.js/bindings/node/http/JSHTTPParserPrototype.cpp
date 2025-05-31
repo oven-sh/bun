@@ -208,8 +208,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.toNumber(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // ASSERT(type == HTTP_REQUEST || type == HTTP_RESPONSE);
-
     JSValue thisValue = callFrame->thisValue();
 
     JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(thisValue);

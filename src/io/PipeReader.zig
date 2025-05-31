@@ -226,6 +226,7 @@ const PosixBufferedReader = struct {
 
         bun.assert(!this.flags.is_done);
         this.flags.is_done = true;
+        this._buffer.clearAndFree();
     }
 
     fn closeHandle(this: *PosixBufferedReader) void {
@@ -801,6 +802,7 @@ pub const WindowsBufferedReader = struct {
     fn finish(this: *WindowsBufferedReader) void {
         this.flags.has_inflight_read = false;
         this.flags.is_done = true;
+        this._buffer.clearAndFree();
     }
 
     pub fn done(this: *WindowsBufferedReader) void {

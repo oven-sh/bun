@@ -46,7 +46,7 @@ pub const HashType = u32;
 const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
 /// Initializes a watcher. Each watcher is tied to some context type, which
-/// recieves watch callbacks on the watcher thread. This function does not
+/// receives watch callbacks on the watcher thread. This function does not
 /// actually start the watcher thread.
 ///
 ///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator)

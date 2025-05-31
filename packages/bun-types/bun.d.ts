@@ -6849,7 +6849,7 @@ declare module "bun" {
        * incoming messages, and `subprocess.send` can send messages to the subprocess. Messages are serialized
        * using the JSC serialize API, which allows for the same types that `postMessage`/`structuredClone` supports.
        *
-       * The subprocess can send and recieve messages by using `process.send` and `process.on("message")`,
+       * The subprocess can send and receive messages by using `process.send` and `process.on("message")`,
        * respectively. This is the same API as what Node.js exposes when `child_process.fork()` is used.
        *
        * Currently, this is only compatible with processes that are other `bun` instances.

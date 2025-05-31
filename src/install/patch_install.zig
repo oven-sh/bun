@@ -168,7 +168,7 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
-            const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
+            const fmt = "\n\nErrors occurred while calculating hash for <b>{s}<r>:\n\n";
             const args = .{this.callback.calc_hash.patchfile_path};
             if (log_level.showProgress()) {
                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);

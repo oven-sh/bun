@@ -2691,7 +2691,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
         };
 
-        /// If css modules is enabled, we want to record each occurence of the `composes` property
+        /// If css modules is enabled, we want to record each occurrence of the `composes` property
         /// for the bundler so we can generate the lazy JS import object later.
         pub fn recordComposes(this: *This, allocator: Allocator, composes: *Composes) void {
             for (this.composes_refs.slice()) |ref| {

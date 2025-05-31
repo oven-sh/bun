@@ -14199,7 +14199,7 @@ pub const LinkerContext = struct {
                                                 // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
                                                 hoist.decls.append(hoist.allocator, decl.*) catch bun.outOfMemory();
                                             } else {
-                                                // if the value cannot be moved, add every destructuring key seperately
+                                                // if the value cannot be moved, add every destructuring key separately
                                                 // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                                 const binding = decl.binding.toExpr(&hoist);
                                                 value = value.joinWithComma(

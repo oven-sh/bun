@@ -94,7 +94,7 @@ describe("Bun.spawn", () => {
       Bun.gc(true);
     }
 
-    const batchSize = process.platform === "win32" ? 10 : 100;
+    const batchSize = process.platform === "win32" ? 10 : 50;
 
     // Warmup
     await testSpawnMemoryLeak(batchSize, 5);

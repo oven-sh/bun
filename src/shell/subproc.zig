@@ -12,7 +12,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const uws = bun.uws;
 const sh = bun.shell;
 
-
 const util = @import("./util.zig");
 
 pub const Stdio = util.Stdio;
@@ -943,7 +942,6 @@ pub const ShellSubprocess = struct {
     }
 };
 
-
 pub const PipeReader = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -1273,9 +1271,8 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
                 _ = err; // autofix

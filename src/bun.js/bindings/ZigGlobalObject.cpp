@@ -176,6 +176,7 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
+#include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2777,6 +2778,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSMIMETypeClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             WebCore::setupJSMIMETypeClassStructure(init);
+        });
+
+    m_JSNodePerformanceHooksHistogramClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
         });
 
     m_lazyStackCustomGetterSetter.initLater(

@@ -94,6 +94,9 @@ declare module "bun:test" {
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
     setTimeout(milliseconds: number): void;
+    useFakeTimers(): void;
+    useRealTimers(): void;
+    spyOn: spyOn;
   }
   export const jest: Jest;
   export namespace jest {
@@ -146,7 +149,7 @@ declare module "bun:test" {
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
-  ): Mock<T[K] extends (...args: any[]) => any ? T[K] : never>;
+  ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
   interface FunctionLike {
     readonly name: string;

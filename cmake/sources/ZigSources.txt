@@ -454,6 +454,9 @@ src/install/lockfile/printer/Yarn.zig
 src/install/lockfile/Tree.zig
 src/install/migration.zig
 src/install/npm.zig
+src/install/PackageManager/CommandLineArguments.zig
+src/install/PackageManager/PackageJSONEditor.zig
+src/install/PackageManager/PackageManagerOptions.zig
 src/install/padding_checker.zig
 src/install/patch_install.zig
 src/install/repository.zig

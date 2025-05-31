@@ -1114,3 +1114,20 @@ it("should handle user assigned `default` properties", async () => {
 
   await promise;
 });
+
+it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle exceptions without crashing", stream => {
+  expect([
+    /* js */ `
+      const old = process;
+      process = null;
+      try {
+        old.${stream};
+      } catch {}
+      if (typeof old.${stream} !== "undefined") {
+        console.log("wrong");
+      }
+    `,
+    "",
+    1,
+  ]).toRunInlineFixture();
+});

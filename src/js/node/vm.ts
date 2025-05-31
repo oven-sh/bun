@@ -440,7 +440,7 @@ function isModule(object) {
 
 function importModuleDynamicallyWrap(importModuleDynamically) {
   const importModuleDynamicallyWrapper = async (...args) => {
-    const m: any = importModuleDynamically.$apply(this, args);
+    const m: any = await importModuleDynamically.$apply(this, args);
     if (isModuleNamespaceObject(m)) {
       return m;
     }

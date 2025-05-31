@@ -5933,7 +5933,7 @@ declare module "bun" {
     /**
      * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
-     * Consider using `close()` or `end()` for graceful shutdowns.
+     * Consider using `end()` or `shutdown()`.
      *
      * @example
      * ```ts

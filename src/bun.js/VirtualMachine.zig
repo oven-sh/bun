@@ -539,29 +539,31 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
         return true;
     }
 
-    defer this.eventLoop().drainMicrotasks();
-
     switch (this.unhandledRejectionsMode()) {
         .bun => {
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             // continue to default handler
         },
         .none => {
+            defer this.eventLoop().drainMicrotasks();
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             return true; // ignore the unhandled rejection
         },
         .warn => {
+            defer this.eventLoop().drainMicrotasks();
             _ = Bun__handleUnhandledRejection(globalObject, reason, promise);
             Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             return true;
         },
         .warn_with_error_code => {
+            defer this.eventLoop().drainMicrotasks();
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             Bun__promises__emitUnhandledRejectionWarning(globalObject, reason, promise);
             this.exit_handler.exit_code = 1;
             return true;
         },
         .strict => {
+            defer this.eventLoop().drainMicrotasks();
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             _ = this.uncaughtException(globalObject, wrapped_reason, true);
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
@@ -569,6 +571,7 @@ pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSGlobalObje
             return true;
         },
         .throw => {
+            defer this.eventLoop().drainMicrotasks();
             if (Bun__handleUnhandledRejection(globalObject, reason, promise) > 0) return true;
             const wrapped_reason = wrapUnhandledRejectionErrorForUncaughtException(globalObject, reason);
             if (this.uncaughtException(globalObject, wrapped_reason, true)) return true;

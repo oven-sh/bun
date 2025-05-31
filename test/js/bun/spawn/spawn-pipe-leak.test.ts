@@ -8,39 +8,70 @@
 import { bunExe } from "harness";
 
 describe("Bun.spawn", () => {
-  const DEBUG_LOGS = false; // turn this on to see debug logs
+  const DEBUG_LOGS = true; // turn this on to see debug logs
   const log = (...args: any[]) => DEBUG_LOGS && console.log(...args);
 
   const MB = 1024 * 1024;
 
-  test("'pipe' stdout should not leak memory", async () => {
+  // Create a command that will generate ~512 KB of output
+  const cmd = [
+    bunExe(),
+    "-e",
+    `for (let buffer = Buffer.alloc(1024 * 1024 * 10, 'X'); buffer.length > 0;) {
+    const written = require('fs').writeSync(1, buffer);
+    buffer = buffer.slice(written);
+}`,
+  ];
+
+  const cmd10 = [
+    bunExe(),
+    "-e",
+    `for (let buffer = Buffer.alloc(10, 'X'); buffer.length > 0;) {
+    const written = require('fs').writeSync(1, buffer);
+    buffer = buffer.slice(written);
+}`,
+  ];
+
+  async function readPipeAfterExit() {
+    const process = Bun.spawn({
+      cmd,
+      stdout: "pipe", // We pipe stdout but never read from it
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    await process.exited;
+    await Bun.readableStreamToBlob(process.stdout);
+  }
+
+  async function dontRead() {
+    const process = Bun.spawn({
+      cmd: cmd10,
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    await process.exited;
+  }
+
+  async function readPipeBeforeExit() {
+    const process = Bun.spawn({
+      cmd,
+      stdout: "pipe", // We pipe stdout but never read from it
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    await process.exited;
+    await Bun.readableStreamToBlob(process.stdout);
+  }
+
+  async function run(iterate: () => Promise<void>) {
     /**
      * @param batchSize # of processes to spawn in parallel in each batch
      * @param totalBatches # of batches to run
      */
     async function testSpawnMemoryLeak(batchSize: number, totalBatches: number) {
-      // Create a command that will generate ~512 KB of output
-      const cmd = [
-        bunExe(),
-        "-e",
-        `for (let buffer = Buffer.alloc(10, 'X'); buffer.length > 0;) {
-            const written = require('fs').writeSync(1, buffer);
-            buffer = buffer.slice(written);
-        }`,
-      ];
-
       log("Starting memory leak test...");
       log(`Initial memory usage: ${Math.round(process.memoryUsage.rss() / MB)} MB`);
-
-      async function iterate() {
-        const process = Bun.spawn({
-          cmd,
-          stdout: "ignore", // We pipe stdout but never read from it
-          stderr: "pipe",
-          stdin: "ignore",
-        });
-        await process.exited;
-      }
 
       for (let batch = 0; batch < totalBatches; batch++) {
         const batchPromises: Promise<void>[] = [];
@@ -80,5 +111,17 @@ describe("Bun.spawn", () => {
     const pct = delta / memBefore.rss;
     console.log(`RSS delta: ${delta / MB}MB (${Math.round(100 * pct)}%)`);
     expect(pct).toBeLessThan(0.5);
-  }, 10_000); // NOTE: this test doesn't actually take this long, but keeping the limit high will help avoid flakyness
+  }
+
+  test("'pipe' stdout if read after exit should not leak memory", async () => {
+    await run(readPipeAfterExit);
+  }, 30_000);
+
+  test("'pipe' stdout if not read should not leak memory", async () => {
+    await run(dontRead);
+  }, 30_000);
+
+  test("'pipe' stdout if read before exit should not leak memory", async () => {
+    await run(readPipeBeforeExit);
+  }, 30_000);
 });

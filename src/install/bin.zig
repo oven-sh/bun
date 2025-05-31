@@ -762,7 +762,16 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
-                    _ = bun.sys.chmod(abs_target, umask | 0o777);
+                    // Check current permissions before chmod to avoid unnecessary copy-up in overlay filesystems
+                    const target_permissions = umask | 0o777;
+                    if (bun.sys.stat(abs_target)) |stat_result| {
+                        if ((stat_result.mode & 0o777) != target_permissions) {
+                            _ = bun.sys.chmod(abs_target, target_permissions);
+                        }
+                    } else |_| {
+                        // If stat fails, proceed with chmod as before
+                        _ = bun.sys.chmod(abs_target, target_permissions);
+                    }
                 }
             }
 

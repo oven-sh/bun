@@ -24,14 +24,13 @@
  */
 
 #include "config.h"
+
+#include <wtf/TZoneMallocInlines.h>
 #include "MessagePortChannelRegistry.h"
 
-#include "MessagePort.h"
-#include "MessagePortChannel.h"
 // #include "Logging.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
-#include <wtf/TZoneMallocInlines.h>
 
 // ASSERT(isMainThread()) is used alot here, and I think it may be required, but i'm not 100% sure.
 // we totally are calling these off the main thread in many cases in Bun, so ........

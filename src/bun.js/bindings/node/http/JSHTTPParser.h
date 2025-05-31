@@ -49,6 +49,10 @@ public:
     {
     }
 
+    ~JSHTTPParser()
+    {
+    }
+
     inline HTTPParser* impl() { return m_freed ? nullptr : &m_impl; }
 
     inline void freeImpl()

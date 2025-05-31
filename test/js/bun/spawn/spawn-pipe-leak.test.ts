@@ -35,7 +35,7 @@ describe("Bun.spawn", () => {
   async function readPipeAfterExit() {
     const process = Bun.spawn({
       cmd,
-      stdout: "pipe", // We pipe stdout but never read from it
+      stdout: "pipe",
       stderr: "ignore",
       stdin: "ignore",
     });
@@ -56,11 +56,11 @@ describe("Bun.spawn", () => {
   async function readPipeBeforeExit() {
     const process = Bun.spawn({
       cmd,
-      stdout: "pipe", // We pipe stdout but never read from it
+      stdout: "pipe",
       stderr: "ignore",
       stdin: "ignore",
     });
-    Bun.readableStreamToBlob(process.stdout);
+    await Bun.readableStreamToBlob(process.stdout);
     await process.exited;
   }
 

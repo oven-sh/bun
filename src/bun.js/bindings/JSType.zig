@@ -1,3 +1,94 @@
+/// JSType is a critical performance optimization in JavaScriptCore that enables O(1) type
+/// identification for JavaScript values without virtual function calls or expensive RTTI.
+///
+/// THE FUNDAMENTAL ARCHITECTURE:
+///
+/// JSValue (64-bit on modern platforms):
+/// ┌─────────────────────────────────────────────────────────────────┐
+/// │ Either: Immediate value (int32, bool, null, undefined, double)   │
+/// │    Or:  Pointer to JSCell + type bits                           │
+/// └─────────────────────────────────────────────────────────────────┘
+///
+/// JSCell (base class for all heap objects):
+/// ┌─────────────────────────────────────────────────────────────────┐
+/// │ m_structureID │ m_indexingTypeAndMisc │ m_type │ m_flags │ ...   │
+/// │               │                       │ (u8)   │         │       │
+/// └─────────────────────────────────────────────────────────────────┘
+///                                           ↑
+///                                      JSType enum
+///
+/// PERFORMANCE CRITICAL DESIGN:
+///
+/// Instead of virtual function calls like:
+///   if (cell->isString()) // virtual call overhead
+///
+/// JavaScriptCore uses direct memory access:
+///   if (cell->type() == StringType) // single memory load + compare
+///
+/// This JSType enum provides the complete taxonomy of JavaScript runtime types,
+/// enabling the engine to make blazing-fast type decisions that are essential
+/// for JavaScript's dynamic nature.
+///
+/// TYPE HIERARCHY MAPPING:
+///
+/// JavaScript Primitives → JSType:
+/// • string → String (heap-allocated) or immediate (small strings)
+/// • number → immediate double/int32 or HeapBigInt
+/// • boolean → immediate true/false
+/// • symbol → Symbol
+/// • bigint → HeapBigInt or BigInt32 (immediate)
+/// • null/undefined → immediate values
+///
+/// JavaScript Objects → JSType:
+/// • {} → Object, FinalObject
+/// • [] → Array, DerivedArray
+/// • function → JSFunction, InternalFunction
+/// • new Int8Array() → Int8Array
+/// • new Error() → ErrorInstance
+/// • arguments → DirectArguments, ScopedArguments
+///
+/// Engine Internals → JSType:
+/// • Structure → metadata for object layout optimization
+/// • CodeBlock → compiled JavaScript bytecode
+/// • Executable → function compilation units
+///
+/// FAST PATH OPTIMIZATIONS:
+///
+/// The JSType enables JavaScriptCore's legendary performance through:
+///
+/// 1. Inline Caching: "This property access was on a String last time,
+///    check if it's still a String with one comparison"
+///
+/// 2. Speculative Compilation: "This function usually gets Arrays,
+///    generate optimized code for Arrays and deoptimize if wrong"
+///
+/// 3. Polymorphic Inline Caches: "This call site sees Objects and Arrays,
+///    generate a fast switch on JSType"
+///
+/// 4. Type Guards: "Assume this is a String, insert a type check,
+///    and generate optimal string operations"
+///
+/// MEMORY LAYOUT OPTIMIZATION:
+///
+/// JSType is strategically placed in JSCell's header for cache efficiency.
+/// A typical property access like obj.prop becomes:
+///
+/// 1. Load JSCell* from JSValue (1 instruction)
+/// 2. Load JSType from JSCell header (1 instruction, same cache line)
+/// 3. Compare JSType against expected type (1 instruction)
+/// 4. Branch to optimized or generic path
+///
+/// This 3-instruction type check is what makes JavaScript competitive
+/// with statically typed languages in hot code paths.
+///
+/// The enum values are carefully ordered to enable range checks:
+/// • All typed arrays are consecutive (Int8Array..Float64Array)
+/// • All function types are grouped together
+/// • All array types are adjacent
+///
+/// This allows optimizations like:
+///   if (type >= Int8Array && type <= Float64Array) // single range check
+///   if (type >= JSFunction && type <= InternalFunction) // function check
 pub const JSType = enum(u8) {
     Cell = 0,
     Structure = 1,

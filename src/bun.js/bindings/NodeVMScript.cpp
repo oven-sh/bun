@@ -67,7 +67,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
                 this->importer = importModuleDynamicallyValue;
                 any = true;
-            } else {
+            } else if (!importModuleDynamicallyValue.isUndefined()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.importModuleDynamically"_s, "function"_s, importModuleDynamicallyValue);
                 return false;
             }

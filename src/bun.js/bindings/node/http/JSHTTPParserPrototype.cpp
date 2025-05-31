@@ -175,8 +175,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     uint32_t lenientFlags = kLenientNone;
     JSConnectionsList* connections = nullptr;
 
+    JSValue thisValue = callFrame->thisValue();
+    JSValue typeValue = callFrame->argument(0);
+    JSValue maxHttpHeaderSizeValue = callFrame->argument(2);
+    JSValue lenientFlagsValue = callFrame->argument(3);
+    JSValue connectionsListValue = callFrame->argument(4);
+
     if (callFrame->argumentCount() > 2) {
-        JSValue maxHttpHeaderSizeValue = callFrame->argument(2);
         if (maxHttpHeaderSizeValue.isNumber()) {
             maxHttpHeaderSize = static_cast<uint64_t>(maxHttpHeaderSizeValue.asNumber());
         }
@@ -187,14 +192,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     }
 
     if (callFrame->argumentCount() > 3) {
-        JSValue lenientFlagsValue = callFrame->argument(3);
         if (lenientFlagsValue.isInt32()) {
             lenientFlags = lenientFlagsValue.asInt32();
         }
     }
 
     if (callFrame->argumentCount() > 4) {
-        JSValue connectionsListValue = callFrame->argument(4);
         if (!connectionsListValue.isUndefinedOrNull()) {
             connections = jsDynamicCast<JSConnectionsList*>(connectionsListValue);
             if (!connections) {
@@ -203,12 +206,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
         }
     }
 
-    JSValue typeValue = callFrame->argument(0);
-
     llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.toNumber(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue thisValue = callFrame->thisValue();
 
     JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(thisValue);
     if (!parser) {

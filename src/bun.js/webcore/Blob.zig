@@ -4250,10 +4250,6 @@ pub const Any = union(enum) {
             //     return value;
             // },
             .InternalBlob => {
-                if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.create(global, "", TypedArrayView);
-                }
-
                 const bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
 

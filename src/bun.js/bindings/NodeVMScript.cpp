@@ -1,13 +1,18 @@
+#include "NodeVMScript.h"
+
 #include "ErrorCode.h"
+
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-#include "NodeVMScript.h"
 
+#include "NodeVMScriptFetcher.h"
 #include "../vm/SigintWatcher.h"
+
+#include <bit>
 
 namespace Bun {
 using namespace NodeVM;
@@ -53,6 +58,20 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             RETURN_IF_EXCEPTION(scope, false);
             any = true;
         }
+
+        // Handle importModuleDynamically option
+        JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (importModuleDynamicallyValue) {
+            if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+                this->importer = importModuleDynamicallyValue;
+                any = true;
+            } else if (!importModuleDynamicallyValue.isUndefined()) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.importModuleDynamically"_s, "function"_s, importModuleDynamicallyValue);
+                return false;
+            }
+        }
     }
 
     return any;
@@ -93,15 +112,17 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
-        options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
+
+    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
 
     const bool produceCachedData = options.produceCachedData;
     auto filename = options.filename;
 
-    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, source, WTFMove(options));
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTFMove(source), WTFMove(options));
+
+    fetcher->owner(vm, script);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -113,7 +134,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         ASSERT(executable);
 
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
-        JSC::SourceCodeKey key(source, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+        JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
 
@@ -225,7 +246,7 @@ void NodeVMScriptConstructor::finishCreation(VM& vm, JSObject* prototype)
 
 NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, SourceCode source, ScriptOptions options)
 {
-    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, source, WTFMove(options));
+    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, WTFMove(source), WTFMove(options));
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -261,7 +282,7 @@ static bool checkForTermination(JSGlobalObject* globalObject, ThrowScope& scope,
     return false;
 }
 
-static void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
+void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& dog = vm.ensureWatchdog();
@@ -416,7 +437,12 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    const auto& url = script->source().provider()->sourceMappingURLDirective();
+    const String& url = script->source().provider()->sourceMappingURLDirective();
+
+    if (!url) {
+        return encodedJSUndefined();
+    }
+
     return JSValue::encode(jsString(vm, url));
 }
 
@@ -511,8 +537,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     VM& vm = JSC::getVM(globalObject);
     NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
-    // TODO: options
-    // JSValue optionsObjectValue = callFrame->argument(1);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!script) {
@@ -520,24 +544,35 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    if (contextObjectValue.isUndefined()) {
-        contextObjectValue = JSC::constructEmptyObject(globalObject);
-    }
+    bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
 
     if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
 
-    // we don't care about options for now
-    // TODO: options
-    // bool didThrow = false;
+    JSValue contextOptionsArg = callFrame->argument(1);
+    NodeVMContextOptions contextOptions {};
 
-    auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration")) {
+        return *encodedException;
+    }
+
+    contextOptions.notContextified = notContextified;
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobal->NodeVMGlobalObjectStructure(),
-        {});
+        zigGlobalObject->NodeVMGlobalObjectStructure(),
+        contextOptions);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        RETURN_IF_EXCEPTION(scope, {});
+        targetContext->setSpecialSandbox(specialSandbox);
+        return runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1));
+    }
 
     return runInContext(targetContext, script, context, callFrame->argument(1));
 }

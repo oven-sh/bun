@@ -12,6 +12,8 @@
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
+#include "NodeVMSyntheticModule.h"
+
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -44,15 +46,22 @@
 #include "JavaScriptCore/UnlinkedFunctionExecutable.h"
 #include "NodeValidator.h"
 
+#include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"
-#include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/ProgramCodeBlock.h"
+#include "JavaScriptCore/GlobalObjectMethodTable.h"
+#include "NodeVMScriptFetcher.h"
 #include "wtf/FileHandle.h"
 
 #include "../vm/SigintWatcher.h"
+
+#include "JavaScriptCore/GetterSetter.h"
 
 namespace Bun {
 using namespace WebCore;
@@ -198,6 +207,92 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     }
 
     return function;
+}
+
+JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, JSValue parameters, const SourceOrigin& sourceOrigin)
+{
+    if (auto* fetcher = sourceOrigin.fetcher(); !fetcher || fetcher->fetcherType() != ScriptFetcher::Type::NodeVM) {
+        return nullptr;
+    }
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* fetcher = static_cast<NodeVMScriptFetcher*>(sourceOrigin.fetcher());
+
+    if (fetcher->isUsingDefaultLoader()) {
+        return nullptr;
+    }
+
+    JSValue dynamicImportCallback = fetcher->dynamicImportCallback();
+
+    if (isUseMainContextDefaultLoaderConstant(dynamicImportCallback)) {
+        auto defer = fetcher->temporarilyUseDefaultLoader();
+        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        return zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleNameValue, parameters, sourceOrigin);
+    } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        return nullptr;
+    }
+
+    if (parameters.isObject()) {
+        if (JSValue with = asObject(parameters)->getIfPropertyExists(globalObject, vm.propertyNames->with)) {
+            parameters = with;
+        }
+    }
+
+    JSValue owner = fetcher->owner();
+
+    MarkedArgumentBuffer args;
+    args.append(moduleNameValue);
+    args.append(owner ? owner : jsUndefined());
+    args.append(parameters);
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (result.isUndefinedOrNull()) {
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+        return nullptr;
+    }
+
+    if (auto* promise = jsDynamicCast<JSInternalPromise*>(result)) {
+        return promise;
+    }
+
+    auto* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSValue argument = callFrame->argument(0);
+
+        if (JSObject* object = argument.getObject()) {
+            JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (result && !result.isUndefinedOrNull()) {
+                return JSValue::encode(result);
+            }
+        }
+
+        return JSValue::encode(argument);
+    });
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    promise->fulfill(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    promise = promise->then(globalObject, transformer, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    return promise;
 }
 
 // Helper function to create an anonymous function expression with parameters
@@ -425,13 +520,28 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
     if (scopeValue.isUndefined()) {
+        if (auto* specialSandbox = jsDynamicCast<NodeVMSpecialSandbox*>(context)) {
+            return specialSandbox->parentGlobal();
+        }
+
+        if (auto* proxy = jsDynamicCast<JSGlobalProxy*>(context)) {
+            if (auto* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(proxy->target())) {
+                return nodeVmGlobalObject;
+            }
+        }
+
         if (canThrow) {
             INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
         }
         return nullptr;
     }
 
-    NodeVMGlobalObject* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+    auto* nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+
+    if (!nodeVmGlobalObject) {
+        nodeVmGlobalObject = jsDynamicCast<NodeVMGlobalObject*>(context);
+    }
+
     if (!nodeVmGlobalObject) {
         if (canThrow) {
             INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "contextifiedObject"_s, context);
@@ -450,12 +560,88 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
     return {};
 }
 
+bool isContext(JSGlobalObject* globalObject, JSValue value)
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
+    if (zigGlobalObject->vmModuleContextMap()->has(asObject(value))) {
+        return true;
+    }
+
+    if (value.inherits(NodeVMSpecialSandbox::info())) {
+        return true;
+    }
+
+    if (auto* proxy = jsDynamicCast<JSGlobalProxy*>(value); proxy && proxy->target()) {
+        return proxy->target()->inherits(NodeVMGlobalObject::info());
+    }
+
+    return false;
+}
+
+bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
+{
+    if (contextArg.isUndefined()) {
+        contextArg = JSC::constructEmptyObject(globalObject);
+    } else if (contextArg.isUInt32() && contextArg.asUInt32() == 64) { // vm.constants.DONT_CONTEXTIFY
+        contextArg = JSC::constructEmptyObject(globalObject);
+        return true;
+    }
+
+    return false;
+}
+
+bool isUseMainContextDefaultLoaderConstant(JSValue value)
+{
+    // vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+    return value.isUInt32() && value.asUInt32() == 42;
+}
+
 } // namespace NodeVM
 
 using namespace NodeVM;
 
-NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure)
+template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMSpecialSandbox::subspaceFor(JSC::VM& vm)
+{
+    if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+        return nullptr;
+    return WebCore::subspaceForImpl<NodeVMSpecialSandbox, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMSpecialSandbox.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMSpecialSandbox = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForNodeVMSpecialSandbox.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSpecialSandbox = std::forward<decltype(space)>(space); });
+}
+
+NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
+{
+    NodeVMSpecialSandbox* ptr = new (NotNull, allocateCell<NodeVMSpecialSandbox>(vm)) NodeVMSpecialSandbox(vm, structure, globalObject);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+JSC::Structure* NodeVMSpecialSandbox::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+{
+    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+}
+
+NodeVMSpecialSandbox::NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
     : Base(vm, structure)
+{
+    m_parentGlobal.set(vm, this, globalObject);
+}
+
+void NodeVMSpecialSandbox::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
+
+NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions)
+    : Base(vm, structure, &globalObjectMethodTable())
+    , m_contextOptions(contextOptions)
 {
 }
 
@@ -474,8 +660,8 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
 
 NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options)
 {
-    auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure);
-    cell->finishCreation(vm, options);
+    auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure, options);
+    cell->finishCreation(vm);
     return cell;
 }
 
@@ -485,11 +671,40 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
-void NodeVMGlobalObject::finishCreation(JSC::VM& vm, NodeVMContextOptions options)
+const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table {
+        &supportsRichSourceInfo,
+        &shouldInterruptScript,
+        &javaScriptRuntimeFlags,
+        nullptr, // queueTaskToEventLoop
+        nullptr, // shouldInterruptScriptBeforeTimeout,
+        &moduleLoaderImportModule,
+        nullptr, // moduleLoaderResolve
+        nullptr, // moduleLoaderFetch
+        nullptr, // moduleLoaderCreateImportMetaProperties
+        nullptr, // moduleLoaderEvaluate
+        nullptr, // promiseRejectionTracker
+        &reportUncaughtExceptionAtEventLoop,
+        &currentScriptExecutionOwner,
+        &scriptExecutionStatus,
+        nullptr, // reportViolationForUnsafeEval
+        nullptr, // defaultLanguage
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+        nullptr,
+        &codeForEval,
+        &canCompileStrings,
+        &trustedScriptStructure,
+    };
+    return table;
+}
+
+void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    setEvalEnabled(options.allowStrings, "Code generation from strings disallowed for this context"_s);
-    setWebAssemblyEnabled(options.allowWasm, "Wasm code generation disallowed by embedder"_s);
+    setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
+    setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
     vm.ensureTerminationException();
 }
 
@@ -551,11 +766,17 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         return Base::put(cell, globalObject, propertyName, value, slot);
     }
 
-    slot.setThisValue(sandbox);
+    if (thisObject->m_contextOptions.notContextified) {
+        JSObject* specialSandbox = thisObject->specialSandbox();
+        slot.setThisValue(specialSandbox);
+        return specialSandbox->putInline(globalObject, propertyName, value, slot);
+    }
 
+    slot.setThisValue(sandbox);
     if (!sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot)) {
         return false;
     }
+
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
@@ -563,12 +784,33 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
 
     slot.setThisValue(thisValue);
-
     return Base::put(cell, globalObject, propertyName, value, slot);
 }
 
 // This is copy-pasted from JSC's ProxyObject.cpp
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
+
+bool NodeVMSpecialSandbox::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsCast<NodeVMSpecialSandbox*>(cell);
+    NodeVMGlobalObject* parentGlobal = thisObject->parentGlobal();
+
+    if (propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+        slot.disableCaching();
+        slot.setThisValue(thisObject);
+        slot.setValue(thisObject, slot.attributes(), thisObject);
+        return true;
+    }
+
+    if (parentGlobal->getOwnPropertySlot(parentGlobal, globalObject, propertyName, slot)) {
+        return true;
+    }
+
+    return Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
+}
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -576,8 +818,17 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (thisObject->m_sandbox) {
-        auto* contextifiedObject = thisObject->m_sandbox.get();
+
+    bool notContextified = thisObject->isNotContextified();
+
+    if (notContextified && propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+        slot.disableCaching();
+        slot.setThisValue(thisObject);
+        slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
+        return true;
+    }
+
+    if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
         slot.setThisValue(contextifiedObject);
         // Unfortunately we must special case ProxyObjects. Why?
         //
@@ -644,7 +895,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        if (contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
+        if (!notContextified && contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
             return true;
         }
 
@@ -654,19 +905,26 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, false);
     }
 
-    return Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
+    if (Base::getOwnPropertySlot(cell, globalObject, propertyName, slot)) {
+        return true;
+    }
+
+    if (thisObject->m_contextOptions.notContextified) {
+        JSObject* specialSandbox = thisObject->specialSandbox();
+        return JSObject::getOwnPropertySlot(specialSandbox, globalObject, propertyName, slot);
+    }
+
+    return false;
 }
 
 bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    // if (!propertyName.isSymbol())
-    //     printf("defineOwnProperty called for %s\n", propertyName.publicName()->utf8().data());
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     if (!thisObject->m_sandbox) {
         return Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow);
     }
 
-    auto* contextifiedObject = thisObject->m_sandbox.get();
+    auto* contextifiedObject = thisObject->isNotContextified() ? thisObject->specialSandbox() : thisObject->m_sandbox.get();
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -680,17 +938,17 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     if (descriptor.isAccessorDescriptor()) {
-        return contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+        return JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        return contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+        return JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
     }
 
-    if (!contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow)) {
+    if (!JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow)) {
         return false;
     }
 
@@ -705,6 +963,7 @@ void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(cell, visitor);
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     visitor.append(thisObject->m_sandbox);
+    visitor.append(thisObject->m_specialSandbox);
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -717,22 +976,22 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "code"_s, "string"_s, code);
 
     JSValue contextArg = callFrame->argument(1);
-    if (contextArg.isUndefined()) {
-        contextArg = JSC::constructEmptyObject(globalObject);
-    }
+    bool notContextified = getContextArg(globalObject, contextArg);
 
-    if (!contextArg.isObject())
+    if (!contextArg.isObject()) {
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
+    }
 
     JSObject* sandbox = asObject(contextArg);
 
     JSValue contextOptionsArg = callFrame->argument(2);
-
     NodeVMContextOptions contextOptions {};
 
     if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration")) {
         return *encodedException;
     }
+
+    contextOptions.notContextified = notContextified;
 
     // Create context and run code
     auto* context = NodeVMGlobalObject::create(vm,
@@ -751,10 +1010,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    auto sourceCode = SourceCode(
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
+
+    SourceCode sourceCode(
         JSC::StringSourceProvider::create(
             code.toString(globalObject)->value(globalObject),
-            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)),
+            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher),
             options.filename,
             JSC::SourceTaintedOrigin::Untainted,
             TextPosition(options.lineOffset, options.columnOffset)),
@@ -797,8 +1058,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
     }
 
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
+
     SourceCode source(
-        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename)), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
+        JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
         options.lineOffset.zeroBasedInt(), options.columnOffset.zeroBasedInt());
 
     WTF::NakedPtr<JSC::Exception> exception;
@@ -830,15 +1093,17 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     MarkedArgumentBuffer parameters;
     JSValue paramsArg = callFrame->argument(1);
     if (paramsArg && !paramsArg.isUndefined()) {
-        if (!paramsArg.isObject() || !isArray(globalObject, paramsArg))
+        if (!paramsArg.isObject() || !isArray(globalObject, paramsArg)) {
             return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
+        }
 
         auto* paramsArray = jsCast<JSArray*>(paramsArg);
         unsigned length = paramsArray->length();
         for (unsigned i = 0; i < length; i++) {
             JSValue param = paramsArray->getIndexQuickly(i);
-            if (!param.isString())
+            if (!param.isString()) {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array<string>"_s, paramsArg);
+            }
             parameters.append(param);
         }
     }
@@ -868,8 +1133,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Add the function body
     constructFunctionArgs.append(jsString(vm, sourceString));
 
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
+
     // Create the source origin
-    SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
+    SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };
 
     // Process contextExtensions if they exist
     JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
@@ -900,6 +1167,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
     JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTFMove(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
+    fetcher->owner(vm, function);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -915,31 +1183,17 @@ Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
     return NodeVMGlobalObject::createStructure(vm, jsNull());
 }
 
-NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox)
-{
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
-        NodeVMContextOptions {});
-
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
-    return targetContext;
-}
-
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    NodeVMContextOptions contextOptions {};
+
     JSValue contextArg = callFrame->argument(0);
-    if (contextArg.isUndefined()) {
-        contextArg = JSC::constructEmptyObject(globalObject);
-    }
+    bool notContextified = getContextArg(globalObject, contextArg);
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!contextArg.isObject()) {
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
@@ -952,24 +1206,45 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
     }
 
-    NodeVMContextOptions contextOptions {};
-
     if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, "codeGeneration")) {
         return *encodedException;
     }
 
+    contextOptions.notContextified = notContextified;
+
     JSObject* sandbox = asObject(contextArg);
 
+    if (isContext(globalObject, sandbox)) {
+        if (auto* proxy = jsDynamicCast<JSC::JSGlobalProxy*>(sandbox)) {
+            if (auto* targetContext = jsDynamicCast<NodeVMGlobalObject*>(proxy->target())) {
+                if (targetContext->isNotContextified()) {
+                    return JSValue::encode(targetContext->specialSandbox());
+                }
+            }
+        }
+        return JSValue::encode(sandbox);
+    }
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
+        zigGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions);
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Set sandbox as contextified object
     targetContext->setContextifiedObject(sandbox);
 
     // Store context in WeakMap for isContext checks
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
     zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
+
+    if (notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        RETURN_IF_EXCEPTION(scope, {});
+        targetContext->setSpecialSandbox(specialSandbox);
+        return JSValue::encode(targetContext->specialSandbox());
+    }
 
     return JSValue::encode(sandbox);
 }
@@ -980,39 +1255,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
     JSValue contextArg = callFrame->argument(0);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool isContext;
     if (!contextArg || !contextArg.isObject()) {
-        isContext = false;
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "object"_s, "object"_s, contextArg);
-    } else {
-        auto* zigGlobalObject = defaultGlobalObject(globalObject);
-        isContext = zigGlobalObject->vmModuleContextMap()->has(asObject(contextArg));
     }
-    return JSValue::encode(jsBoolean(isContext));
+    return JSValue::encode(jsBoolean(isContext(globalObject, contextArg)));
 }
 
-// NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
-// {
-//     auto* obj = new (NotNull, allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure);
-//     obj->finishCreation(vm);
-//     return obj;
-// }
-
-// void NodeVMGlobalObject::finishCreation(VM& vm, JSObject* context)
-// {
-//     Base::finishCreation(vm);
-//     // We don't need to store the context anymore since we use proxies
-// }
-
-// DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
-
-// template<typename Visitor>
-// void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-// {
-//     Base::visitChildren(cell, visitor);
-//     // auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-//     // visitor.append(thisObject->m_proxyTarget);
-// }
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -1034,11 +1282,33 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
+JSC::JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
+{
+    auto* globalObject = static_cast<NodeVMGlobalObject*>(jsGlobalObject);
+
+    if (JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleName, parameters, sourceOrigin)) {
+        return result;
+    }
+
+    // Default behavior copied from JSModuleLoader::importModule
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    auto moduleNameString = moduleName->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+    scope.release();
+    promise->reject(globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    return promise;
+}
+
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
-    if (thisObject->m_sandbox) {
+    if (thisObject->m_sandbox) [[likely]] {
         thisObject->m_sandbox->getOwnPropertyNames(
             thisObject->m_sandbox.get(),
             globalObject,
@@ -1051,17 +1321,7 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    return JSValue::encode(JSC::jsBoolean(false)); // TODO(@heimskr): implement
-
-    // JSValue argument = callFrame->argument(0);
-    // if (!argument.isObject()) {
-    //     return JSValue::encode(JSC::jsBoolean(false));
-    // }
-
-    // JSObject* object = asObject(argument);
+    return JSValue::encode(JSC::jsBoolean(!!jsDynamicCast<JSModuleNamespaceObject*>(callFrame->argument(0))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
@@ -1076,7 +1336,7 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         defaultGlobalObject(globalObject)->NodeVMSourceTextModule(), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "createContext"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public), 0);
+        JSC::JSFunction::create(vm, globalObject, 0, "createContext"_s, vmModule_createContext, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, vmModule_createContext), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
@@ -1147,19 +1407,27 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
             init.setConstructor(constructor);
         });
 
-    // globalObject->m_NodeVMSyntheticModuleClassStructure.initLater(
-    //     [](LazyClassStructure::Initializer& init) {
-    //         auto prototype = NodeVMSyntheticModule::createPrototype(init.vm, init.global);
-    //         auto* structure = NodeVMSyntheticModule::createStructure(init.vm, init.global, prototype);
-    //         auto* constructorStructure = NodeVMModuleConstructor::createStructure(
-    //             init.vm, init.global, init.global->m_functionPrototype.get());
-    //         auto* constructor = NodeVMModuleConstructor::create(
-    //             init.vm, init.global, constructorStructure, prototype);
-    //     });
+    globalObject->m_NodeVMSyntheticModuleClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto prototype = NodeVMSyntheticModule::createPrototype(init.vm, init.global);
+            auto* structure = NodeVMSyntheticModule::createStructure(init.vm, init.global, prototype);
+            auto* constructorStructure = NodeVMModuleConstructor::createStructure(
+                init.vm, init.global, init.global->m_functionPrototype.get());
+            auto* constructor = NodeVMModuleConstructor::create(
+                init.vm, init.global, constructorStructure, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
 
     globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(createNodeVMGlobalObjectStructure(init.vm));
+        });
+
+    globalObject->m_cachedNodeVMSpecialSandboxStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(NodeVMSpecialSandbox::createStructure(init.vm, init.owner, init.owner->objectPrototype())); // TODO(@heimskr): or maybe jsNull() for the prototype?
         });
 }
 
@@ -1357,6 +1625,15 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
             }
 
             this->contextExtensions = contextExtensionsValue;
+            any = true;
+        }
+
+        // Handle importModuleDynamically option
+        JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+            this->importer = importModuleDynamicallyValue;
             any = true;
         }
     }

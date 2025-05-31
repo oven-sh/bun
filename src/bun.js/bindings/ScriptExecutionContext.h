@@ -60,7 +60,7 @@ public:
     }
 
     uint32_t messagesSentThisTick = 0;
-    uint32_t lastSendTickNr = -1; // Will be updated to the us_loop_t->data.iteration_nr every tick we send a message in
+    long long lastSendTickNr = -1; // Will be updated to the us_loop_t->data.iteration_nr every tick we send a message in
                                   // https://github.com/oven-sh/bun/blob/d7a517cdfc31705a6b4fb696dc834ba8d98d5d3a/packages/bun-usockets/src/internal/loop_data.h#L58
 
     bool canSendMessage();

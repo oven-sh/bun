@@ -278,8 +278,8 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
         dispatchEvent(event.event);
 
         if (scope.exception()) [[unlikely]] {
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-            scope.clearExceptionExceptTermination();
+            RELEASE_ASSERT(vm.hasPendingTerminationException());
+            return;
         }
 
         if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {

@@ -581,13 +581,16 @@ pub const Bin = extern struct {
         err: ?anyerror = null,
 
         pub var umask: bun.Mode = 0;
+        var original_umask: bun.Mode = 0;
 
         var has_set_umask = false;
 
         pub fn ensureUmask() void {
             if (!has_set_umask) {
                 has_set_umask = true;
-                umask = bun.sys.umask(0);
+                original_umask = bun.sys.umask(0);
+                umask = original_umask;
+                _ = bun.sys.umask(original_umask);
             }
         }
 
@@ -765,7 +768,7 @@ pub const Bin = extern struct {
                     // An extra stat() is cheaper than a copy-up of potentially large executables in Docker.
                     switch (bun.sys.stat(abs_target)) {
                         .result => |*stat| {
-                            const desired_mode = umask | 0o777;
+                            const desired_mode = 0o777 & ~umask;
                             if ((stat.mode & 0o777) != desired_mode) {
                                 _ = bun.sys.chmod(abs_target, desired_mode);
                             }

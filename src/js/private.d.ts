@@ -226,4 +226,8 @@ declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol:
 
 declare module "node:net" {
   export function _normalizeArgs(args: any[]): unknown[];
+
+  interface Socket {
+    _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+  }
 }

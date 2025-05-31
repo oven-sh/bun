@@ -88,15 +88,19 @@ declare module "bun:test" {
    */
   export function setSystemTime(now?: Date | number): ThisType<void>;
 
-  interface Jest {
-    restoreAllMocks(): void;
-    clearAllMocks(): void;
-    fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
-    setSystemTime(now?: number | Date): void;
-    setTimeout(milliseconds: number): void;
-  }
-  export const jest: Jest;
   export namespace jest {
+    function restoreAllMocks(): void;
+    function clearAllMocks(): void;
+    function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    function setSystemTime(now?: number | Date): void;
+    function setTimeout(milliseconds: number): void;
+    function useFakeTimers(): void;
+    function useRealTimers(): void;
+    function spyOn<T extends object, K extends keyof T>(
+      obj: T,
+      methodOrPropertyValue: K,
+    ): Mock<Extract<T[K], (...args: any[]) => any>>;
+
     /**
      * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
      */

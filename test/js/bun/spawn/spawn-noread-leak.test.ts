@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 async function spawn() {
   const proc = Bun.spawn(["cat", import.meta.path], {

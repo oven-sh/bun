@@ -601,7 +601,7 @@ it("should add to devDependencies with --dev", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-it.only("should add to optionalDependencies with --optional", async () => {
+it("should add to optionalDependencies with --optional", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
   await writeFile(

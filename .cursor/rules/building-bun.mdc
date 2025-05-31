@@ -1,5 +1,5 @@
 ---
-description: 
+description: How to build Bun
 globs: **/*.zig,**/*.ts,**/*.cpp,**/*.c
 alwaysApply: false
 ---

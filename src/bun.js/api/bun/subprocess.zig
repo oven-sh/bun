@@ -775,25 +775,16 @@ pub fn pid(this: *const Subprocess) i32 {
     return @intCast(this.process.pid);
 }
 
-pub fn getPid(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getPid(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.pid());
 }
 
-pub fn getKilled(
-    this: *Subprocess,
-    _: *JSGlobalObject,
-) JSValue {
+pub fn getKilled(this: *Subprocess, _: *JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.hasKilled());
 }
 
-pub fn getStdio(
-    this: *Subprocess,
-    global: *JSGlobalObject,
-) JSValue {
-    const array = JSValue.createEmptyArray(global, 0);
+pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue {
+    const array = try JSValue.createEmptyArray(global, 0);
     array.push(global, .null);
     array.push(global, .null); // TODO: align this with options
     array.push(global, .null); // TODO: align this with options

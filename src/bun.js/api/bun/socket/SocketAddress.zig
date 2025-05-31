@@ -448,12 +448,12 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 }
 
 pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.JSObject.create(.{
+    return (try JSC.JSObject.create(.{
         .address = this.getAddress(global),
         .family = this.getFamily(global),
         .port = this.port(),
         .flowlabel = this.flowLabel() orelse 0,
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {

@@ -2664,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);

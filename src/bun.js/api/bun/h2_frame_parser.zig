@@ -290,7 +290,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -323,7 +323,7 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     }
 }
 
-fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args_list = callframe.arguments_old(1);
     if (args_list.len < 1) {
         return globalObject.throw("Expected settings to be a object", .{});
@@ -410,7 +410,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
     return .undefined;
 }
 
-fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments_old(1);
 
@@ -645,6 +645,8 @@ const Handlers = struct {
         this.strong_ctx.deinit();
     }
 };
+
+pub const H2FrameParserConstructor = H2FrameParser.js.getConstructor;
 
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
@@ -1774,14 +1776,14 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) ?*Stream {
+    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) bun.JSError!?*Stream {
         log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
         const globalObject = this.handlers.globalObject;
 
         const stream_id = stream.id;
-        const headers = JSC.JSValue.createEmptyArray(globalObject, 0);
+        const headers = try JSC.JSValue.createEmptyArray(globalObject, 0);
         headers.ensureStillAlive();
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();
@@ -1817,7 +1819,7 @@ pub const H2FrameParser = struct {
                 headers.push(globalObject, js_header_value);
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
@@ -1836,7 +1838,7 @@ pub const H2FrameParser = struct {
 
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
@@ -1995,7 +1997,7 @@ pub const H2FrameParser = struct {
                     originValue.ensureStillAlive();
                 } else if (count == 1) {
                     // need to create an array
-                    const array = JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
+                    const array = JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0) catch .zero; //?
                     array.ensureStillAlive();
                     array.push(this.handlers.globalObject, originValue);
                     array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
@@ -2156,7 +2158,7 @@ pub const H2FrameParser = struct {
             const payload = content.data;
             this.readBuffer.reset();
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
-            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
+            stream = (this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) catch null) orelse { //?
                 return content.end;
             };
             if (stream.endAfterHeaders) {
@@ -2221,7 +2223,7 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
-            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
+            stream = (this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) catch null) orelse { //?
                 return content.end;
             };
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
@@ -3537,7 +3539,7 @@ pub const H2FrameParser = struct {
     pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
+        const array = try JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
         var count: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
@@ -4295,12 +4297,3 @@ pub const H2FrameParser = struct {
 };
 
 extern fn Bun__wrapAbortError(globalObject: *JSC.JSGlobalObject, cause: JSC.JSValue) JSC.JSValue;
-
-pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSArray.create(global, &.{
-        H2FrameParser.js.getConstructor(global),
-        JSC.JSFunction.create(global, "assertSettings", jsAssertSettings, 1, .{}),
-        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 1, .{}),
-        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 1, .{}),
-    });
-}

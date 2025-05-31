@@ -288,7 +288,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         if (values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
-            var value_list = JSValue.createEmptyArray(globalThis, 1);
+            var value_list = JSValue.createEmptyArray(globalThis, 1) catch return; //?
             value_list.putIndex(globalThis, 0, new_value);
             values.putMayBeIndex(globalThis, &key, value_list);
         }
@@ -713,8 +713,8 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
     const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
-    const positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
-    const tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+    const positionals = try JSC.JSValue.createEmptyArray(globalThis, 0);
+    const tokens = if (return_tokens) try JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
 
     var state = ParseArgsState{
         .globalThis = globalThis,

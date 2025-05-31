@@ -292,18 +292,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -394,17 +391,15 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 const globalObject = this.globalObject;
-                var success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                const success = @as(JSC.Maybe(ReturnType).Tag, this.result) == .result;
+                var promise_value = this.promise.value();
+                var promise = this.promise.get();
                 const result = switch (this.result) {
                     .err => |err| err.toJSC(globalObject),
                     .result => |*res| brk: {
-                        const out = globalObject.toJS(res, .temporary);
-                        success = out != .zero;
-                        break :brk out;
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
                 promise_value.ensureStillAlive();
 
                 const tracker = this.tracker;
@@ -671,18 +666,15 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             const globalObject = this.evtloop.globalObject() orelse {
                 @panic("No global object, this indicates a bug in Bun. Please file a GitHub issue.");
             };
-            var success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            const success = @as(JSC.Maybe(Return.Cp).Tag, this.result) == .result;
+            var promise_value = this.promise.value();
+            var promise = this.promise.get();
             const result = switch (this.result) {
                 .err => |err| err.toJSC(globalObject),
                 .result => |*res| brk: {
-                    const out = globalObject.toJS(res, .temporary);
-                    success = out != .zero;
-
-                    break :brk out;
+                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
             };
-            var promise_value = this.promise.value();
-            var promise = this.promise.get();
             promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
@@ -1225,22 +1217,17 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
         const globalObject = this.globalObject;
-        var success = this.pending_err == null;
+        const success = this.pending_err == null;
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
         const result = if (this.pending_err) |*err| err.toJSC(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            const out = res.toJS(globalObject);
-            if (out == .zero) {
-                success = false;
-            }
-
-            break :brk out;
+            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
         const tracker = this.tracker;
@@ -3289,11 +3276,11 @@ const Return = struct {
             files,
         };
 
-        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: Readdir, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
-                    var array = JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, this.with_file_types.len);
                     var previous_jsstring: ?*JSC.JSString = null;
                     for (this.with_file_types, 0..) |*item, i| {
                         const res = item.toJSNewlyCreated(globalObject, &previous_jsstring);
@@ -3308,11 +3295,11 @@ const Return = struct {
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
-                    return JSC.toJS(globalObject, []Buffer, this.buffers, .temporary);
+                    return JSC.toJS(globalObject, []Buffer, this.buffers);
                 },
                 .files => {
                     // automatically freed
-                    return JSC.toJS(globalObject, []const bun.String, this.files, .temporary);
+                    return JSC.toJS(globalObject, []const bun.String, this.files);
                 },
             }
         }

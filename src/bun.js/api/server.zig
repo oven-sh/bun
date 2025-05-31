@@ -5089,7 +5089,7 @@ const ServePlugins = struct {
         for (plugin_list, bunstring_array) |raw_plugin, *out| {
             out.* = bun.String.init(raw_plugin);
         }
-        const plugin_js_array = bun.String.toJSArray(global, bunstring_array);
+        const plugin_js_array = bun.String.toJSArray(global, bunstring_array) catch @panic("oops"); //?
         const bunfig_folder_bunstr = bun.String.createUTF8ForJS(global, bunfig_folder);
 
         this.state = .{ .pending = .{

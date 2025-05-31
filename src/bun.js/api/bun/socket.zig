@@ -3101,7 +3101,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const nsig = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, 0, null, null, null, null, null);
 
-            const array = JSC.JSValue.createEmptyArray(globalObject, @as(usize, @intCast(nsig)));
+            const array = try JSC.JSValue.createEmptyArray(globalObject, @as(usize, @intCast(nsig)));
 
             for (0..@as(usize, @intCast(nsig))) |i| {
                 var hash_nid: c_int = 0;
@@ -3580,7 +3580,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.has_pending_activity.store(false, .release);
             }
 
-            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
+            const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
             array.putIndex(globalObject, 0, raw_js_value);
             array.putIndex(globalObject, 1, tls_js_value);
 
@@ -4331,10 +4331,10 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
 
     duplexContext.startTLS();
 
-    const array = JSC.JSValue.createEmptyArray(globalObject, 2);
+    const array = try JSC.JSValue.createEmptyArray(globalObject, 2);
     array.putIndex(globalObject, 0, tls_js_value);
     // data, end, drain and close events must be reported
-    array.putIndex(globalObject, 1, duplexContext.upgrade.getJSHandlers(globalObject));
+    array.putIndex(globalObject, 1, try duplexContext.upgrade.getJSHandlers(globalObject));
 
     return array;
 }
@@ -4371,15 +4371,6 @@ pub fn jsGetBufferedAmount(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     return JSC.JSValue.jsNumber(0);
 }
 
-pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSArray.create(global, &.{
-        JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),
-        JSC.JSFunction.create(global, "upgradeDuplexToTLS", jsUpgradeDuplexToTLS, 2, .{}),
-        JSC.JSFunction.create(global, "isNamedPipeSocket", jsIsNamedPipeSocket, 1, .{}),
-        JSC.JSFunction.create(global, "getBufferedAmount", jsGetBufferedAmount, 1, .{}),
-    });
-}
-
 pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
@@ -4397,7 +4388,7 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
     _ = bun.FD.fromNative(fds_[0]).updateNonblocking(true);
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
-    const array = JSC.JSValue.createEmptyArray(global, 2);
+    const array = try JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));
     array.putIndex(global, 1, JSC.jsNumber(fds_[1]));
     return array;

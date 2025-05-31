@@ -685,7 +685,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [file]",
@@ -710,7 +710,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test --only [file]",
@@ -735,7 +735,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [file] (fast)",
@@ -760,7 +760,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [file] (verbose)",
@@ -785,7 +785,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [file] --inspect",
@@ -819,7 +819,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [file] --inspect-brk",
@@ -854,7 +854,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun run [file]",
@@ -879,7 +879,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun install",
@@ -900,7 +900,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun run [file] (verbose)",
@@ -925,7 +925,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun run [file] --inspect",
@@ -955,7 +955,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun run [file] --inspect-brk",
@@ -986,7 +986,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...]",
@@ -1011,7 +1011,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] (fast)",
@@ -1036,7 +1036,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] (verbose)",
@@ -1061,7 +1061,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] --watch",
@@ -1086,7 +1086,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] --hot",
@@ -1111,7 +1111,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] --inspect",
@@ -1145,7 +1145,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [...] --inspect-brk",
@@ -1180,7 +1180,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun exec [...]",
@@ -1202,7 +1202,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [*]",
@@ -1223,7 +1223,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [*] (fast)",
@@ -1248,7 +1248,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [*] --inspect",
@@ -1282,7 +1282,7 @@
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "C:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\vendor\\WebKit\\Source",
       },
       "request": "launch",
       "name": "Windows: bun test [*] (ci)",

@@ -5969,7 +5969,7 @@ declare module "bun" {
     /**
      * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
-     * Consider using `end()` or `shutdown()`.
+     * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
      * @example
      * ```ts
@@ -6312,10 +6312,28 @@ declare module "bun" {
 
     upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
+    /**
+     * Closes the socket.
+     *
+     * This is a wrapper around `end()` and `shutdown()`.
+     *
+     * @see {@link end}
+     * @see {@link shutdown}
+     */
     close(): void;
 
+    /**
+     * Returns the servername of the socket.
+     *
+     * @see {@link setServername}
+     */
     getServername(): string;
 
+    /**
+     * Sets the servername of the socket.
+     *
+     * @see {@link getServername}
+     */
     setServername(name: string): void;
   }
 

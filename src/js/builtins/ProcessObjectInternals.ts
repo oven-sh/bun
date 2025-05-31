@@ -89,6 +89,7 @@ export function getStdinStream(
   fd: number,
   isTTY: boolean,
   fdType: BunProcessStdinFdType,
+  isNodeWorkerThread: boolean,
 ) {
   $assert(fd === 0);
   const native = Bun.stdin.stream();
@@ -131,7 +132,11 @@ export function getStdinStream(
     }
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const ReadStream = isNodeWorkerThread
+    ? require("internal/worker_threads").ReadableWorkerStdio
+    : isTTY
+      ? require("node:tty").ReadStream
+      : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
@@ -154,7 +159,7 @@ export function getStdinStream(
     return originalOn.$call(this, event, listener);
   };
 
-  stream.fd = fd;
+  if (!isNodeWorkerThread) stream.fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods

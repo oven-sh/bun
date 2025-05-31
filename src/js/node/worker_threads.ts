@@ -27,6 +27,7 @@ const {
   environmentData,
   webWorkerToStdio,
   ReadableWorkerStdio,
+  WritableWorkerStdio,
 } = require("internal/worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -225,6 +226,7 @@ const unsupportedOptions = ["trackedUnmanagedFds", "resourceLimits"];
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
+  #stdin: InstanceType<typeof WritableWorkerStdio> | null;
   #stdout: InstanceType<typeof ReadableWorkerStdio>;
   #stderr: InstanceType<typeof ReadableWorkerStdio>;
 
@@ -286,6 +288,12 @@ class Worker extends EventEmitter {
     if (!options.stderr) {
       this.#stderr.pipe(process.stderr);
     }
+
+    if (options.stdin) {
+      this.#stdin = new WritableWorkerStdio(0, this.#worker);
+    } else {
+      this.#stdin = null;
+    }
     webWorkerToStdio.set(this.#worker, { stdout: this.#stdout, stderr: this.#stderr });
   }
 
@@ -302,8 +310,7 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
-    return null;
+    return this.#stdin;
   }
 
   get stdout() {

@@ -95,12 +95,10 @@ public:
     WorkerOptions& options() { return m_options; }
 
     enum class PushStdioFd : int {
+        Stdin = 0,
         Stdout = 1,
         Stderr = 2,
     };
-
-    // bytes are cloned
-    void pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes);
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
@@ -109,6 +107,11 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {};
+
+    // bytes are cloned
+    // for fd == Stdin: send from parent to child
+    // for fd == Stdout or Stderr: send from child to parent
+    static void pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> bytes);
 
     static void networkStateChanged(bool isOnLine);
 
@@ -129,10 +132,15 @@ private:
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
     void* impl_ { nullptr };
+
+    friend JSC_DECLARE_HOST_FUNCTION(jsPushStdioToParent);
+    friend JSC_DECLARE_HOST_FUNCTION(jsPushStdinToChild);
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+JSC_DECLARE_HOST_FUNCTION(jsPushStdioToParent);
+JSC_DECLARE_HOST_FUNCTION(jsPushStdinToChild);
 
 } // namespace WebCore

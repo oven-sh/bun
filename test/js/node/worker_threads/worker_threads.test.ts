@@ -435,7 +435,7 @@ describe("stdio", () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     stream.on("error", reject);
     stream.on("data", chunk => {
-      expect(typeof chunk == "string" || chunk instanceof Buffer).toBeTrue();
+      expect(chunk).toBeInstanceOf(Buffer);
       data += chunk.toString("utf8");
     });
     stream.on("end", () => resolve(data));
@@ -598,6 +598,18 @@ describe("stdio", () => {
       expect(code).toBe(0);
       expect(await resultPromise).toBe("[wrapped] hello\n");
     });
+
+    it("has no fd", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.${stream}.fd, undefined);
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
   });
 
   describe("console", () => {
@@ -701,6 +713,55 @@ warn
     it.todo("works if the entire process object is overridden", async () => {
       const worker = new Worker(/* js */ `process = 5; console.log("hello");`, { eval: true, stdout: true });
       expect(await readToEnd(worker.stdout)).toBe("hello\n");
+    });
+  });
+
+  describe("stdin", () => {
+    it("by default, process.stdin is readable and worker.stdin is null", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.stdin.constructor.name, "ReadableWorkerStdio");
+        `,
+        { eval: true },
+      );
+      expect(worker.stdin).toBeNull();
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+
+    it("has no fd", async () => {
+      const worker = new Worker(
+        /* js */ `
+          import assert from "node:assert";
+          assert.strictEqual(process.stdin.fd, undefined);
+        `,
+        { eval: true },
+      );
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+
+    it.todo("does not keep the event loop alive if worker does not listen for events", async () => {});
+    it.todo("hangs if parent does not call end()", async () => {});
+
+    it("child can read data from parent", async () => {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const worker = new Worker("process.stdin.pipe(process.stdout)", { stdin: true, stdout: true, eval: true });
+      expect(worker.stdin!.constructor.name).toBe("WritableWorkerStdio");
+      worker.on("error", reject);
+      worker.stdout.on("data", chunk => {
+        chunks.push(chunk);
+        if (chunks.length == 2) resolve();
+        if (chunks.length > 2) throw new Error("too much data");
+      });
+      worker.stdin!.write("hello");
+      // " world"
+      worker.stdin!.write(new Uint16Array([0x7720, 0x726f, 0x646c]));
+      await promise;
+      expect(chunks).toEqual([Buffer.from("hello"), Buffer.from(" world")]);
+      worker.stdin!.end();
     });
   });
 });

@@ -2102,7 +2102,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = processObject->globalObject();
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto scope = DECLARE_CATCH_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2111,6 +2111,9 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
+    bool isNodeWorkerThread = globalObject->worker()
+        && globalObject->worker()->options().kind == WorkerOptions::Kind::Node;
+    args.append(jsBoolean(isNodeWorkerThread));
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);

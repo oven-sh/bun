@@ -549,20 +549,49 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-void Worker::pushStdioToParent(PushStdioFd fd, std::span<const uint8_t> bytes)
+void Worker::pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> bytes)
 {
     Vector<uint8_t, 64> vec { bytes };
 
-    scriptExecutionContext()->postTaskConcurrently([sourceWorker = Ref { *this }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
+    ScriptExecutionContext* ctx
+        = fd == PushStdioFd::Stdin
+        ? ScriptExecutionContext::getScriptExecutionContext(child.clientIdentifier())
+        : child.scriptExecutionContext();
+
+    // TODO ctx can be null if worker hasn't gotten far enough in startup
+    if (!ctx) return;
+
+    ctx->postTaskConcurrently([worker = Ref { child }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
         auto& vm = ctx.vm();
-        auto* parentGlobalObject = defaultGlobalObject(ctx.globalObject());
+        auto* destGlobalObject = defaultGlobalObject(ctx.globalObject());
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        auto* buffer = WebCore::createBuffer(parentGlobalObject, vec.span());
-        auto* jsWorker = jsCast<JSWorker*>(WebCore::toJS(parentGlobalObject, parentGlobalObject, sourceWorker));
+        auto reportUncaught = [&destGlobalObject, &scope]() -> void {
+            destGlobalObject->reportUncaughtExceptionAtEventLoop(destGlobalObject, scope.exception());
+        };
 
-        parentGlobalObject->processObject()->emitWorkerStdioInParent(jsWorker, fd, buffer);
-        RETURN_IF_EXCEPTION(scope, parentGlobalObject->reportUncaughtExceptionAtEventLoop(parentGlobalObject, scope.exception()));
+        auto* buffer = WebCore::createBuffer(destGlobalObject, vec.span());
+
+        if (fd == PushStdioFd::Stdin) {
+            auto* process = destGlobalObject->processObject();
+            vm.propertyNames->builtinNames();
+            auto processStdin = process->get(destGlobalObject, Identifier::fromString(vm, "stdin"_s));
+            RETURN_IF_EXCEPTION(scope, reportUncaught());
+            auto push = processStdin.get(destGlobalObject, Identifier::fromString(vm, "push"_s));
+            RETURN_IF_EXCEPTION(scope, reportUncaught());
+            auto callData = JSC::getCallData(push);
+            if (callData.type == CallData::Type::None) {
+                scope.throwException(destGlobalObject, createNotAFunctionError(destGlobalObject, push));
+                RETURN_IF_EXCEPTION(scope, reportUncaught());
+            }
+            MarkedArgumentBuffer args;
+            args.append(buffer);
+            JSC::call(destGlobalObject, push, callData, processStdin, args);
+        } else {
+            auto* jsWorker = jsCast<JSWorker*>(WebCore::toJS(destGlobalObject, destGlobalObject, worker));
+            destGlobalObject->processObject()->emitWorkerStdioInParent(jsWorker, fd, buffer);
+            RETURN_IF_EXCEPTION(scope, reportUncaught());
+        }
     });
 }
 
@@ -576,7 +605,19 @@ JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObj
     auto* buf = jsCast<JSUint8Array*>(callFrame->argument(1));
     auto& sourceWorker = *globalObject->worker();
 
-    sourceWorker.pushStdioToParent(static_cast<Worker::PushStdioFd>(fd), buf->span());
+    Worker::pushStdio(sourceWorker, static_cast<Worker::PushStdioFd>(fd), buf->span());
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPushStdinToChild, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    // internal binding
+    ASSERT(callFrame->argumentCount() == 2);
+    auto* destWorker = jsCast<JSWorker*>(callFrame->argument(0));
+    auto* buf = jsCast<JSUint8Array*>(callFrame->argument(1));
+
+    Worker::pushStdio(destWorker->wrapped(), Worker::PushStdioFd::Stdin, buf->span());
 
     return JSValue::encode(jsUndefined());
 }
@@ -624,6 +665,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
     array->putDirectIndex(globalObject, 4, JSFunction::create(vm, globalObject, 2, "pushStdioToParent"_s, jsPushStdioToParent, ImplementationVisibility::Public));
+    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 2, "pushStdinToChild"_s, jsPushStdinToChild, ImplementationVisibility::Public));
     return array;
 }
 

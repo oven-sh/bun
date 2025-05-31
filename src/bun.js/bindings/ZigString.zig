@@ -256,7 +256,7 @@ pub const ZigString = extern struct {
         return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
     }
 
-    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![]u8 {
+    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) OOM![:0]u8 {
         if (this.isUTF8())
             return try allocator.dupeZ(u8, this.slice());
 
@@ -266,24 +266,11 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
-        if (list.capacity > list.items.len) {
-            list.items.ptr[list.items.len] = 0;
-        }
-
-        return list.items;
-    }
-
-    pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) OOM![:0]u8 {
-        if (this.isUTF8())
-            return allocator.dupeZ(u8, this.slice());
-
-        var list = std.ArrayList(u8).init(allocator);
-        list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
-        else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
-
-        return list.toOwnedSliceSentinel(0);
+        const len = list.items.len;
+        try list.resize(len + 1);
+        list.shrinkAndFree(len + 1);
+        list.items.ptr[len] = 0;
+        return list.items[0..len :0];
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {

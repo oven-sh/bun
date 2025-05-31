@@ -12,7 +12,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const uws = bun.uws;
 const sh = bun.shell;
 
-
 const util = @import("./util.zig");
 
 pub const Stdio = util.Stdio;
@@ -943,7 +942,6 @@ pub const ShellSubprocess = struct {
     }
 };
 
-
 pub const PipeReader = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -1248,7 +1246,8 @@ pub const PipeReader = struct {
             return this.state.done;
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
-        const out = this.reader._buffer;
+        var out = this.reader._buffer;
+        out.shrinkAndFree(out.items.len);
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
         return out.items;

@@ -316,7 +316,7 @@ pub const String = extern struct {
     }
 
     pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) OOM![:0]u8 {
-        return this.toZigString().toOwnedSliceZ(allocator);
+        return this.toZigString().toOwnedSlice(allocator);
     }
 
     /// Create a bun.String from a slice. This is never a copy.

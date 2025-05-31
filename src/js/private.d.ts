@@ -224,10 +224,17 @@ declare function $newZigFunction<T = (...args: any) => any>(
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
+import "node:net";
 declare module "node:net" {
   export function _normalizeArgs(args: any[]): unknown[];
 
   interface Socket {
     _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+    server: Server | null;
+  }
+
+  interface Server {
+    _handle: Bun.SocketListener<Socket> | null;
+    _connections: number;
   }
 }

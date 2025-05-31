@@ -12,6 +12,11 @@ categories:
 - ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
 - takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
 
+createSecurePair not implemented:
+These tests are removed in new node versions:
+- test-tls-securepair-fiftharg.js
+- test-tls-securepair-leak.js
+
 http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
 that to `localhost:${port}localhost:${port}` which is an invalid url
   - test-tls-over-http-tunnel.js

@@ -187,6 +187,7 @@ it("bun add --only-missing should not install existing package", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
+      env,
     });
     const out = await new Response(stdout).text();
     expect(out).not.toContain("Saved lockfile");
@@ -260,6 +261,7 @@ it("bun add --analyze should scan dependencies", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
+      env,
     });
     const out = await new Response(stdout).text();
     expect(out).not.toContain("Saved lockfile");

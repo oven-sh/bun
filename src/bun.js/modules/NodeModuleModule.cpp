@@ -13,6 +13,7 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
+#include "JSCommonJSModule.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
@@ -722,6 +723,16 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
         JSC::CustomGetterSetter::create(vm, getterRequireFunction,
             setterRequireFunction),
         0);
+
+    prototype->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "_compile"_s),
+        2,
+        functionJSCommonJSModule_compile,
+        JSC::ImplementationVisibility::Public,
+        JSC::NoIntrinsic,
+        static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 
     return prototype;
 }

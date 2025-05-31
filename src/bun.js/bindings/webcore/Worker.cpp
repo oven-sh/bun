@@ -64,7 +64,6 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
-#include <stdio.h>
 
 namespace WebCore {
 
@@ -434,9 +433,8 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 void Worker::dispatchExit(int32_t exitCode)
 {
     auto* ctx = scriptExecutionContext();
-    if (!ctx) {
+    if (!ctx)
         return;
-    }
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_onlineClosingFlags = ClosingFlag;
@@ -445,7 +443,6 @@ void Worker::dispatchExit(int32_t exitCode)
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
         }
-
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
     });
 }
@@ -471,7 +468,6 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
-
     // no longer referenced by Zig
     worker->deref();
 

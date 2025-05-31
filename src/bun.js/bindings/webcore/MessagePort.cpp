@@ -44,7 +44,6 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
-#include "SerializedScriptValue.h"
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 

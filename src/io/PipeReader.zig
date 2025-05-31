@@ -539,6 +539,70 @@ const PosixBufferedReader = struct {
 
                 if (!parent.vtable.isStreamingEnabled()) break;
             }
+        } else if (resizable_buffer.capacity == 0 and parent._offset == 0) {
+            // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
+            const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
+
+            // Unlike the block of code following this one, only handle the non-streaming case.
+            bun.debugAssert(!streaming);
+
+            switch (sys_fn(fd, stack_buffer, 0)) {
+                .result => |bytes_read| {
+                    if (bytes_read > 0) {
+                        resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                    }
+                    if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
+                    parent._offset += bytes_read;
+
+                    if (bytes_read == 0) {
+                        parent.closeWithoutReporting();
+                        _ = drainChunk(parent, resizable_buffer.items, .eof);
+                        parent.done();
+                        return;
+                    }
+
+                    if (comptime file_type == .pipe) {
+                        if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
+                            switch (bun.isReadable(fd)) {
+                                .ready => {},
+                                .hup => {
+                                    received_hup = true;
+                                },
+                                .not_ready => {
+                                    if (received_hup) {
+                                        parent.closeWithoutReporting();
+                                    }
+                                    defer {
+                                        if (received_hup) {
+                                            parent.done();
+                                        }
+                                    }
+
+                                    if (!received_hup) {
+                                        parent.registerPoll();
+                                    }
+
+                                    return;
+                                },
+                            }
+                        }
+                    }
+                },
+                .err => |err| {
+                    if (err.isRetry()) {
+                        if (comptime file_type == .file) {
+                            bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
+                        } else {
+                            parent.registerPoll();
+                        }
+                        return;
+                    }
+                    parent.onError(err);
+                    return;
+                },
+            }
+
+            // Allow falling through
         }
 
         while (true) {

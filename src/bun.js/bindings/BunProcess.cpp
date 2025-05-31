@@ -2030,8 +2030,9 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* jsGlobalObject, JSC::JSObject* processObject, int fd)
 {
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -2042,6 +2043,9 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     args.append(jsBoolean(bun_stdio_tty[fd]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
+    bool isNodeWorkerThread = globalObject->worker()
+        && globalObject->worker()->options().kind == WorkerOptions::Kind::Node;
+    args.append(jsBoolean(isNodeWorkerThread));
 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
@@ -2073,7 +2077,10 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     forceSync = true;
 #endif
     if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        JSValue underlyingSink = resultObject->getIndex(globalObject, 1);
+        if (!underlyingSink.isUndefined()) {
+            Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(underlyingSink));
+        }
     }
 
     return resultObject->getIndex(globalObject, 0);
@@ -2095,7 +2102,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = processObject->globalObject();
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto scope = DECLARE_CATCH_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2104,6 +2111,9 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
+    bool isNodeWorkerThread = globalObject->worker()
+        && globalObject->worker()->options().kind == WorkerOptions::Kind::Node;
+    args.append(jsBoolean(isNodeWorkerThread));
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
@@ -2679,6 +2689,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
+    thisObject->m_emitWorkerStdioInParentFunction.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(Process);
@@ -3291,6 +3302,17 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     return nextTickFunction;
 }
 
+void Process::emitWorkerStdioInParent(JSWorker* worker, Worker::PushStdioFd fd, JSUint8Array* data)
+{
+    auto* fn = m_emitWorkerStdioInParentFunction.getInitializedOnMainThread(this);
+    auto callData = JSC::getCallData(fn);
+    MarkedArgumentBuffer args;
+    args.append(worker);
+    args.append(jsNumber(static_cast<int>(fd)));
+    args.append(data);
+    JSC::call(globalObject(), fn, callData, jsNull(), args);
+}
+
 static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
 {
     JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
@@ -3598,6 +3620,30 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
+extern "C" void Process__writeToStdio(JSGlobalObject* jsGlobalObject, int fd, const uint8_t* bytes, size_t len)
+{
+    ASSERT(fd == 1 || fd == 2);
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* process = globalObject->processObject();
+    auto stream = process->get(globalObject, Identifier::fromString(vm, fd == 1 ? "stdout"_s : "stderr"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    auto writeFn = stream.get(globalObject, Identifier::fromString(vm, "write"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    auto callData = JSC::getCallData(writeFn);
+    if (callData.type == CallData::Type::None) {
+        scope.throwException(globalObject, createNotAFunctionError(globalObject, writeFn));
+        return;
+    }
+    MarkedArgumentBuffer args;
+    auto* buffer = WebCore::createBuffer(globalObject, { bytes, len });
+    args.append(buffer);
+    JSC::call(globalObject, writeFn, callData, stream, args);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0
@@ -3720,6 +3766,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));
+    });
+    m_emitWorkerStdioInParentFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
+        init.set(JSFunction::create(init.vm, init.owner->globalObject(), processObjectInternalsEmitWorkerStdioInParentCodeGenerator(init.vm), init.owner->globalObject()));
     });
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);

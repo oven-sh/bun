@@ -6,7 +6,8 @@
     "@types/supertest": "2.0.12",
     "@types/utf-8-validate": "5.0.0",
     "@types/ws": "8.5.10",
-    "@types/puppeteer": "7.0.4"
+    "@types/puppeteer": "7.0.4",
+    "@types/node": "22.6.0"
   },
   "dependencies": {
     "@astrojs/node": "9.1.3",

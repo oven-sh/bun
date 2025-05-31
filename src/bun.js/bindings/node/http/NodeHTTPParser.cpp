@@ -318,6 +318,7 @@ int HTTPParser::onMessageBegin()
     }
 
     m_numFields = 0;
+    m_numValues = 0;
     m_headersCompleted = false;
     m_chunkExtensionsNread = 0;
     m_lastMessageStart = uv_hrtime();

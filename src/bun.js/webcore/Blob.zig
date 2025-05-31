@@ -4413,8 +4413,15 @@ pub const Internal = struct {
 
     pub fn toOwnedSlice(this: *@This()) []u8 {
         const bytes = this.bytes.items;
+        const capacity = this.bytes.capacity;
+        if (bytes.len == 0 and capacity > 0) {
+            this.bytes.clearAndFree();
+            return &.{};
+        }
+
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
+
         return bytes;
     }
 

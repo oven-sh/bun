@@ -387,8 +387,6 @@ const PosixBufferedReader = struct {
         }
     }
 
-    const stack_buffer_len = 64 * 1024;
-
     inline fn drainChunk(parent: *PosixBufferedReader, chunk: []const u8, hasMore: ReadState) bool {
         if (parent.vtable.isStreamingEnabled()) {
             if (chunk.len > 0) {

@@ -2302,7 +2302,7 @@ pub const PackCommand = struct {
     };
 
     pub const IgnorePatterns = struct {
-        list: []const Pattern,
+        list: []Pattern,
         kind: Kind,
         depth: usize,
 
@@ -2411,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);

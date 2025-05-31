@@ -13,6 +13,7 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
+#include "JSCommonJSModule.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"

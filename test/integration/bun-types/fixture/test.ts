@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, type Mock, spyOn, test } from "bun:test";
 import { expectType } from "./utilities";
 
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
@@ -141,3 +141,6 @@ expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
 const spy = spyOn(console, "log");
 expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
+
+jest.spyOn(console, "log");
+jest.fn(() => 123 as const);

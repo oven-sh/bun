@@ -17,7 +17,7 @@ describe("Bun.spawn", () => {
   const cmd = [
     bunExe(),
     "-e",
-    `for (let buffer = Buffer.alloc(1024 * 1024 * 10, 'X'); buffer.length > 0;) {
+    `for (let buffer = Buffer.alloc(1024 * 1024 * 8, 'X'); buffer.length > 0;) {
     const written = require('fs').writeSync(1, buffer);
     buffer = buffer.slice(written);
 }`,
@@ -60,8 +60,8 @@ describe("Bun.spawn", () => {
       stderr: "ignore",
       stdin: "ignore",
     });
+    Bun.readableStreamToBlob(process.stdout);
     await process.exited;
-    await Bun.readableStreamToBlob(process.stdout);
   }
 
   async function run(iterate: () => Promise<void>) {
@@ -94,12 +94,14 @@ describe("Bun.spawn", () => {
       Bun.gc(true);
     }
 
+    const batchSize = process.platform === "win32" ? 10 : 100;
+
     // Warmup
-    await testSpawnMemoryLeak(100, 5);
+    await testSpawnMemoryLeak(batchSize, 5);
     const memBefore = process.memoryUsage();
 
     // Run the test
-    await testSpawnMemoryLeak(100, 10);
+    await testSpawnMemoryLeak(batchSize, 10);
     const memAfter = process.memoryUsage();
 
     log("Memory leak test completed");

@@ -1,4 +1,5 @@
 #include "bun.h"
+#include "uv.h"
 
 #if OS(WINDOWS)
 #include "uv.h"
@@ -8,12 +9,7 @@ namespace Bun {
 
 uint64_t hrtime()
 {
-#if OS(WINDOWS)
     return uv_hrtime();
-#else
-    // TODO: TODO!
-    return 0;
-#endif
 }
 
 } // namespace Bun

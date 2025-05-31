@@ -4,7 +4,6 @@ const bun = @import("bun");
 const JSValue = JSC.JSValue;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
-
 const log = bun.Output.scoped(.napi, false);
 
 const Async = bun.Async;

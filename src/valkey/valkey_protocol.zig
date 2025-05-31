@@ -4,7 +4,6 @@ const bun = @import("bun");
 const JSC = bun.JSC;
 const String = bun.String;
 
-
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,

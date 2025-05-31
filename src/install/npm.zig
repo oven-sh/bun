@@ -2450,4 +2450,3 @@ pub const PackageManifest = struct {
         return result;
     }
 };
-

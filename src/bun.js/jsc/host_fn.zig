@@ -110,7 +110,6 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
     };
 }
 
-
 pub fn wrap1(comptime func: anytype) @"return": {
     const p = checkWrapParams(func, 1);
     break :@"return" fn (p[0].type.?) callconv(.c) JSValue;

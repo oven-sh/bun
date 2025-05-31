@@ -3,7 +3,6 @@ const bun = @import("bun");
 
 pub const css = @import("../css_parser.zig");
 
-
 const VendorPrefix = css.VendorPrefix;
 
 const PropertyIdTag = css.PropertyIdTag;

@@ -2632,7 +2632,6 @@ pub const FetchFlags = enum {
     }
 };
 
-
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",

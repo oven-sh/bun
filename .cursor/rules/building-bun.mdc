@@ -1,6 +1,6 @@
 ---
-description:
-globs: src/**/*.cpp,src/**/*.zig,**/*.ts,**/*.c
+description: How to build Bun
+globs: **/*.zig,**/*.ts,**/*.cpp,**/*.c,src/**/*.cpp,src/**/*.zig
 alwaysApply: false
 ---
 

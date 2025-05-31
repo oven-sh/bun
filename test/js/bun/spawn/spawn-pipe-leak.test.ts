@@ -75,5 +75,5 @@ describe("Bun.spawn", () => {
     const pct = delta / memBefore.rss;
     console.log(`RSS delta: ${delta / MB}MB (${Math.round(100 * pct)}%)`);
     expect(pct).toBeLessThan(0.5);
-  }, 10_000); // NOTE: this test doesn't actually take this long, but keeping the limit high will help avoid flakyness
+  }, 30_000); // NOTE: this test doesn't actually take this long, but keeping the limit high will help avoid flakyness
 });

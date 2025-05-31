@@ -1,6 +1,6 @@
 categories:
 
-- process kept alive when it shouldn't: test-tls-junk-server
+- bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
 - different cipher list, support --tls-cipher-list: test-tls-cipher-list
 - after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
 - socket never closes? test-tls-js-stream.js

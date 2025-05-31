@@ -20,10 +20,27 @@ describe("Bun.spawn", () => {
      */
     async function testSpawnMemoryLeak(batchSize: number, totalBatches: number) {
       // Create a command that will generate ~512 KB of output
-      const cmd = [bunExe(), "-e", "process.stdout.write(Buffer.alloc(32 * 1024, 'X'))"];
+      const cmd = [
+        bunExe(),
+        "-e",
+        `for (let buffer = Buffer.alloc(10, 'X'); buffer.length > 0;) {
+            const written = require('fs').writeSync(1, buffer);
+            buffer = buffer.slice(written);
+        }`,
+      ];
 
       log("Starting memory leak test...");
       log(`Initial memory usage: ${Math.round(process.memoryUsage.rss() / MB)} MB`);
+
+      async function iterate() {
+        const process = Bun.spawn({
+          cmd,
+          stdout: "ignore", // We pipe stdout but never read from it
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        await process.exited;
+      }
 
       for (let batch = 0; batch < totalBatches; batch++) {
         const batchPromises: Promise<void>[] = [];
@@ -31,19 +48,7 @@ describe("Bun.spawn", () => {
         for (let i = 0; i < batchSize; i++) {
           // Use an async IIFE that doesn't return anything
           // This should help the GC clean up resources
-          batchPromises.push(
-            (async (): Promise<void> => {
-              const process = Bun.spawn({
-                cmd,
-                stdout: "pipe", // We pipe stdout but never read from it
-                stderr: "ignore",
-                stdin: "ignore",
-              });
-
-              // Only await the exit, don't read any data
-              await process.exited;
-            })(),
-          );
+          batchPromises.push(iterate());
         }
 
         // Wait for all processes in this batch to complete
@@ -59,11 +64,11 @@ describe("Bun.spawn", () => {
     }
 
     // Warmup
-    await testSpawnMemoryLeak(10, 2);
+    await testSpawnMemoryLeak(100, 5);
     const memBefore = process.memoryUsage();
 
     // Run the test
-    await testSpawnMemoryLeak(25, 5);
+    await testSpawnMemoryLeak(100, 10);
     const memAfter = process.memoryUsage();
 
     log("Memory leak test completed");

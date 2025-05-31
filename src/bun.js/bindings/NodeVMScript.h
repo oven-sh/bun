@@ -8,9 +8,10 @@ namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
 public:
-    std::optional<int64_t> timeout = std::nullopt;
-    bool produceCachedData = false;
     WTF::Vector<uint8_t> cachedData;
+    std::optional<int64_t> timeout = std::nullopt;
+    JSValue importer {};
+    bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
 
@@ -91,7 +92,7 @@ private:
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)
         : Base(vm, structure)
-        , m_source(source)
+        , m_source(WTFMove(source))
         , m_options(WTFMove(options))
     {
     }

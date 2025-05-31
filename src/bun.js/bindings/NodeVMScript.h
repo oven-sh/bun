@@ -10,7 +10,7 @@ class ScriptOptions : public BaseVMOptions {
 public:
     WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
-    JSValue importer {};
+    JSValue importer = jsUndefined();
     bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;

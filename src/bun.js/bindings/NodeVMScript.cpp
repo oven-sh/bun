@@ -63,9 +63,14 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (importModuleDynamicallyValue && (importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
-            this->importer = importModuleDynamicallyValue;
-            any = true;
+        if (importModuleDynamicallyValue) {
+            if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
+                this->importer = importModuleDynamicallyValue;
+                any = true;
+            } else {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.importModuleDynamically"_s, "function"_s, importModuleDynamicallyValue);
+                return false;
+            }
         }
     }
 
@@ -107,7 +112,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
@@ -116,6 +121,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     auto filename = options.filename;
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTFMove(source), WTFMove(options));
+
+    fetcher->owner(vm, script);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 

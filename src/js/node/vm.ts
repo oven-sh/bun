@@ -143,7 +143,6 @@ class Module {
       });
     }
 
-    let registry: any = { __proto__: null };
     if (sourceText !== undefined) {
       this[kNative] = new ModuleNative(
         identifier,
@@ -154,19 +153,8 @@ class Module {
         options.cachedData,
         options.initializeImportMeta,
         this,
+        options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
       );
-      registry = {
-        __proto__: null,
-        initializeImportMeta: options.initializeImportMeta,
-        importModuleDynamically: options.importModuleDynamically
-          ? importModuleDynamicallyWrap(options.importModuleDynamically)
-          : undefined,
-      };
-      // This will take precedence over the referrer as the object being
-      // passed into the callbacks.
-      registry.callbackReferrer = this;
-      // const { registerModule } = require("internal/modules/esm/utils");
-      // registerModule(this[kNative], registry);
     } else {
       $assert(syntheticEvaluationSteps);
       this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);

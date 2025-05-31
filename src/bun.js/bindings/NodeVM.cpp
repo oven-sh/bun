@@ -220,18 +220,28 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
 
     auto* fetcher = static_cast<NodeVMScriptFetcher*>(sourceOrigin.fetcher());
 
-    JSValue dynamicImportCallback = fetcher->dynamicImportCallback();
-
-    if (isUseMainContextDefaultLoaderConstant(dynamicImportCallback) && globalObject->inherits(NodeVMGlobalObject::info())) {
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        return zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleNameValue, parameters, sourceOrigin);
-    }
-
-    if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
+    if (fetcher->isUsingDefaultLoader()) {
         return nullptr;
     }
 
-    JSFunction* owner = fetcher->owner();
+    JSValue dynamicImportCallback = fetcher->dynamicImportCallback();
+
+    if (isUseMainContextDefaultLoaderConstant(dynamicImportCallback)) {
+        auto defer = fetcher->temporarilyUseDefaultLoader();
+        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        return zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleNameValue, parameters, sourceOrigin);
+    } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        return nullptr;
+    }
+
+    if (parameters.isObject()) {
+        if (JSValue with = asObject(parameters)->getIfPropertyExists(globalObject, vm.propertyNames->with)) {
+            parameters = with;
+        }
+    }
+
+    JSValue owner = fetcher->owner();
 
     MarkedArgumentBuffer args;
     args.append(moduleNameValue);
@@ -243,6 +253,11 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (result.isUndefinedOrNull()) {
+        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+        return nullptr;
+    }
 
     if (auto* promise = jsDynamicCast<JSInternalPromise*>(result)) {
         return promise;
@@ -995,7 +1010,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
 
     SourceCode sourceCode(
         JSC::StringSourceProvider::create(
@@ -1043,7 +1058,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
         RETURN_IF_EXCEPTION(throwScope, encodedJSUndefined());
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
 
     SourceCode source(
         JSC::StringSourceProvider::create(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset)),
@@ -1118,7 +1133,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Add the function body
     constructFunctionArgs.append(jsString(vm, sourceString));
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
 
     // Create the source origin
     SourceOrigin sourceOrigin { WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher };

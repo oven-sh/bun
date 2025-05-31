@@ -20,6 +20,7 @@ connect() callback never called when invalid pfx provided:
 - ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
 - takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
 - client.on("session") never called?: test-tls-secure-session.js
+- SNICallback not supported: test-tls-starttls-server.js
 
 createSecurePair not implemented:
 These tests are removed in new node versions:

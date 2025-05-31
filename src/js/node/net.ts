@@ -32,7 +32,7 @@ const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
-import type { Socket as NodeSocket, ServerOpts } from "node:net";
+import type { Socket as NetSocket, ServerOpts, Server as NetServer } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32 } = require("internal/validators"); // prettier-ignore
@@ -326,7 +326,7 @@ const SocketEmitEndNT = (self, _err?) => {
   // }
 };
 
-const ServerHandlers: SocketHandler<NodeSocket> = {
+const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -364,11 +364,11 @@ const ServerHandlers: SocketHandler<NodeSocket> = {
   },
   open(socket) {
     $debug("Bun.Server open");
-    const self = socket.data.server!;
+    const self = socket.data as any as NetServer;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({}) as NodeSocket | TLSSocket;
+    const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket.server = self;
     _socket._requestCert = requestCert;
@@ -2384,7 +2384,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
-      data: { server: this },
+      data: this,
     });
   } else if (fd != null) {
     this._handle = Bun.listen({
@@ -2396,7 +2396,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
-      data: { server: this },
+      data: this,
     });
   } else {
     this._handle = Bun.listen({
@@ -2408,7 +2408,7 @@ Server.prototype[kRealListen] = function (
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
       socket: ServerHandlers,
-      data: { server: this },
+      data: this,
     });
   }
 

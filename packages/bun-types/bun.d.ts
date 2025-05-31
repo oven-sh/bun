@@ -6300,16 +6300,44 @@ declare module "bun" {
 
     pause(): void;
 
+    /**
+     * If this is a TLS Socket
+     */
     renegotiate(): void;
 
+    /**
+     * Sets the verify mode of the socket.
+     *
+     * @param requestCert Whether to request a certificate.
+     * @param rejectUnauthorized Whether to reject unauthorized certificates.
+     */
     setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void;
 
     getSession(): void;
 
+    /**
+     * Sets the session of the socket.
+     *
+     * @param session The session to set.
+     */
     setSession(session: string | Buffer | BufferSource): void;
 
+    /**
+     * Exports the keying material of the socket.
+     *
+     * @param length The length of the keying material to export.
+     * @param label The label of the keying material to export.
+     * @param context The context of the keying material to export.
+     */
     exportKeyingMaterial(length: number, label: string, context?: string | BufferSource): void;
 
+    /**
+     * Upgrades the socket to a TLS socket.
+     *
+     * @param options The options for the upgrade.
+     * @returns A tuple containing the raw socket and the TLS socket.
+     * @see {@link TLSUpgradeOptions}
+     */
     upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
     /**

@@ -44,10 +44,6 @@ void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    if (thisObject->vm().isCollectorBusyOnCurrentThread()) {
-        return;
-    }
-
     WTF::Locker locker { thisObject->cellLock() };
 
     for (auto& handle : thisObject->m_storage) {
@@ -63,6 +59,7 @@ DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);
 
 void NapiHandleScopeImpl::append(JSC::JSValue val)
 {
+    WTF::Locker locker { cellLock() };
     m_storage.append(Slot(vm(), this, val));
 }
 
@@ -79,6 +76,7 @@ bool NapiHandleScopeImpl::escape(JSC::JSValue val)
 
 NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
 {
+    WTF::Locker locker { cellLock() };
     m_storage.append(Slot());
     return &m_storage.last();
 }

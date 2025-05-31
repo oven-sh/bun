@@ -2434,7 +2434,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSString = JSC.JSString;
 const JSObject = JSC.JSObject;
 const JSArrayIterator = JSC.JSArrayIterator;
-const JSFunction = JSC.JSFunction;
 const JSCell = JSC.JSCell;
 
 const AnyPromise = JSC.AnyPromise;

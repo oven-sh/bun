@@ -825,7 +825,7 @@ pub const EventLoop = struct {
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     /// We also have immediate_cpp_tasks and next_immediate_cpp_tasks which are basically
     /// exactly the same thing, except these just come from c++ code. The behaviour and theory
-    /// for executing them is the same. You can call "Bun__queueImmediateCppTask" to queue a task from cpp
+    /// for executing them is the same. You can call "globalObject->queueImmediateCppTask()" to queue a task from cpp
     immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
     immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
     next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},

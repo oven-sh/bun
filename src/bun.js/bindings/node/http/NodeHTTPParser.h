@@ -125,7 +125,6 @@ const uint32_t kLenientSpacesAfterChunkSize = 1 << 9;
 const uint32_t kLenientAll = kLenientHeaders | kLenientChunkedLength | kLenientKeepAlive | kLenientTransferEncoding | kLenientVersion | kLenientDataAfterClose | kLenientOptionalLFAfterCR | kLenientOptionalCRLFAfterChunk | kLenientOptionalCRBeforeLF | kLenientSpacesAfterChunkSize;
 
 struct HTTPParser {
-    WTF_MAKE_TZONE_ALLOCATED(HTTPParser);
 
 public:
     HTTPParser(JSC::JSGlobalObject* globalObject)

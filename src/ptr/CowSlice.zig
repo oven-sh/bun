@@ -229,7 +229,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         ///
         /// In debug builds, deinitializing borrowed strings performs debug
         /// checks. In release builds it is a no-op.
-        pub fn deinit(str: Self, allocator: Allocator) void {
+        pub fn deinit(str: *Self, allocator: Allocator) void {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 bun.assertf(

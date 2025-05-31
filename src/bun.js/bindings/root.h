@@ -84,7 +84,6 @@
 #include <JavaScriptCore/HandleSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include "bun.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

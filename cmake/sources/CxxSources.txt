@@ -11,7 +11,6 @@ src/bun.js/bindings/bindings.cpp
 src/bun.js/bindings/blob.cpp
 src/bun.js/bindings/bun-simdutf.cpp
 src/bun.js/bindings/bun-spawn.cpp
-src/bun.js/bindings/bun.cpp
 src/bun.js/bindings/BunClientData.cpp
 src/bun.js/bindings/BunCommonStrings.cpp
 src/bun.js/bindings/BunDebugger.cpp

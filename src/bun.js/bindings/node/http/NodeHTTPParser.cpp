@@ -4,6 +4,7 @@
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
 #include "ZigGlobalObject.h"
+#include "uv.h"
 
 namespace Bun {
 
@@ -240,7 +241,7 @@ JSValue HTTPParser::initialize(JSGlobalObject* globalObject, JSCell* thisParser,
         // This protects from a DoS attack where an attacker establishes
         // the connection without sending any data on applications where
         // server.timeout is left to the default value of zero.
-        m_lastMessageStart = Bun::hrtime();
+        m_lastMessageStart = uv_hrtime();
 
         // Important: Push into the lists AFTER setting the last_message_start_
         // otherwise std::set.erase will fail later.
@@ -285,7 +286,7 @@ JSValue HTTPParser::duration() const
         return jsNumber(0);
     }
 
-    double duration = (Bun::hrtime() - m_lastMessageStart) / 1e6;
+    double duration = (uv_hrtime() - m_lastMessageStart) / 1e6;
 
     return jsNumber(duration);
 }
@@ -319,7 +320,7 @@ int HTTPParser::onMessageBegin()
     m_numFields = 0;
     m_headersCompleted = false;
     m_chunkExtensionsNread = 0;
-    m_lastMessageStart = Bun::hrtime();
+    m_lastMessageStart = uv_hrtime();
     m_url.reset();
     m_statusMessage.reset();
 

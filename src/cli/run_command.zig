@@ -37,8 +37,6 @@ const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
 
-
-
 const windows = std.os.windows;
 
 pub const RunCommand = struct {
@@ -1398,7 +1396,12 @@ pub const RunCommand = struct {
                 RunCommand.printHelp(package_json);
             } else {
                 RunCommand.printHelp(null);
-                Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                if (ctx.log.hasErrors()) {
+                    try ctx.log.print(Output.errorWriter());
+                    Output.prettyln("\n<r><yellow>Failed parsing package.json.<r>\n", .{});
+                } else {
+                    Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                }
                 Output.flush();
             }
 

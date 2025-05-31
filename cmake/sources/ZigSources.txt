@@ -105,6 +105,7 @@ src/bun.js/bindings/JSPropertyIterator.zig
 src/bun.js/bindings/JSRef.zig
 src/bun.js/bindings/JSRuntimeType.zig
 src/bun.js/bindings/JSString.zig
+src/bun.js/bindings/JSType.zig
 src/bun.js/bindings/JSUint8Array.zig
 src/bun.js/bindings/JSValue.zig
 src/bun.js/bindings/NodeModuleModule.zig

@@ -108,7 +108,7 @@ pub const PackageManagerCommand = struct {
             \\
             \\<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\<command\>]<r>
             \\
-            \\  Run package manager utilities
+            \\  Run package manager utilities.
         ;
         const outro_text =
             \\

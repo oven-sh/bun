@@ -372,6 +372,30 @@ pub const Stringifier = struct {
                 try writer.writeAll("},\n");
             }
 
+            if (lockfile.nohoist_patterns.items.len > 0) {
+                const Sorter = String.Sorter(.asc);
+                const sorter: Sorter = .{
+                    .lhs_buf = lockfile.buffers.string_bytes.items,
+                    .rhs_buf = lockfile.buffers.string_bytes.items,
+                };
+                std.sort.pdq(String, lockfile.nohoist_patterns.items, sorter, Sorter.lessThan);
+
+                try writeIndent(writer, indent);
+                try writer.writeAll(
+                    \\"nohoist": [
+                    \\
+                );
+                indent.* += 1;
+
+                for (lockfile.nohoist_patterns.items) |pattern| {
+                    try writeIndent(writer, indent);
+                    try writer.print("{},\n", .{pattern.fmtJson(buf, .{})});
+                }
+
+                try decIndent(writer, indent);
+                try writer.writeAll("],\n");
+            }
+
             var tree_deps_sort_buf: std.ArrayListUnmanaged(DependencyID) = .{};
             defer tree_deps_sort_buf.deinit(allocator);
 
@@ -1002,6 +1026,7 @@ const ParseError = OOM || error{
     InvalidOverridesObject,
     InvalidCatalogObject,
     InvalidCatalogsObject,
+    InvalidNohoistArray,
     InvalidDependencyName,
     InvalidDependencyVersion,
     InvalidPackageResolution,
@@ -1392,6 +1417,26 @@ pub fn parseIntoBinaryLockfile(
                 entry.value_ptr.* = dep;
             }
         }
+    }
+
+    if (root.get("nohoist")) |nohoist_expr| {
+        if (!nohoist_expr.isArray()) {
+            try log.addError(source, nohoist_expr.loc, "Expected an array of strings");
+            return error.InvalidNohoistArray;
+        }
+
+        var nohoist_patterns: std.ArrayListUnmanaged(String) = try .initCapacity(allocator, nohoist_expr.data.e_array.items.len);
+
+        for (nohoist_expr.data.e_array.slice()) |pattern_expr| {
+            if (!pattern_expr.isString()) {
+                try log.addError(source, pattern_expr.loc, "Expected a string");
+                return error.InvalidNohoistArray;
+            }
+
+            nohoist_patterns.appendAssumeCapacity(try string_buf.append(pattern_expr.data.e_string.slice(allocator)));
+        }
+
+        lockfile.nohoist_patterns = nohoist_patterns;
     }
 
     const workspaces_obj = root.getObject("workspaces") orelse {

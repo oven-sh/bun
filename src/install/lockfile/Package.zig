@@ -527,6 +527,7 @@ pub const Package = extern struct {
             update: u32 = 0,
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
+            nohoist_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -542,7 +543,7 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
+                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or this.nohoist_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -592,60 +593,28 @@ pub const Package = extern struct {
                 }
             }
 
-            if (is_root) catalogs: {
+            if (is_root) {
+                catalogs: {
 
-                // don't sort if lengths are different
-                if (from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count()) {
-                    summary.catalogs_changed = true;
-                    break :catalogs;
-                }
-
-                if (from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count()) {
-                    summary.catalogs_changed = true;
-                    break :catalogs;
-                }
-
-                from_lockfile.catalogs.sort(from_lockfile);
-                to_lockfile.catalogs.sort(to_lockfile);
-
-                for (
-                    from_lockfile.catalogs.default.keys(),
-                    from_lockfile.catalogs.default.values(),
-                    to_lockfile.catalogs.default.keys(),
-                    to_lockfile.catalogs.default.values(),
-                ) |from_dep_name, *from_dep, to_dep_name, *to_dep| {
-                    if (!from_dep_name.eql(to_dep_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                    // don't sort if lengths are different
+                    if (from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count()) {
                         summary.catalogs_changed = true;
                         break :catalogs;
                     }
 
-                    if (!from_dep.eql(to_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
-                        summary.catalogs_changed = true;
-                        break :catalogs;
-                    }
-                }
-
-                for (
-                    from_lockfile.catalogs.groups.keys(),
-                    from_lockfile.catalogs.groups.values(),
-                    to_lockfile.catalogs.groups.keys(),
-                    to_lockfile.catalogs.groups.values(),
-                ) |from_catalog_name, from_catalog_deps, to_catalog_name, to_catalog_deps| {
-                    if (!from_catalog_name.eql(to_catalog_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                    if (from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count()) {
                         summary.catalogs_changed = true;
                         break :catalogs;
                     }
 
-                    if (from_catalog_deps.count() != to_catalog_deps.count()) {
-                        summary.catalogs_changed = true;
-                        break :catalogs;
-                    }
+                    from_lockfile.catalogs.sort(from_lockfile);
+                    to_lockfile.catalogs.sort(to_lockfile);
 
                     for (
-                        from_catalog_deps.keys(),
-                        from_catalog_deps.values(),
-                        to_catalog_deps.keys(),
-                        to_catalog_deps.values(),
+                        from_lockfile.catalogs.default.keys(),
+                        from_lockfile.catalogs.default.values(),
+                        to_lockfile.catalogs.default.keys(),
+                        to_lockfile.catalogs.default.values(),
                     ) |from_dep_name, *from_dep, to_dep_name, *to_dep| {
                         if (!from_dep_name.eql(to_dep_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
                             summary.catalogs_changed = true;
@@ -655,6 +624,66 @@ pub const Package = extern struct {
                         if (!from_dep.eql(to_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
                             summary.catalogs_changed = true;
                             break :catalogs;
+                        }
+                    }
+
+                    for (
+                        from_lockfile.catalogs.groups.keys(),
+                        from_lockfile.catalogs.groups.values(),
+                        to_lockfile.catalogs.groups.keys(),
+                        to_lockfile.catalogs.groups.values(),
+                    ) |from_catalog_name, from_catalog_deps, to_catalog_name, to_catalog_deps| {
+                        if (!from_catalog_name.eql(to_catalog_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                            summary.catalogs_changed = true;
+                            break :catalogs;
+                        }
+
+                        if (from_catalog_deps.count() != to_catalog_deps.count()) {
+                            summary.catalogs_changed = true;
+                            break :catalogs;
+                        }
+
+                        for (
+                            from_catalog_deps.keys(),
+                            from_catalog_deps.values(),
+                            to_catalog_deps.keys(),
+                            to_catalog_deps.values(),
+                        ) |from_dep_name, *from_dep, to_dep_name, *to_dep| {
+                            if (!from_dep_name.eql(to_dep_name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                                summary.catalogs_changed = true;
+                                break :catalogs;
+                            }
+
+                            if (!from_dep.eql(to_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                                summary.catalogs_changed = true;
+                                break :catalogs;
+                            }
+                        }
+                    }
+                }
+
+                nohoist: {
+                    if (from_lockfile.nohoist_patterns.items.len != to_lockfile.nohoist_patterns.items.len) {
+                        summary.nohoist_changed = true;
+                        break :nohoist;
+                    }
+
+                    const Sorter = String.Sorter(.asc);
+                    var sorter: Sorter = .{
+                        .lhs_buf = from_lockfile.buffers.string_bytes.items,
+                        .rhs_buf = from_lockfile.buffers.string_bytes.items,
+                    };
+                    std.sort.pdq(String, from_lockfile.nohoist_patterns.items, sorter, Sorter.lessThan);
+                    sorter = .{
+                        .lhs_buf = to_lockfile.buffers.string_bytes.items,
+                        .rhs_buf = to_lockfile.buffers.string_bytes.items,
+                    };
+                    std.sort.pdq(String, to_lockfile.nohoist_patterns.items, sorter, Sorter.lessThan);
+
+                    for (from_lockfile.nohoist_patterns.items, to_lockfile.nohoist_patterns.items) |from_pattern, to_pattern| {
+                        if (!from_pattern.eql(to_pattern, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                            summary.nohoist_changed = true;
+                            break :nohoist;
                         }
                     }
                 }
@@ -1576,6 +1605,28 @@ pub const Package = extern struct {
 
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
+
+                if (workspaces_expr.get("nohoist")) |nohoist_expr| {
+                    switch (nohoist_expr.data) {
+                        .e_array => |nohoist_arr| {
+                            for (nohoist_arr.slice()) |pattern_expr| {
+                                switch (pattern_expr.data) {
+                                    .e_string => |pattern_str| {
+                                        string_builder.count(pattern_str.slice(allocator));
+                                    },
+                                    else => {
+                                        try log.addError(&source, pattern_expr.loc, "Expected a string");
+                                        return error.InvalidPackageJSON;
+                                    },
+                                }
+                            }
+                        },
+                        else => {
+                            try log.addError(&source, nohoist_expr.loc, "Expected an array of strings");
+                            return error.InvalidPackageJSON;
+                        },
+                    }
+                }
             }
         }
 
@@ -1941,6 +1992,13 @@ pub const Package = extern struct {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
             if (json.get("workspaces")) |workspaces_expr| {
                 try lockfile.catalogs.parseAppend(pm, lockfile, log, &source, workspaces_expr, &string_builder);
+                if (workspaces_expr.get("nohoist")) |nohoist_expr| {
+                    lockfile.nohoist_patterns.clearRetainingCapacity();
+                    try lockfile.nohoist_patterns.ensureTotalCapacity(allocator, nohoist_expr.data.e_array.items.len);
+                    for (nohoist_expr.data.e_array.slice()) |pattern_expr| {
+                        lockfile.nohoist_patterns.appendAssumeCapacity(string_builder.append(String, pattern_expr.data.e_string.slice(allocator)));
+                    }
+                }
             }
         }
 

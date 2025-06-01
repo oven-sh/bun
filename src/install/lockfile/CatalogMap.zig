@@ -17,6 +17,10 @@ pub fn get(this: *CatalogMap, lockfile: *const Lockfile, catalog_name: String, d
         };
     }
 
+    if (this.groups.count() == 0) {
+        return null;
+    }
+
     const group = this.groups.getContext(catalog_name, String.arrayHashContext(lockfile, null)) orelse {
         return null;
     };

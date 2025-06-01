@@ -25,6 +25,7 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
+nohoist_patterns: std.ArrayListUnmanaged(String) = .{},
 
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -335,6 +336,7 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.workspace_versions = .{};
     this.overrides = .{};
     this.catalogs = .{};
+    this.nohoist_patterns = .{};
     this.patched_dependencies = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
@@ -624,9 +626,16 @@ pub fn cleanWithLogger(
         var builder = new.stringBuilder();
         old.overrides.count(old, &builder);
         old.catalogs.count(old, &builder);
+        for (old.nohoist_patterns.items) |pattern| {
+            builder.count(pattern.slice(old.buffers.string_bytes.items));
+        }
         try builder.allocate();
         new.overrides = try old.overrides.clone(manager, old, new, &builder);
         new.catalogs = try old.catalogs.clone(manager, old, new, &builder);
+        try new.nohoist_patterns.ensureTotalCapacity(new.allocator, old.nohoist_patterns.items.len);
+        for (old.nohoist_patterns.items) |pattern| {
+            new.nohoist_patterns.appendAssumeCapacity(builder.append(String, pattern.slice(old.buffers.string_bytes.items)));
+        }
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -893,6 +902,7 @@ pub fn hoist(
     try (Tree{}).processSubtree(
         Tree.root_dep_id,
         Tree.invalid_id,
+        .{},
         method,
         &builder,
         if (method == .filter) manager.options.log_level,
@@ -900,9 +910,12 @@ pub fn hoist(
 
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
+        var subpath = item.subpath;
+        defer subpath.deinit(builder.allocator);
         try builder.list.items(.tree)[item.tree_id].processSubtree(
             item.dependency_id,
             item.hoist_root_id,
+            subpath,
             method,
             &builder,
             if (method == .filter) manager.options.log_level,
@@ -1207,6 +1220,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
+        .nohoist_patterns = .{},
         .meta_hash = zero_hash,
     };
 }
@@ -1606,6 +1620,7 @@ pub fn deinit(this: *Lockfile) void {
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);
     this.catalogs.deinit(this.allocator);
+    this.nohoist_patterns.deinit(this.allocator);
 }
 
 pub const EqlSorter = struct {

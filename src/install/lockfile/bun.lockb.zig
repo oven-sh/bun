@@ -7,6 +7,7 @@ const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
+const has_nohoist_tag: u64 = @bitCast(@as([8]u8, "nO hOiSt".*));
 
 pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
@@ -242,6 +243,19 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
                 external_deps_buf.items,
             );
         }
+    }
+
+    if (this.nohoist_patterns.items.len > 0) {
+        try writer.writeAll(std.mem.asBytes(&has_nohoist_tag));
+
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []String,
+            this.nohoist_patterns.items,
+        );
     }
 
     total_size.* = try stream.getPos();
@@ -514,6 +528,19 @@ pub fn load(
                         group.putAssumeCapacityContext(dep_name, Dependency.toDependency(dep, context), String.arrayHashContext(lockfile, null));
                     }
                 }
+            } else {
+                stream.pos -= 8;
+            }
+        }
+    }
+
+    {
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_nohoist_tag) {
+                lockfile.nohoist_patterns = try Lockfile.Buffers.readArray(stream, allocator, std.ArrayListUnmanaged(String));
             } else {
                 stream.pos -= 8;
             }

@@ -52,7 +52,7 @@ pub const HoistDependencyResult = union(enum) {
     hoisted,
     placement: struct {
         id: Id,
-        bundled: bool = false,
+        is_hoist_root: bool = false,
     },
     // replace: struct {
     //     dest_id: Id,
@@ -320,6 +320,7 @@ pub fn processSubtree(
     this: *const Tree,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
+    subpath: std.ArrayListUnmanaged(u8),
     comptime method: BuilderMethod,
     builder: *Builder(method),
     log_level: if (method == .filter) PackageManager.Options.LogLevel else void,
@@ -469,7 +470,7 @@ pub fn processSubtree(
                             },
                         };
 
-                        switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
+                        switch (bun.glob.match(pattern, path_or_name)) {
                             .match, .negate_match => match = true,
 
                             .negate_no_match => {
@@ -491,16 +492,37 @@ pub fn processSubtree(
             }
         }
 
+        const dependency = builder.dependencies[dep_id];
+        var dep_subpath: std.ArrayListUnmanaged(u8) = .{};
+        if (builder.lockfile.nohoist_patterns.items.len > 0) {
+            try dep_subpath.ensureTotalCapacity(
+                builder.allocator,
+                subpath.items.len + dependency.name.len() + @intFromBool(subpath.items.len != 0),
+            );
+            if (subpath.items.len != 0) {
+                dep_subpath.appendSliceAssumeCapacity(subpath.items);
+                dep_subpath.appendAssumeCapacity('/');
+            }
+            dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(builder.buf()));
+        }
+
         const hoisted: HoistDependencyResult = hoisted: {
-            const dependency = builder.dependencies[dep_id];
 
             // don't hoist if it's a folder dependency or a bundled dependency.
             if (dependency.behavior.isBundled()) {
-                break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+                break :hoisted .{ .placement = .{ .id = next.id, .is_hoist_root = true } };
             }
 
             if (pkg_resolutions[pkg_id].tag == .folder) {
                 break :hoisted .{ .placement = .{ .id = next.id } };
+            }
+
+            for (builder.lockfile.nohoist_patterns.items) |pattern| {
+                if (bun.glob.match(pattern.slice(builder.buf()), dep_subpath.items).matches()) {
+                    // prevent hoisting this package. it's dependencies
+                    // are allowed to hoist beyond it.
+                    break :hoisted .{ .placement = .{ .id = next.id } };
+                }
             }
 
             break :hoisted try next.hoistDependency(
@@ -524,9 +546,10 @@ pub fn processSubtree(
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
                         .dependency_id = dep_id,
+                        .subpath = dep_subpath,
 
                         // if it's bundled, start a new hoist root
-                        .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
+                        .hoist_root_id = if (dest.is_hoist_root) dest.id else hoist_root_id,
                     });
                 }
             },
@@ -631,6 +654,7 @@ fn hoistDependency(
 pub const FillItem = struct {
     tree_id: Tree.Id,
     dependency_id: DependencyID,
+    subpath: std.ArrayListUnmanaged(u8),
 
     /// If valid, dependencies will not hoist
     /// beyond this tree if they're in a subtree

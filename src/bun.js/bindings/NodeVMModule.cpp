@@ -19,10 +19,15 @@ void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
 
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, JSC::jsString(globalObject->vm(), m_specifier));
 
     JSObject* attributes = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
@@ -224,6 +229,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
 
     if (auto* sourceTextModule = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
@@ -233,9 +241,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     const WTF::Vector<NodeVMModuleRequest>& requests = thisObject->moduleRequests();
 
     JSArray* array = constructEmptyArray(globalObject, nullptr, requests.size());
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
         array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(array);

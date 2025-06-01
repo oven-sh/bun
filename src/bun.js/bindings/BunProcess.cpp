@@ -2030,13 +2030,14 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
     args.append(JSC::jsNumber(fd));
     args.append(jsBoolean(bun_stdio_tty[fd]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), fd);
@@ -2045,8 +2046,11 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
-    scope.assertNoExceptionExceptTermination();
-    CLEAR_AND_RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (auto* exception = scope.exception()) {
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        scope.clearException();
+        return jsUndefined();
+    }
 
     ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
     JSC::JSArray* resultObject = JSC::jsCast<JSC::JSArray*>(result);
@@ -2077,12 +2081,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
-    return constructStdioWriteStream(processObject->globalObject(), 1);
+    return constructStdioWriteStream(processObject->globalObject(), processObject, 1);
 }
 
 static JSValue constructStderr(VM& vm, JSObject* processObject)
 {
-    return constructStdioWriteStream(processObject->globalObject(), 2);
+    return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
 }
 
 #if OS(WINDOWS)
@@ -2092,17 +2096,22 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
     args.append(JSC::jsNumber(STDIN_FILENO));
     args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
     BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
     args.append(jsNumber(static_cast<int32_t>(fdType)));
-    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+    JSC::CallData callData = JSC::getCallData(getStdinStream);
 
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject, args);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
+    if (auto* exception = scope.exception()) {
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        scope.clearException();
+        return jsUndefined();
+    }
     return result;
 }
 
@@ -2358,6 +2367,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         return {};
     }
     JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
+    RETURN_IF_EXCEPTION(throwScope, {});
     Vector<gid_t> groupVector(ngroups);
     getgroups(ngroups, groupVector.data());
     for (unsigned i = 0; i < ngroups; i++) {
@@ -2599,7 +2609,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto moduleName = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // clang-format off
     if (moduleName == "async_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("async_wrap");
     if (moduleName == "buffer"_s) return JSValue::encode(globalObject->processBindingBuffer());
     if (moduleName == "cares_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("cares_wrap");
@@ -2610,7 +2619,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "crypto/x509"_s) return JSValue::encode(createCryptoX509Object(globalObject));
     if (moduleName == "fs"_s) return JSValue::encode(globalObject->processBindingFs());
     if (moduleName == "fs_event_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("fs_event_wrap");
-    if (moduleName == "http_parser"_s) PROCESS_BINDING_NOT_IMPLEMENTED("http_parser");
+    if (moduleName == "http_parser"_s) return JSValue::encode(globalObject->processBindingHTTPParser());
     if (moduleName == "icu"_s) PROCESS_BINDING_NOT_IMPLEMENTED("icu");
     if (moduleName == "inspector"_s) PROCESS_BINDING_NOT_IMPLEMENTED("inspector");
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
@@ -2630,7 +2639,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "uv"_s) return JSValue::encode(process->bindingUV());
     if (moduleName == "v8"_s) PROCESS_BINDING_NOT_IMPLEMENTED("v8");
     if (moduleName == "zlib"_s) PROCESS_BINDING_NOT_IMPLEMENTED("zlib");
-    // clang-format on
 
     throwScope.throwException(globalObject, createError(globalObject, makeString("No such module: "_s, moduleName)));
     return {};
@@ -3127,6 +3135,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue arg0 = callFrame->argument(0);
+    if (!arg0.isBoolean()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
+    }
+
+    globalObject->processObject()->m_sourceMapsEnabled = arg0.toBoolean(globalObject);
     return JSValue::encode(jsUndefined());
 }
 
@@ -3636,7 +3659,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   resourceUsage                    Process_functionResourceUsage                       Function 0
   revision                         constructRevision                                   PropertyCallback
   send                             constructProcessSend                                PropertyCallback
-  setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
+  setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback

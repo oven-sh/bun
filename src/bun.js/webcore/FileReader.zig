@@ -255,7 +255,7 @@ pub fn onStart(this: *FileReader) streams.Start {
         if (this.buffered.items.len > 0) {
             const buffered = this.buffered;
             this.buffered = .{};
-            return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+            return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
         }
     } else if (comptime Environment.isPosix) {
         if (!was_lazy and this.reader.flags.pollable) {
@@ -524,10 +524,10 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Resul
                 this.buffered = .{};
                 log("onPull({d}) = {d}", .{ buffer.len, buffered.items.len });
                 if (this.reader.isDone()) {
-                    return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+                    return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
                 }
 
-                return .{ .owned = bun.ByteList.init(buffered.items) };
+                return .{ .owned = bun.ByteList.fromList(buffered) };
             },
             else => {},
         }
@@ -549,7 +549,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) streams.Resul
 
 pub fn drain(this: *FileReader) bun.ByteList {
     if (this.buffered.items.len > 0) {
-        const out = bun.ByteList.init(this.buffered.items);
+        const out = bun.ByteList.fromList(this.buffered);
         this.buffered = .{};
         if (comptime Environment.allow_assert) {
             bun.assert(this.reader.buffer().items.ptr != out.ptr);
@@ -626,6 +626,10 @@ pub fn onReaderDone(this: *FileReader) void {
 
 pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
     this.consumeReaderBuffer();
+    if (this.buffered.capacity > 0 and this.buffered.items.len == 0) {
+        this.buffered.deinit(bun.default_allocator);
+        this.buffered = .{};
+    }
 
     this.pending.result = .{ .err = .{ .Error = err } };
     this.pending.run();

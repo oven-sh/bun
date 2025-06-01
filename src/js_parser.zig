@@ -7671,7 +7671,15 @@ fn NewParser_(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            var scopeIndex: usize = 0;
+            var pushedScopeForFunctionArgs = false;
+            // Push scope if the current lexer token is an open parenthesis token.
+            // That is, the parser is about parsing function arguments
+            if (p.lexer.token == .t_open_paren) {
+                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+                pushedScopeForFunctionArgs = true;
+            }
+
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
@@ -7687,7 +7695,7 @@ fn NewParser_(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if (opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) {
+                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) and pushedScopeForFunctionArgs) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -7703,7 +7711,9 @@ fn NewParser_(
                 }
             }
 
-            p.popScope();
+            if (pushedScopeForFunctionArgs) {
+                p.popScope();
+            }
 
             // Only declare the function after we know if it had a body or not. Otherwise
             // TypeScript code such as this will double-declare the symbol:
@@ -12605,13 +12615,18 @@ fn NewParser_(
             p.allow_in = true;
 
             const loc = p.lexer.loc();
-            _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
-            defer p.popScope();
+            var pushedScopeForFunctionBody = false;
+            if (p.lexer.token == .t_open_brace) {
+                _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+                pushedScopeForFunctionBody = true;
+            }
 
             try p.lexer.expect(.t_open_brace);
             var opts = ParseStatementOptions{};
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
             try p.lexer.next();
+
+            if (pushedScopeForFunctionBody) p.popScope();
 
             p.allow_in = oldAllowIn;
             p.fn_or_arrow_data_parse = oldFnOrArrowData;

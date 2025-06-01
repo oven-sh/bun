@@ -327,7 +327,6 @@ pub fn finalize(this: *SocketAddress) void {
 pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     var addr_str = this.address();
     defer this._presentation = .dead;
-    defer this.* = undefined; // removed in release builds, so setting _presentation to dead is still needed.
     return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
 }
 
@@ -337,21 +336,15 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 ///
 /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
 /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
+pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: u16, is_ipv6: bool) JSC.JSValue {
     if (comptime bun.Environment.isDebug) {
-        bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
         bun.assertWithLocation(addr_.len > 0, @src());
     }
 
-    return JSSocketAddressDTO__create(
-        globalObject,
-        bun.String.createUTF8ForJS(globalObject, addr_),
-        port_,
-        is_ipv6,
-    );
+    return JSSocketAddressDTO__create(globalObject, bun.String.createUTF8ForJS(globalObject, addr_), port_, is_ipv6);
 }
 
-extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: c_int, is_ipv6: bool) JSC.JSValue;
+extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: u16, is_ipv6: bool) JSC.JSValue;
 
 // =============================================================================
 
@@ -455,12 +448,12 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 }
 
 pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    return JSC.JSObject.create(.{
+    return (try JSC.JSObject.create(.{
         .address = this.getAddress(global),
         .family = this.getFamily(global),
         .port = this.port(),
         .flowlabel = this.flowLabel() orelse 0,
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst: *anyopaque) bun.JSError!void {

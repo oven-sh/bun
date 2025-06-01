@@ -5014,8 +5014,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     }
 
     if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(obj)) {
-        auto view = WTF::StringView(function->name());
-        *arg2 = Zig::toZigString(view);
+        *arg2 = Zig::toZigString(function->name());
         return;
     }
 

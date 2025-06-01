@@ -34,6 +34,7 @@ pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
 pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
 pub const toJSHostValue = host_fn.toJSHostValue;
+pub const fromJSHostValue = host_fn.fromJSHostValue;
 pub const createCallback = host_fn.createCallback;
 
 // JSC Classes Bindings

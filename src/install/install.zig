@@ -5968,7 +5968,7 @@ pub const PackageManager = struct {
                 false,
             ) catch |err| {
                 const note = .{
-                    .fmt = "error occured while resolving {}",
+                    .fmt = "error occurred while resolving {}",
                     .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                         .path_sep = switch (dependency.version.tag) {
                             .folder => .auto,

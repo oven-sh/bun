@@ -238,7 +238,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Skip devDependencies<r>
                 \\  <b><green>bun install<r> <cyan>--production<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -268,7 +268,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -299,7 +299,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Generate a patch file in a custom directory for changes made to jquery<r>
                 \\  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
                 \\
             ;
 
@@ -327,7 +327,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Generate a patch in a custom directory ("./my-patches")<r>
                 \\  <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -362,7 +362,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
                 \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -387,7 +387,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Remove a dependency<r>
                 \\  <b><green>bun remove<r> <blue>ts-node<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -415,7 +415,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
                 \\  <b><green>bun link<r> <blue>\<package\><r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>.
                 \\
             ;
             Output.pretty(intro_text, .{});
@@ -440,7 +440,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Unregister the current directory as a linkable package.<r>
                 \\  <b><green>bun unlink<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>.
                 \\
             ;
 
@@ -476,7 +476,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun outdated<r> <blue>"is-*"<r>
                 \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/outdated<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/outdated<r>.
                 \\
             ;
 
@@ -501,7 +501,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\<b>Examples:<r>
                 \\  <b><green>bun pm pack<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/pm#pack<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/pm#pack<r>.
                 \\
             ;
 
@@ -533,7 +533,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/publish<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/publish<r>.
                 \\
             ;
 
@@ -556,13 +556,13 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\
                 \\
                 \\<b>Examples:<r>
-                \\  <d>Check installed packages for vulnerabilities.<r>
+                \\  <d>Check the current project's packages for vulnerabilities.<r>
                 \\  <b><green>bun audit<r>
                 \\
                 \\  <d>Output package vulnerabilities in JSON format.<r>
                 \\  <b><green>bun audit --json<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/install/audit<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/audit<r>.
                 \\
             ;
 

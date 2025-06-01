@@ -139,7 +139,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
             \\  <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list
             \\
-            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
+            \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>.
             \\
         ;
 

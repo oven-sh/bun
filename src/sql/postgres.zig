@@ -1394,12 +1394,12 @@ pub const PostgresSQLConnection = struct {
         this.globalObject.bunVM().timer.insert(&this.timer);
     }
 
-    pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getQueries(_: *PostgresSQLConnection, thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         if (js.queriesGetCached(thisValue)) |value| {
             return value;
         }
 
-        const array = JSC.JSValue.createEmptyArray(globalObject, 0);
+        const array = try JSC.JSValue.createEmptyArray(globalObject, 0);
         js.queriesSetCached(thisValue, globalObject, array);
 
         return array;

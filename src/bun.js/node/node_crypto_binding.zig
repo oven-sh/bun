@@ -509,7 +509,7 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     // TODO(dylan-conway): cache the names
     BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
 
-    const array = JSValue.createEmptyArray(global, hashes.count());
+    const array = try JSValue.createEmptyArray(global, hashes.count());
 
     for (hashes.keys(), 0..) |hash, i| {
         const str = String.createUTF8ForJS(global, hash);

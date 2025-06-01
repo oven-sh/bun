@@ -330,8 +330,8 @@ pub const UpgradedDuplex = struct {
         };
     }
 
-    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const array = JSC.JSValue.createEmptyArray(globalThis, 4);
+    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        const array = try JSC.JSValue.createEmptyArray(globalThis, 4);
         array.ensureStillAlive();
 
         {
@@ -3497,7 +3497,6 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
-            
             uws_app_any(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern.ptr, pattern.len, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
         pub fn domain(app: *ThisApp, pattern: [:0]const u8) void {

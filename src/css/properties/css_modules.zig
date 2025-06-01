@@ -7,7 +7,6 @@ pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-
 const CustomIdent = css.css_values.ident.CustomIdent;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
 const CustomIdentFns = css.css_values.ident.CustomIdentFns;

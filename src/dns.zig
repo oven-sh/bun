@@ -329,11 +329,11 @@ pub const GetAddrInfo = struct {
             addrinfo: ?*std.c.addrinfo,
             list: List,
 
-            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) bun.JSError!?JSC.JSValue {
                 return switch (this.*) {
-                    .addrinfo => |addrinfo| addrInfoToJSArray(addrinfo orelse return null, globalThis),
+                    .addrinfo => |addrinfo| try addrInfoToJSArray(addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
-                        const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
+                        const array = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
@@ -444,11 +444,8 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     return count;
 }
 
-pub fn addrInfoToJSArray(
-    addr_info: *std.c.addrinfo,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const array = JSC.JSValue.createEmptyArray(
+pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    const array = try JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
     );

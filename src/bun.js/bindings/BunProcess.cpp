@@ -2367,6 +2367,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         return {};
     }
     JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
+    RETURN_IF_EXCEPTION(throwScope, {});
     Vector<gid_t> groupVector(ngroups);
     getgroups(ngroups, groupVector.data());
     for (unsigned i = 0; i < ngroups; i++) {

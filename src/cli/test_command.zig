@@ -9,7 +9,6 @@ const default_allocator = bun.default_allocator;
 
 const std = @import("std");
 
-
 const FileSystem = @import("../fs.zig").FileSystem;
 const options = @import("../options.zig");
 const js_ast = bun.JSAst;

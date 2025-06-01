@@ -456,7 +456,9 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody
     for (auto& name : impl.getEventNames()) {
         args.append(JSC::identifierToSafePublicJSValue(vm, name));
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
+    auto array = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_eventNames, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -494,7 +496,9 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(
     for (auto* listener : impl.getListeners(eventType)) {
         args.append(listener);
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
+    auto array = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -582,7 +586,9 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionGetEventListeners,
     for (auto* listener : impl.getListeners(eventType)) {
         args.append(listener);
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
+    auto array = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Events_functionListenerCount,

@@ -1889,6 +1889,7 @@ static inline JSC::JSArray* constructResultRow(JSC::VM& vm, JSC::JSGlobalObject*
     } else {
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         result = JSC::constructArray(lexicalGlobalObject, arrayStructure, arguments);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return result;
@@ -1995,6 +1996,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
 
         result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
                              : constructResultObject<false>(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (status == SQLITE_DONE || status == SQLITE_OK || status == SQLITE_ROW) {
@@ -2052,15 +2054,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         } else {
             bool useBigInt64 = castedThis->useBigInt64;
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             if (useBigInt64) {
                 do {
                     JSC::JSValue result = constructResultObject<true>(lexicalGlobalObject, castedThis);
+                    RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             } else {
                 do {
                     JSC::JSValue result = constructResultObject<false>(lexicalGlobalObject, castedThis);
+                    RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
@@ -2069,6 +2074,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         }
     } else if (status == SQLITE_DONE) {
         result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
@@ -2123,6 +2129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
         result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
                              : constructResultObject<false>(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
         while (status == SQLITE_ROW) {
             status = sqlite3_step(stmt);
         }
@@ -2185,6 +2192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         } else {
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             {
                 size_t columnCount = sqlite3_column_count(stmt);
 
@@ -2204,6 +2212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     } else if (status == SQLITE_DONE && columnCount != 0) {
         // breaking change in Bun v0.6.8
         result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
@@ -2318,6 +2327,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
             array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
         } else {
             array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, columnNames->size());
+            RETURN_IF_EXCEPTION(scope, {});
             unsigned int i = 0;
             for (const auto& column : *columnNames) {
                 array->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, column.string()));
@@ -2325,6 +2335,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
         }
     } else {
         array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return JSC::JSValue::encode(array);
 }

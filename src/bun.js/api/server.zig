@@ -5043,10 +5043,10 @@ const ServePlugins = struct {
         bun.destroy(this);
     }
 
-    pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
+    pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.JSError!GetOrStartLoadResult {
         sw: switch (this.state) {
             .unqueued => {
-                this.loadAndResolvePlugins(global);
+                try this.loadAndResolvePlugins(global);
                 continue :sw this.state; // could jump to any branch if synchronously resolved
             },
             .pending => |*pending| {
@@ -5073,7 +5073,7 @@ const ServePlugins = struct {
         bunfig_folder: JSC.JSValue,
     ) JSValue;
 
-    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) void {
+    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) bun.JSError!void {
         bun.assert(this.state == .unqueued);
         const plugin_list = this.state.unqueued;
         const bunfig_folder = bun.path.dirname(global.bunVM().transpiler.options.bunfig_path, .auto);
@@ -5089,7 +5089,7 @@ const ServePlugins = struct {
         for (plugin_list, bunstring_array) |raw_plugin, *out| {
             out.* = bun.String.init(raw_plugin);
         }
-        const plugin_js_array = bun.String.toJSArray(global, bunstring_array);
+        const plugin_js_array = try bun.String.toJSArray(global, bunstring_array);
         const bunfig_folder_bunstr = bun.String.createUTF8ForJS(global, bunfig_folder);
 
         this.state = .{ .pending = .{

@@ -3,6 +3,7 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include <mimalloc.h>
 
 // It would be nicer to construct a DropAllLocks in us_loop_run_bun_tick (the only function that
 // uses onBeforeWait and onAfterWait), but that code is in C. We use an optional as that lets us
@@ -20,6 +21,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* vm)
         drop_all_locks.emplace(*vm);
         if (previouslyHadAccess) {
             vm->heap.releaseAccess();
+            mi_collect(false);
         }
     }
 }

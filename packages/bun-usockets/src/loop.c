@@ -164,7 +164,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         us_internal_socket_context_link_socket(s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
-        s->low_prio_state = 2;
+        s->flags.low_prio_state = 2;
     }
 }
 
@@ -213,21 +213,21 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
-    loop->data.closed_head = 0;
+    loop->data.closed_head = NULL;
 
     for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
         struct us_udp_socket_t *next = s->next;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
-    loop->data.closed_udp_head = 0;
+    loop->data.closed_udp_head = NULL;
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
         struct us_connecting_socket_t *next = s->next;
         us_free(s);
         s = next;
     }
-    loop->data.closed_connecting_head = 0;
+    loop->data.closed_connecting_head = NULL;
 }
 
 void us_internal_free_closed_contexts(struct us_loop_t *loop) {
@@ -236,7 +236,7 @@ void us_internal_free_closed_contexts(struct us_loop_t *loop) {
         us_free(ctx);
         ctx = next;
     }
-    loop->data.closed_context_head = 0;
+    loop->data.closed_context_head = NULL;
 }
 
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
@@ -310,9 +310,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->connect_state = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;
-                        s->low_prio_state = 0;
-                        s->allow_half_open = listen_socket->s.allow_half_open;
-
+                        s->flags.low_prio_state = 0;
+                        s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
+                        s->flags.is_paused = 0;
+                        s->flags.is_ipc = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -358,8 +359,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
                 if (s->context->is_low_prio(s)) {
-                    if (s->low_prio_state == 2) {
-                        s->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
+                    if (s->flags.low_prio_state == 2) {
+                        s->flags.low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
                     } else if (s->context->loop->data.low_prio_budget > 0) {
                         s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
@@ -375,7 +376,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (s->next) s->next->prev = s;
                         s->context->loop->data.low_prio_head = s;
 
-                        s->low_prio_state = 1;
+                        s->flags.low_prio_state = 1;
 
                         break;
                     }
@@ -391,7 +392,43 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                       const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
                     #endif
 
-                    int length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    int length;
+                    #if !defined(_WIN32)
+                    if(s->flags.is_ipc) {
+                        struct msghdr msg = {0};
+                        struct iovec iov = {0};
+                        char cmsg_buf[CMSG_SPACE(sizeof(int))];
+                        
+                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
+
+                        msg.msg_flags = 0;                        
+                        msg.msg_iov = &iov;
+                        msg.msg_iovlen = 1;
+                        msg.msg_name = NULL;
+                        msg.msg_namelen = 0;
+                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        msg.msg_control = cmsg_buf;
+                        
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        
+                        // Extract file descriptor if present
+                        if (length > 0 && msg.msg_controllen > 0) {
+                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
+                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
+                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                                s = s->context->on_fd(s, fd);
+                                if(us_socket_is_closed(0, s)) {
+                                    break;
+                                }
+                            }
+                        }
+                    }else{
+                    #endif
+                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                    #if !defined(_WIN32)
+                    }
+                    #endif
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
@@ -439,7 +476,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if(s->allow_half_open) {
+                if(s->flags.allow_half_open) {
                     /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
                     us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
                     s = s->context->on_end(s);

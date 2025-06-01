@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const Environment = bun.Environment;
 const AllocationScope = bun.AllocationScope;
@@ -153,7 +153,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// Returns a new string that borrows this string's data.
         ///
         /// The borrowed string should be deinitialized so that debug assertions
-        /// that perform.
+        /// that perform `borrows` checks are performed.
         pub fn borrow(str: Self) Self {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
@@ -165,6 +165,31 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                 .flags = .{ .is_owned = false, .len = str.flags.len },
                 .debug = str.debug,
             };
+        }
+
+        /// Returns a new string that borrows a subslice of this string.
+        ///
+        /// This is the Cow-equivalent of
+        /// ```zig
+        /// var str2 = str[start..end];
+        /// ```
+        ///
+        /// When `end` `null`, the subslice will end at the end of the string.
+        /// `end` must be less than or equal to `str.len`, and greater than or
+        /// equal to `start`.  The borrowed string should be deinitialized so
+        /// that debug assertions get performed.
+        pub fn borrowSubslice(str: Self, start: usize, end: ?usize) Self {
+            const end_ = end orelse str.flags.len;
+            const subrange: Slice = if (comptime sentinel) |s|
+                str.ptr[start..end_ :s]
+            else
+                str.ptr[start..end_];
+
+            var result = str.borrow();
+            // SAFETY: const semantics are enforced by is_owned flag
+            result.ptr = @constCast(subrange.ptr);
+            result.flags.len = @intCast(end_ - start);
+            return result;
         }
 
         /// Make this Cow `owned` by duplicating its borrowed data. Does nothing
@@ -204,7 +229,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         ///
         /// In debug builds, deinitializing borrowed strings performs debug
         /// checks. In release builds it is a no-op.
-        pub fn deinit(str: Self, allocator: Allocator) void {
+        pub fn deinit(str: *const Self, allocator: Allocator) void {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 bun.assertf(
@@ -250,7 +275,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
 
 const cow_str_assertions = Environment.isDebug;
 const DebugData = if (cow_str_assertions) struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: bun.Mutex = .{},
     allocator: Allocator,
     /// number of active borrows
     borrows: usize = 0,

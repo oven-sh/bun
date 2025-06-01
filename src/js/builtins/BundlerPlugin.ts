@@ -20,6 +20,9 @@ interface BundlerPlugin {
   addFilter(filter, namespace, number): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
+
+  onBeforeParse: (filter: RegExp, namespace: string, addon: unknown, symbol: string, external?: unknown) => void;
+  $napiDlopenHandle: number;
 }
 
 // Extra types
@@ -41,8 +44,6 @@ interface PluginBuilderExt extends PluginBuilder {
   // we set this to an empty object
   esbuild: any;
 }
-
-type BeforeOnParseExternal = unknown;
 
 /**
  * Used by Bun.serve() to resolve and load plugins.
@@ -223,8 +224,7 @@ export function runSetupFunction(
 
   const processSetupResult = () => {
     var anyOnLoad = false,
-      anyOnResolve = false,
-      anyOnBeforeParse = false;
+      anyOnResolve = false;
 
     for (let [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
@@ -243,7 +243,6 @@ export function runSetupFunction(
     for (let [namespace, callbacks] of onBeforeParsePlugins.entries()) {
       for (let [filter, addon, symbol, external] of callbacks) {
         this.onBeforeParse(filter, namespace, addon, symbol, external);
-        anyOnBeforeParse = true;
       }
     }
 

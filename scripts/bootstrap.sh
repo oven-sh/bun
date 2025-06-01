@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 10
+# Version: 11
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -910,6 +910,9 @@ install_llvm() {
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -920,7 +923,8 @@ install_llvm() {
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld"
+			"lld" \
+			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
 }
@@ -994,6 +998,8 @@ install_gcc() {
 	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
 	execute_sudo ln -sf $(which clang) /usr/bin/cc
 	execute_sudo ln -sf $(which clang++) /usr/bin/c++
+	# Make sure llvm-symbolizer is available for ASAN
+	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
 install_ccache() {

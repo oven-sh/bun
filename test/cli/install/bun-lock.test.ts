@@ -1,14 +1,14 @@
-import { spawn, write, file } from "bun";
-import { expect, it, beforeAll, afterAll } from "bun:test";
-import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
+import { file, spawn, write } from "bun";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
-  VerdaccioRegistry,
+  readdirSorted,
   runBunInstall,
   toBeValidBin,
-  readdirSorted,
+  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
 
@@ -501,4 +501,99 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
     lockfile,
   );
+});
+
+it("should sort overrides before comparing", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  const pkg = {
+    name: "pkg-with-overrides",
+    dependencies: {
+      "one-dep": "1.0.0",
+      "uses-what-bin": "1.5.0",
+    },
+    peerDependencies: {
+      "what-bin": "1.0.0",
+      "no-deps": "2.0.0",
+    },
+    peerDependenciesMeta: {
+      "what-bin": {
+        optional: true,
+      },
+      "no-deps": {
+        optional: true,
+      },
+    },
+    resolutions: {
+      "what-bin": "1.0.0",
+      "no-deps": "2.0.0",
+    },
+  };
+
+  await write(packageJson, JSON.stringify(pkg));
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+  expect(lockfile).toMatchSnapshot();
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // now swap "what-bin" and "no-deps" in resolutions
+  pkg.resolutions = {
+    "no-deps": "2.0.0",
+    "what-bin": "1.0.0",
+  };
+  await write(packageJson, JSON.stringify(pkg));
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // --frozen-lockfile was a success. lockfile will be the same as the first
+  const secondLockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(
+    /localhost:\d+/g,
+    "localhost:1234",
+  );
+  expect(secondLockfile).toBe(lockfile);
+});
+
+it("should include unused resolutions in the lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // we need to include unused resolutions in order to detect changes from package.json
+
+  const pkg = {
+    name: "pkg-with-unused-override",
+    dependencies: {
+      "one-dep": "1.0.0",
+      "uses-what-bin": "1.5.0",
+    },
+    peerDependencies: {
+      "what-bin": "1.0.0",
+      "no-deps": "2.0.0",
+    },
+    peerDependenciesMeta: {
+      "what-bin": {
+        optional: true,
+      },
+      "no-deps": {
+        optional: true,
+      },
+    },
+    resolutions: {
+      "what-bin": "1.0.0",
+      "no-deps": "2.0.0",
+
+      // unused resolution
+      "jquery": "4.0.0",
+    },
+  };
+
+  await write(packageJson, JSON.stringify(pkg));
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+  expect(lockfile).toMatchSnapshot();
+
+  // --frozen-lockfile works
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
 });

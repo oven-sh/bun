@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Maybe = bun.JSC.Maybe;
 
 const WORD = c_ushort;
@@ -21,7 +21,6 @@ const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
 const INPUT_RECORD = windows.INPUT_RECORD;
 const sockaddr = std.posix.sockaddr;
 const sockaddr_storage = std.os.linux.sockaddr_storage;
-const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
@@ -229,19 +228,9 @@ pub const O = struct {
     }
 };
 
-const _O_RDONLY = 0x0000;
 const _O_WRONLY = 0x0001;
-const _O_RDWR = 0x0002;
-const _O_APPEND = 0x0008;
 const _O_CREAT = 0x0100;
 const _O_TRUNC = 0x0200;
-const _O_EXCL = 0x0400;
-const _O_TEXT = 0x4000;
-const _O_NOINHERIT = 0x0080;
-const _O_TEMPORARY = 0x0040;
-const _O_SHORT_LIVED = 0x1000;
-const _O_SEQUENTIAL = 0x0020;
-const _O_RANDOM = 0x0010;
 
 // These **do not** map to std.posix.O/bun.O
 // To use libuv O, use libuv.O.
@@ -384,7 +373,18 @@ pub const Handle = extern struct {
     endgame_next: ?*uv_handle_t = null,
     flags: c_uint,
 
-    pub usingnamespace HandleMixin(Handle);
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub const Type = enum(c_uint) {
         unknown = 0,
@@ -459,7 +459,7 @@ fn HandleMixin(comptime Type: type) type {
             if (fd_ == windows.INVALID_HANDLE_VALUE)
                 return bun.invalid_fd;
 
-            return bun.FDImpl.fromSystem(fd_).encode();
+            return .fromNative(fd_);
         }
     };
 }
@@ -524,7 +524,7 @@ const union_unnamed_377 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_idle_cb = ?*const fn ([*c]uv_idle_t) callconv(.C) void;
+pub const uv_idle_cb = ?*const fn (this: *uv_idle_t) callconv(.C) void;
 pub const struct_uv_idle_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -537,6 +537,22 @@ pub const struct_uv_idle_s = extern struct {
     idle_prev: [*c]uv_idle_t,
     idle_next: [*c]uv_idle_t,
     idle_cb: uv_idle_cb,
+
+    pub fn init(this: *@This(), loop: *Loop) void {
+        @memset(std.mem.asBytes(this), 0);
+
+        if (uv_idle_init(loop, this) != 0) {
+            @panic("internal error: uv_idle_init failed");
+        }
+    }
+
+    pub fn start(this: *@This(), cb: uv_idle_cb) void {
+        _ = uv_idle_start(this, cb);
+    }
+
+    pub fn stop(this: *@This()) void {
+        _ = uv_idle_stop(this);
+    }
 };
 pub const uv_idle_t = struct_uv_idle_s;
 pub const uv_mutex_t = CRITICAL_SECTION;
@@ -558,7 +574,18 @@ pub const struct_uv_async_s = extern struct {
     async_cb: uv_async_cb,
     async_sent: u8,
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub fn init(this: *@This(), loop: *Loop, callback: uv_async_cb) void {
         @memset(std.mem.asBytes(this), 0);
@@ -617,7 +644,7 @@ pub const Loop = extern struct {
 
         // This log may be helpful if you are curious where KeepAlives are being created from
         // if (Env.isDebug) {
-        //     std.debug.dumpCurrentStackTrace(@returnAddress());
+        //     std.debug.dumpCurrentStackTrace(@returnAddress(), .{});
         // }
         this.active_handles += 1;
     }
@@ -637,7 +664,7 @@ pub const Loop = extern struct {
         return loop_alive;
     }
 
-    pub fn init(ptr: *Loop) ?bun.C.E {
+    pub fn init(ptr: *Loop) ?bun.sys.E {
         if (uv_loop_init(ptr).errEnum()) |err| return err;
         return null;
     }
@@ -1003,7 +1030,29 @@ pub const struct_uv_stream_s = extern struct {
     read_req: uv_read_t,
     stream: union_unnamed_384,
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 };
 const union_unnamed_390 = extern union {
     fd: c_int,
@@ -1299,7 +1348,29 @@ pub const Pipe = extern struct {
     name: [*]WCHAR,
     pipe: union_unnamed_405,
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 
     pub fn init(this: *Pipe, loop: *Loop, ipc: bool) Maybe(void) {
         if (uv_pipe_init(loop, this, if (ipc) 1 else 0).toError(.pipe)) |err| return .{ .err = err };
@@ -1308,7 +1379,7 @@ pub const Pipe = extern struct {
     }
 
     pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
-        const uv_fd = bun.uvfdcast(file);
+        const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
         return .{ .result = {} };
@@ -1343,6 +1414,10 @@ pub const Pipe = extern struct {
 
     pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
         uv_pipe_pending_instances(this, count);
+    }
+
+    pub fn asStream(this: *@This()) *uv_stream_t {
+        return @ptrCast(this);
     }
 };
 const union_unnamed_416 = extern union {
@@ -1403,9 +1478,9 @@ pub const struct_uv_tty_s = extern struct {
     handle: HANDLE,
     tty: union_unnamed_420,
 
-    pub fn init(this: *uv_tty_t, loop: *uv_loop_t, fd: uv_file) Maybe(void) {
+    pub fn init(this: *uv_tty_t, loop: *uv_loop_t, file: uv_file) Maybe(void) {
         // last param is ignored
-        return if (uv_tty_init(loop, this, fd, 0).toError(.open)) |err|
+        return if (uv_tty_init(loop, this, file, 0).toError(.open)) |err|
             .{ .err = err }
         else
             .{ .result = {} };
@@ -1421,7 +1496,29 @@ pub const struct_uv_tty_s = extern struct {
         return uv_tty_set_mode(this, @intFromEnum(mode));
     }
 
-    pub usingnamespace StreamMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
+    const stream_impl = StreamMixin(@This());
+    pub const getWriteQueueSize = stream_impl.getWriteQueueSize;
+    pub const listen = stream_impl.listen;
+    pub const accept = stream_impl.accept;
+    pub const readStart = stream_impl.readStart;
+    pub const readStop = stream_impl.readStop;
+    pub const write = stream_impl.write;
+    pub const tryWrite = stream_impl.tryWrite;
+    pub const tryWrite2 = stream_impl.tryWrite2;
+    pub const isReadable = stream_impl.isReadable;
+    pub const isWritable = stream_impl.isWritable;
 };
 pub const uv_tty_t = struct_uv_tty_s;
 const union_unnamed_423 = extern union {
@@ -1452,7 +1549,18 @@ pub const struct_uv_poll_s = extern struct {
     mask_events_2: u8,
     events: u8,
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 };
 pub const Poll = struct_uv_poll_s;
 const union_unnamed_424 = extern union {
@@ -1504,7 +1612,18 @@ pub const Process = extern struct {
         return uv_spawn(loop, handle, options);
     }
 
-    pub usingnamespace HandleMixin(@This());
+    const handle_impl = HandleMixin(@This());
+    pub const getData = handle_impl.getData;
+    pub const getLoop = handle_impl.getLoop;
+    pub const setData = handle_impl.setData;
+    pub const close = handle_impl.close;
+    pub const hasRef = handle_impl.hasRef;
+    pub const ref = handle_impl.ref;
+    pub const unref = handle_impl.unref;
+    pub const isClosing = handle_impl.isClosing;
+    pub const isClosed = handle_impl.isClosed;
+    pub const isActive = handle_impl.isActive;
+    pub const fd = handle_impl.fd;
 
     pub fn kill(this: *@This(), signum: c_int) ReturnCode {
         return uv_process_kill(@alignCast(@ptrCast(this)), signum);
@@ -1789,7 +1908,13 @@ pub const fs_t = extern struct {
     sys_errno_: DWORD,
     file: union_unnamed_450,
     fs: union_unnamed_451,
-    pub usingnamespace ReqMixin(@This());
+
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
+
     const UV_FS_CLEANEDUP = 0x0010;
 
     pub inline fn deinit(this: *fs_t) void {
@@ -1865,7 +1990,11 @@ pub const struct_uv_work_s = extern struct {
     after_work_cb: uv_after_work_cb,
     work_req: struct_uv__work,
 
-    pub usingnamespace ReqMixin(@This());
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
 };
 const struct_unnamed_458 = extern struct {
     overlapped: OVERLAPPED,
@@ -1896,7 +2025,11 @@ pub const struct_uv_random_s = extern struct {
     cb: uv_random_cb,
     work_req: struct_uv__work,
 
-    pub usingnamespace ReqMixin(@This());
+    const req_impl = ReqMixin(@This());
+    pub const setData = req_impl.setData;
+    pub const getLoop = req_impl.loop;
+    pub const getData = req_impl.getData;
+    pub const cancel = req_impl.cancel;
 };
 pub const struct_uv_env_item_s = extern struct {
     name: [*]u8,
@@ -2174,7 +2307,6 @@ pub extern fn uv_tty_set_vterm_state(state: uv_tty_vtermstate_t) void;
 pub extern fn uv_tty_get_vterm_state(state: [*c]uv_tty_vtermstate_t) c_int;
 pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
-const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) ReturnCode;
 pub extern fn uv_pipe_open(*Pipe, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *Pipe, name: [*]const u8) c_int;
@@ -2202,9 +2334,9 @@ pub extern fn uv_prepare_stop(prepare: *uv_prepare_t) c_int;
 pub extern fn uv_check_init(*uv_loop_t, check: *uv_check_t) c_int;
 pub extern fn uv_check_start(check: *uv_check_t, cb: uv_check_cb) c_int;
 pub extern fn uv_check_stop(check: *uv_check_t) c_int;
-pub extern fn uv_idle_init(*uv_loop_t, idle: [*c]uv_idle_t) c_int;
-pub extern fn uv_idle_start(idle: [*c]uv_idle_t, cb: uv_idle_cb) c_int;
-pub extern fn uv_idle_stop(idle: [*c]uv_idle_t) c_int;
+pub extern fn uv_idle_init(*uv_loop_t, idle: *uv_idle_t) c_int;
+pub extern fn uv_idle_start(idle: *uv_idle_t, cb: uv_idle_cb) c_int;
+pub extern fn uv_idle_stop(idle: *uv_idle_t) c_int;
 pub extern fn uv_async_init(*uv_loop_t, @"async": *uv_async_t, async_cb: uv_async_cb) c_int;
 pub extern fn uv_async_send(@"async": *uv_async_t) c_int;
 pub extern fn uv_timer_init(*uv_loop_t, handle: *Timer) c_int;
@@ -2311,8 +2443,6 @@ pub extern fn uv_get_process_title(buffer: [*]u8, size: usize) c_int;
 pub extern fn uv_set_process_title(title: [*]const u8) c_int;
 pub extern fn uv_resident_set_memory(rss: [*c]usize) c_int;
 pub extern fn uv_uptime(uptime: [*c]f64) c_int;
-pub extern fn uv_get_osfhandle(fd: c_int) uv_os_fd_t;
-pub extern fn uv_open_osfhandle(os_fd: uv_os_fd_t) c_int;
 pub const uv_rusage_t = extern struct {
     ru_utime: uv_timeval_t,
     ru_stime: uv_timeval_t,
@@ -2578,78 +2708,78 @@ pub fn uv_is_closed(handle: *const uv_handle_t) bool {
     return (handle.flags & UV_HANDLE_CLOSED != 0);
 }
 
-pub fn translateUVErrorToE(code_in: anytype) bun.C.E {
+pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
     const code: c_int = @intCast(code_in);
 
     return switch (code) {
-        UV_EPERM => bun.C.E.PERM,
-        UV_ENOENT => bun.C.E.NOENT,
-        UV_ESRCH => bun.C.E.SRCH,
-        UV_EINTR => bun.C.E.INTR,
-        UV_EIO => bun.C.E.IO,
-        UV_ENXIO => bun.C.E.NXIO,
-        UV_E2BIG => bun.C.E.@"2BIG",
-        UV_EBADF => bun.C.E.BADF,
-        UV_EAGAIN => bun.C.E.AGAIN,
-        UV_ENOMEM => bun.C.E.NOMEM,
-        UV_EACCES => bun.C.E.ACCES,
-        UV_EFAULT => bun.C.E.FAULT,
-        UV_EBUSY => bun.C.E.BUSY,
-        UV_EEXIST => bun.C.E.EXIST,
-        UV_EXDEV => bun.C.E.XDEV,
-        UV_ENODEV => bun.C.E.NODEV,
-        UV_ENOTDIR => bun.C.E.NOTDIR,
-        UV_EISDIR => bun.C.E.ISDIR,
-        UV_EINVAL => bun.C.E.INVAL,
-        UV_ENFILE => bun.C.E.NFILE,
-        UV_EMFILE => bun.C.E.MFILE,
-        UV_ENOTTY => bun.C.E.NOTTY,
-        UV_ETXTBSY => bun.C.E.TXTBSY,
-        UV_EFBIG => bun.C.E.FBIG,
-        UV_ENOSPC => bun.C.E.NOSPC,
-        UV_ESPIPE => bun.C.E.SPIPE,
-        UV_EROFS => bun.C.E.ROFS,
-        UV_EMLINK => bun.C.E.MLINK,
-        UV_EPIPE => bun.C.E.PIPE,
-        UV_ERANGE => bun.C.E.RANGE,
-        UV_ENAMETOOLONG => bun.C.E.NAMETOOLONG,
-        UV_ENOSYS => bun.C.E.NOSYS,
-        UV_ENOTEMPTY => bun.C.E.NOTEMPTY,
-        UV_ELOOP => bun.C.E.LOOP,
-        UV_EUNATCH => bun.C.E.UNATCH,
-        UV_ENODATA => bun.C.E.NODATA,
-        UV_ENONET => bun.C.E.NONET,
-        UV_EPROTO => bun.C.E.PROTO,
-        UV_EOVERFLOW => bun.C.E.OVERFLOW,
-        UV_EILSEQ => bun.C.E.ILSEQ,
-        UV_ENOTSOCK => bun.C.E.NOTSOCK,
-        UV_EDESTADDRREQ => bun.C.E.DESTADDRREQ,
-        UV_EMSGSIZE => bun.C.E.MSGSIZE,
-        UV_EPROTOTYPE => bun.C.E.PROTOTYPE,
-        UV_ENOPROTOOPT => bun.C.E.NOPROTOOPT,
-        UV_EPROTONOSUPPORT => bun.C.E.PROTONOSUPPORT,
-        UV_ESOCKTNOSUPPORT => bun.C.E.SOCKTNOSUPPORT,
-        UV_ENOTSUP => bun.C.E.NOTSUP,
-        UV_EAFNOSUPPORT => bun.C.E.AFNOSUPPORT,
-        UV_EADDRINUSE => bun.C.E.ADDRINUSE,
-        UV_EADDRNOTAVAIL => bun.C.E.ADDRNOTAVAIL,
-        UV_ENETDOWN => bun.C.E.NETDOWN,
-        UV_ENETUNREACH => bun.C.E.NETUNREACH,
-        UV_ECONNABORTED => bun.C.E.CONNABORTED,
-        UV_ECONNRESET => bun.C.E.CONNRESET,
-        UV_ENOBUFS => bun.C.E.NOBUFS,
-        UV_EISCONN => bun.C.E.ISCONN,
-        UV_ENOTCONN => bun.C.E.NOTCONN,
-        UV_ESHUTDOWN => bun.C.E.SHUTDOWN,
-        UV_ETIMEDOUT => bun.C.E.TIMEDOUT,
-        UV_ECONNREFUSED => bun.C.E.CONNREFUSED,
-        UV_EHOSTDOWN => bun.C.E.HOSTDOWN,
-        UV_EHOSTUNREACH => bun.C.E.HOSTUNREACH,
-        UV_EALREADY => bun.C.E.ALREADY,
-        UV_EREMOTEIO => bun.C.E.REMOTEIO,
-        UV_ECANCELED => bun.C.E.CANCELED,
-        UV_ECHARSET => bun.C.E.CHARSET,
-        UV_EOF => bun.C.E.EOF,
+        UV_EPERM => bun.sys.E.PERM,
+        UV_ENOENT => bun.sys.E.NOENT,
+        UV_ESRCH => bun.sys.E.SRCH,
+        UV_EINTR => bun.sys.E.INTR,
+        UV_EIO => bun.sys.E.IO,
+        UV_ENXIO => bun.sys.E.NXIO,
+        UV_E2BIG => bun.sys.E.@"2BIG",
+        UV_EBADF => bun.sys.E.BADF,
+        UV_EAGAIN => bun.sys.E.AGAIN,
+        UV_ENOMEM => bun.sys.E.NOMEM,
+        UV_EACCES => bun.sys.E.ACCES,
+        UV_EFAULT => bun.sys.E.FAULT,
+        UV_EBUSY => bun.sys.E.BUSY,
+        UV_EEXIST => bun.sys.E.EXIST,
+        UV_EXDEV => bun.sys.E.XDEV,
+        UV_ENODEV => bun.sys.E.NODEV,
+        UV_ENOTDIR => bun.sys.E.NOTDIR,
+        UV_EISDIR => bun.sys.E.ISDIR,
+        UV_EINVAL => bun.sys.E.INVAL,
+        UV_ENFILE => bun.sys.E.NFILE,
+        UV_EMFILE => bun.sys.E.MFILE,
+        UV_ENOTTY => bun.sys.E.NOTTY,
+        UV_ETXTBSY => bun.sys.E.TXTBSY,
+        UV_EFBIG => bun.sys.E.FBIG,
+        UV_ENOSPC => bun.sys.E.NOSPC,
+        UV_ESPIPE => bun.sys.E.SPIPE,
+        UV_EROFS => bun.sys.E.ROFS,
+        UV_EMLINK => bun.sys.E.MLINK,
+        UV_EPIPE => bun.sys.E.PIPE,
+        UV_ERANGE => bun.sys.E.RANGE,
+        UV_ENAMETOOLONG => bun.sys.E.NAMETOOLONG,
+        UV_ENOSYS => bun.sys.E.NOSYS,
+        UV_ENOTEMPTY => bun.sys.E.NOTEMPTY,
+        UV_ELOOP => bun.sys.E.LOOP,
+        UV_EUNATCH => bun.sys.E.UNATCH,
+        UV_ENODATA => bun.sys.E.NODATA,
+        UV_ENONET => bun.sys.E.NONET,
+        UV_EPROTO => bun.sys.E.PROTO,
+        UV_EOVERFLOW => bun.sys.E.OVERFLOW,
+        UV_EILSEQ => bun.sys.E.ILSEQ,
+        UV_ENOTSOCK => bun.sys.E.NOTSOCK,
+        UV_EDESTADDRREQ => bun.sys.E.DESTADDRREQ,
+        UV_EMSGSIZE => bun.sys.E.MSGSIZE,
+        UV_EPROTOTYPE => bun.sys.E.PROTOTYPE,
+        UV_ENOPROTOOPT => bun.sys.E.NOPROTOOPT,
+        UV_EPROTONOSUPPORT => bun.sys.E.PROTONOSUPPORT,
+        UV_ESOCKTNOSUPPORT => bun.sys.E.SOCKTNOSUPPORT,
+        UV_ENOTSUP => bun.sys.E.NOTSUP,
+        UV_EAFNOSUPPORT => bun.sys.E.AFNOSUPPORT,
+        UV_EADDRINUSE => bun.sys.E.ADDRINUSE,
+        UV_EADDRNOTAVAIL => bun.sys.E.ADDRNOTAVAIL,
+        UV_ENETDOWN => bun.sys.E.NETDOWN,
+        UV_ENETUNREACH => bun.sys.E.NETUNREACH,
+        UV_ECONNABORTED => bun.sys.E.CONNABORTED,
+        UV_ECONNRESET => bun.sys.E.CONNRESET,
+        UV_ENOBUFS => bun.sys.E.NOBUFS,
+        UV_EISCONN => bun.sys.E.ISCONN,
+        UV_ENOTCONN => bun.sys.E.NOTCONN,
+        UV_ESHUTDOWN => bun.sys.E.SHUTDOWN,
+        UV_ETIMEDOUT => bun.sys.E.TIMEDOUT,
+        UV_ECONNREFUSED => bun.sys.E.CONNREFUSED,
+        UV_EHOSTDOWN => bun.sys.E.HOSTDOWN,
+        UV_EHOSTUNREACH => bun.sys.E.HOSTUNREACH,
+        UV_EALREADY => bun.sys.E.ALREADY,
+        UV_EREMOTEIO => bun.sys.E.REMOTEIO,
+        UV_ECANCELED => bun.sys.E.CANCELED,
+        UV_ECHARSET => bun.sys.E.CHARSET,
+        UV_EOF => bun.sys.E.EOF,
         else => @enumFromInt(-code),
     };
 }
@@ -2684,84 +2814,84 @@ pub const ReturnCode = enum(c_int) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
+    pub inline fn errno(this: ReturnCode) ?u16 {
         return if (this.int() < 0)
             switch (this.int()) {
-                UV_EPERM => @intFromEnum(bun.C.E.PERM),
-                UV_ENOENT => @intFromEnum(bun.C.E.NOENT),
-                UV_ESRCH => @intFromEnum(bun.C.E.SRCH),
-                UV_EINTR => @intFromEnum(bun.C.E.INTR),
-                UV_EIO => @intFromEnum(bun.C.E.IO),
-                UV_ENXIO => @intFromEnum(bun.C.E.NXIO),
-                UV_E2BIG => @intFromEnum(bun.C.E.@"2BIG"),
-                UV_EBADF => @intFromEnum(bun.C.E.BADF),
-                UV_EAGAIN => @intFromEnum(bun.C.E.AGAIN),
-                UV_ENOMEM => @intFromEnum(bun.C.E.NOMEM),
-                UV_EACCES => @intFromEnum(bun.C.E.ACCES),
-                UV_EFAULT => @intFromEnum(bun.C.E.FAULT),
-                UV_EBUSY => @intFromEnum(bun.C.E.BUSY),
-                UV_EEXIST => @intFromEnum(bun.C.E.EXIST),
-                UV_EXDEV => @intFromEnum(bun.C.E.XDEV),
-                UV_ENODEV => @intFromEnum(bun.C.E.NODEV),
-                UV_ENOTDIR => @intFromEnum(bun.C.E.NOTDIR),
-                UV_EISDIR => @intFromEnum(bun.C.E.ISDIR),
-                UV_EINVAL => @intFromEnum(bun.C.E.INVAL),
-                UV_ENFILE => @intFromEnum(bun.C.E.NFILE),
-                UV_EMFILE => @intFromEnum(bun.C.E.MFILE),
-                UV_ENOTTY => @intFromEnum(bun.C.E.NOTTY),
-                UV_ETXTBSY => @intFromEnum(bun.C.E.TXTBSY),
-                UV_EFBIG => @intFromEnum(bun.C.E.FBIG),
-                UV_ENOSPC => @intFromEnum(bun.C.E.NOSPC),
-                UV_ESPIPE => @intFromEnum(bun.C.E.SPIPE),
-                UV_EROFS => @intFromEnum(bun.C.E.ROFS),
-                UV_EMLINK => @intFromEnum(bun.C.E.MLINK),
-                UV_EPIPE => @intFromEnum(bun.C.E.PIPE),
-                UV_ERANGE => @intFromEnum(bun.C.E.RANGE),
-                UV_ENAMETOOLONG => @intFromEnum(bun.C.E.NAMETOOLONG),
-                UV_ENOSYS => @intFromEnum(bun.C.E.NOSYS),
-                UV_ENOTEMPTY => @intFromEnum(bun.C.E.NOTEMPTY),
-                UV_ELOOP => @intFromEnum(bun.C.E.LOOP),
-                UV_EUNATCH => @intFromEnum(bun.C.E.UNATCH),
-                UV_ENODATA => @intFromEnum(bun.C.E.NODATA),
-                UV_ENONET => @intFromEnum(bun.C.E.NONET),
-                UV_EPROTO => @intFromEnum(bun.C.E.PROTO),
-                UV_EOVERFLOW => @intFromEnum(bun.C.E.OVERFLOW),
-                UV_EILSEQ => @intFromEnum(bun.C.E.ILSEQ),
-                UV_ENOTSOCK => @intFromEnum(bun.C.E.NOTSOCK),
-                UV_EDESTADDRREQ => @intFromEnum(bun.C.E.DESTADDRREQ),
-                UV_EMSGSIZE => @intFromEnum(bun.C.E.MSGSIZE),
-                UV_EPROTOTYPE => @intFromEnum(bun.C.E.PROTOTYPE),
-                UV_ENOPROTOOPT => @intFromEnum(bun.C.E.NOPROTOOPT),
-                UV_EPROTONOSUPPORT => @intFromEnum(bun.C.E.PROTONOSUPPORT),
-                UV_ESOCKTNOSUPPORT => @intFromEnum(bun.C.E.SOCKTNOSUPPORT),
-                UV_ENOTSUP => @intFromEnum(bun.C.E.NOTSUP),
-                UV_EAFNOSUPPORT => @intFromEnum(bun.C.E.AFNOSUPPORT),
-                UV_EADDRINUSE => @intFromEnum(bun.C.E.ADDRINUSE),
-                UV_EADDRNOTAVAIL => @intFromEnum(bun.C.E.ADDRNOTAVAIL),
-                UV_ENETDOWN => @intFromEnum(bun.C.E.NETDOWN),
-                UV_ENETUNREACH => @intFromEnum(bun.C.E.NETUNREACH),
-                UV_ECONNABORTED => @intFromEnum(bun.C.E.CONNABORTED),
-                UV_ECONNRESET => @intFromEnum(bun.C.E.CONNRESET),
-                UV_ENOBUFS => @intFromEnum(bun.C.E.NOBUFS),
-                UV_EISCONN => @intFromEnum(bun.C.E.ISCONN),
-                UV_ENOTCONN => @intFromEnum(bun.C.E.NOTCONN),
-                UV_ESHUTDOWN => @intFromEnum(bun.C.E.SHUTDOWN),
-                UV_ETIMEDOUT => @intFromEnum(bun.C.E.TIMEDOUT),
-                UV_ECONNREFUSED => @intFromEnum(bun.C.E.CONNREFUSED),
-                UV_EHOSTDOWN => @intFromEnum(bun.C.E.HOSTDOWN),
-                UV_EHOSTUNREACH => @intFromEnum(bun.C.E.HOSTUNREACH),
-                UV_EALREADY => @intFromEnum(bun.C.E.ALREADY),
-                UV_EREMOTEIO => @intFromEnum(bun.C.E.REMOTEIO),
-                UV_ECANCELED => @intFromEnum(bun.C.E.CANCELED),
-                UV_ECHARSET => @intFromEnum(bun.C.E.CHARSET),
-                UV_EOF => @intFromEnum(bun.C.E.EOF),
+                UV_EPERM => @intFromEnum(bun.sys.E.PERM),
+                UV_ENOENT => @intFromEnum(bun.sys.E.NOENT),
+                UV_ESRCH => @intFromEnum(bun.sys.E.SRCH),
+                UV_EINTR => @intFromEnum(bun.sys.E.INTR),
+                UV_EIO => @intFromEnum(bun.sys.E.IO),
+                UV_ENXIO => @intFromEnum(bun.sys.E.NXIO),
+                UV_E2BIG => @intFromEnum(bun.sys.E.@"2BIG"),
+                UV_EBADF => @intFromEnum(bun.sys.E.BADF),
+                UV_EAGAIN => @intFromEnum(bun.sys.E.AGAIN),
+                UV_ENOMEM => @intFromEnum(bun.sys.E.NOMEM),
+                UV_EACCES => @intFromEnum(bun.sys.E.ACCES),
+                UV_EFAULT => @intFromEnum(bun.sys.E.FAULT),
+                UV_EBUSY => @intFromEnum(bun.sys.E.BUSY),
+                UV_EEXIST => @intFromEnum(bun.sys.E.EXIST),
+                UV_EXDEV => @intFromEnum(bun.sys.E.XDEV),
+                UV_ENODEV => @intFromEnum(bun.sys.E.NODEV),
+                UV_ENOTDIR => @intFromEnum(bun.sys.E.NOTDIR),
+                UV_EISDIR => @intFromEnum(bun.sys.E.ISDIR),
+                UV_EINVAL => @intFromEnum(bun.sys.E.INVAL),
+                UV_ENFILE => @intFromEnum(bun.sys.E.NFILE),
+                UV_EMFILE => @intFromEnum(bun.sys.E.MFILE),
+                UV_ENOTTY => @intFromEnum(bun.sys.E.NOTTY),
+                UV_ETXTBSY => @intFromEnum(bun.sys.E.TXTBSY),
+                UV_EFBIG => @intFromEnum(bun.sys.E.FBIG),
+                UV_ENOSPC => @intFromEnum(bun.sys.E.NOSPC),
+                UV_ESPIPE => @intFromEnum(bun.sys.E.SPIPE),
+                UV_EROFS => @intFromEnum(bun.sys.E.ROFS),
+                UV_EMLINK => @intFromEnum(bun.sys.E.MLINK),
+                UV_EPIPE => @intFromEnum(bun.sys.E.PIPE),
+                UV_ERANGE => @intFromEnum(bun.sys.E.RANGE),
+                UV_ENAMETOOLONG => @intFromEnum(bun.sys.E.NAMETOOLONG),
+                UV_ENOSYS => @intFromEnum(bun.sys.E.NOSYS),
+                UV_ENOTEMPTY => @intFromEnum(bun.sys.E.NOTEMPTY),
+                UV_ELOOP => @intFromEnum(bun.sys.E.LOOP),
+                UV_EUNATCH => @intFromEnum(bun.sys.E.UNATCH),
+                UV_ENODATA => @intFromEnum(bun.sys.E.NODATA),
+                UV_ENONET => @intFromEnum(bun.sys.E.NONET),
+                UV_EPROTO => @intFromEnum(bun.sys.E.PROTO),
+                UV_EOVERFLOW => @intFromEnum(bun.sys.E.OVERFLOW),
+                UV_EILSEQ => @intFromEnum(bun.sys.E.ILSEQ),
+                UV_ENOTSOCK => @intFromEnum(bun.sys.E.NOTSOCK),
+                UV_EDESTADDRREQ => @intFromEnum(bun.sys.E.DESTADDRREQ),
+                UV_EMSGSIZE => @intFromEnum(bun.sys.E.MSGSIZE),
+                UV_EPROTOTYPE => @intFromEnum(bun.sys.E.PROTOTYPE),
+                UV_ENOPROTOOPT => @intFromEnum(bun.sys.E.NOPROTOOPT),
+                UV_EPROTONOSUPPORT => @intFromEnum(bun.sys.E.PROTONOSUPPORT),
+                UV_ESOCKTNOSUPPORT => @intFromEnum(bun.sys.E.SOCKTNOSUPPORT),
+                UV_ENOTSUP => @intFromEnum(bun.sys.E.NOTSUP),
+                UV_EAFNOSUPPORT => @intFromEnum(bun.sys.E.AFNOSUPPORT),
+                UV_EADDRINUSE => @intFromEnum(bun.sys.E.ADDRINUSE),
+                UV_EADDRNOTAVAIL => @intFromEnum(bun.sys.E.ADDRNOTAVAIL),
+                UV_ENETDOWN => @intFromEnum(bun.sys.E.NETDOWN),
+                UV_ENETUNREACH => @intFromEnum(bun.sys.E.NETUNREACH),
+                UV_ECONNABORTED => @intFromEnum(bun.sys.E.CONNABORTED),
+                UV_ECONNRESET => @intFromEnum(bun.sys.E.CONNRESET),
+                UV_ENOBUFS => @intFromEnum(bun.sys.E.NOBUFS),
+                UV_EISCONN => @intFromEnum(bun.sys.E.ISCONN),
+                UV_ENOTCONN => @intFromEnum(bun.sys.E.NOTCONN),
+                UV_ESHUTDOWN => @intFromEnum(bun.sys.E.SHUTDOWN),
+                UV_ETIMEDOUT => @intFromEnum(bun.sys.E.TIMEDOUT),
+                UV_ECONNREFUSED => @intFromEnum(bun.sys.E.CONNREFUSED),
+                UV_EHOSTDOWN => @intFromEnum(bun.sys.E.HOSTDOWN),
+                UV_EHOSTUNREACH => @intFromEnum(bun.sys.E.HOSTUNREACH),
+                UV_EALREADY => @intFromEnum(bun.sys.E.ALREADY),
+                UV_EREMOTEIO => @intFromEnum(bun.sys.E.REMOTEIO),
+                UV_ECANCELED => @intFromEnum(bun.sys.E.CANCELED),
+                UV_ECHARSET => @intFromEnum(bun.sys.E.CHARSET),
+                UV_EOF => @intFromEnum(bun.sys.E.EOF),
                 else => null,
             }
         else
             null;
     }
 
-    pub inline fn errEnum(this: ReturnCode) ?bun.C.E {
+    pub inline fn errEnum(this: ReturnCode) ?bun.sys.E {
         return if (this.int() < 0)
             (translateUVErrorToE(this.int()))
         else
@@ -2799,14 +2929,14 @@ pub const ReturnCodeI64 = enum(i64) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
+    pub inline fn errno(this: ReturnCodeI64) ?u16 {
         return if (@intFromEnum(this) < 0)
             @as(u16, @intCast(-@intFromEnum(this)))
         else
             null;
     }
 
-    pub inline fn errEnum(this: ReturnCodeI64) ?bun.C.E {
+    pub inline fn errEnum(this: ReturnCodeI64) ?bun.sys.E {
         return if (@intFromEnum(this) < 0)
             (translateUVErrorToE(@intFromEnum(this)))
         else
@@ -2818,7 +2948,7 @@ pub const ReturnCodeI64 = enum(i64) {
     }
 
     pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
-        return bun.toFD(@as(i32, @truncate(this.int())));
+        return .fromUV(@truncate(this.int()));
     }
 };
 
@@ -2827,8 +2957,6 @@ pub const addrinfo = std.os.windows.ws2_32.addrinfo;
 // https://docs.libuv.org/en/v1.x/stream.html
 fn StreamMixin(comptime Type: type) type {
     return struct {
-        pub usingnamespace HandleMixin(Type);
-
         pub fn getWriteQueueSize(this: *Type) usize {
             return uv_stream_get_write_queue_size(@ptrCast(this));
         }
@@ -2857,7 +2985,7 @@ fn StreamMixin(comptime Type: type) type {
             this: *Type,
             context: anytype,
             comptime alloc_cb: *const (fn (@TypeOf(context), suggested_size: usize) []u8),
-            comptime error_cb: *const (fn (@TypeOf(context), err: bun.C.E) void),
+            comptime error_cb: *const (fn (@TypeOf(context), err: bun.sys.E) void),
             comptime read_cb: *const (fn (@TypeOf(context), data: []const u8) void),
         ) Maybe(void) {
             const Context = @TypeOf(context);
@@ -2872,7 +3000,7 @@ fn StreamMixin(comptime Type: type) type {
                     if (nreads == 0) return; // EAGAIN or EWOULDBLOCK
                     if (nreads < 0) {
                         req.readStop();
-                        error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.C.E.CANCELED);
+                        error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.sys.E.CANCELED);
                     } else {
                         read_cb(context_data, buffer.slice());
                     }

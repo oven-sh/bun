@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { CSRF, type CSRFAlgorithm } from "bun";
+import { describe, expect, test } from "bun:test";
 describe("Bun.CSRF", () => {
   const secret = "this-is-my-super-secure-secret-key";
 
@@ -140,5 +140,17 @@ describe("Bun.CSRF", () => {
 
     // Empty secret for verification
     expect(() => CSRF.verify("some-token", { secret: "" })).toThrow();
+  });
+
+  test("handle bad decoding", () => {
+    const ambigousSecret = "test-secret";
+
+    const token = CSRF.generate(ambigousSecret, {
+      encoding: "hex",
+      expiresIn: 60 * 60 * 1000,
+    });
+    // the default encoding is base64url with is the same decoding for base64
+    expect(CSRF.verify(token, { secret: ambigousSecret })).toBe(false);
+    expect(CSRF.verify(token, { secret: ambigousSecret, encoding: "hex" })).toBe(true);
   });
 });

@@ -88,7 +88,7 @@ endif()
 if(UNIX)
   register_compiler_flags(
     DESCRIPTION "Enable debug symbols"
-    -g3 ${DEBUG}
+    -g3 -gz=zstd ${DEBUG}
     -g1 ${RELEASE}
   )
 
@@ -141,6 +141,14 @@ if(UNIX)
     DESCRIPTION "Disable unwind tables"
     -fno-unwind-tables
     -fno-asynchronous-unwind-tables
+  )
+
+  # needed for libuv stubs because they use
+  # C23 feature which lets you define parameter without
+  # name
+  register_compiler_flags(
+    DESCRIPTION "Allow C23 extensions"
+    -Wno-c23-extensions
   )
 endif()
 

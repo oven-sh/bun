@@ -8,6 +8,11 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/JSInternalPromise.h>
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
@@ -36,8 +41,11 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
-// This is a mix of bun's builtin module names and also the ones reported by
-// node v20.4.0
+// This is a list of builtin module names that do not have the node prefix. It
+// also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
+// The reason for overstuffing this list is so that uses that use these as the
+// 'external' option to a bundler will properly exclude things like 'ws' which
+// only work with Bun's native 'ws' implementation and not the JS one on NPM.
 static constexpr ASCIILiteral builtinModuleNames[] = {
     "_http_agent"_s,
     "_http_client"_s,
@@ -83,7 +91,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
-    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -372,7 +379,6 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
         EncodedJSValue thisValue,
         PropertyName propertyName))
 {
-
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     return JSValue::encode(
         globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(
@@ -405,16 +411,9 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
     return true;
 }
 
-extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);
-
-struct Parent {
-    JSArray* paths;
-    JSString* filename;
-};
-
-Parent getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
+PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
 {
-    Parent value { nullptr, nullptr };
+    PathResolveModule value { nullptr, nullptr, false };
 
     if (!maybe_parent) {
         return value;
@@ -457,8 +456,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
         return JSC::JSValue::encode(JSC::jsNull());
     }
 
-    auto parent = getParent(vm, globalObject, callFrame->argument(1));
+    PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resolveLookupPaths(globalObject, request, parent)));
+}
+
+JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String request, PathResolveModule parent)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Check for node modules paths.
     if (request.characterAt(0) != '.' || (request.length() > 1 && request.characterAt(1) != '.' && request.characterAt(1) != '/' &&
@@ -468,16 +474,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
             true
 #endif
             )) {
-        auto array = JSC::constructArray(
-            globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
         if (parent.paths) {
+            auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
                 array->push(globalObject, path);
             }
+            RELEASE_AND_RETURN(scope, array);
+        } else if (parent.pathsArrayLazy && parent.filename) {
+            auto filenameValue = parent.filename->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto filename = Bun::toString(filenameValue);
+            auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
+            RELEASE_AND_RETURN(scope, paths);
+        } else {
+            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, array);
         }
-        return JSValue::encode(array);
     }
 
     JSValue dirname;
@@ -495,9 +511,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     }
 
     JSValue values[] = { dirname };
-    auto array = JSC::constructArray(
-        globalObject, (ArrayAllocationProfile*)nullptr, values, 1);
-    RELEASE_AND_RETURN(scope, JSValue::encode(array));
+    auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, values, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, array);
 }
 
 extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
@@ -559,6 +575,12 @@ static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
         ->lazyRequireCacheObject();
 }
 
+static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
+{
+    return jsCast<Zig::GlobalObject*>(moduleObject->globalObject())
+        ->lazyRequireExtensionsObject();
+}
+
 static JSValue getModuleDebugObject(VM& vm, JSObject* moduleObject)
 {
     return JSC::constructEmptyObject(moduleObject->globalObject());
@@ -569,13 +591,6 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     return JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
-}
-
-static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
-{
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return globalObject->requireFunctionUnbound()->getIfPropertyExists(
-        globalObject, Identifier::fromString(vm, "extensions"_s));
 }
 
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
@@ -655,7 +670,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
 {
     // This does not cache anything because it is assumed nobody reads it more than once.
     VM& vm = global->vm();
-    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::moduleGetWrapperArrayProxyCodeGenerator(vm), global);
+    JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::commonJSGetWrapperArrayProxyCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);
 
     JSC::MarkedArgumentBuffer args;
@@ -700,11 +715,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -724,9 +734,74 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSInternalPromise* promise);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto arg1 = callFrame->argument(0);
+    auto name = makeAtomString(arg1.toWTFString(globalObject));
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        vm, globalObject, 1, String(), resolverFunctionCallback);
+
+    auto result = promise->then(globalObject, resolverFunction, nullptr);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    return JSValue::encode(
+        globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(
+            globalObject));
+}
+
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+{
+    auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
+    MarkedArgumentBuffer args;
+    args.append(argv1);
+    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &jsFunctionRunMain) {
+                    isOriginal = true;
+                }
+            }
+        }
+        Bun__VirtualMachine__setOverrideModuleRunMain(globalObject->bunVM(), !isOriginal);
+        globalObject->m_moduleRunMainFunction.set(
+            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    }
+
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPreloadModules,
@@ -772,8 +847,8 @@ static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 _cache                  getModuleCacheObject              PropertyCallback
 _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
-_findPath                jsFunctionFindPath                Function 3
-_initPaths              jsFunctionInitPaths               Function 0
+_findPath                jsFunctionFindPath               Function 3
+_initPaths              JSBuiltin                         Function|Builtin 0
 _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback
@@ -785,13 +860,13 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
-findSourceMap            jsFunctionFindSourceMap           Function 0
+findSourceMap           jsFunctionFindSourceMap           Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
-runMain                 jsFunctionRunMain                 Function 0
+runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
@@ -866,6 +941,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             init.set(moduleConstructor);
         });
 
+    globalObject->m_moduleRunMainFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* runMainFunction = JSFunction::create(
+                init.vm, init.owner, 2, "runMain"_s,
+                jsFunctionRunMain, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, jsFunctionRunMain);
+            init.set(runMainFunction);
+        });
+
     globalObject->m_moduleResolveFilenameFunction.initLater(
         [](const Zig::GlobalObject::Initializer<JSCell>& init) {
             JSFunction* resolveFilenameFunction = JSFunction::create(
@@ -873,6 +957,42 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic, jsFunctionResolveFileName);
             init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSFunction* resolveFilenameFunction = JSFunction::create(
+                init.vm, init.owner, 2, "_compile"_s,
+                functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic, functionJSCommonJSModule_compile);
+            init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
+            init.set(requireESM);
+        });
+
+    globalObject->m_lazyRequireCacheObject.initLater(
+        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            ASSERT(!returnedException);
+            init.set(result.toObject(globalObject));
+        });
+
+    globalObject->m_lazyRequireExtensionsObject.initLater(
+        [](const Zig::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            init.set(JSCommonJSExtensions::create(vm, globalObject, JSCommonJSExtensions::createStructure(vm, globalObject, globalObject->nullPrototype())));
         });
 }
 
@@ -917,11 +1037,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->getIfPropertyExists(globalObject, property);
 
-        if (UNLIKELY(catchScope.exception())) {
+        if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
         }
-        if (UNLIKELY(value.isEmpty())) {
+        if (value.isEmpty()) [[unlikely]] {
             value = JSC::jsUndefined();
         }
 

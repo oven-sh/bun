@@ -111,7 +111,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   const required_functions = ["deepClone", "parse", "toCss", "eql"];
 
   return `
-  pub usingnamespace PropertyImpl();
+  // Copy manually implemented functions.
+  pub const toCss = properties_impl.property_mixin.toCss
 
   // Sanity check to make sure all types have the following functions:
   // - deepClone()
@@ -120,7 +121,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   // - toCss()
   // 
   // We do this string concatenation thing so we get all the errors at once,
-  // instead of relying on Zig semantic analysis which usualy stops at the first error.
+  // instead of relying on Zig semantic analysis which usually stops at the first error.
   comptime {
   const compile_error: []const u8 = compile_error: {
       var compile_error: []const u8 = "";
@@ -358,7 +359,11 @@ ${Object.entries(property_defs)
   unparsed,
   custom: CustomPropertyName,
 
-pub usingnamespace PropertyIdImpl();
+  // Copy manually implemented functions.
+  pub const toCss = properties_impl.property_id_mixin.toCss;
+  pub const parse = properties_impl.property_id_mixin.toCss;
+  pub const fromString = properties_impl.property_id_mixin.toCss;
+  pub const fromStr = fromString;
 
 ${generatePropertyIdImpl(property_defs)}
 };`;
@@ -383,7 +388,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn prefix(this: *const PropertyId) VendorPrefix {
     return switch (this.*) {
       ${generatePropertyIdImplPrefix(property_defs)}
-      .all, .custom, .unparsed => VendorPrefix.empty(),
+      .all, .custom, .unparsed => VendorPrefix{},
     };
   }
 
@@ -475,7 +480,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
 function generatePropertyIdImplPrefix(property_defs: Record<string, PropertyDef>): string {
   return Object.entries(property_defs)
     .map(([name, meta]) => {
-      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix.empty(),`;
+      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix{},`;
       return `.${escapeIdent(name)} => |p| p,`;
     })
     .join("\n");
@@ -1780,7 +1785,7 @@ generateCode({
 
 function prelude() {
   return /* zig */ `const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
 pub const css = @import("../css_parser.zig");
@@ -1789,9 +1794,7 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
-
-const PropertyImpl = @import("./properties_impl.zig").PropertyImpl;
-const PropertyIdImpl = @import("./properties_impl.zig").PropertyIdImpl;
+const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

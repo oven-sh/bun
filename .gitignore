@@ -153,6 +153,7 @@ test/cli/install/registry/packages/publish-pkg-*
 test/cli/install/registry/packages/@secret/publish-pkg-8
 test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 tmp
+codegen-for-zig-team.tar.gz
 
 # Dependencies
 /vendor

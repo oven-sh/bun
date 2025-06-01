@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -45,7 +45,7 @@ pub const GetAddrInfo = struct {
         return hasher.final();
     }
 
-    pub const Options = packed struct {
+    pub const Options = packed struct(u64) {
         family: Family = .unspecified,
         /// Leaving this unset leads to many duplicate addresses returned.
         /// Node hardcodes to `SOCK_STREAM`.
@@ -56,6 +56,7 @@ pub const GetAddrInfo = struct {
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
         flags: std.c.AI = .{},
+        _: u24 = 0,
 
         pub fn toLibC(this: Options) ?std.c.addrinfo {
             if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == std.c.AI{}) {
@@ -109,8 +110,10 @@ pub const GetAddrInfo = struct {
 
                     options.flags = flags.coerce(std.c.AI, globalObject);
 
-                    if (!options.flags.ALL and !options.flags.ADDRCONFIG and !options.flags.V4MAPPED)
-                        return error.InvalidFlags;
+                    // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                    const filter = ~@as(u32, @bitCast(std.c.AI{ .ALL = true, .ADDRCONFIG = true, .V4MAPPED = true }));
+                    const int = @as(u32, @bitCast(options.flags));
+                    if (int & filter != 0) return error.InvalidFlags;
                 }
 
                 return options;
@@ -326,11 +329,11 @@ pub const GetAddrInfo = struct {
             addrinfo: ?*std.c.addrinfo,
             list: List,
 
-            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+            pub fn toJS(this: *const Any, globalThis: *JSC.JSGlobalObject) bun.JSError!?JSC.JSValue {
                 return switch (this.*) {
-                    .addrinfo => |addrinfo| addrInfoToJSArray(addrinfo orelse return null, globalThis),
+                    .addrinfo => |addrinfo| try addrInfoToJSArray(addrinfo orelse return null, globalThis),
                     .list => |list| brk: {
-                        const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
+                        const array = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
@@ -441,11 +444,8 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     return count;
 }
 
-pub fn addrInfoToJSArray(
-    addr_info: *std.c.addrinfo,
-    globalThis: *JSC.JSGlobalObject,
-) JSC.JSValue {
-    const array = JSC.JSValue.createEmptyArray(
+pub fn addrInfoToJSArray(addr_info: *std.c.addrinfo, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    const array = try JSC.JSValue.createEmptyArray(
         globalThis,
         addrInfoCount(addr_info),
     );
@@ -469,4 +469,4 @@ pub fn addrInfoToJSArray(
     return array;
 }
 
-pub const internal = bun.JSC.DNS.InternalDNS;
+pub const internal = bun.api.DNS.InternalDNS;

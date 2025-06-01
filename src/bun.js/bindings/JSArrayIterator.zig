@@ -1,6 +1,4 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;

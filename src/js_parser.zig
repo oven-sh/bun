@@ -3,7 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
@@ -18,13 +18,10 @@ pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const G = js_ast.G;
 const Define = @import("./defines.zig").Define;
 const DefineData = @import("./defines.zig").DefineData;
@@ -70,13 +67,11 @@ pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
 const Ref = @import("./ast/base.zig").Ref;
-const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -89,7 +84,7 @@ const SkipTypeParameterResult = enum {
     definitely_type_parameters,
 };
 
-const TypeParameterFlag = packed struct {
+const TypeParameterFlag = packed struct(u8) {
     /// TypeScript 4.7
     allow_in_out_variance_annotations: bool = false,
 
@@ -98,6 +93,8 @@ const TypeParameterFlag = packed struct {
 
     /// Allow "<>" without any type parameters
     allow_empty_type_parameters: bool = false,
+
+    _: u5 = 0,
 };
 
 const JSXImport = enum {
@@ -183,8 +180,6 @@ const arguments_str: string = "arguments";
 
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
-const JSXFactoryName = "JSX";
-const JSXAutomaticName = "jsx_module";
 // kept as a static reference
 const exports_string_name: string = "exports";
 
@@ -497,7 +492,6 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
         return e.left.loc;
     }
 }
-const ExportsStringName = "exports";
 
 const TransposeState = struct {
     is_await_target: bool = false,
@@ -1677,9 +1671,7 @@ pub const SideEffects = enum(u1) {
             .e_arrow,
             .e_import_meta,
             .e_inlined_enum,
-            => {
-                return null;
-            },
+            => return null,
 
             .e_dot => |dot| {
                 if (dot.can_be_removed_if_unused) {
@@ -1753,7 +1745,7 @@ pub const SideEffects = enum(u1) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
                     } else {
-                        return Expr.empty;
+                        return null;
                     }
                 }
             },
@@ -2436,11 +2428,12 @@ const AsyncPrefixExpression = enum(u2) {
     }
 };
 
-const IdentifierOpts = packed struct {
+const IdentifierOpts = packed struct(u8) {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
     is_call_target: bool = false,
+    _padding: u3 = 0,
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
@@ -2538,8 +2531,6 @@ const ExprIn = struct {
 
     property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
 };
-
-const Tup = std.meta.Tuple;
 
 // This function exists to tie all of these checks together in one place
 // This can sometimes show up on benchmarks as a small thing.
@@ -2678,7 +2669,6 @@ const SymbolUseMap = js_ast.Part.SymbolUseMap;
 const SymbolPropertyUseMap = js_ast.Part.SymbolPropertyUseMap;
 const StringBoolMap = bun.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
-const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("./ast/base.zig").RefHashCtx, false);
 
 const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;
@@ -3159,7 +3149,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
@@ -3197,7 +3187,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         var parts = ListManaged(js_ast.Part).init(p.allocator);
@@ -3206,7 +3196,7 @@ pub const Parser = struct {
         try p.appendPart(&parts, stmts);
         visit_tracer.end();
 
-        const analyze_tracer = bun.tracy.traceNamed(@src(), "JSParser.analyze");
+        const analyze_tracer = bun.perf.trace("JSParser.analyze");
         try callback(context, &p, parts.items);
         analyze_tracer.end();
     }
@@ -3292,7 +3282,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -3324,7 +3314,7 @@ pub const Parser = struct {
 
         bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         var before = ListManaged(js_ast.Part).init(p.allocator);
@@ -3531,7 +3521,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
+        const postvisit_tracer = bun.perf.trace("JSParser.postvisit");
         defer postvisit_tracer.end();
 
         var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
@@ -3589,9 +3579,6 @@ pub const Parser = struct {
                 uses_filename = false;
             }
         }
-
-        const did_import_fast_refresh = false;
-        _ = did_import_fast_refresh;
 
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
@@ -3964,7 +3951,13 @@ pub const Parser = struct {
             switch (p.options.module_type) {
                 // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
                 .cjs => {
-                    exports_kind = .cjs;
+                    // There are no commonjs-only features used (require is allowed in ESM)
+                    bun.assert(!uses_exports_ref and
+                        !uses_module_ref and
+                        !p.has_top_level_return and
+                        !p.has_with_scope);
+                    // Use ESM if the file has ES module syntax (import)
+                    exports_kind = if (p.has_es_module_syntax) .esm else .cjs;
                 },
                 .esm => {
                     exports_kind = .esm;
@@ -6640,12 +6633,6 @@ fn NewParser_(
 
         pub fn prepareForVisitPass(p: *P) anyerror!void {
             {
-                var count: usize = 0;
-                for (p.scopes_in_order.items) |item| {
-                    if (item != null) {
-                        count += 1;
-                    }
-                }
                 var i: usize = 0;
                 p.scope_order_to_visit = try p.allocator.alloc(ScopeOrder, p.scopes_in_order.items.len);
                 for (p.scopes_in_order.items) |item| {
@@ -6654,6 +6641,7 @@ fn NewParser_(
                         i += 1;
                     }
                 }
+                p.scope_order_to_visit.len = i;
             }
 
             p.is_file_considered_to_have_esm_exports =
@@ -7449,10 +7437,11 @@ fn NewParser_(
                     .bin_rem => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
+                                const fmod = @extern(*const fn (f64, f64) callconv(.C) f64, .{ .name = "fmod" });
                                 return p.newExpr(
                                     // Use libc fmod here to be consistent with what JavaScriptCore does
                                     // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                    E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
+                                    E.Number{ .value = if (comptime Environment.isNative) fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
                                     v.loc,
                                 );
                             }
@@ -7461,7 +7450,7 @@ fn NewParser_(
                     .bin_pow => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                return p.newExpr(E.Number{ .value = std.math.pow(f64, vals[0], vals[1]) }, v.loc);
+                                return p.newExpr(E.Number{ .value = JSC.math.pow(vals[0], vals[1]) }, v.loc);
                             }
                         }
                     },
@@ -7682,7 +7671,15 @@ fn NewParser_(
                 ifStmtScopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.block, loc);
             }
 
-            const scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+            var scopeIndex: usize = 0;
+            var pushedScopeForFunctionArgs = false;
+            // Push scope if the current lexer token is an open parenthesis token.
+            // That is, the parser is about parsing function arguments
+            if (p.lexer.token == .t_open_paren) {
+                scopeIndex = try p.pushScopeForParsePass(js_ast.Scope.Kind.function_args, p.lexer.loc());
+                pushedScopeForFunctionArgs = true;
+            }
+
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
                 .async_range = asyncRange orelse logger.Range.None,
@@ -7698,7 +7695,7 @@ fn NewParser_(
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
-                if (opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) {
+                if ((opts.is_typescript_declare or func.flags.contains(.is_forward_declaration)) and pushedScopeForFunctionArgs) {
                     p.popAndDiscardScope(scopeIndex);
 
                     // Balance the fake block scope introduced above
@@ -7714,7 +7711,9 @@ fn NewParser_(
                 }
             }
 
-            p.popScope();
+            if (pushedScopeForFunctionArgs) {
+                p.popScope();
+            }
 
             // Only declare the function after we know if it had a body or not. Otherwise
             // TypeScript code such as this will double-declare the symbol:
@@ -12616,13 +12615,18 @@ fn NewParser_(
             p.allow_in = true;
 
             const loc = p.lexer.loc();
-            _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
-            defer p.popScope();
+            var pushedScopeForFunctionBody = false;
+            if (p.lexer.token == .t_open_brace) {
+                _ = try p.pushScopeForParsePass(Scope.Kind.function_body, p.lexer.loc());
+                pushedScopeForFunctionBody = true;
+            }
 
             try p.lexer.expect(.t_open_brace);
             var opts = ParseStatementOptions{};
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
             try p.lexer.next();
+
+            if (pushedScopeForFunctionBody) p.popScope();
 
             p.allow_in = oldAllowIn;
             p.fn_or_arrow_data_parse = oldFnOrArrowData;

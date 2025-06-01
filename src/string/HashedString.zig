@@ -1,5 +1,5 @@
 const HashedString = @This();
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 ptr: [*]const u8,
 len: u32,

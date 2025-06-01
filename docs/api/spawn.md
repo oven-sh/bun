@@ -253,6 +253,19 @@ const proc = Bun.spawn({
 
 The `killSignal` option also controls which signal is sent when an AbortSignal is aborted.
 
+## Using maxBuffer
+
+For spawnSync, you can limit the maximum number of bytes of output before the process is killed:
+
+```ts
+// KIll 'yes' after it emits over 100 bytes of output
+const result = Bun.spawnSync({
+  cmd: ["yes"], // or ["bun", "exec", "yes"] on windows
+  maxBuffer: 100,
+});
+// process exits
+```
+
 ## Inter-process communication (IPC)
 
 Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
@@ -423,6 +436,7 @@ namespace SpawnOptions {
     signal?: AbortSignal;
     timeout?: number;
     killSignal?: string | number;
+    maxBuffer?: number;
   }
 
   type Readable =

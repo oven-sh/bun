@@ -80,8 +80,6 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype);
 };
 
-JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
-
 void setupJSVerifyClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

@@ -43,7 +43,7 @@ const DirWatcher = struct {
             const err = w.kernel32.GetLastError();
             log("failed to start watching directory: {s}", .{@tagName(err)});
             return .{ .err = .{
-                .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                .errno = @intFromEnum(bun.sys.SystemErrno.init(err) orelse bun.sys.SystemErrno.EINVAL),
                 .syscall = .watch,
             } };
         }
@@ -160,7 +160,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
             } else {
                 log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.init(err) orelse bun.sys.SystemErrno.EINVAL),
                     .syscall = .watch,
                 } };
             }
@@ -176,7 +176,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
                 // TODO close handles?
                 log("shutdown notification in WindowsWatcher.next", .{});
                 return .{ .err = .{
-                    .errno = @intFromEnum(bun.C.SystemErrno.ESHUTDOWN),
+                    .errno = @intFromEnum(bun.sys.SystemErrno.ESHUTDOWN),
                     .syscall = .watch,
                 } };
             }
@@ -184,7 +184,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterato
         } else {
             log("GetQueuedCompletionStatus returned no overlapped event", .{});
             return .{ .err = .{
-                .errno = @truncate(@intFromEnum(bun.C.E.INVAL)),
+                .errno = @truncate(@intFromEnum(bun.sys.E.INVAL)),
                 .syscall = .watch,
             } };
         }
@@ -284,11 +284,9 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
-const Environment = bun.Environment;
+const bun = @import("bun");
 const Output = bun.Output;
 const log = Output.scoped(.watcher, false);
-const Futex = bun.Futex;
 const Mutex = bun.Mutex;
 const w = std.os.windows;
 

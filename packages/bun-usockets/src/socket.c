@@ -37,6 +37,15 @@ int us_socket_local_port(int ssl, struct us_socket_t *s) {
     }
 }
 
+int us_socket_remote_port(int ssl, struct us_socket_t *s) {
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return -1;
+    } else {
+        return bsd_addr_get_port(&addr);
+    }
+}
+
 void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
     /* This syscall is idempotent so no extra check is needed */
     bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
@@ -178,7 +187,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         /* make sure the context is alive until the callback ends */
         us_socket_context_ref(ssl, s->context);
 
-        if (s->low_prio_state == 1) {
+        if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
@@ -187,7 +196,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 
             s->prev = 0;
             s->next = 0;
-            s->low_prio_state = 0;
+            s->flags.low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
@@ -238,7 +247,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 // - does not close
 struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
     if (!us_socket_is_closed(0, s)) {
-        if (s->low_prio_state == 1) {
+        if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
             if (!s->prev) s->context->loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
@@ -247,7 +256,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
 
             s->prev = 0;
             s->next = 0;
-            s->low_prio_state = 0;
+            s->flags.low_prio_state = 0;
             us_socket_context_unref(ssl, s->context);
 
         } else {
@@ -267,27 +276,6 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
     return s;
 }
 
-// This function is used for moving a socket between two different event loops
-struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd, struct us_socket_context_t *ctx, int flags, int socket_ext_size) {
-    struct us_poll_t *accepted_p = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + socket_ext_size);
-    us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-    us_poll_start(accepted_p, ctx->loop, flags);
-
-    struct us_socket_t *s = (struct us_socket_t *) accepted_p;
-
-    s->context = ctx;
-    s->timeout = 0;
-    s->low_prio_state = 0;
-
-    /* We always use nodelay */
-    bsd_socket_nodelay(client_fd, 1);
-    us_internal_socket_context_link_socket(ctx, s);
-
-    if (ctx->on_open) ctx->on_open(s, 0, 0, 0);
-
-    return s;
-}
-
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
@@ -296,7 +284,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
         return 0;
     }
 
-    return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+    return us_socket_from_fd(ctx, socket_ext_size, fds[0], 0);
 #endif
 }
 
@@ -314,7 +302,7 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
+struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
 #else
@@ -328,19 +316,19 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->context = ctx;
-    s->timeout = 0;
-    s->long_timeout = 0;
-    s->low_prio_state = 0;
+    s->timeout = 255;
+    s->long_timeout = 255;
+    s->flags.low_prio_state = 0;
+    s->flags.allow_half_open = 0;
+    s->flags.is_paused = 0;
+    s->flags.is_ipc = 0;
+    s->flags.is_ipc = ipc;
+    s->connect_state = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
-
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags != -1) {
-        flags |= O_NONBLOCK;
-        fcntl(fd, F_SETFL, flags);
-    }
-
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
     us_internal_socket_context_link_socket(ctx, s);
 
     return s;
@@ -387,6 +375,44 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     return written < 0 ? 0 : written;
 }
+
+#if !defined(_WIN32)
+/* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
+    number is less than the length, the file descriptor was not sent. */
+int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
+    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
+        return 0;
+    }
+
+    struct msghdr msg = {0};
+    struct iovec iov = {0};
+    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    
+    iov.iov_base = (void*)data;
+    iov.iov_len = length;
+    
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = CMSG_SPACE(sizeof(int));
+    
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    
+    *(int *)CMSG_DATA(cmsg) = fd;
+    
+    int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
+    
+    if (sent != length) {
+        s->context->loop->data.last_write_failed = 1;
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+    
+    return sent < 0 ? 0 : sent;
+}
+#endif
 
 void *us_socket_ext(int ssl, struct us_socket_t *s) {
 #ifndef LIBUS_NO_SSL
@@ -501,6 +527,24 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
     return length;
 }
 
+unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+{
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+        return 0;
+    }
+
+    int length = bsd_addr_get_ip_length(&addr);
+    if (!length) {
+        return 0;
+    }
+
+    memcpy(buf, bsd_addr_get_ip(&addr), length);
+    *port = bsd_addr_get_port(&addr);
+
+    return length;
+}
+
 void us_socket_ref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_ref((uv_handle_t*)s->p.uv_p);
@@ -538,18 +582,17 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 }
 
 void us_socket_pause(int ssl, struct us_socket_t *s) {
+    if(s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
-    if(us_socket_is_shut_down(ssl, s)) {
-        // we already sent FIN so we pause all events because we are read-only
-        us_poll_change(&s->p, s->context->loop, 0);
-        return;
-    }
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+    s->flags.is_paused = 1;
 }
 
 void us_socket_resume(int ssl, struct us_socket_t *s) {
+    if(!s->flags.is_paused) return;
+    s->flags.is_paused = 0;
     // closed cannot be resumed
     if(us_socket_is_closed(ssl, s)) return;
 

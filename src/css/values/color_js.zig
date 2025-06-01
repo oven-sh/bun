@@ -1,14 +1,10 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const color = @import("./color.zig");
 const RGBA = color.RGBA;
 const LAB = color.LAB;
-const LCH = color.LCH;
 const SRGB = color.SRGB;
 const HSL = color.HSL;
-const HWB = color.HWB;
-const SRGBLinear = color.SRGBLinear;
-const P3 = color.P3;
 const JSC = bun.JSC;
 const css = bun.css;
 
@@ -281,15 +277,15 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                             const srgba = switch (result.*) {
                                 .float => |float| switch (float.*) {
                                     .rgb => |rgb| rgb,
-                                    inline else => |*val| val.intoSRGB(),
+                                    inline else => |*val| val.into(.SRGB),
                                 },
-                                .rgba => |*rgba| rgba.intoSRGB(),
+                                .rgba => |*rgba| rgba.into(.SRGB),
                                 .lab => |lab| switch (lab.*) {
-                                    inline else => |entry| entry.intoSRGB(),
+                                    inline else => |entry| entry.into(.SRGB),
                                 },
                                 else => break :formatted,
                             };
-                            const rgba = srgba.intoRGBA();
+                            const rgba = srgba.into(.RGBA);
                             switch (tag) {
                                 .@"{rgba}" => {
                                     const object = JSC.JSValue.createEmptyObject(globalThis, 4);
@@ -307,14 +303,14 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                     return object;
                                 },
                                 .@"[rgb]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 3);
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 3);
                                     object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
                                     object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
                                     object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgba]" => {
-                                    const object = JSC.JSValue.createEmptyArray(globalThis, 4);
+                                    const object = try JSC.JSValue.createEmptyArray(globalThis, 4);
                                     object.putIndex(globalThis, 0, JSC.JSValue.jsNumber(rgba.red));
                                     object.putIndex(globalThis, 1, JSC.JSValue.jsNumber(rgba.green));
                                     object.putIndex(globalThis, 2, JSC.JSValue.jsNumber(rgba.blue));
@@ -385,12 +381,12 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                                 .float => |float| brk: {
                                     switch (float.*) {
                                         .hsl => |hsl| break :brk hsl,
-                                        inline else => |*val| break :brk val.intoHSL(),
+                                        inline else => |*val| break :brk val.into(.HSL),
                                     }
                                 },
-                                .rgba => |*rgba| rgba.intoHSL(),
+                                .rgba => |*rgba| rgba.into(.HSL),
                                 .lab => |lab| switch (lab.*) {
-                                    inline else => |entry| entry.intoHSL(),
+                                    inline else => |entry| entry.into(.HSL),
                                 },
                                 else => break :formatted,
                             };
@@ -400,13 +396,13 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                         .lab => {
                             const lab = switch (result.*) {
                                 .float => |float| switch (float.*) {
-                                    inline else => |*val| val.intoLAB(),
+                                    inline else => |*val| val.into(.LAB),
                                 },
                                 .lab => |lab| switch (lab.*) {
                                     .lab => |lab_| lab_,
-                                    inline else => |entry| entry.intoLAB(),
+                                    inline else => |entry| entry.into(.LAB),
                                 },
-                                .rgba => |*rgba| rgba.intoLAB(),
+                                .rgba => |*rgba| rgba.into(.LAB),
                                 else => break :formatted,
                             };
 

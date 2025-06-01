@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const strings = bun.strings;
 const S3Credentials = @import("./credentials.zig").S3Credentials;
 const ACL = @import("./acl.zig").ACL;
@@ -110,7 +110,7 @@ pub const MultiPartUpload = struct {
     available: bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE) = bun.bit_set.IntegerBitSet(MAX_QUEUE_SIZE).initFull(),
 
     currentPartNumber: u16 = 1,
-    ref_count: u16 = 1,
+    ref_count: RefCount,
     ended: bool = false,
 
     options: MultiPartUploadOptions = .{},
@@ -145,7 +145,10 @@ pub const MultiPartUpload = struct {
     callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+    const Self = @This();
+    const RefCount = bun.ptr.RefCount(Self, "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     const log = bun.Output.scoped(.S3MultiPartUpload, true);
 
@@ -292,7 +295,7 @@ pub const MultiPartUpload = struct {
             this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
             this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn singleSendUploadResponse(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {

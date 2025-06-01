@@ -1,15 +1,9 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
-const builtin = @import("builtin");
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
-const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-
-threadlocal var arena_: ?Arena = null;
 
 const TestKind = enum {
     normal,
@@ -53,14 +47,12 @@ pub fn _test(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 }
 
 pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime test_kind: TestKind, comptime test_category: TestCategory) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(3);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
     };
@@ -173,9 +165,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
                 const str = bunstr.toUTF8(bun.default_allocator);
                 defer str.deinit();
                 if (std.mem.eql(u8, str.slice(), "DEEP_SELECTOR_COMBINATOR")) {
-                    opts.flags.insert(bun.css.ParserFlags{
-                        .deep_selector_combinator = true,
-                    });
+                    opts.flags.deep_selector_combinator = true;
                 } else {
                     return globalThis.throw("invalid flag: {s}", .{str.slice()});
                 }
@@ -268,14 +258,12 @@ fn targetsFromJS(globalThis: *JSC.JSGlobalObject, jsobj: JSValue) bun.JSError!bu
 }
 
 pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    var arena = arena_ orelse brk: {
-        break :brk Arena.init() catch @panic("oopsie arena no good");
-    };
-    defer arena.reset();
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
     const alloc = arena.allocator();
 
     const arguments_ = callframe.arguments_old(4);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         return globalThis.throw("attrTest: expected 3 arguments, got 0", .{});
     };

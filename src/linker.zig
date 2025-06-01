@@ -1,42 +1,23 @@
 // This file is the old linker, used by Bun.Transpiler.
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const FileDescriptorType = bun.FileDescriptor;
-const C = bun.C;
-const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const Options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
-const js_ast = bun.JSAst;
 
 const Fs = @import("fs.zig");
-const Api = @import("api/schema.zig").Api;
 const Resolver = @import("./resolver/resolver.zig");
-const sync = @import("sync.zig");
 const _import_record = @import("./import_record.zig");
 const ImportRecord = _import_record.ImportRecord;
-const ImportKind = _import_record.ImportKind;
 const allocators = @import("./allocators.zig");
-const MimeType = @import("./http/mime_type.zig");
-const resolve_path = @import("./resolver/resolve_path.zig");
 const _transpiler = bun.transpiler;
 const Transpiler = _transpiler.Transpiler;
 const ResolveQueue = _transpiler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
-const ESModule = @import("./resolver/package_json.zig").ESModule;
-const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = bun.JSC;
 const PluginRunner = bun.transpiler.PluginRunner;
@@ -101,7 +82,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.asFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -186,7 +167,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;

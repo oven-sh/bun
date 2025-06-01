@@ -6,8 +6,7 @@
 const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
-const bun = @import("root").bun;
-const FeatureFlags = bun.FeatureFlags;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -16,26 +15,19 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const std = @import("std");
-const uws = @import("../deps/uws.zig");
 const JSC = bun.JSC;
 const DirInfo = @import("../resolver/dir_info.zig");
 const File = bun.sys.File;
-const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 const OOM = bun.OOM;
 const FD = bun.FD;
 
-const js_parser = bun.js_parser;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
-const linker = @import("../linker.zig");
-
 const Api = @import("../api/schema.zig").Api;
 const Path = bun.path;
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
 const transpiler = bun.transpiler;
@@ -45,32 +37,24 @@ const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
-const Lock = bun.Mutex;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
-const HTTPChannel = HTTP.HTTPChannel;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
 
-const Integrity = @import("./integrity.zig").Integrity;
-const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
-const PackageManagerCommand = @import("../cli/package_manager_command.zig").PackageManagerCommand;
 threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
-pub const TextLockfile = @import("./bun.lock.zig");
+pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
-
-const anyhow = bun.anyhow;
 
 pub const bun_hash_tag = ".bun-tag-";
 pub const max_hex_hash_len: comptime_int = brk: {
@@ -133,7 +117,8 @@ pub fn initializeMiniStore() void {
     } else {
         var mini_store = MiniStore.instance.?;
         if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
-            mini_store.heap.reset();
+            mini_store.heap.deinit();
+            mini_store.heap = bun.MimallocArena.init() catch bun.outOfMemory();
             mini_store.memory_allocator.allocator = mini_store.heap.allocator();
         }
         mini_store.memory_allocator.reset();
@@ -478,7 +463,7 @@ const NetworkTask = struct {
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
+        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
             this.unsafe_http_client.client.flags.force_last_modified = true;
             this.unsafe_http_client.client.if_modified_since = last_modified;
         }
@@ -777,6 +762,7 @@ pub const Task = struct {
                 }
 
                 const result = this.request.extract.tarball.run(
+                    &this.log,
                     bytes,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -798,7 +784,7 @@ pub const Task = struct {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
                         this.request.git_clone.env,
-                        manager.log,
+                        &this.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
@@ -822,7 +808,7 @@ pub const Task = struct {
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
@@ -838,9 +824,7 @@ pub const Task = struct {
                     return;
                 };
 
-                this.data = .{
-                    .git_clone = bun.toFD(dir.fd),
-                };
+                this.data = .{ .git_clone = .fromStdDir(dir) };
                 this.status = Status.success;
             },
             .git_checkout => {
@@ -848,9 +832,9 @@ pub const Task = struct {
                 const data = Repository.checkout(
                     manager.allocator,
                     this.request.git_checkout.env,
-                    manager.log,
+                    &this.log,
                     manager.getCacheDirectory(),
-                    git_checkout.repo_dir.asDir(),
+                    git_checkout.repo_dir.stdDir(),
                     git_checkout.name.slice(),
                     git_checkout.url.slice(),
                     git_checkout.resolved.slice(),
@@ -899,6 +883,7 @@ pub const Task = struct {
                     &this.request.local_tarball.tarball,
                     tarball_path,
                     normalize,
+                    &this.log,
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -920,13 +905,14 @@ pub const Task = struct {
         tarball: *const ExtractTarball,
         tarball_path: string,
         normalize: bool,
+        log: *logger.Log,
     ) !ExtractData {
         const bytes = if (normalize)
             try File.readFromUserInput(std.fs.cwd(), tarball_path, allocator).unwrap()
         else
             try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
         defer allocator.free(bytes);
-        return tarball.run(bytes);
+        return tarball.run(log, bytes);
     }
 
     pub const Tag = enum(u3) {
@@ -1002,6 +988,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
     const do_progress = kind != .patch;
     const ProgressT = if (do_progress) *Progress else struct {};
     return struct {
+        /// TODO: Change to bun.FD.Dir
         cache_dir: std.fs.Dir,
         cache_dir_subpath: stringZ = "",
         destination_dir_subpath: stringZ = "",
@@ -1131,11 +1118,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
 
             if (comptime bun.Environment.isPosix) {
-                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return false;
+                _ = bun.sys.fstatat(.fromStdDir(destination_dir), patch_tag_path).unwrap() catch return false;
             } else {
-                switch (bun.sys.openat(bun.toFD(destination_dir.fd), patch_tag_path, bun.O.RDONLY, 0)) {
+                switch (bun.sys.openat(.fromStdDir(destination_dir), patch_tag_path, bun.O.RDONLY, 0)) {
                     .err => return false,
-                    .result => |fd| _ = bun.sys.close(fd),
+                    .result => |fd| fd.close(),
                 }
             }
 
@@ -1378,7 +1365,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
         };
 
-        var supported_method: Method = if (Environment.isMac)
+        pub var supported_method: Method = if (Environment.isMac)
             Method.clonefile
         else
             Method.hardlink;
@@ -1404,14 +1391,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     while (try walker.next()) |entry| {
                         switch (entry.kind) {
                             .directory => {
-                                _ = bun.sys.mkdirat(bun.toFD(destination_dir_.fd), entry.path, 0o755);
+                                _ = bun.sys.mkdirat(.fromStdDir(destination_dir_), entry.path, 0o755);
                             },
                             .file => {
                                 bun.copy(u8, &stackpath, entry.path);
                                 stackpath[entry.path.len] = 0;
                                 const path: [:0]u8 = stackpath[0..entry.path.len :0];
                                 const basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
-                                switch (C.clonefileat(
+                                switch (bun.c.clonefileat(
                                     entry.dir.fd,
                                     basename,
                                     destination_dir_.fd,
@@ -1464,7 +1451,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 }
             }
 
-            return switch (C.clonefileat(
+            return switch (bun.c.clonefileat(
                 this.cache_dir.fd,
                 this.cache_dir_subpath,
                 destination_dir.fd,
@@ -1505,7 +1492,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
         };
 
-        threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
+        threadlocal var node_fs_for_package_installer: bun.JSC.Node.fs.NodeFS = .{};
 
         fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir, method: Method) Result {
             const destbase = destination_dir;
@@ -1513,7 +1500,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             state.cached_package_dir = (if (comptime Environment.isWindows)
                 if (method == .symlink)
-                    bun.openDirNoRenamingOrDeletingWindows(bun.toFD(this.cache_dir), this.cache_dir_subpath)
+                    bun.openDirNoRenamingOrDeletingWindows(.fromStdDir(this.cache_dir), this.cache_dir_subpath)
                 else
                     bun.openDir(this.cache_dir, this.cache_dir_subpath)
             else
@@ -1685,10 +1672,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                             if (comptime Environment.isPosix) {
                                 const stat = in_file.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                                _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
+                            bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -1799,10 +1786,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             pub fn deinit(task: *@This()) void {
                 bun.default_allocator.free(task.bytes);
-                task.destroy();
+                bun.destroy(task);
             }
 
-            pub usingnamespace bun.New(@This());
+            pub const new = bun.TrivialNew(@This());
 
             pub fn run(task: *@This()) ?anyerror {
                 const src = task.src;
@@ -1972,7 +1959,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             var buf2: bun.PathBuffer = undefined;
             var to_copy_buf2: []u8 = undefined;
             if (Environment.isPosix) {
-                const cache_dir_path = try bun.getFdPath(state.cached_package_dir.fd, &buf2);
+                const cache_dir_path = try bun.FD.fromStdDir(state.cached_package_dir).getFdPath(&buf2);
                 if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
                     buf2[cache_dir_path.len] = std.fs.path.sep;
                     to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
@@ -2110,7 +2097,12 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         pub fn uninstallBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
             var rand_path_buf: [48]u8 = undefined;
             const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
-            switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
+            switch (bun.sys.renameat(
+                .fromStdDir(destination_dir),
+                this.destination_dir_subpath,
+                .fromStdDir(destination_dir),
+                temp_path,
+            )) {
                 .err => {
                     // if it fails, that means the directory doesn't exist or was inaccessible
                 },
@@ -2139,8 +2131,11 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     //
 
                     const UninstallTask = struct {
+                        pub const new = bun.TrivialNew(@This());
+
                         absolute_path: []const u8,
                         task: JSC.WorkPoolTask = .{ .callback = &run },
+
                         pub fn run(task: *JSC.WorkPoolTask) void {
                             var unintall_task: *@This() = @fieldParentPtr("task", task);
                             var debug_timer = bun.Output.DebugTimer.start();
@@ -2157,15 +2152,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             const basename = std.fs.path.basename(unintall_task.absolute_path);
 
                             var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
                                 }
                                 return;
                             };
-                            defer _ = bun.sys.close(bun.toFD(dir.fd));
+                            defer bun.FD.fromStdDir(dir).close();
 
                             dir.deleteTree(basename) catch |err| {
-                                if (comptime Environment.isDebug) {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
                                     Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
                                 }
                             };
@@ -2178,10 +2173,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
                         pub fn deinit(uninstall_task: *@This()) void {
                             bun.default_allocator.free(uninstall_task.absolute_path);
-                            uninstall_task.destroy();
+                            bun.destroy(uninstall_task);
                         }
-
-                        pub usingnamespace bun.New(@This());
                     };
                     var task = UninstallTask.new(.{
                         .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
@@ -2197,7 +2190,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
                     .err => return true,
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2207,7 +2200,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                         return true;
                     },
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2215,7 +2208,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (Syscall.open(path, bun.O.PATH, @as(u32, 0))) {
                     .err => return true,
                     .result => |fd| {
-                        _ = bun.sys.close(fd);
+                        fd.close();
                         return false;
                     },
                 }
@@ -2226,8 +2219,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
             const bin_path = bin_path: {
                 const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
-                defer _ = bun.sys.close(fd);
-                const size = fd.asFile().readAll(temp_buffer) catch return true;
+                defer fd.close();
+                const size = fd.stdFile().readAll(temp_buffer) catch return true;
                 const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
                 bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
                 break :bin_path decoded.bin_path;
@@ -2235,7 +2228,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             {
                 const fd = bun.sys.openatWindows(node_mod_fd, bin_path, bun.O.RDONLY).unwrap() catch return true;
-                _ = bun.sys.close(fd);
+                fd.close();
             }
 
             return false;
@@ -2304,7 +2297,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     .err => |err_| brk: {
                         var err = err_;
                         if (err.getErrno() == .EXIST) {
-                            _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                            _ = bun.sys.rmdirat(.fromStdDir(destination_dir), this.destination_dir_subpath);
                             switch (bun.sys.symlinkOrJunction(dest_z, target_z)) {
                                 .err => |e| err = e,
                                 .result => break :brk,
@@ -2323,7 +2316,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     if (subdir != null) dest_dir.close();
                 }
 
-                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
+                const dest_dir_path = bun.getFdPath(.fromStdDir(dest_dir), &dest_buf) catch |err| return Result.fail(err, .linking_dependency, @errorReturnTrace());
 
                 const target = Path.relative(dest_dir_path, to_path);
                 std.posix.symlinkat(target, dest_dir.fd, dest) catch |err| return Result.fail(err, .linking_dependency, null);
@@ -2360,9 +2353,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 defer buf[subpath_len] = 0;
                                 @memcpy(buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
                                 const subpath = buf[0 .. subpath_len + 1 + "package.json".len :0];
-                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), subpath);
+                                break :package_json_exists Syscall.existsAt(.fromStdDir(this.cache_dir), subpath);
                             },
-                            else => Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false,
+                            else => Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false,
                         };
                         if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                         break :brk !exists;
@@ -2370,7 +2363,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     const cache_dir_subpath_without_patch_hash = this.cache_dir_subpath[0 .. std.mem.lastIndexOf(u8, this.cache_dir_subpath, "_patch_hash=") orelse @panic("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")];
                     @memcpy(bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len], cache_dir_subpath_without_patch_hash);
                     bun.path.join_buf[cache_dir_subpath_without_patch_hash.len] = 0;
-                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
+                    const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
                     if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                     break :brk !exists;
                 },
@@ -2387,24 +2380,36 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + patch_hash_part.len], patch_hash_part);
             // bun.path.join_buf[this.cache_dir_subpath.len + patch_hash_part.len] = 0;
             // const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + patch_hash_part.len :0];
-            const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+            const exists = Syscall.directoryExistsAt(.fromStdDir(this.cache_dir), this.cache_dir_subpath).unwrap() catch false;
             if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
             return !exists;
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-            if (comptime kind == .regular) return result;
-            if (result == .fail) return result;
-            const fd = bun.toFD(destination_dir.fd);
-            const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
-            const tag_fd = switch (bun.sys.openat(fd, subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
-                .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
-                .result => |f| f,
-            };
-            defer _ = bun.sys.close(tag_fd);
+            switch (comptime kind) {
+                .regular => {
+                    const tracer = bun.perf.trace("PackageInstaller.install");
+                    defer tracer.end();
+                    return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                },
+                .patch => {
+                    const tracer = bun.perf.trace("PackageInstaller.installPatch");
+                    defer tracer.end();
 
-            if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+                    if (result == .fail) return result;
+                    const fd = bun.FD.fromStdDir(destination_dir);
+                    const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
+                    const tag_fd = switch (fd.openat(subpath, bun.O.CREAT | bun.O.WRONLY, 0o666)) {
+                        .result => |f| f,
+                        .err => |e| return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace()),
+                    };
+                    defer tag_fd.close();
+                    if (bun.sys.File.writeAll(.{ .handle = tag_fd }, this.package_version).asErr()) |e|
+                        return .fail(bun.errnoToZigErr(e.getErrno()), .patching, @errorReturnTrace());
+                    return result;
+                },
+            }
         }
 
         pub fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method, resolution_tag: Resolution.Tag) Result {
@@ -2661,6 +2666,9 @@ pub const PackageManager = struct {
     subcommand: Subcommand,
     update_requests: []UpdateRequest = &[_]UpdateRequest{},
 
+    /// Only set in `bun pm`
+    root_package_json_name_at_time_of_init: []const u8 = "",
+
     root_package_json_file: std.fs.File,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
@@ -2820,10 +2828,12 @@ pub const PackageManager = struct {
         }
     };
 
+    pub const Options = @import("./PackageManager/PackageManagerOptions.zig");
+
     pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
         const log_level = this.options.log_level;
         if (log_level == .silent) return;
-        if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
             return;
         }
 
@@ -2941,7 +2951,7 @@ pub const PackageManager = struct {
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             entry.key_ptr.* = key;
 
-            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| {
+            const source = bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
                 _ = this.map.remove(key);
                 allocator.free(key);
                 return .{ .read_err = err };
@@ -3370,7 +3380,7 @@ pub const PackageManager = struct {
             this.global_dir = global_dir;
             this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
             var buf: bun.PathBuffer = undefined;
-            const _path = try bun.getFdPath(this.global_link_dir.?.fd, &buf);
+            const _path = try bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
             break :brk this.global_link_dir.?;
         };
@@ -3569,7 +3579,7 @@ pub const PackageManager = struct {
         return this.temp_dir_ orelse brk: {
             this.temp_dir_ = this.ensureTemporaryDirectory();
             var pathbuf: bun.PathBuffer = undefined;
-            const temp_dir_path = bun.getFdPathZ(bun.toFD(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
+            const temp_dir_path = bun.getFdPathZ(.fromStdDir(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
             this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
             break :brk this.temp_dir_.?;
         };
@@ -3682,7 +3692,7 @@ pub const PackageManager = struct {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
                 var path_buf: bun.PathBuffer = undefined;
-                const cache_dir_path = bun.getFdPath(cache_directory.fd, &path_buf) catch "it";
+                const cache_dir_path = bun.getFdPath(.fromStdDir(cache_directory), &path_buf) catch "it";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                     .{cache_dir_path},
@@ -4026,7 +4036,7 @@ pub const PackageManager = struct {
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
-        return bun.sys.directoryExistsAt(this.getCacheDirectory(), folder_path).unwrap() catch false;
+        return bun.sys.directoryExistsAt(.fromStdDir(this.getCacheDirectory()), folder_path).unwrap() catch false;
     }
 
     pub fn pathForCachedNPMPath(
@@ -4045,7 +4055,7 @@ pub const PackageManager = struct {
 
         cache_path_buf[package_name.len] = std.fs.path.sep;
 
-        const cache_dir = bun.toFD(this.getCacheDirectory());
+        const cache_dir: bun.FD = .fromStdDir(this.getCacheDirectory());
 
         if (comptime Environment.isWindows) {
             var path_buf: bun.PathBuffer = undefined;
@@ -4056,10 +4066,10 @@ pub const PackageManager = struct {
             };
         }
 
-        return bun.sys.readlinkat(cache_dir, cache_path, buf).unwrap() catch |err| {
+        return cache_dir.readlinkat(cache_path, buf).unwrap() catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            _ = bun.sys.unlinkat(cache_dir, cache_path);
+            _ = cache_dir.unlinkat(cache_path);
             return err;
         };
     }
@@ -5125,7 +5135,7 @@ pub const PackageManager = struct {
         try buffered_writer.flush();
 
         if (comptime Environment.isPosix) {
-            _ = C.fchmod(
+            _ = bun.c.fchmod(
                 tmpfile.fd.cast(),
                 // chmod 666,
                 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
@@ -5154,6 +5164,23 @@ pub const PackageManager = struct {
     }
 
     const debug = Output.scoped(.PackageManager, true);
+
+    fn updateNameAndNameHashFromVersionReplacement(
+        lockfile: *const Lockfile,
+        original_name: String,
+        original_name_hash: PackageNameHash,
+        new_version: Dependency.Version,
+    ) struct { String, PackageNameHash } {
+        return switch (new_version.tag) {
+            // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+            .dist_tag => .{ new_version.value.dist_tag.name, String.Builder.stringHash(lockfile.str(&new_version.value.dist_tag.name)) },
+            .npm => .{ new_version.value.npm.name, String.Builder.stringHash(lockfile.str(&new_version.value.npm.name)) },
+            .git => .{ new_version.value.git.package_name, original_name_hash },
+            .github => .{ new_version.value.github.package_name, original_name_hash },
+            .tarball => .{ new_version.value.tarball.package_name, original_name_hash },
+            else => .{ original_name, original_name_hash },
+        };
+    }
 
     /// Q: "What do we do with a dependency in a package.json?"
     /// A: "We enqueue it!"
@@ -5202,21 +5229,29 @@ pub const PackageManager = struct {
 
             // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
             // if it's a workspaceOnly dependency
-            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                    name, name_hash = switch (new.tag) {
-                        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-                        .dist_tag => .{ new.value.dist_tag.name, String.Builder.stringHash(this.lockfile.str(&new.value.dist_tag.name)) },
-                        .npm => .{ new.value.npm.name, String.Builder.stringHash(this.lockfile.str(&new.value.npm.name)) },
-                        .git => .{ new.value.git.package_name, name_hash },
-                        .github => .{ new.value.github.package_name, name_hash },
-                        .tarball => .{ new.value.tarball.package_name, name_hash },
-                        else => .{ name, name_hash },
-                    };
+
+                    name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
+
+                    if (new.tag == .catalog) {
+                        if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
+                            name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+                            break :version catalog_dep.version;
+                        }
+                    }
 
                     // `name_hash` stays the same
                     break :version new;
+                }
+
+                if (dependency.version.tag == .catalog) {
+                    if (this.lockfile.catalogs.get(this.lockfile, dependency.version.value.catalog, name)) |catalog_dep| {
+                        name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+
+                        break :version catalog_dep.version;
+                    }
                 }
             }
 
@@ -5504,7 +5539,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         this.env,
                         this.log,
-                        repo_fd.asDir(),
+                        repo_fd.stdDir(),
                         alias,
                         this.lockfile.str(&dep.committish),
                         clone_id,
@@ -5933,7 +5968,7 @@ pub const PackageManager = struct {
                 false,
             ) catch |err| {
                 const note = .{
-                    .fmt = "error occured while resolving {}",
+                    .fmt = "error occurred while resolving {}",
                     .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                         .path_sep = switch (dependency.version.tag) {
                             .folder => .auto,
@@ -6548,12 +6583,14 @@ pub const PackageManager = struct {
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
 
-                            Npm.PackageManifest.Serializer.saveAsync(
-                                &entry.value_ptr.manifest,
-                                manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
-                                manager.getCacheDirectory(),
-                            );
+                            if (manager.options.enable.manifest_cache) {
+                                Npm.PackageManifest.Serializer.saveAsync(
+                                    &entry.value_ptr.manifest,
+                                    manager.scopeForPackageName(name.slice()),
+                                    manager.getTemporaryDirectory(),
+                                    manager.getCacheDirectory(),
+                                );
+                            }
 
                             if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                                 continue;
@@ -6763,6 +6800,10 @@ pub const PackageManager = struct {
 
             if (task.log.msgs.items.len > 0) {
                 try task.log.print(Output.errorWriter());
+                if (task.log.errors > 0) {
+                    manager.any_failed_to_install = true;
+                }
+                task.log.deinit();
             }
 
             switch (task.tag) {
@@ -6993,7 +7034,7 @@ pub const PackageManager = struct {
                             manager.allocator,
                             manager.env,
                             manager.log,
-                            task.data.git_clone.asDir(),
+                            task.data.git_clone.stdDir(),
                             dep_name,
                             committish,
                             task.id,
@@ -7122,632 +7163,6 @@ pub const PackageManager = struct {
         }
     }
 
-    pub const Options = struct {
-        log_level: LogLevel = .default,
-        global: bool = false,
-
-        global_bin_dir: std.fs.Dir = bun.invalid_fd.asDir(),
-        explicit_global_directory: string = "",
-        /// destination directory to link bins into
-        // must be a variable due to global installs and bunx
-        bin_path: stringZ = bun.pathLiteral("node_modules/.bin"),
-
-        did_override_default_scope: bool = false,
-        scope: Npm.Registry.Scope = undefined,
-
-        registries: Npm.Registry.Map = .{},
-        cache_directory: string = "",
-        enable: Enable = .{},
-        do: Do = .{},
-        positionals: []const string = &[_]string{},
-        update: Update = .{},
-        dry_run: bool = false,
-        remote_package_features: Features = .{
-            .optional_dependencies = true,
-        },
-        local_package_features: Features = .{
-            .optional_dependencies = true,
-            .dev_dependencies = true,
-            .workspaces = true,
-        },
-        patch_features: union(enum) {
-            nothing: struct {},
-            patch: struct {},
-            commit: struct {
-                patches_dir: string,
-            },
-        } = .{ .nothing = .{} },
-
-        filter_patterns: []const string = &.{},
-        pack_destination: string = "",
-        pack_filename: string = "",
-        pack_gzip_level: ?string = null,
-        // json_output: bool = false,
-
-        max_retry_count: u16 = 5,
-        min_simultaneous_requests: usize = 4,
-
-        max_concurrent_lifecycle_scripts: usize,
-
-        publish_config: PublishConfig = .{},
-
-        ca: []const string = &.{},
-        ca_file_name: string = &.{},
-
-        // if set to `false` in bunfig, save a binary lockfile
-        save_text_lockfile: ?bool = null,
-
-        lockfile_only: bool = false,
-
-        pub const PublishConfig = struct {
-            access: ?Access = null,
-            tag: string = "",
-            otp: string = "",
-            auth_type: ?AuthType = null,
-        };
-
-        pub const Access = enum {
-            public,
-            restricted,
-
-            const map = bun.ComptimeEnumMap(Access);
-
-            pub fn fromStr(str: string) ?Access {
-                return map.get(str);
-            }
-        };
-
-        pub const AuthType = enum {
-            legacy,
-            web,
-
-            const map = bun.ComptimeEnumMap(AuthType);
-
-            pub fn fromStr(str: string) ?AuthType {
-                return map.get(str);
-            }
-        };
-
-        pub fn shouldPrintCommandName(this: *const Options) bool {
-            return this.log_level != .silent and this.do.summary;
-        }
-
-        pub const LogLevel = enum {
-            default,
-            verbose,
-            silent,
-            default_no_progress,
-            verbose_no_progress,
-
-            pub inline fn isVerbose(this: LogLevel) bool {
-                return switch (this) {
-                    .verbose_no_progress, .verbose => true,
-                    else => false,
-                };
-            }
-            pub inline fn showProgress(this: LogLevel) bool {
-                return switch (this) {
-                    .default, .verbose => true,
-                    else => false,
-                };
-            }
-        };
-
-        pub const Update = struct {
-            development: bool = false,
-            optional: bool = false,
-            peer: bool = false,
-        };
-
-        pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
-            if (bun.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
-                return try std.fs.cwd().makeOpenPath(home_dir, .{});
-            }
-
-            if (explicit_global_dir.len > 0) {
-                return try std.fs.cwd().makeOpenPath(explicit_global_dir, .{});
-            }
-
-            if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: bun.PathBuffer = undefined;
-                var parts = [_]string{ "install", "global" };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{});
-            }
-
-            if (!Environment.isWindows) {
-                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                    var buf: bun.PathBuffer = undefined;
-                    var parts = [_]string{ ".bun", "install", "global" };
-                    const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                    return try std.fs.cwd().makeOpenPath(path, .{});
-                }
-            } else {
-                if (bun.getenvZ("USERPROFILE")) |home_dir| {
-                    var buf: bun.PathBuffer = undefined;
-                    var parts = [_]string{ ".bun", "install", "global" };
-                    const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                    return try std.fs.cwd().makeOpenPath(path, .{});
-                }
-            }
-
-            return error.@"No global directory found";
-        }
-
-        pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
-            if (bun.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
-                return try std.fs.cwd().makeOpenPath(home_dir, .{});
-            }
-
-            if (opts_) |opts| {
-                if (opts.global_bin_dir) |home_dir| {
-                    if (home_dir.len > 0) {
-                        return try std.fs.cwd().makeOpenPath(home_dir, .{});
-                    }
-                }
-            }
-
-            if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: bun.PathBuffer = undefined;
-                var parts = [_]string{
-                    "bin",
-                };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{});
-            }
-
-            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-                var buf: bun.PathBuffer = undefined;
-                var parts = [_]string{
-                    ".bun",
-                    "bin",
-                };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{});
-            }
-
-            return error.@"Missing global bin directory: try setting $BUN_INSTALL";
-        }
-
-        pub fn load(
-            this: *Options,
-            allocator: std.mem.Allocator,
-            log: *logger.Log,
-            env: *DotEnv.Loader,
-            maybe_cli: ?CommandLineArguments,
-            bun_install_: ?*Api.BunInstall,
-            subcommand: Subcommand,
-        ) bun.OOM!void {
-            var base = Api.NpmRegistry{
-                .url = "",
-                .username = "",
-                .password = "",
-                .token = "",
-            };
-            if (bun_install_) |config| {
-                if (config.default_registry) |registry| {
-                    base = registry;
-                }
-            }
-
-            if (base.url.len == 0) base.url = Npm.Registry.default_url;
-            this.scope = try Npm.Registry.Scope.fromAPI("", base, allocator, env);
-            defer {
-                this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
-            }
-            if (bun_install_) |config| {
-                if (config.cache_directory) |cache_directory| {
-                    this.cache_directory = cache_directory;
-                }
-
-                if (config.scoped) |scoped| {
-                    for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
-                        var registry = registry_.*;
-                        if (registry.url.len == 0) registry.url = base.url;
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
-                    }
-                }
-
-                if (config.ca) |ca| {
-                    switch (ca) {
-                        .list => |ca_list| {
-                            this.ca = ca_list;
-                        },
-                        .str => |ca_str| {
-                            this.ca = &.{ca_str};
-                        },
-                    }
-                }
-
-                if (config.cafile) |cafile| {
-                    this.ca_file_name = cafile;
-                }
-
-                if (config.disable_cache orelse false) {
-                    this.enable.cache = false;
-                }
-
-                if (config.disable_manifest_cache orelse false) {
-                    this.enable.manifest_cache = false;
-                }
-
-                if (config.force orelse false) {
-                    this.enable.manifest_cache_control = false;
-                    this.enable.force_install = true;
-                }
-
-                if (config.save_yarn_lockfile orelse false) {
-                    this.do.save_yarn_lock = true;
-                }
-
-                if (config.save_lockfile) |save_lockfile| {
-                    this.do.save_lockfile = save_lockfile;
-                    this.enable.force_save_lockfile = true;
-                }
-
-                if (config.save_dev) |save| {
-                    this.local_package_features.dev_dependencies = save;
-                    // remote packages should never install dev dependencies
-                    // (TODO: unless git dependency with postinstalls)
-                }
-
-                if (config.save_optional) |save| {
-                    this.remote_package_features.optional_dependencies = save;
-                    this.local_package_features.optional_dependencies = save;
-                }
-
-                if (config.save_peer) |save| {
-                    this.remote_package_features.peer_dependencies = save;
-                    this.local_package_features.peer_dependencies = save;
-                }
-
-                if (config.exact) |exact| {
-                    this.enable.exact_versions = exact;
-                }
-
-                if (config.production) |production| {
-                    if (production) {
-                        this.local_package_features.dev_dependencies = false;
-                        this.enable.fail_early = true;
-                        this.enable.frozen_lockfile = true;
-                        this.enable.force_save_lockfile = false;
-                    }
-                }
-
-                if (config.frozen_lockfile) |frozen_lockfile| {
-                    if (frozen_lockfile) {
-                        this.enable.frozen_lockfile = true;
-                    }
-                }
-
-                if (config.save_text_lockfile) |save_text_lockfile| {
-                    this.save_text_lockfile = save_text_lockfile;
-                }
-
-                if (config.concurrent_scripts) |jobs| {
-                    this.max_concurrent_lifecycle_scripts = jobs;
-                }
-
-                if (config.cache_directory) |cache_dir| {
-                    this.cache_directory = cache_dir;
-                }
-
-                if (config.ignore_scripts) |ignore_scripts| {
-                    if (ignore_scripts) {
-                        this.do.run_scripts = false;
-                    }
-                }
-
-                this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
-            }
-
-            const default_disable_progress_bar: bool = brk: {
-                if (env.get("BUN_INSTALL_PROGRESS")) |prog| {
-                    break :brk strings.eqlComptime(prog, "0");
-                }
-
-                if (env.isCI()) {
-                    break :brk true;
-                }
-
-                break :brk Output.stderr_descriptor_type != .terminal;
-            };
-
-            // technically, npm_config is case in-sensitive
-            // load_registry:
-            {
-                const registry_keys = [_]string{
-                    "BUN_CONFIG_REGISTRY",
-                    "NPM_CONFIG_REGISTRY",
-                    "npm_config_registry",
-                };
-                var did_set = false;
-
-                inline for (registry_keys) |registry_key| {
-                    if (!did_set) {
-                        if (env.get(registry_key)) |registry_| {
-                            if (registry_.len > 0 and
-                                (strings.startsWith(registry_, "https://") or
-                                    strings.startsWith(registry_, "http://")))
-                            {
-                                const prev_scope = this.scope;
-                                var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                api_registry.url = registry_;
-                                api_registry.token = prev_scope.token;
-                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                did_set = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            {
-                const token_keys = [_]string{
-                    "BUN_CONFIG_TOKEN",
-                    "NPM_CONFIG_TOKEN",
-                    "npm_config_token",
-                };
-                var did_set = false;
-
-                inline for (token_keys) |registry_key| {
-                    if (!did_set) {
-                        if (env.get(registry_key)) |registry_| {
-                            if (registry_.len > 0) {
-                                this.scope.token = registry_;
-                                did_set = true;
-                                // stage1 bug: break inside inline is broken
-                                // break :load_registry;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (env.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
-                this.do.save_yarn_lock = true;
-            }
-
-            if (env.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
-                if (std.fmt.parseInt(u16, retry_count, 10)) |int| this.max_retry_count = int else |_| {}
-            }
-
-            AsyncHTTP.loadEnv(allocator, log, env);
-
-            if (env.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
-                this.do.save_lockfile = strings.eqlComptime(check_bool, "0");
-            }
-
-            if (env.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE")) |check_bool| {
-                this.do.load_lockfile = strings.eqlComptime(check_bool, "0");
-            }
-
-            if (env.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES")) |check_bool| {
-                this.do.install_packages = strings.eqlComptime(check_bool, "0");
-            }
-
-            if (env.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
-                this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
-            }
-
-            // Update should never read from manifest cache
-            if (subcommand == .update) {
-                this.enable.manifest_cache = false;
-                this.enable.manifest_cache_control = false;
-            }
-
-            if (maybe_cli) |cli| {
-                this.do.analyze = cli.analyze;
-                this.enable.only_missing = cli.only_missing or cli.analyze;
-
-                if (cli.registry.len > 0) {
-                    this.scope.url = URL.parse(cli.registry);
-                }
-
-                if (cli.cache_dir) |cache_dir| {
-                    this.cache_directory = cache_dir;
-                }
-
-                if (cli.exact) {
-                    this.enable.exact_versions = true;
-                }
-
-                if (cli.token.len > 0) {
-                    this.scope.token = cli.token;
-                }
-
-                if (cli.no_save) {
-                    this.do.save_lockfile = false;
-                    this.do.write_package_json = false;
-                }
-
-                if (cli.dry_run) {
-                    this.do.install_packages = false;
-                    this.dry_run = true;
-                    this.do.write_package_json = false;
-                    this.do.save_lockfile = false;
-                }
-
-                if (cli.no_summary or cli.silent) {
-                    this.do.summary = false;
-                }
-
-                this.filter_patterns = cli.filters;
-                this.pack_destination = cli.pack_destination;
-                this.pack_filename = cli.pack_filename;
-                this.pack_gzip_level = cli.pack_gzip_level;
-                // this.json_output = cli.json_output;
-
-                if (cli.no_cache) {
-                    this.enable.manifest_cache = false;
-                    this.enable.manifest_cache_control = false;
-                }
-
-                if (cli.omit) |omit| {
-                    if (omit.dev) {
-                        this.local_package_features.dev_dependencies = false;
-                        // remote packages should never install dev dependencies
-                        // (TODO: unless git dependency with postinstalls)
-                    }
-
-                    if (omit.optional) {
-                        this.local_package_features.optional_dependencies = false;
-                        this.remote_package_features.optional_dependencies = false;
-                    }
-
-                    if (omit.peer) {
-                        this.local_package_features.peer_dependencies = false;
-                        this.remote_package_features.peer_dependencies = false;
-                    }
-                }
-
-                if (cli.global or cli.ignore_scripts) {
-                    this.do.run_scripts = false;
-                }
-
-                if (cli.trusted) {
-                    this.do.trust_dependencies_from_args = true;
-                }
-
-                if (cli.save_text_lockfile) |save_text_lockfile| {
-                    this.save_text_lockfile = save_text_lockfile;
-                }
-
-                this.lockfile_only = cli.lockfile_only;
-
-                const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
-
-                if (cli.verbose) {
-                    this.log_level = if (disable_progress_bar) LogLevel.verbose_no_progress else LogLevel.verbose;
-                    PackageManager.verbose_install = true;
-                } else if (cli.silent) {
-                    this.log_level = .silent;
-                    PackageManager.verbose_install = false;
-                } else {
-                    this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
-                    PackageManager.verbose_install = false;
-                }
-
-                if (cli.no_verify) {
-                    this.do.verify_integrity = false;
-                }
-
-                if (cli.yarn) {
-                    this.do.save_yarn_lock = true;
-                }
-
-                if (cli.backend) |backend| {
-                    PackageInstall.supported_method = backend;
-                }
-
-                this.do.update_to_latest = cli.latest;
-
-                if (cli.positionals.len > 0) {
-                    this.positionals = cli.positionals;
-                }
-
-                if (cli.production) {
-                    this.local_package_features.dev_dependencies = false;
-                    this.enable.fail_early = true;
-                    this.enable.frozen_lockfile = true;
-                }
-
-                if (cli.frozen_lockfile) {
-                    this.enable.frozen_lockfile = true;
-                }
-
-                if (cli.force) {
-                    this.enable.manifest_cache_control = false;
-                    this.enable.force_install = true;
-                    this.enable.force_save_lockfile = true;
-                }
-
-                if (cli.development) {
-                    this.update.development = cli.development;
-                } else if (cli.optional) {
-                    this.update.optional = cli.optional;
-                } else if (cli.peer) {
-                    this.update.peer = cli.peer;
-                }
-
-                switch (cli.patch) {
-                    .nothing => {},
-                    .patch => {
-                        this.patch_features = .{ .patch = .{} };
-                    },
-                    .commit => {
-                        this.patch_features = .{
-                            .commit = .{
-                                .patches_dir = cli.patch.commit.patches_dir,
-                            },
-                        };
-                    },
-                }
-
-                if (cli.publish_config.access) |cli_access| {
-                    this.publish_config.access = cli_access;
-                }
-                if (cli.publish_config.tag.len > 0) {
-                    this.publish_config.tag = cli.publish_config.tag;
-                }
-                if (cli.publish_config.otp.len > 0) {
-                    this.publish_config.otp = cli.publish_config.otp;
-                }
-                if (cli.publish_config.auth_type) |auth_type| {
-                    this.publish_config.auth_type = auth_type;
-                }
-
-                if (cli.ca.len > 0) {
-                    this.ca = cli.ca;
-                }
-                if (cli.ca_file_name.len > 0) {
-                    this.ca_file_name = cli.ca_file_name;
-                }
-            } else {
-                this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
-                PackageManager.verbose_install = false;
-            }
-
-            // If the lockfile is frozen, don't save it to disk.
-            if (this.enable.frozen_lockfile) {
-                this.do.save_lockfile = false;
-                this.enable.force_save_lockfile = false;
-            }
-        }
-
-        pub const Do = packed struct {
-            save_lockfile: bool = true,
-            load_lockfile: bool = true,
-            install_packages: bool = true,
-            write_package_json: bool = true,
-            run_scripts: bool = true,
-            save_yarn_lock: bool = false,
-            print_meta_hash_string: bool = false,
-            verify_integrity: bool = true,
-            summary: bool = true,
-            trust_dependencies_from_args: bool = false,
-            update_to_latest: bool = false,
-            analyze: bool = false,
-        };
-
-        pub const Enable = packed struct {
-            manifest_cache: bool = true,
-            manifest_cache_control: bool = true,
-            cache: bool = true,
-            fail_early: bool = false,
-            frozen_lockfile: bool = false,
-
-            // Don't save the lockfile unless there were actual changes
-            // unless...
-            force_save_lockfile: bool = false,
-
-            force_install: bool = false,
-
-            exact_versions: bool = false,
-            only_missing: bool = false,
-        };
-    };
-
     pub const ProgressStrings = struct {
         pub const download_no_emoji_ = "Resolving";
         const download_no_emoji: string = download_no_emoji_ ++ "\n";
@@ -7795,820 +7210,6 @@ pub const PackageManager = struct {
         }
     };
 
-    pub const PackageJSONEditor = struct {
-        const Expr = JSAst.Expr;
-        const G = JSAst.G;
-        const E = JSAst.E;
-
-        const trusted_dependencies_string = "trustedDependencies";
-
-        const dependency_groups = &.{
-            .{ "optionalDependencies", .{ .optional = true } },
-            .{ "devDependencies", .{ .dev = true } },
-            .{ "dependencies", .{ .prod = true } },
-            .{ "peerDependencies", .{ .peer = true } },
-        };
-
-        pub const EditOptions = struct {
-            exact_versions: bool = false,
-            add_trusted_dependencies: bool = false,
-            before_install: bool = false,
-        };
-
-        pub fn editPatchedDependencies(
-            manager: *PackageManager,
-            package_json: *Expr,
-            patch_key: []const u8,
-            patchfile_path: []const u8,
-        ) !void {
-
-            // const pkg_to_patch = manager.
-            var patched_dependencies = brk: {
-                if (package_json.asProperty("patchedDependencies")) |query| {
-                    if (query.expr.data == .e_object)
-                        break :brk query.expr.data.e_object.*;
-                }
-                break :brk E.Object{};
-            };
-
-            const patchfile_expr = try Expr.init(
-                E.String,
-                E.String{
-                    .data = patchfile_path,
-                },
-                logger.Loc.Empty,
-            ).clone(manager.allocator);
-
-            try patched_dependencies.put(
-                manager.allocator,
-                patch_key,
-                patchfile_expr,
-            );
-
-            try package_json.data.e_object.put(
-                manager.allocator,
-                "patchedDependencies",
-                try Expr.init(E.Object, patched_dependencies, logger.Loc.Empty).clone(manager.allocator),
-            );
-        }
-
-        pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr, names_to_add: []string) !void {
-            var len = names_to_add.len;
-
-            var original_trusted_dependencies = brk: {
-                if (package_json.asProperty(trusted_dependencies_string)) |query| {
-                    if (query.expr.data == .e_array) {
-                        break :brk query.expr.data.e_array.*;
-                    }
-                }
-                break :brk E.Array{};
-            };
-
-            for (names_to_add, 0..) |name, i| {
-                for (original_trusted_dependencies.items.slice()) |item| {
-                    if (item.data == .e_string) {
-                        if (item.data.e_string.eql(string, name)) {
-                            const temp = names_to_add[i];
-                            names_to_add[i] = names_to_add[len - 1];
-                            names_to_add[len - 1] = temp;
-                            len -= 1;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            var trusted_dependencies: []Expr = &[_]Expr{};
-            if (package_json.asProperty(trusted_dependencies_string)) |query| {
-                if (query.expr.data == .e_array) {
-                    trusted_dependencies = query.expr.data.e_array.items.slice();
-                }
-            }
-
-            const trusted_dependencies_to_add = len;
-            const new_trusted_deps = brk: {
-                var deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
-                @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
-                @memset(deps[trusted_dependencies.len..], Expr.empty);
-
-                for (names_to_add[0..len]) |name| {
-                    if (comptime Environment.allow_assert) {
-                        var has_missing = false;
-                        for (deps) |dep| {
-                            if (dep.data == .e_missing) has_missing = true;
-                        }
-                        bun.assert(has_missing);
-                    }
-
-                    var i = deps.len;
-                    while (i > 0) {
-                        i -= 1;
-                        if (deps[i].data == .e_missing) {
-                            deps[i] = try Expr.init(
-                                E.String,
-                                E.String{
-                                    .data = name,
-                                },
-                                logger.Loc.Empty,
-                            ).clone(allocator);
-                            break;
-                        }
-                    }
-                }
-
-                if (comptime Environment.allow_assert) {
-                    for (deps) |dep| bun.assert(dep.data != .e_missing);
-                }
-
-                break :brk deps;
-            };
-
-            var needs_new_trusted_dependencies_list = true;
-            const trusted_dependencies_array: Expr = brk: {
-                if (package_json.asProperty(trusted_dependencies_string)) |query| {
-                    if (query.expr.data == .e_array) {
-                        needs_new_trusted_dependencies_list = false;
-                        break :brk query.expr;
-                    }
-                }
-
-                break :brk Expr.init(
-                    E.Array,
-                    E.Array{
-                        .items = JSAst.ExprNodeList.init(new_trusted_deps),
-                    },
-                    logger.Loc.Empty,
-                );
-            };
-
-            if (trusted_dependencies_to_add > 0 and new_trusted_deps.len > 0) {
-                trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
-                trusted_dependencies_array.data.e_array.alphabetizeStrings();
-            }
-
-            if (package_json.data != .e_object or package_json.data.e_object.properties.len == 0) {
-                var root_properties = try allocator.alloc(JSAst.G.Property, 1);
-                root_properties[0] = JSAst.G.Property{
-                    .key = Expr.init(
-                        E.String,
-                        E.String{
-                            .data = trusted_dependencies_string,
-                        },
-                        logger.Loc.Empty,
-                    ),
-                    .value = trusted_dependencies_array,
-                };
-
-                package_json.* = Expr.init(
-                    E.Object,
-                    E.Object{
-                        .properties = JSAst.G.Property.List.init(root_properties),
-                    },
-                    logger.Loc.Empty,
-                );
-            } else if (needs_new_trusted_dependencies_list) {
-                var root_properties = try allocator.alloc(G.Property, package_json.data.e_object.properties.len + 1);
-                @memcpy(root_properties[0..package_json.data.e_object.properties.len], package_json.data.e_object.properties.slice());
-                root_properties[root_properties.len - 1] = .{
-                    .key = Expr.init(
-                        E.String,
-                        E.String{
-                            .data = trusted_dependencies_string,
-                        },
-                        logger.Loc.Empty,
-                    ),
-                    .value = trusted_dependencies_array,
-                };
-                package_json.* = Expr.init(
-                    E.Object,
-                    E.Object{
-                        .properties = JSAst.G.Property.List.init(root_properties),
-                    },
-                    logger.Loc.Empty,
-                );
-            }
-        }
-
-        /// When `bun update` is called without package names, all dependencies are updated.
-        /// This function will identify the current workspace and update all changed package
-        /// versions.
-        pub fn editUpdateNoArgs(
-            manager: *PackageManager,
-            current_package_json: *Expr,
-            options: EditOptions,
-        ) !void {
-            // using data store is going to result in undefined memory issues as
-            // the store is cleared in some workspace situations. the solution
-            // is to always avoid the store
-            Expr.Disabler.disable();
-            defer Expr.Disabler.enable();
-
-            const allocator = manager.allocator;
-
-            inline for (dependency_groups) |group| {
-                const group_str = group[0];
-
-                if (current_package_json.asProperty(group_str)) |root| {
-                    if (root.expr.data == .e_object) {
-                        if (options.before_install) {
-                            // set each npm dependency to latest
-                            for (root.expr.data.e_object.properties.slice()) |*dep| {
-                                const key = dep.key orelse continue;
-                                if (key.data != .e_string) continue;
-                                const value = dep.value orelse continue;
-                                if (value.data != .e_string) continue;
-
-                                const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
-                                var tag = Dependency.Version.Tag.infer(version_literal);
-
-                                // only updating dependencies with npm versions, and dist-tags if `--latest`.
-                                if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
-
-                                var alias_at_index: ?usize = null;
-                                if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
-                                    // negative because the real package might have a scope
-                                    // e.g. "dep": "npm:@foo/bar@1.2.3"
-                                    if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                        tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                        if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
-                                        alias_at_index = at_index;
-                                    }
-                                }
-
-                                const key_str = try key.asStringCloned(allocator) orelse unreachable;
-                                const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
-
-                                // If a dependency is present in more than one dependency group, only one of it's versions
-                                // will be updated. The group is determined by the order of `dependency_groups`, the same
-                                // order used to choose which version to install.
-                                if (entry.found_existing) continue;
-
-                                entry.value_ptr.* = .{
-                                    .original_version_literal = version_literal,
-                                    .is_alias = alias_at_index != null,
-                                    .original_version = null,
-                                };
-
-                                if (manager.options.do.update_to_latest) {
-                                    // is it an aliased package
-                                    const temp_version = if (alias_at_index) |at_index|
-                                        std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}) catch bun.outOfMemory()
-                                    else
-                                        allocator.dupe(u8, "latest") catch bun.outOfMemory();
-
-                                    dep.value = Expr.allocate(allocator, E.String, .{
-                                        .data = temp_version,
-                                    }, logger.Loc.Empty);
-                                }
-                            }
-                        } else {
-                            const lockfile = manager.lockfile;
-                            const string_buf = lockfile.buffers.string_bytes.items;
-                            const workspace_package_id = lockfile.getWorkspacePackageID(manager.workspace_name_hash);
-                            const packages = lockfile.packages.slice();
-                            const resolutions = packages.items(.resolution);
-                            const deps = packages.items(.dependencies)[workspace_package_id];
-                            const resolution_ids = packages.items(.resolutions)[workspace_package_id];
-                            const workspace_deps: []const Dependency = deps.get(lockfile.buffers.dependencies.items);
-                            const workspace_resolution_ids = resolution_ids.get(lockfile.buffers.resolutions.items);
-
-                            for (root.expr.data.e_object.properties.slice()) |*dep| {
-                                const key = dep.key orelse continue;
-                                if (key.data != .e_string) continue;
-                                const value = dep.value orelse continue;
-                                if (value.data != .e_string) continue;
-
-                                const key_str = key.asString(allocator) orelse bun.outOfMemory();
-
-                                updated: {
-                                    // fetchSwapRemove because we want to update the first dependency with a matching
-                                    // name, or none at all
-                                    if (manager.updating_packages.fetchSwapRemove(key_str)) |entry| {
-                                        const is_alias = entry.value.is_alias;
-                                        const dep_name = entry.key;
-                                        for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
-                                            if (package_id == invalid_package_id) continue;
-
-                                            const resolution = resolutions[package_id];
-                                            if (resolution.tag != .npm) continue;
-
-                                            const workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                            if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
-
-                                            if (workspace_dep.version.npm()) |npm_version| {
-                                                // It's possible we inserted a dependency that won't update (version is an exact version).
-                                                // If we find one, skip to keep the original version literal.
-                                                if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
-                                            }
-
-                                            const new_version = new_version: {
-                                                const version_fmt = resolution.value.npm.version.fmt(string_buf);
-                                                if (options.exact_versions) {
-                                                    break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
-                                                }
-
-                                                const version_literal = version_literal: {
-                                                    if (!is_alias) break :version_literal entry.value.original_version_literal;
-                                                    if (strings.lastIndexOfChar(entry.value.original_version_literal, '@')) |at_index| {
-                                                        break :version_literal entry.value.original_version_literal[at_index + 1 ..];
-                                                    }
-                                                    break :version_literal entry.value.original_version_literal;
-                                                };
-
-                                                const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
-                                                break :new_version try switch (pinned_version) {
-                                                    .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
-                                                    .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
-                                                    .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
-                                                };
-                                            };
-
-                                            if (is_alias) {
-                                                const dep_literal = workspace_dep.version.literal.slice(string_buf);
-
-                                                // negative because the real package might have a scope
-                                                // e.g. "dep": "npm:@foo/bar@1.2.3"
-                                                if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                                    dep.value = Expr.allocate(allocator, E.String, .{
-                                                        .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
-                                                            dep_literal[0..at_index],
-                                                            new_version,
-                                                        }),
-                                                    }, logger.Loc.Empty);
-                                                    break :updated;
-                                                }
-
-                                                // fallthrough and replace entire version.
-                                            }
-
-                                            dep.value = Expr.allocate(allocator, E.String, .{
-                                                .data = new_version,
-                                            }, logger.Loc.Empty);
-                                            break :updated;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        /// edits dependencies and trusted dependencies
-        /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
-        pub fn edit(
-            manager: *PackageManager,
-            updates: *[]UpdateRequest,
-            current_package_json: *Expr,
-            dependency_list: string,
-            options: EditOptions,
-        ) !void {
-            // using data store is going to result in undefined memory issues as
-            // the store is cleared in some workspace situations. the solution
-            // is to always avoid the store
-            Expr.Disabler.disable();
-            defer Expr.Disabler.enable();
-
-            const allocator = manager.allocator;
-            var remaining = updates.len;
-            var replacing: usize = 0;
-            const only_add_missing = manager.options.enable.only_missing;
-
-            // There are three possible scenarios here
-            // 1. There is no "dependencies" (or equivalent list) or it is empty
-            // 2. There is a "dependencies" (or equivalent list), but the package name already exists in a separate list
-            // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
-            // Try to use the existing spot in the dependencies list if possible
-            {
-                var original_trusted_dependencies = brk: {
-                    if (!options.add_trusted_dependencies) break :brk E.Array{};
-                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
-                        if (query.expr.data == .e_array) {
-                            // not modifying
-                            break :brk query.expr.data.e_array.*;
-                        }
-                    }
-                    break :brk E.Array{};
-                };
-
-                if (options.add_trusted_dependencies) {
-                    for (manager.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
-                        for (original_trusted_dependencies.items.slice()) |item| {
-                            if (item.data == .e_string) {
-                                if (item.data.e_string.eql(string, trusted_package_name)) {
-                                    allocator.free(manager.trusted_deps_to_add_to_package_json.swapRemove(i));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                {
-                    var i: usize = 0;
-                    loop: while (i < updates.len) {
-                        var request = &updates.*[i];
-                        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
-                            if (current_package_json.asProperty(list)) |query| {
-                                if (query.expr.data == .e_object) {
-                                    const name = if (request.is_aliased)
-                                        request.name
-                                    else
-                                        request.version.literal.slice(request.version_buf);
-
-                                    if (query.expr.asProperty(name)) |value| {
-                                        if (value.expr.data == .e_string) {
-                                            if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
-                                                replacing += 1;
-                                            } else {
-                                                if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
-                                                    const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                                    var tag = Dependency.Version.Tag.infer(version_literal);
-
-                                                    if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-
-                                                    const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
-
-                                                    // first come, first serve
-                                                    if (entry.found_existing) break :add_packages_to_update;
-
-                                                    var is_alias = false;
-                                                    if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
-                                                        if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                                            tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-                                                            is_alias = true;
-                                                        }
-                                                    }
-
-                                                    entry.value_ptr.* = .{
-                                                        .original_version_literal = version_literal,
-                                                        .is_alias = is_alias,
-                                                        .original_version = null,
-                                                    };
-                                                }
-                                                if (!only_add_missing) {
-                                                    request.e_string = value.expr.data.e_string;
-                                                    remaining -= 1;
-                                                } else {
-                                                    if (i < updates.*.len - 1) {
-                                                        updates.*[i] = updates.*[updates.*.len - 1];
-                                                    }
-
-                                                    updates.*.len -= 1;
-                                                    remaining -= 1;
-                                                    continue :loop;
-                                                }
-                                            }
-                                        }
-                                        break;
-                                    } else {
-                                        if (request.version.tag == .github or request.version.tag == .git) {
-                                            for (query.expr.data.e_object.properties.slice()) |item| {
-                                                if (item.value) |v| {
-                                                    const url = request.version.literal.slice(request.version_buf);
-                                                    if (v.data == .e_string and v.data.e_string.eql(string, url)) {
-                                                        request.e_string = v.data.e_string;
-                                                        remaining -= 1;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        i += 1;
-                    }
-                }
-            }
-
-            if (remaining != 0) {
-                var dependencies: []G.Property = &[_]G.Property{};
-                if (current_package_json.asProperty(dependency_list)) |query| {
-                    if (query.expr.data == .e_object) {
-                        dependencies = query.expr.data.e_object.properties.slice();
-                    }
-                }
-
-                var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
-                bun.copy(G.Property, new_dependencies, dependencies);
-                @memset(new_dependencies[dependencies.len..], G.Property{});
-
-                var trusted_dependencies: []Expr = &[_]Expr{};
-                if (options.add_trusted_dependencies) {
-                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
-                        if (query.expr.data == .e_array) {
-                            trusted_dependencies = query.expr.data.e_array.items.slice();
-                        }
-                    }
-                }
-
-                const trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.items.len;
-                const new_trusted_deps = brk: {
-                    if (!options.add_trusted_dependencies or trusted_dependencies_to_add == 0) break :brk &[_]Expr{};
-
-                    var deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
-                    @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
-                    @memset(deps[trusted_dependencies.len..], Expr.empty);
-
-                    for (manager.trusted_deps_to_add_to_package_json.items) |package_name| {
-                        if (comptime Environment.allow_assert) {
-                            var has_missing = false;
-                            for (deps) |dep| {
-                                if (dep.data == .e_missing) has_missing = true;
-                            }
-                            bun.assert(has_missing);
-                        }
-
-                        var i = deps.len;
-                        while (i > 0) {
-                            i -= 1;
-                            if (deps[i].data == .e_missing) {
-                                deps[i] = Expr.allocate(allocator, E.String, .{
-                                    .data = package_name,
-                                }, logger.Loc.Empty);
-                                break;
-                            }
-                        }
-                    }
-
-                    if (comptime Environment.allow_assert) {
-                        for (deps) |dep| bun.assert(dep.data != .e_missing);
-                    }
-
-                    break :brk deps;
-                };
-
-                outer: for (updates.*) |*request| {
-                    if (request.e_string != null) continue;
-                    defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
-
-                    var k: usize = 0;
-                    while (k < new_dependencies.len) : (k += 1) {
-                        if (new_dependencies[k].key) |key| {
-                            if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string.eql(
-                                string,
-                                manager.lockfile.packages.items(.name)[request.package_id].slice(request.version_buf),
-                            )) {
-                                // This actually is a duplicate which we did not
-                                // pick up before dependency resolution.
-                                // For this case, we'll just swap remove it.
-                                if (new_dependencies.len > 1) {
-                                    new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                    new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                                } else {
-                                    new_dependencies = &[_]G.Property{};
-                                }
-                                continue;
-                            }
-                            if (key.data.e_string.eql(
-                                string,
-                                if (request.is_aliased)
-                                    request.name
-                                else
-                                    request.version.literal.slice(request.version_buf),
-                            )) {
-                                if (request.package_id == invalid_package_id) {
-                                    // This actually is a duplicate like "react"
-                                    // appearing in both "dependencies" and "optionalDependencies".
-                                    // For this case, we'll just swap remove it
-                                    if (new_dependencies.len > 1) {
-                                        new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                                    } else {
-                                        new_dependencies = &[_]G.Property{};
-                                    }
-                                    continue;
-                                }
-
-                                new_dependencies[k].key = null;
-                            }
-                        }
-
-                        if (new_dependencies[k].key == null) {
-                            new_dependencies[k].key = JSAst.Expr.allocate(
-                                allocator,
-                                JSAst.E.String,
-                                .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
-                                logger.Loc.Empty,
-                            );
-
-                            new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                                // we set it later
-                                .data = "",
-                            }, logger.Loc.Empty);
-
-                            request.e_string = new_dependencies[k].value.?.data.e_string;
-
-                            if (request.is_aliased) continue :outer;
-                        }
-                    }
-                }
-
-                var needs_new_dependency_list = true;
-                const dependencies_object: JSAst.Expr = brk: {
-                    if (current_package_json.asProperty(dependency_list)) |query| {
-                        if (query.expr.data == .e_object) {
-                            needs_new_dependency_list = false;
-
-                            break :brk query.expr;
-                        }
-                    }
-
-                    break :brk JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                        .properties = JSAst.G.Property.List.init(new_dependencies),
-                    }, logger.Loc.Empty);
-                };
-
-                dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
-                if (new_dependencies.len > 1)
-                    dependencies_object.data.e_object.alphabetizeProperties();
-
-                var needs_new_trusted_dependencies_list = true;
-                const trusted_dependencies_array: Expr = brk: {
-                    if (!options.add_trusted_dependencies or trusted_dependencies_to_add == 0) {
-                        needs_new_trusted_dependencies_list = false;
-                        break :brk Expr.empty;
-                    }
-                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
-                        if (query.expr.data == .e_array) {
-                            needs_new_trusted_dependencies_list = false;
-                            break :brk query.expr;
-                        }
-                    }
-
-                    break :brk Expr.allocate(allocator, E.Array, .{
-                        .items = JSAst.ExprNodeList.init(new_trusted_deps),
-                    }, logger.Loc.Empty);
-                };
-
-                if (options.add_trusted_dependencies and trusted_dependencies_to_add > 0) {
-                    trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
-                    if (new_trusted_deps.len > 1) {
-                        trusted_dependencies_array.data.e_array.alphabetizeStrings();
-                    }
-                }
-
-                if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
-                    var root_properties = try allocator.alloc(JSAst.G.Property, if (options.add_trusted_dependencies) 2 else 1);
-                    root_properties[0] = JSAst.G.Property{
-                        .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                            .data = dependency_list,
-                        }, logger.Loc.Empty),
-                        .value = dependencies_object,
-                    };
-
-                    if (options.add_trusted_dependencies) {
-                        root_properties[1] = JSAst.G.Property{
-                            .key = Expr.allocate(allocator, E.String, .{
-                                .data = trusted_dependencies_string,
-                            }, logger.Loc.Empty),
-                            .value = trusted_dependencies_array,
-                        };
-                    }
-
-                    current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                        .properties = JSAst.G.Property.List.init(root_properties),
-                    }, logger.Loc.Empty);
-                } else {
-                    if (needs_new_dependency_list and needs_new_trusted_dependencies_list) {
-                        var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
-                        @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
-                        root_properties[root_properties.len - 2] = .{
-                            .key = Expr.allocate(allocator, E.String, E.String{
-                                .data = dependency_list,
-                            }, logger.Loc.Empty),
-                            .value = dependencies_object,
-                        };
-                        root_properties[root_properties.len - 1] = .{
-                            .key = Expr.allocate(allocator, E.String, .{
-                                .data = trusted_dependencies_string,
-                            }, logger.Loc.Empty),
-                            .value = trusted_dependencies_array,
-                        };
-                        current_package_json.* = Expr.allocate(allocator, E.Object, .{
-                            .properties = G.Property.List.init(root_properties),
-                        }, logger.Loc.Empty);
-                    } else if (needs_new_dependency_list or needs_new_trusted_dependencies_list) {
-                        var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
-                        @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
-                        root_properties[root_properties.len - 1] = .{
-                            .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                                .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
-                            }, logger.Loc.Empty),
-                            .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
-                        };
-                        current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                            .properties = JSAst.G.Property.List.init(root_properties),
-                        }, logger.Loc.Empty);
-                    }
-                }
-            }
-
-            const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
-            for (updates.*) |*request| {
-                if (request.e_string) |e_string| {
-                    if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
-                        e_string.data = uninitialized: {
-                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
-                                break :uninitialized try allocator.dupe(u8, "latest");
-                            }
-
-                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
-                                break :uninitialized switch (request.version.tag) {
-                                    .uninitialized => try allocator.dupe(u8, "latest"),
-                                    else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                                };
-                            } else {
-                                break :uninitialized e_string.data;
-                            }
-                        };
-
-                        continue;
-                    }
-                    e_string.data = switch (resolutions[request.package_id].tag) {
-                        .npm => npm: {
-                            if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
-                                if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {
-                                    var alias_at_index: ?usize = null;
-
-                                    const new_version = new_version: {
-                                        const version_fmt = resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
-                                        if (options.exact_versions) {
-                                            break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
-                                        }
-
-                                        const version_literal = version_literal: {
-                                            if (!entry.value.is_alias) break :version_literal entry.value.original_version_literal;
-                                            if (strings.lastIndexOfChar(entry.value.original_version_literal, '@')) |at_index| {
-                                                alias_at_index = at_index;
-                                                break :version_literal entry.value.original_version_literal[at_index + 1 ..];
-                                            }
-
-                                            break :version_literal entry.value.original_version_literal;
-                                        };
-
-                                        const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
-                                        break :new_version try switch (pinned_version) {
-                                            .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
-                                            .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
-                                            .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
-                                        };
-                                    };
-
-                                    if (entry.value.is_alias) {
-                                        const dep_literal = entry.value.original_version_literal;
-
-                                        if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                            break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
-                                                dep_literal[0..at_index],
-                                                new_version,
-                                            });
-                                        }
-                                    }
-
-                                    break :npm new_version;
-                                }
-                            }
-                            if (request.version.tag == .dist_tag or
-                                (manager.subcommand == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
-                            {
-                                const new_version = try switch (options.exact_versions) {
-                                    inline else => |exact_versions| std.fmt.allocPrint(
-                                        allocator,
-                                        if (comptime exact_versions) "{}" else "^{}",
-                                        .{
-                                            resolutions[request.package_id].value.npm.version.fmt(request.version_buf),
-                                        },
-                                    ),
-                                };
-
-                                if (request.version.tag == .npm and request.version.value.npm.is_alias) {
-                                    const dep_literal = request.version.literal.slice(request.version_buf);
-                                    if (strings.indexOfChar(dep_literal, '@')) |at_index| {
-                                        break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
-                                            dep_literal[0..at_index],
-                                            new_version,
-                                        });
-                                    }
-                                }
-
-                                break :npm new_version;
-                            }
-
-                            break :npm try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
-                        },
-
-                        .workspace => try allocator.dupe(u8, "workspace:*"),
-                        else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                    };
-                }
-            }
-        }
-    };
-
     // Corresponds to possible commands from the CLI.
     pub const Subcommand = enum {
         install,
@@ -8623,6 +7224,7 @@ pub const PackageManager = struct {
         outdated,
         pack,
         publish,
+        audit,
 
         // bin,
         // hash,
@@ -8647,6 +7249,16 @@ pub const PackageManager = struct {
                 .outdated => true,
                 .install => true,
                 // .pack => true,
+                // .add => true,
+                else => false,
+            };
+        }
+
+        pub fn supportsJsonOutput(this: Subcommand) bool {
+            return switch (this) {
+                .audit,
+                .pm,
+                => true,
                 else => false,
             };
         }
@@ -8721,6 +7333,7 @@ pub const PackageManager = struct {
         };
 
         var workspace_name_hash: ?PackageNameHash = null;
+        var root_package_json_name_at_time_of_init: []const u8 = "";
 
         // Step 1. Find the nearest package.json directory
         //
@@ -8823,10 +7436,16 @@ pub const PackageManager = struct {
                         const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                         defer ctx.allocator.free(json_buf);
                         const json_len = try json_file.preadAll(json_buf, 0);
-                        const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
+                        const json_path = try bun.getFdPath(.fromStdFile(json_file), &package_json_cwd_buf);
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
                         const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        if (subcommand == .pm) {
+                            if (json.getStringCloned(ctx.allocator, "name") catch null) |name| {
+                                root_package_json_name_at_time_of_init = name;
+                            }
+                        }
+
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -8838,8 +7457,7 @@ pub const PackageManager = struct {
                             };
                             var log = logger.Log.init(ctx.allocator);
                             defer log.deinit();
-                            _ = Package.processWorkspaceNamesArray(
-                                &workspace_names,
+                            _ = workspace_names.processNamesArray(
                                 ctx.allocator,
                                 &workspace_package_json_cache,
                                 &log,
@@ -8888,7 +7506,7 @@ pub const PackageManager = struct {
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = 0;
         fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
-        package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
+        package_json_cwd = try bun.getFdPath(.fromStdFile(root_package_json_file), &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
@@ -8900,6 +7518,10 @@ pub const PackageManager = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
+
+        if (subcommand == .pm and cli.positionals.len >= 2 and strings.eqlComptime(cli.positionals[1], "audit")) {
+            env.quiet = true;
+        }
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
@@ -8942,7 +7564,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            bun.spawn.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -8984,6 +7606,7 @@ pub const PackageManager = struct {
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
             .subcommand = subcommand,
+            .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
         };
         manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -9278,6 +7901,8 @@ pub const PackageManager = struct {
         };
     }
 
+    pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
+
     pub fn link(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .link);
         var manager, const original_cwd = PackageManager.init(ctx, cli, .link) catch |err| brk: {
@@ -9304,7 +7929,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -9405,8 +8030,8 @@ pub const PackageManager = struct {
                 var node_modules_path_buf: bun.PathBuffer = undefined;
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .node_modules = bun.toFD(node_modules.fd),
-                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                    .node_modules = .fromStdDir(node_modules),
+                    .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
                         if (manager.options.log_level != .silent) {
                             Output.err(err, "failed to link binary", .{});
                         }
@@ -9485,7 +8110,7 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
                     Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
@@ -9550,8 +8175,8 @@ pub const PackageManager = struct {
 
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .node_modules = bun.toFD(node_modules.fd),
-                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                    .node_modules = .fromStdDir(node_modules),
+                    .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
                         if (manager.options.log_level != .silent) {
                             Output.err(err, "failed to link binary", .{});
                         }
@@ -9584,737 +8209,7 @@ pub const PackageManager = struct {
         }
     }
 
-    const ParamType = clap.Param(clap.Help);
-    const platform_specific_backend_label = if (Environment.isMac)
-        "Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
-    else
-        "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
-
-    const shared_params = [_]ParamType{
-        clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
-        clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
-        clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
-        clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
-        clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
-        clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
-        clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
-        clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
-        clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
-        clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
-        clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
-        clap.parseParam("--no-cache                            Ignore manifest cache entirely") catch unreachable,
-        clap.parseParam("--silent                              Don't log anything") catch unreachable,
-        clap.parseParam("--verbose                             Excessively verbose logging") catch unreachable,
-        clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
-        clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
-        clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
-        clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
-        clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
-        clap.parseParam("-g, --global                          Install globally") catch unreachable,
-        clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
-        clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
-        clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
-        clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
-        clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
-        clap.parseParam("--save-text-lockfile                  Save a text-based lockfile") catch unreachable,
-        clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
-        clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
-        clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
-    };
-
-    pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
-        clap.parseParam("-D, --development") catch unreachable,
-        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
-        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
-        clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
-        clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
-        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
-        clap.parseParam("<POS> ...                         ") catch unreachable,
-    });
-
-    pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
-        clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
-    });
-
-    pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("-a, --all") catch unreachable,
-        // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
-        clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
-        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
-        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
-        clap.parseParam("<POS> ...                         ") catch unreachable,
-    });
-
-    pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
-        clap.parseParam("-D, --development") catch unreachable,
-        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
-        clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
-        clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
-        clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
-        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
-    });
-
-    pub const remove_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
-    });
-
-    pub const link_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
-    });
-
-    pub const unlink_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
-    });
-
-    const patch_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
-        clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
-        clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
-    });
-
-    const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                         \"dir\" containing changes to a package") catch unreachable,
-        clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
-    });
-
-    const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-        clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
-        clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
-    });
-
-    const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
-        clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
-        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
-        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
-        clap.parseParam("<POS> ...                              ") catch unreachable,
-    });
-
-    const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
-        clap.parseParam("<POS> ...                              Package tarball to publish") catch unreachable,
-        clap.parseParam("--access <STR>                         Set access level for scoped packages") catch unreachable,
-        clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
-        clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
-        clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
-        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
-    });
-
-    pub const CommandLineArguments = struct {
-        cache_dir: ?string = null,
-        lockfile: string = "",
-        token: string = "",
-        global: bool = false,
-        config: ?string = null,
-        network_concurrency: ?u16 = null,
-        backend: ?PackageInstall.Method = null,
-        analyze: bool = false,
-        only_missing: bool = false,
-        positionals: []const string = &[_]string{},
-
-        yarn: bool = false,
-        production: bool = false,
-        frozen_lockfile: bool = false,
-        no_save: bool = false,
-        dry_run: bool = false,
-        force: bool = false,
-        no_cache: bool = false,
-        silent: bool = false,
-        verbose: bool = false,
-        no_progress: bool = false,
-        no_verify: bool = false,
-        ignore_scripts: bool = false,
-        trusted: bool = false,
-        no_summary: bool = false,
-        latest: bool = false,
-        // json_output: bool = false,
-        filters: []const string = &.{},
-
-        pack_destination: string = "",
-        pack_filename: string = "",
-        pack_gzip_level: ?string = null,
-
-        development: bool = false,
-        optional: bool = false,
-        peer: bool = false,
-
-        omit: ?Omit = null,
-
-        exact: bool = false,
-
-        concurrent_scripts: ?usize = null,
-
-        patch: PatchOpts = .{ .nothing = .{} },
-
-        registry: string = "",
-
-        publish_config: Options.PublishConfig = .{},
-
-        ca: []const string = &.{},
-        ca_file_name: string = "",
-
-        save_text_lockfile: ?bool = null,
-
-        lockfile_only: bool = false,
-
-        const PatchOpts = union(enum) {
-            nothing: struct {},
-            patch: struct {},
-            commit: struct {
-                patches_dir: []const u8 = "patches",
-            },
-        };
-
-        const Omit = struct {
-            dev: bool = false,
-            optional: bool = false,
-            peer: bool = false,
-        };
-
-        pub fn printHelp(subcommand: Subcommand) void {
-
-            // the output of --help uses the following syntax highlighting
-            // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-            // use [foo] for multiple arguments or flags for foo.
-            // use <bar> to emphasize 'bar'
-
-            switch (subcommand) {
-                // fall back to HelpCommand.printWithReason
-                Subcommand.install => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
-                        \\<b>Alias: <b><green>bun i<r>
-                        \\  Install the dependencies listed in package.json
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Install the dependencies for the current project<r>
-                        \\  <b><green>bun install<r>
-                        \\
-                        \\  <d>Skip devDependencies<r>
-                        \\  <b><green>bun install<r> <cyan>--production<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
-                    ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.install_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                Subcommand.update => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
-                        \\  Update all dependencies to most recent versions within the version range in package.json
-                        \\
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Update all dependencies:<r>
-                        \\  <b><green>bun update<r>
-                        \\
-                        \\  <d>Update all dependencies to latest:<r>
-                        \\  <b><green>bun update<r> <cyan>--latest<r>
-                        \\
-                        \\  <d>Update specific packages:<r>
-                        \\  <b><green>bun update<r> <blue>zod jquery@3<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
-                    ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.update_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                Subcommand.patch => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
-                        \\
-                        \\Prepare a package for patching.
-                        \\
-                    ;
-
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.patch_params);
-                    // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.pretty("\n", .{});
-                    Output.flush();
-                },
-                Subcommand.@"patch-commit" => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
-                        \\
-                        \\Generate a patc out of a directory and save it.
-                        \\
-                        \\<b>Options:<r>
-                        \\  <cyan>--patches-dir<r>               <d>The directory to save the patch file<r>
-                        \\
-                    ;
-                    // const outro_text =
-                    //     \\<b>Options:<r>
-                    //     \\  <d>--edit-dir<r>
-                    //     \\  <b><green>bun update<r>
-                    //     \\
-                    //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
-                    // ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.patch_params);
-                    // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.pretty("\n", .{});
-                    Output.flush();
-                },
-                Subcommand.pm => {
-                    PackageManagerCommand.printHelp();
-                },
-                Subcommand.add => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
-                        \\<b>Alias: <b><green>bun a<r>
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Add a dependency from the npm registry<r>
-                        \\  <b><green>bun add<r> <blue>zod<r>
-                        \\  <b><green>bun add<r> <blue>zod@next<r>
-                        \\  <b><green>bun add<r> <blue>zod@3.0.0<r>
-                        \\
-                        \\  <d>Add a dev, optional, or peer dependency <r>
-                        \\  <b><green>bun add<r> <cyan>-d<r> <blue>typescript<r>
-                        \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
-                        \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
-                    ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.add_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                Subcommand.remove => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
-                        \\<b>Alias: <b>bun r<r>
-                        \\  Remove a package from package.json and uninstall from node_modules
-                        \\
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Remove a dependency<r>
-                        \\  <b><green>bun remove<r> <blue>ts-node<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
-                    ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.remove_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                Subcommand.link => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
-                        \\
-                    ;
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Register the current directory as a linkable package.<r>
-                        \\  <d>Directory should contain a package.json.<r>
-                        \\  <b><green>bun link<r>
-                        \\
-                        \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
-                        \\  <b><green>bun link<r> <blue>\<package\><r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
-                    ;
-                    Output.pretty("\n" ++ intro_text, .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.link_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                Subcommand.unlink => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
-                    ;
-
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Unregister the current directory as a linkable package.<r>
-                        \\  <b><green>bun unlink<r>
-                        \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>
-                    ;
-
-                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    Output.flush();
-                    clap.simpleHelp(PackageManager.unlink_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                .outdated => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
-                    ;
-
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Display outdated dependencies in the current workspace.<r>
-                        \\  <b><green>bun outdated<r>
-                        \\
-                        \\  <d>Use --filter to include more than one workspace.<r>
-                        \\  <b><green>bun outdated<r> <cyan>--filter="*"<r>
-                        \\  <b><green>bun outdated<r> <cyan>--filter="./app/*"<r>
-                        \\  <b><green>bun outdated<r> <cyan>--filter="!frontend"<r>
-                        \\
-                        \\  <d>Filter dependencies with name patterns.<r>
-                        \\  <b><green>bun outdated<r> <blue>jquery<r>
-                        \\  <b><green>bun outdated<r> <blue>"is-*"<r>
-                        \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
-                        \\
-                    ;
-
-                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.outdated_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                .pack => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun pack<r> <cyan>[flags]<r>
-                    ;
-
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <b><green>bun pack<r>
-                        \\
-                    ;
-
-                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.pack_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-                .publish => {
-                    const intro_text =
-                        \\<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
-                    ;
-
-                    const outro_text =
-                        \\<b>Examples:<r>
-                        \\  <d>Display files that would be published, without publishing to the registry.<r>
-                        \\  <b><green>bun publish<r> <cyan>--dry-run<r>
-                        \\
-                        \\  <d>Publish the current package with public access.<r>
-                        \\  <b><green>bun publish<r> <cyan>--access public<r>
-                        \\
-                        \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
-                        \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
-                        \\
-                    ;
-
-                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
-                    Output.flush();
-                    Output.pretty("\n<b>Flags:<r>", .{});
-                    clap.simpleHelp(PackageManager.publish_params);
-                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-                    Output.flush();
-                },
-            }
-        }
-
-        pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
-            Output.is_verbose = Output.isVerbose();
-
-            const params: []const ParamType = switch (subcommand) {
-                .install => install_params,
-                .update => update_params,
-                .pm => pm_params,
-                .add => add_params,
-                .remove => remove_params,
-                .link => link_params,
-                .unlink => unlink_params,
-                .patch => patch_params,
-                .@"patch-commit" => patch_commit_params,
-                .outdated => outdated_params,
-                .pack => pack_params,
-                .publish => publish_params,
-            };
-
-            var diag = clap.Diagnostic{};
-
-            var args = clap.parse(clap.Help, params, .{
-                .diagnostic = &diag,
-                .allocator = allocator,
-            }) catch |err| {
-                clap.help(Output.errorWriter(), params) catch {};
-                Output.errorWriter().writeAll("\n") catch {};
-                diag.report(Output.errorWriter(), err) catch {};
-                return err;
-            };
-
-            if (args.flag("--help")) {
-                printHelp(subcommand);
-                Global.exit(0);
-            }
-
-            var cli = CommandLineArguments{};
-            cli.yarn = args.flag("--yarn");
-            cli.production = args.flag("--production");
-            cli.frozen_lockfile = args.flag("--frozen-lockfile");
-            cli.no_progress = args.flag("--no-progress");
-            cli.dry_run = args.flag("--dry-run");
-            cli.global = args.flag("--global");
-            cli.force = args.flag("--force");
-            cli.no_verify = args.flag("--no-verify");
-            cli.no_cache = args.flag("--no-cache");
-            cli.silent = args.flag("--silent");
-            cli.verbose = args.flag("--verbose") or Output.is_verbose;
-            cli.ignore_scripts = args.flag("--ignore-scripts");
-            cli.trusted = args.flag("--trust");
-            cli.no_summary = args.flag("--no-summary");
-            cli.ca = args.options("--ca");
-            cli.lockfile_only = args.flag("--lockfile-only");
-
-            if (args.option("--cache-dir")) |cache_dir| {
-                cli.cache_dir = cache_dir;
-            }
-
-            if (args.option("--cafile")) |ca_file_name| {
-                cli.ca_file_name = ca_file_name;
-            }
-
-            if (args.option("--network-concurrency")) |network_concurrency| {
-                cli.network_concurrency = std.fmt.parseInt(u16, network_concurrency, 10) catch {
-                    Output.errGeneric("Expected --network-concurrency to be a number between 0 and 65535: {s}", .{network_concurrency});
-                    Global.crash();
-                };
-            }
-
-            if (args.flag("--save-text-lockfile")) {
-                cli.save_text_lockfile = true;
-            }
-
-            const omit_values = args.options("--omit");
-
-            if (omit_values.len > 0) {
-                var omit: Omit = .{};
-                for (omit_values) |omit_value| {
-                    if (strings.eqlComptime(omit_value, "dev")) {
-                        omit.dev = true;
-                    } else if (strings.eqlComptime(omit_value, "optional")) {
-                        omit.optional = true;
-                    } else if (strings.eqlComptime(omit_value, "peer")) {
-                        omit.peer = true;
-                    } else {
-                        Output.errGeneric("invalid `omit` value: '{s}'", .{omit_value});
-                        Global.crash();
-                    }
-                }
-                cli.omit = omit;
-            }
-
-            // commands that support --filter
-            if (comptime subcommand.supportsWorkspaceFiltering()) {
-                cli.filters = args.options("--filter");
-            }
-
-            if (comptime subcommand == .outdated) {
-                // fake --dry-run, we don't actually resolve+clean the lockfile
-                cli.dry_run = true;
-                // cli.json_output = args.flag("--json");
-            }
-
-            if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
-                if (comptime subcommand != .publish) {
-                    if (args.option("--destination")) |dest| {
-                        cli.pack_destination = dest;
-                    }
-                    if (args.option("--filename")) |file| {
-                        cli.pack_filename = file;
-                    }
-                }
-
-                if (args.option("--gzip-level")) |level| {
-                    cli.pack_gzip_level = level;
-                }
-            }
-
-            if (comptime subcommand == .publish) {
-                if (args.option("--tag")) |tag| {
-                    cli.publish_config.tag = tag;
-                }
-
-                if (args.option("--access")) |access| {
-                    cli.publish_config.access = Options.Access.fromStr(access) orelse {
-                        Output.errGeneric("invalid `access` value: '{s}'", .{access});
-                        Global.crash();
-                    };
-                }
-
-                if (args.option("--otp")) |otp| {
-                    cli.publish_config.otp = otp;
-                }
-
-                if (args.option("--auth-type")) |auth_type| {
-                    cli.publish_config.auth_type = Options.AuthType.fromStr(auth_type) orelse {
-                        Output.errGeneric("invalid `auth-type` value: '{s}'", .{auth_type});
-                        Global.crash();
-                    };
-                }
-            }
-
-            // link and unlink default to not saving, all others default to
-            // saving.
-            if (comptime subcommand == .link or subcommand == .unlink) {
-                cli.no_save = !args.flag("--save");
-            } else {
-                cli.no_save = args.flag("--no-save");
-            }
-
-            if (subcommand == .patch) {
-                const patch_commit = args.flag("--commit");
-                if (patch_commit) {
-                    cli.patch = .{
-                        .commit = .{
-                            .patches_dir = args.option("--patches-dir") orelse "patches",
-                        },
-                    };
-                } else {
-                    cli.patch = .{
-                        .patch = .{},
-                    };
-                }
-            }
-            if (subcommand == .@"patch-commit") {
-                cli.patch = .{
-                    .commit = .{
-                        .patches_dir = args.option("--patches-dir") orelse "patches",
-                    },
-                };
-            }
-
-            if (args.option("--config")) |opt| {
-                cli.config = opt;
-            }
-
-            if (comptime subcommand == .add or subcommand == .install) {
-                cli.development = args.flag("--development") or args.flag("--dev");
-                cli.optional = args.flag("--optional");
-                cli.peer = args.flag("--peer");
-                cli.exact = args.flag("--exact");
-                cli.analyze = args.flag("--analyze");
-                cli.only_missing = args.flag("--only-missing");
-            }
-
-            if (args.option("--concurrent-scripts")) |concurrency| {
-                cli.concurrent_scripts = std.fmt.parseInt(usize, concurrency, 10) catch null;
-            }
-
-            if (args.option("--cwd")) |cwd_| {
-                var buf: bun.PathBuffer = undefined;
-                var buf2: bun.PathBuffer = undefined;
-                var final_path: [:0]u8 = undefined;
-                if (cwd_.len > 0 and cwd_[0] == '.') {
-                    const cwd = try bun.getcwd(&buf);
-                    var parts = [_]string{cwd_};
-                    const path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
-                    buf2[path_.len] = 0;
-                    final_path = buf2[0..path_.len :0];
-                } else {
-                    bun.copy(u8, &buf, cwd_);
-                    buf[cwd_.len] = 0;
-                    final_path = buf[0..cwd_.len :0];
-                }
-                bun.sys.chdir("", final_path).unwrap() catch |err| {
-                    Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
-                    Global.crash();
-                };
-            }
-
-            if (comptime subcommand == .update) {
-                cli.latest = args.flag("--latest");
-            }
-
-            const specified_backend: ?PackageInstall.Method = brk: {
-                if (args.option("--backend")) |backend_| {
-                    break :brk PackageInstall.Method.map.get(backend_);
-                }
-                break :brk null;
-            };
-
-            if (specified_backend) |backend| {
-                if (backend.isSupported()) {
-                    cli.backend = backend;
-                }
-            }
-
-            if (args.option("--registry")) |registry| {
-                if (!strings.hasPrefixComptime(registry, "https://") and !strings.hasPrefixComptime(registry, "http://")) {
-                    Output.errGeneric("Registry URL must start with 'https://' or 'http://': {}\n", .{bun.fmt.quote(registry)});
-                    Global.crash();
-                }
-                cli.registry = registry;
-            }
-
-            cli.positionals = args.positionals();
-
-            if (subcommand == .patch and cli.positionals.len < 2) {
-                Output.errGeneric("Missing pkg to patch\n", .{});
-                Global.crash();
-            }
-
-            if (subcommand == .@"patch-commit" and cli.positionals.len < 2) {
-                Output.errGeneric("Missing pkg folder to patch\n", .{});
-                Global.crash();
-            }
-
-            if (cli.production and cli.trusted) {
-                Output.errGeneric("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
-                Global.crash();
-            }
-
-            if (cli.frozen_lockfile and cli.trusted) {
-                Output.errGeneric("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
-                Global.crash();
-            }
-
-            if (cli.analyze and cli.positionals.len == 0) {
-                Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
-                Global.crash();
-            }
-
-            return cli;
-        }
-    };
+    pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.zig");
 
     pub const UpdateRequest = struct {
         name: string = "",
@@ -10365,14 +8260,14 @@ pub const PackageManager = struct {
                     allocator,
                 ) orelse return .zero;
                 if (input_str.len > 0)
-                    all_positionals.append(input_str.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(input_str.slice());
             } else if (input.isArray()) {
                 var iter = input.arrayIterator(globalThis);
                 while (iter.next()) |item| {
                     const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
                     if (globalThis.hasException()) return .zero;
                     if (slice.len == 0) continue;
-                    all_positionals.append(slice.slice()) catch bun.outOfMemory();
+                    try all_positionals.append(slice.slice());
                 }
                 if (globalThis.hasException()) return .zero;
             } else {
@@ -10386,12 +8281,12 @@ pub const PackageManager = struct {
             var array = Array{};
 
             const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
-                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             };
             if (update_requests.len == 0) return .undefined;
 
             if (log.msgs.items.len > 0) {
-                return globalThis.throwValue(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
+                return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
             }
 
             if (update_requests[0].failed) {
@@ -10997,7 +8892,7 @@ pub const PackageManager = struct {
             manager.update_requests = cloned;
         }
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
@@ -11074,7 +8969,7 @@ pub const PackageManager = struct {
                     stuff.patch_key,
                     stuff.patchfile_path,
                 );
-                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
                 try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
                 buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
                 var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
@@ -11137,7 +9032,7 @@ pub const PackageManager = struct {
                     },
                 );
             }
-            var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
+            var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;
@@ -11169,11 +9064,11 @@ pub const PackageManager = struct {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(
-                bun.invalid_fd,
+                .cwd(),
                 path,
                 bun.O.RDWR,
                 0,
-            ).unwrap()).handle.asFile();
+            ).unwrap()).handle.stdFile();
 
             try workspace_package_json_file.pwriteAll(source, 0);
             std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
@@ -11465,7 +9360,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :src s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
@@ -11672,9 +9567,9 @@ pub const PackageManager = struct {
                         const entrypathZ = pathbuf[0..entrypath.len :0];
 
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(destination_dir_.fd),
+                            .fromStdDir(destination_dir_),
                             entrypathZ,
-                            bun.toFD(tmpdir_in_node_modules.fd),
+                            .fromStdDir(tmpdir_in_node_modules),
                             tmpname,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -11703,7 +9598,7 @@ pub const PackageManager = struct {
                         pathbuf[entry.path.len] = 0;
 
                         if (bun.sys.unlinkat(
-                            bun.toFD(destination_dir_.fd),
+                            .fromStdDir(destination_dir_),
                             pathbuf[0..entry.path.len :0],
                         ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
@@ -11714,9 +9609,9 @@ pub const PackageManager = struct {
                         defer outfile.close();
 
                         const stat = in_file.stat() catch continue;
-                        _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                        _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
+                        bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -11876,7 +9771,7 @@ pub const PackageManager = struct {
                 const package_json_source: logger.Source = brk: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
-                    switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
+                    switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                         .result => |s| break :brk s,
                         .err => |e| {
                             Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
@@ -11981,7 +9876,7 @@ pub const PackageManager = struct {
             var buf2: bun.PathBuffer = undefined;
             var buf3: bun.PathBuffer = undefined;
             const old_folder = old_folder: {
-                const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
+                const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
                         Output.err(e, "failed to read from cache", .{});
@@ -12012,9 +9907,9 @@ pub const PackageManager = struct {
                 defer new_folder_handle.close();
 
                 if (bun.sys.renameatConcurrently(
-                    bun.toFD(new_folder_handle.fd),
+                    .fromStdDir(new_folder_handle),
                     "node_modules",
-                    bun.toFD(root_node_modules.fd),
+                    .fromStdDir(root_node_modules),
                     random_tempdir,
                     .{ .move_fallback = true },
                 ).asErr()) |_| break :has_nested_node_modules false;
@@ -12047,9 +9942,9 @@ pub const PackageManager = struct {
                 defer new_folder_handle.close();
 
                 if (bun.sys.renameatConcurrently(
-                    bun.toFD(new_folder_handle.fd),
+                    .fromStdDir(new_folder_handle),
                     patch_tag,
-                    bun.toFD(root_node_modules.fd),
+                    .fromStdDir(root_node_modules),
                     patch_tag_tmpname,
                     .{ .move_fallback = true },
                 ).asErr()) |e| {
@@ -12071,9 +9966,9 @@ pub const PackageManager = struct {
 
                     if (has_nested_node_modules) {
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(root_node_modules.fd),
+                            .fromStdDir(root_node_modules),
                             random_tempdir,
-                            bun.toFD(new_folder_handle.fd),
+                            .fromStdDir(new_folder_handle),
                             "node_modules",
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -12083,9 +9978,9 @@ pub const PackageManager = struct {
 
                     if (bun_patch_tag) |patch_tag| {
                         if (bun.sys.renameatConcurrently(
-                            bun.toFD(root_node_modules.fd),
+                            .fromStdDir(root_node_modules),
                             patch_tag_tmpname,
-                            bun.toFD(new_folder_handle.fd),
+                            .fromStdDir(new_folder_handle),
                             patch_tag,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -12185,7 +10080,7 @@ pub const PackageManager = struct {
         const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
         const tmpdir = manager.getTemporaryDirectory();
         const tmpfd = switch (bun.sys.openat(
-            bun.toFD(tmpdir.fd),
+            .fromStdDir(tmpdir),
             tempfile_name,
             bun.O.RDWR | bun.O.CREAT,
             0o666,
@@ -12196,7 +10091,7 @@ pub const PackageManager = struct {
                 Global.crash();
             },
         };
-        defer _ = bun.sys.close(tmpfd);
+        defer tmpfd.close();
 
         if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
             Output.err(e, "failed to write patch to temp file", .{});
@@ -12220,8 +10115,8 @@ pub const PackageManager = struct {
             .posix,
         );
 
-        var nodefs = bun.JSC.Node.NodeFS{};
-        const args = bun.JSC.Node.Arguments.Mkdir{
+        var nodefs = bun.JSC.Node.fs.NodeFS{};
+        const args = bun.JSC.Node.fs.Arguments.Mkdir{
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
         if (nodefs.mkdirRecursive(args).asErr()) |e| {
@@ -12231,7 +10126,7 @@ pub const PackageManager = struct {
 
         // rename to patches dir
         if (bun.sys.renameatConcurrently(
-            bun.toFD(tmpdir.fd),
+            .fromStdDir(tmpdir),
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
@@ -12261,7 +10156,7 @@ pub const PackageManager = struct {
             .err => |e| return .{ .err = e },
         };
         defer {
-            _ = bun.sys.close(patch_tag_fd);
+            patch_tag_fd.close();
             // we actually need to delete this
             _ = bun.sys.unlink(patch_tag_path);
         }
@@ -12453,7 +10348,7 @@ pub const PackageManager = struct {
         noinline fn directoryExistsAtWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.directoryExistsAt(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
+            return bun.sys.directoryExistsAt(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto)).unwrapOr(false);
         }
 
         pub fn directoryExistsAt(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bool {
@@ -12461,19 +10356,16 @@ pub const PackageManager = struct {
                 return this.directoryExistsAtWithoutOpeningDirectories(root_node_modules_dir, file_path);
             }
 
-            const dir = this.openDir(root_node_modules_dir) catch return false;
-            defer {
-                _ = bun.sys.close(bun.toFD(dir));
-            }
-
-            return bun.sys.directoryExistsAt(bun.toFD(dir), file_path).unwrapOr(false);
+            const dir = FD.fromStdDir(this.openDir(root_node_modules_dir) catch return false);
+            defer dir.close();
+            return dir.directoryExistsAt(file_path).unwrapOr(false);
         }
 
         // Since the stack size of these functions are rather large, let's not let them be inlined.
         noinline fn openFileWithoutOpeningDirectories(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8) bun.sys.Maybe(bun.sys.File) {
             var path_buf: bun.PathBuffer = undefined;
             const parts: [2][]const u8 = .{ this.path.items, file_path };
-            return bun.sys.File.openat(bun.toFD(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
+            return bun.sys.File.openat(.fromStdDir(root_node_modules_dir), bun.path.joinZBuf(&path_buf, &parts, .auto), bun.O.RDONLY, 0);
         }
 
         pub fn readFile(this: *const NodeModulesFolder, root_node_modules_dir: std.fs.Dir, file_path: [:0]const u8, allocator: std.mem.Allocator) !bun.sys.File.ReadToEndResult {
@@ -12505,24 +10397,22 @@ pub const PackageManager = struct {
                 }
             }
 
-            const dir = try this.openDir(root_node_modules_dir);
-            defer {
-                _ = bun.sys.close(bun.toFD(dir));
-            }
+            const dir = bun.FD.fromStdDir(try this.openDir(root_node_modules_dir));
+            defer dir.close();
 
-            return try bun.sys.File.openat(bun.toFD(dir), file_path, bun.O.RDONLY, 0).unwrap();
+            return try bun.sys.File.openat(dir, file_path, bun.O.RDONLY, 0).unwrap();
         }
 
         pub fn openDir(this: *const NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
             if (comptime Environment.isPosix) {
-                return (try bun.sys.openat(bun.toFD(root), &try std.posix.toPosixPath(this.path.items), bun.O.DIRECTORY, 0).unwrap()).asDir();
+                return (try bun.sys.openat(.fromStdDir(root), &try std.posix.toPosixPath(this.path.items), bun.O.DIRECTORY, 0).unwrap()).stdDir();
             }
 
-            return (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+            return (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                 .can_rename_or_delete = false,
                 .create = false,
                 .read_only = false,
-            }).unwrap()).asDir();
+            }).unwrap()).stdDir();
         }
 
         pub fn makeAndOpenDir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
@@ -12533,11 +10423,11 @@ pub const PackageManager = struct {
 
                 // TODO: is this `makePath` necessary with `.create = true` below
                 try bun.MakePath.makePath(u8, root, this.path.items);
-                break :brk (try bun.sys.openDirAtWindowsA(bun.toFD(root), this.path.items, .{
+                break :brk (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                     .can_rename_or_delete = false,
                     .create = true,
                     .read_only = false,
-                }).unwrap()).asDir();
+                }).unwrap()).stdDir();
             };
             return out;
         }
@@ -12697,7 +10587,7 @@ pub const PackageManager = struct {
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
                     .seen = &this.seen_bin_links,
                     .node_modules_path = this.node_modules.path.items,
-                    .node_modules = bun.toFD(destination_dir),
+                    .node_modules = .fromStdDir(destination_dir),
                     .abs_target_buf = link_target_buf,
                     .abs_dest_buf = link_dest_buf,
                     .rel_buf = link_rel_buf,
@@ -13639,7 +11529,7 @@ pub const PackageManager = struct {
                             };
                             if (!Singleton.node_modules_is_ok) {
                                 if (!Environment.isWindows) {
-                                    const stat = bun.sys.fstat(bun.toFD(lazy_package_dir.getDir() catch |err| {
+                                    const stat = bun.sys.fstat(.fromStdDir(lazy_package_dir.getDir() catch |err| {
                                         Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                             this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
                                         });
@@ -13657,9 +11547,9 @@ pub const PackageManager = struct {
                                         Global.exit(1);
                                     };
 
-                                    const is_writable = if (stat.uid == bun.C.getuid())
+                                    const is_writable = if (stat.uid == bun.c.getuid())
                                         stat.mode & bun.S.IWUSR > 0
-                                    else if (stat.gid == bun.C.getgid())
+                                    else if (stat.gid == bun.c.getgid())
                                         stat.mode & bun.S.IWGRP > 0
                                     else
                                         stat.mode & bun.S.IWOTH > 0;
@@ -13688,7 +11578,7 @@ pub const PackageManager = struct {
                             );
                             if (Environment.isDebug) {
                                 var t = cause.debug_trace;
-                                bun.crash_handler.dumpStackTrace(t.trace());
+                                bun.crash_handler.dumpStackTrace(t.trace(), .{});
                             }
                             this.summary.fail += 1;
                         }
@@ -14086,10 +11976,10 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var new_node_modules = false;
-        const cwd = std.fs.cwd();
+        const cwd = bun.FD.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
-            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
+            switch (bun.sys.openatOSPath(cwd, bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
                 .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
                 .err => {},
             }
@@ -14098,12 +11988,12 @@ pub const PackageManager = struct {
 
             // Attempt to create a new node_modules folder
             if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
-                if (err.errno != @intFromEnum(bun.C.E.EXIST)) {
+                if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
                     Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
                     Global.crash();
                 }
             }
-            break :brk bun.openDir(cwd, "node_modules") catch |err| {
+            break :brk bun.openDir(cwd.stdDir(), "node_modules") catch |err| {
                 Output.err(err, "could not open the <b>\"node_modules\"<r> directory", .{});
                 Global.crash();
             };
@@ -14441,7 +12331,7 @@ pub const PackageManager = struct {
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: bun.PathBuffer = undefined;
-        const result = try bun.getFdPathZ(manager.options.global_bin_dir.fd, &out_buffer);
+        const result = try bun.getFdPathZ(.fromStdDir(manager.options.global_bin_dir), &out_buffer);
         const path = try FileSystem.instance.dirname_store.append([:0]u8, result);
         manager.options.bin_path = path.ptr[0..path.len :0];
     }
@@ -14518,12 +12408,16 @@ pub const PackageManager = struct {
         const log_level = manager.options.log_level;
 
         // Start resolving DNS for the default registry immediately.
-        if (manager.options.scope.url.hostname.len > 0) {
-            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
-            const allocator = hostname_stack.get();
-            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
-            defer allocator.free(hostname);
-            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        // Unless you're behind a proxy.
+        if (!manager.env.hasHTTPProxy()) {
+            // And don't try to resolve DNS if it's an IP address.
+            if (manager.options.scope.url.hostname.len > 0 and !manager.options.scope.url.isIPAddress()) {
+                var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+                const allocator = hostname_stack.get();
+                const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+                defer allocator.free(hostname);
+                bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+            }
         }
 
         var load_result: Lockfile.LoadResult = if (manager.options.do.load_lockfile)
@@ -14703,6 +12597,7 @@ pub const PackageManager = struct {
                         for (lockfile.patched_dependencies.values()) |patch_dep| builder.count(patch_dep.path.slice(lockfile.buffers.string_bytes.items));
 
                         lockfile.overrides.count(&lockfile, builder);
+                        lockfile.catalogs.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -14735,6 +12630,7 @@ pub const PackageManager = struct {
                         };
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
+                        manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -14846,10 +12742,25 @@ pub const PackageManager = struct {
                                     try manager.enqueueDependencyWithMain(
                                         @truncate(dependency_i),
                                         dependency,
-                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        invalid_package_id,
                                         false,
                                     );
                                 }
+                            }
+                        }
+
+                        if (manager.summary.catalogs_changed) {
+                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dep, _dep_id| {
+                                const dep_id: DependencyID = @intCast(_dep_id);
+                                if (dep.version.tag != .catalog) continue;
+
+                                manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
+                                try manager.enqueueDependencyWithMain(
+                                    dep_id,
+                                    dep,
+                                    invalid_package_id,
+                                    false,
+                                );
                             }
                         }
 
@@ -15296,7 +13207,7 @@ pub const PackageManager = struct {
             }
         }
 
-        if (manager.options.do.run_scripts and install_root_dependencies) {
+        if (manager.options.do.run_scripts and install_root_dependencies and !manager.options.global) {
             if (manager.root_lifecycle_scripts) |scripts| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(scripts.total > 0);
@@ -15695,7 +13606,7 @@ pub const bun_install_js_bindings = struct {
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         const manager = globalObject.bunVM().transpiler.resolver.getPackageManager();
 
-        const load_result: Lockfile.LoadResult = lockfile.loadFromDir(bun.toFD(dir), manager, allocator, &log, true);
+        const load_result: Lockfile.LoadResult = lockfile.loadFromDir(.fromStdDir(dir), manager, allocator, &log, true);
 
         switch (load_result) {
             .err => |err| {

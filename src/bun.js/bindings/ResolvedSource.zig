@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
@@ -13,13 +13,17 @@ pub const ResolvedSource = extern struct {
 
     is_commonjs_module: bool = false,
 
-    hash: u32 = 0,
+    /// When .tag is .common_js_custom_extension, this is special-cased to hold
+    /// the JSFunction extension. It is kept alive by
+    /// - This structure is stored on the stack
+    /// - There is a JSC::Strong reference to it
+    cjs_custom_extension_index: JSValue = .zero,
 
     allocator: ?*anyopaque = null,
 
     jsvalue_for_export: JSValue = .zero,
 
-    tag: Tag = Tag.javascript,
+    tag: Tag = .javascript,
 
     /// This is for source_code
     source_code_needs_deref: bool = true,

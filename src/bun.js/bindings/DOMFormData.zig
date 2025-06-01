@@ -1,10 +1,9 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
 const ZigString = JSC.ZigString;
-const String = bun.String;
 
 pub const DOMFormData = opaque {
     extern fn WebCore__DOMFormData__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMFormData;

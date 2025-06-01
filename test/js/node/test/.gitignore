@@ -6,7 +6,4 @@ fixtures/source-map
 fixtures/snapshot
 fixtures/repl*
 .tmp.*
-*shadow-realm*
-!test-shadow-realm-prepare-stack-trace.js
-!test-shadow-realm.js
 **/fails.txt

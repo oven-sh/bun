@@ -1,10 +1,11 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VM = JSC.VM;
 const String = bun.String;
+const JSError = bun.JSError;
 
 pub const JSPromise = opaque {
     pub const Status = enum(u32) {
@@ -13,13 +14,13 @@ pub const JSPromise = opaque {
         rejected = 2,
     };
 
-    extern fn JSC__JSPromise__asValue(arg0: *JSPromise, arg1: *JSGlobalObject) JSValue;
     extern fn JSC__JSPromise__create(arg0: *JSGlobalObject) *JSPromise;
     extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
     extern fn JSC__JSPromise__reject(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__rejectAsHandled(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
-    extern fn JSC__JSPromise__rejectAsHandledException(arg0: *JSPromise, arg1: *JSGlobalObject, arg2: ?*JSC.Exception) void;
     extern fn JSC__JSPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
+    /// **DEPRECATED** This function does not notify the VM about the rejection,
+    /// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
     extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
     extern fn JSC__JSPromise__resolve(arg0: *JSPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
@@ -27,6 +28,7 @@ pub const JSPromise = opaque {
     extern fn JSC__JSPromise__result(arg0: *JSPromise, arg1: *VM) JSValue;
     extern fn JSC__JSPromise__setHandled(arg0: *JSPromise, arg1: *VM) void;
     extern fn JSC__JSPromise__status(arg0: *const JSPromise, arg1: *VM) JSPromise.Status;
+    extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
 
     pub fn Weak(comptime T: type) type {
         return struct {
@@ -105,12 +107,12 @@ pub const JSPromise = opaque {
     }
 
     pub const Strong = struct {
-        strong: JSC.Strong = .empty,
+        strong: JSC.Strong.Optional = .empty,
 
         pub const empty: Strong = .{ .strong = .empty };
 
-        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
-            this.swap().reject(globalThis, val);
+        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSError!JSC.JSValue) void {
+            this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
@@ -138,8 +140,8 @@ pub const JSPromise = opaque {
 
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
-                .strong = JSC.Strong.create(
-                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                .strong = .create(
+                    JSC.JSPromise.create(globalThis).toJS(),
                     globalThis,
                 ),
             };
@@ -172,7 +174,9 @@ pub const JSPromise = opaque {
         }
     };
 
-    extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
+    pub inline fn toJS(this: *JSPromise) JSValue {
+        return JSValue.fromCell(this);
+    }
 
     pub fn wrap(
         globalObject: *JSGlobalObject,
@@ -205,7 +209,7 @@ pub const JSPromise = opaque {
         }
 
         if (value.isAnyError()) {
-            return rejectedPromiseValue(globalObject, value);
+            return dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, value);
         }
 
         return resolvedPromiseValue(globalObject, value);
@@ -241,7 +245,11 @@ pub const JSPromise = opaque {
         return JSC__JSPromise__rejectedPromise(globalThis, value);
     }
 
-    pub fn rejectedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    /// **DEPRECATED** use `JSPromise.rejectedPromise` instead
+    ///
+    /// Create a new rejected promise without notifying the VM. Unhandled
+    /// rejections created this way will not trigger unhandled rejection handling.
+    pub fn dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis: *JSGlobalObject, value: JSValue) JSValue {
         return JSC__JSPromise__rejectedPromiseValue(globalThis, value);
     }
 
@@ -260,7 +268,7 @@ pub const JSPromise = opaque {
         JSC__JSPromise__resolve(this, globalThis, value);
     }
 
-    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -269,7 +277,9 @@ pub const JSPromise = opaque {
             }
         }
 
-        JSC__JSPromise__reject(this, globalThis, value);
+        const err = value catch |err| globalThis.takeException(err);
+
+        JSC__JSPromise__reject(this, globalThis, err);
     }
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
@@ -280,8 +290,10 @@ pub const JSPromise = opaque {
         return JSC__JSPromise__create(globalThis);
     }
 
+    /// **DEPRECATED** use `JSPromise.toJS` instead
     pub fn asValue(this: *JSPromise, globalThis: *JSGlobalObject) JSValue {
-        return JSC__JSPromise__asValue(this, globalThis);
+        _ = globalThis;
+        return this.toJS();
     }
 
     pub const Unwrapped = union(enum) {

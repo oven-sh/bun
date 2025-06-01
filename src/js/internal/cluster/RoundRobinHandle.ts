@@ -35,7 +35,7 @@ export default class RoundRobinHandle {
         port,
         host: address,
         // Currently, net module only supports `ipv6Only` option in `flags`.
-        ipv6Only: Boolean(flags & UV_TCP_IPV6ONLY),
+        ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
       });
     } else

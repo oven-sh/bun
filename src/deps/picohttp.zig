@@ -1,8 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const c = @import("picohttpparser.zig");
-const ExactSizeMatcher = bun.ExactSizeMatcher;
-const Match = ExactSizeMatcher(2);
 const Output = bun.Output;
 const Environment = bun.Environment;
 const StringBuilder = bun.StringBuilder;
@@ -370,4 +368,12 @@ pub const Headers = struct {
     }
 };
 
-pub usingnamespace c;
+pub const phr_header = c.phr_header;
+pub const phr_chunked_decoder = c.phr_chunked_decoder;
+pub const struct_phr_header = c.struct_phr_header;
+pub const struct_phr_chunked_decoder = c.struct_phr_chunked_decoder;
+pub const phr_parse_request = c.phr_parse_request;
+pub const phr_parse_response = c.phr_parse_response;
+pub const phr_parse_headers = c.phr_parse_headers;
+pub const phr_decode_chunked = c.phr_decode_chunked;
+pub const phr_decode_chunked_is_in_data = c.phr_decode_chunked_is_in_data;

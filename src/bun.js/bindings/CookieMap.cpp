@@ -1,21 +1,40 @@
 #include "CookieMap.h"
 #include "JSCookieMap.h"
+#include <bun-uws/src/App.h>
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-
+#include "HTTPParsers.h"
+#include "decodeURIComponentSIMD.h"
+#include "BunString.h"
 namespace WebCore {
 
-extern "C" JSC::EncodedJSValue CookieMap__create(JSDOMGlobalObject* globalObject, const ZigString* initStr)
+template<bool isSSL>
+void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, uWS::HttpResponse<isSSL>* res)
 {
-    String str = Zig::toString(*initStr);
-    auto result = CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>(str));
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, result.releaseReturnValue()));
+    // Loop over modified cookies and write Set-Cookie headers to the response
+    for (auto& cookie : cookie_map->getAllChanges()) {
+        auto utf8 = cookie->toString(global_this->vm()).utf8();
+        res->writeHeader("Set-Cookie", utf8.data());
+    }
+}
+extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, bool ssl_enabled, void* arg2)
+{
+    if (ssl_enabled) {
+        CookieMap__writeFetchHeadersToUWSResponse<true>(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+    } else {
+        CookieMap__writeFetchHeadersToUWSResponse<false>(cookie_map, global_this, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+    }
 }
 
-extern "C" WebCore::CookieMap* CookieMap__fromJS(JSC::EncodedJSValue value)
+extern "C" void CookieMap__ref(CookieMap* cookie_map)
 {
-    return WebCoreCast<WebCore::JSCookieMap, WebCore::CookieMap>(value);
+    cookie_map->ref();
+}
+
+extern "C" void CookieMap__deref(CookieMap* cookie_map)
+{
+    cookie_map->deref();
 }
 
 CookieMap::~CookieMap() = default;
@@ -24,228 +43,180 @@ CookieMap::CookieMap()
 {
 }
 
-CookieMap::CookieMap(const String& cookieString)
+CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
+    : m_modifiedCookies(WTFMove(cookies))
 {
-    if (cookieString.isEmpty())
-        return;
-
-    Vector<String> pairs = cookieString.split(';');
-    for (auto& pair : pairs) {
-        pair = pair.trim(isASCIIWhitespace<UChar>);
-        if (pair.isEmpty())
-            continue;
-
-        size_t equalsPos = pair.find('=');
-        if (equalsPos == notFound)
-            continue;
-
-        String name = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
-        String value = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
-
-        auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
-        m_cookies.append(WTFMove(cookie));
-    }
 }
 
-CookieMap::CookieMap(const HashMap<String, String>& pairs)
+CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
+    : m_originalCookies(WTFMove(cookies))
 {
-    for (auto& entry : pairs) {
-        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Lax,
-            false, 0, false);
-        m_cookies.append(WTFMove(cookie));
-    }
 }
 
-CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
-{
-    for (const auto& pair : pairs) {
-        if (pair.size() == 2) {
-            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
-            m_cookies.append(WTFMove(cookie));
-        }
-    }
-}
-
-ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant)
+ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
         [&](const Vector<Vector<String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(pairs));
+            Vector<KeyValuePair<String, String>> cookies;
+            for (const auto& pair : pairs) {
+                if (pair.size() == 2) {
+                    cookies.append(KeyValuePair<String, String>(pair[0], pair[1]));
+                } else if (throwOnInvalidCookieString) {
+                    return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
+                }
+            }
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         },
         [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(pairs));
+            Vector<KeyValuePair<String, String>> cookies;
+            for (const auto& entry : pairs) {
+                cookies.append(KeyValuePair<String, String>(entry.key, entry.value));
+            }
+
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
-            return adoptRef(*new CookieMap(cookieString));
+            StringView forCookieHeader = cookieString;
+            if (forCookieHeader.isEmpty()) {
+                return adoptRef(*new CookieMap());
+            }
+
+            auto pairs = forCookieHeader.split(';');
+            Vector<KeyValuePair<String, String>> cookies;
+
+            bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
+            for (auto pair : pairs) {
+                String name = ""_s;
+                String value = ""_s;
+
+                auto equalsPos = pair.find('=');
+                if (equalsPos == notFound) {
+                    continue;
+                }
+
+                auto nameView = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
+                auto valueView = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
+
+                if (nameView.isEmpty()) {
+                    continue;
+                }
+
+                if (hasAnyPercentEncoded) {
+                    Bun::UTF8View utf8View(nameView);
+                    name = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                } else {
+                    name = nameView.toString();
+                }
+
+                if (hasAnyPercentEncoded) {
+                    Bun::UTF8View utf8View(valueView);
+                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                } else {
+                    value = valueView.toString();
+                }
+
+                cookies.append(KeyValuePair<String, String>(name, value));
+            }
+
+            return adoptRef(*new CookieMap(WTFMove(cookies)));
         });
 
     return std::visit(visitor, variant);
 }
 
-RefPtr<Cookie> CookieMap::get(const String& name) const
+std::optional<String> CookieMap::get(const String& name) const
 {
-    // Return the first cookie with the matching name
-    for (auto& cookie : m_cookies) {
-        if (cookie->name() == name)
-            return RefPtr<Cookie>(cookie.ptr());
+    auto modifiedCookieIndex = m_modifiedCookies.findIf([&](auto& cookie) {
+        return cookie->name() == name;
+    });
+    if (modifiedCookieIndex != notFound) {
+        // a set cookie with an empty value is treated as not existing, because that is what delete() sets
+        if (m_modifiedCookies[modifiedCookieIndex]->value().isEmpty()) {
+            return std::nullopt;
+        }
+        return std::optional<String>(m_modifiedCookies[modifiedCookieIndex]->value());
     }
-    return nullptr;
-}
-
-RefPtr<Cookie> CookieMap::get(const CookieStoreGetOptions& options) const
-{
-    // If name is provided, use that for lookup
-    if (!options.name.isEmpty())
-        return get(options.name);
-
-    // If url is provided, use that for lookup
-    if (!options.url.isEmpty()) {
-        // TODO: Implement URL-based cookie lookup
-        // This would involve parsing the URL, extracting the domain, and
-        // finding the first cookie that matches that domain
+    auto originalCookieIndex = m_originalCookies.findIf([&](auto& cookie) {
+        return cookie.key == name;
+    });
+    if (originalCookieIndex != notFound) {
+        return std::optional<String>(m_originalCookies[originalCookieIndex].value);
     }
-
-    return nullptr;
+    return std::nullopt;
 }
 
-Vector<Ref<Cookie>> CookieMap::getAll(const String& name) const
+Vector<KeyValuePair<String, String>> CookieMap::getAll() const
 {
-    // Return all cookies with the matching name
-    Vector<Ref<Cookie>> result;
-    for (auto& cookie : m_cookies) {
-        if (cookie->name() == name)
-            result.append(cookie);
+    Vector<KeyValuePair<String, String>> all;
+    for (const auto& cookie : m_modifiedCookies) {
+        if (cookie->value().isEmpty()) continue;
+        all.append(KeyValuePair<String, String>(cookie->name(), cookie->value()));
     }
-    return result;
-}
-
-Vector<Ref<Cookie>> CookieMap::getAll(const CookieStoreGetOptions& options) const
-{
-    // If name is provided, use that for lookup
-    if (!options.name.isEmpty())
-        return getAll(options.name);
-
-    // If url is provided, use that for lookup
-    if (!options.url.isEmpty()) {
-        // TODO: Implement URL-based cookie lookup
-        // This would involve parsing the URL, extracting the domain, and
-        // finding all cookies that match that domain
+    for (const auto& cookie : m_originalCookies) {
+        all.append(KeyValuePair<String, String>(cookie.key, cookie.value));
     }
-
-    return Vector<Ref<Cookie>>();
+    return all;
 }
 
-bool CookieMap::has(const String& name, const String& value) const
+bool CookieMap::has(const String& name) const
 {
-    for (auto& cookie : m_cookies) {
-        if (cookie->name() == name && (value.isEmpty() || cookie->value() == value))
-            return true;
-    }
-    return false;
+    return get(name).has_value();
 }
 
-void CookieMap::set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge)
+void CookieMap::removeInternal(const String& name)
 {
-    // Remove any existing cookies with the same name
-    remove(name);
-
-    // Add the new cookie with proper settings
-    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
-        httpOnly, maxAge, partitioned);
-    m_cookies.append(WTFMove(cookie));
-}
-
-// Maintain backward compatibility with code that uses the old signature
-void CookieMap::set(const String& name, const String& value)
-{
-    // Remove any existing cookies with the same name
-    remove(name);
-
-    // Add the new cookie
-    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict, false, 0, false);
-    m_cookies.append(WTFMove(cookie));
-}
-
-void CookieMap::set(Ref<Cookie> cookie)
-{
-    // Remove any existing cookies with the same name
-    remove(cookie->name());
-
-    // Add the new cookie
-    m_cookies.append(WTFMove(cookie));
-}
-
-void CookieMap::remove(const String& name)
-{
-    m_cookies.removeAllMatching([&name](const auto& cookie) {
+    // Remove any existing matching cookies
+    m_originalCookies.removeAllMatching([&](auto& cookie) {
+        return cookie.key == name;
+    });
+    m_modifiedCookies.removeAllMatching([&](auto& cookie) {
         return cookie->name() == name;
     });
 }
 
-void CookieMap::remove(const CookieStoreDeleteOptions& options)
+void CookieMap::set(Ref<Cookie> cookie)
 {
+    removeInternal(cookie->name());
+    // Add the new cookie
+    m_modifiedCookies.append(WTFMove(cookie));
+}
+
+ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
+{
+    removeInternal(options.name);
+
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
 
-    m_cookies.removeAllMatching([&](const auto& cookie) {
-        if (cookie->name() != name)
-            return false;
-
-        // If domain is specified, it must match
-        if (!domain.isNull() && cookie->domain() != domain)
-            return false;
-
-        // If path is specified, it must match
-        if (!path.isNull() && cookie->path() != path)
-            return false;
-
-        return true;
-    });
+    // Add the new cookie
+    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, false, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    if (cookie_exception.hasException()) {
+        return cookie_exception.releaseException();
+    }
+    auto cookie = cookie_exception.releaseReturnValue();
+    m_modifiedCookies.append(WTFMove(cookie));
+    return {};
 }
 
-Vector<Ref<Cookie>> CookieMap::getCookiesMatchingDomain(const String& domain) const
+Ref<CookieMap> CookieMap::clone()
 {
-    Vector<Ref<Cookie>> result;
-    for (auto& cookie : m_cookies) {
-        const auto& cookieDomain = cookie->domain();
-        if (cookieDomain.isEmpty() || cookieDomain == domain) {
-            result.append(cookie);
-        }
-    }
-    return result;
+    auto clone = adoptRef(*new CookieMap());
+    clone->m_originalCookies = m_originalCookies;
+    clone->m_modifiedCookies = m_modifiedCookies;
+    return clone;
 }
 
-Vector<Ref<Cookie>> CookieMap::getCookiesMatchingPath(const String& path) const
+size_t
+CookieMap::size() const
 {
-    Vector<Ref<Cookie>> result;
-    for (auto& cookie : m_cookies) {
-        // Simple path matching logic - a cookie matches if its path is a prefix of the requested path
-        if (path.startsWith(cookie->path())) {
-            result.append(cookie);
-        }
+    size_t size = 0;
+    for (const auto& cookie : m_modifiedCookies) {
+        if (cookie->value().isEmpty()) continue;
+        size += 1;
     }
-    return result;
-}
-
-String CookieMap::toString(JSC::VM& vm) const
-{
-    if (m_cookies.isEmpty())
-        return emptyString();
-
-    StringBuilder builder;
-    bool first = true;
-
-    for (auto& cookie : m_cookies) {
-        if (!first)
-            builder.append("; "_s);
-
-        cookie->appendTo(vm, builder);
-
-        first = false;
-    }
-
-    return builder.toString();
+    size += m_originalCookies.size();
+    return size;
 }
 
 JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
@@ -253,46 +224,59 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Create an array of cookie entries
-    auto* array = JSC::constructEmptyArray(globalObject, nullptr, m_cookies.size());
-    RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+    // Create an object to hold cookie key-value pairs
+    auto* object = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    unsigned index = 0;
-    for (const auto& cookie : m_cookies) {
-        // For each cookie, create a [name, cookie JSON] entry
-        auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie->name()));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(vm, globalObject));
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-
-        array->putDirectIndex(globalObject, index++, entryArray);
-        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+    // Add modified cookies to the object
+    for (const auto& cookie : m_modifiedCookies) {
+        if (!cookie->value().isEmpty()) {
+            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
-    return array;
+    // Add original cookies to the object
+    for (const auto& cookie : m_originalCookies) {
+        // Skip if this cookie name was already added from modified cookies
+        if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
+            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    return object;
 }
 
 size_t CookieMap::memoryCost() const
 {
     size_t cost = sizeof(CookieMap);
-    for (auto& cookie : m_cookies) {
-        cost += cookie->memoryCost();
+    for (auto& cookie : m_originalCookies) {
+        cost += cookie.key.sizeInBytes();
+        cost += cookie.value.sizeInBytes();
+    }
+    for (auto& cookie : m_modifiedCookies) {
+        cost += cookie->name().sizeInBytes();
+        cost += cookie->value().sizeInBytes();
     }
     return cost;
 }
 
-std::optional<CookieMap::KeyValuePair> CookieMap::Iterator::next()
+std::optional<KeyValuePair<String, String>> CookieMap::Iterator::next()
 {
-    auto& cookies = m_target->m_cookies;
-    if (m_index >= cookies.size())
-        return std::nullopt;
+    while (m_index < m_target->m_modifiedCookies.size() + m_target->m_originalCookies.size()) {
+        if (m_index >= m_target->m_modifiedCookies.size()) {
+            return m_target->m_originalCookies[(m_index++) - m_target->m_modifiedCookies.size()];
+        }
 
-    auto& cookie = cookies[m_index++];
-    return KeyValuePair(cookie->name(), cookie.ptr());
+        auto result = m_target->m_modifiedCookies[m_index++];
+        if (result->value().isEmpty()) {
+            continue; // deleted; skip
+        }
+
+        return KeyValuePair<String, String>(result->name(), result->value());
+    }
+    return std::nullopt;
 }
 
 CookieMap::Iterator::Iterator(CookieMap& cookieMap)

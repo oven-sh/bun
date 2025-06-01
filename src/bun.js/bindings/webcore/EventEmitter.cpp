@@ -145,7 +145,7 @@ int EventEmitter::listenerCount(const Identifier& eventType)
     int result = 0;
     if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
         for (auto& registeredListener : *listenersVector) {
-            if (UNLIKELY(registeredListener->wasRemoved()))
+            if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
             if (registeredListener->callback().jsFunction()) {
@@ -164,7 +164,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     Vector<JSObject*> listeners;
     if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
         for (auto& registeredListener : *listenersVector) {
-            if (UNLIKELY(registeredListener->wasRemoved()))
+            if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
             if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
@@ -184,7 +184,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
         return false;
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (UNLIKELY(!listenersVector)) {
+    if (!listenersVector) [[unlikely]] {
         if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
             Ref<EventEmitter> protectedThis(*this);
             auto* thisObject = protectedThis->m_thisObject.get();
@@ -223,7 +223,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     for (auto& registeredListener : listeners) {
         // The below code used to be in here, but it's WRONG. Even if a listener is removed,
         // if we're in the middle of firing listeners, we still need to call it.
-        // if (UNLIKELY(registeredListener->wasRemoved()))
+        // if (registeredListener->wasRemoved()) [[unlikely]]
         //     continue;
 
         auto& callback = registeredListener->callback();
@@ -239,12 +239,12 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         if (registeredListener->isOnce())
             removeListener(eventType, callback);
 
-        if (UNLIKELY(!jsFunction))
+        if (!jsFunction) [[unlikely]]
             continue;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);
-        if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        if (callData.type == JSC::CallData::Type::None) [[unlikely]]
             continue;
 
         fired = true;
@@ -252,7 +252,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (UNLIKELY(exception)) {
+        if (exception) [[unlikely]] {
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {

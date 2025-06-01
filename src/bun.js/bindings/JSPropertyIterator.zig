@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const JSPropertyIteratorOptions = struct {
@@ -35,19 +35,12 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         }
 
         /// `object` should be a `JSC::JSObject`. Non-objects will be runtime converted.
-        pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!@This() {
-            const cell = object.toCell() orelse {
-                @branchHint(.unlikely);
-                // not great to surface JS errors from internal APIs, but its
-                // better than crashing (which is what was happening before)
-                return globalObject.throw("PropertyIterator expects an object", .{});
-            };
-            object.ensureStillAlive();
-
+        pub fn init(globalObject: *JSC.JSGlobalObject, object: *JSC.JSObject) bun.JSError!@This() {
             var len: usize = 0;
+            object.ensureStillAlive();
             const impl = try JSPropertyIteratorImpl.init(
                 globalObject,
-                cell.toObject(globalObject),
+                object,
                 &len,
                 options.own_properties_only,
                 options.only_non_index_properties,
@@ -61,7 +54,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             }
 
             return .{
-                .object = cell.toObject(globalObject),
+                .object = object,
                 .globalObject = globalObject,
                 .impl = impl,
                 .len = len,

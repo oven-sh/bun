@@ -1,8 +1,7 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -11,15 +10,13 @@ const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const sync = @import("sync.zig");
 const Mutex = bun.Mutex;
-const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
 const allocators = bun.allocators;
 const OOM = bun.OOM;
+const FD = bun.FD;
 
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const PathBuffer = bun.PathBuffer;
@@ -136,8 +133,9 @@ pub const FileSystem = struct {
     pub const DirEntry = struct {
         pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
+
         dir: string,
-        fd: StoredFileDescriptorType = .zero,
+        fd: FD = .invalid,
         generation: bun.Generation = 0,
         data: EntryMap,
 
@@ -390,7 +388,7 @@ pub const FileSystem = struct {
             symlink: PathString = PathString.empty,
             /// Too much code expects this to be 0
             /// don't make it bun.invalid_fd
-            fd: StoredFileDescriptorType = .zero,
+            fd: FD = .invalid,
             kind: Kind = .file,
         };
 
@@ -616,7 +614,7 @@ pub const FileSystem = struct {
                     // we will not delete the temp directory
                     .can_rename_or_delete = false,
                     .read_only = true,
-                }).unwrap()).asDir();
+                }).unwrap()).stdDir();
             }
 
             return try bun.openDirAbsolute(tmpdir_path);
@@ -668,33 +666,31 @@ pub const FileSystem = struct {
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
-                return this.dir_fd.asDir();
+                return this.dir_fd.stdDir();
             }
 
             pub inline fn file(this: *TmpfilePosix) std.fs.File {
-                return this.fd.asFile();
+                return this.fd.stdFile();
             }
 
             pub fn close(this: *TmpfilePosix) void {
-                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+                if (this.fd.isValid()) this.fd.close();
             }
 
             pub fn create(this: *TmpfilePosix, _: *RealFS, name: [:0]const u8) !void {
                 // We originally used a temporary directory, but it caused EXDEV.
-                const dir_fd = std.fs.cwd().fd;
+                const dir_fd = bun.FD.cwd();
+                this.dir_fd = dir_fd;
 
                 const flags = bun.O.CREAT | bun.O.RDWR | bun.O.CLOEXEC;
-                this.dir_fd = bun.toFD(dir_fd);
-
-                const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.posix.S.IRWXU).unwrap();
-                this.fd = bun.toFD(result);
+                this.fd = try bun.sys.openat(dir_fd, name, flags, std.posix.S.IRWXU).unwrap();
             }
 
             pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
                 bun.assert(this.fd != bun.invalid_fd);
                 bun.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
+                try bun.sys.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -718,19 +714,19 @@ pub const FileSystem = struct {
             }
 
             pub inline fn file(this: *TmpfileWindows) std.fs.File {
-                return this.fd.asFile();
+                return this.fd.stdFile();
             }
 
             pub fn close(this: *TmpfileWindows) void {
-                if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+                if (this.fd.isValid()) this.fd.close();
             }
 
             pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
-                const tmpdir_ = try rfs.openTmpDir();
+                const tmp_dir = try rfs.openTmpDir();
 
                 const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
 
-                this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
+                this.fd = try bun.sys.openat(.fromStdDir(tmp_dir), name, flags, 0).unwrap();
                 var buf: bun.PathBuffer = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
@@ -801,8 +797,6 @@ pub const FileSystem = struct {
         pub const Limit = struct {
             pub var handles: usize = 0;
             pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
-            pub var stack: usize = 0;
-            pub var stack_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
         };
 
         // Always try to max out how many files we can keep open
@@ -811,19 +805,6 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            blk: {
-                const resource = std.posix.rlimit_resource.STACK;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.stack_before = limit;
-                if (limit.cur < limit.max) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = limit.max;
-                    new_limit.max = limit.max;
-
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    Limit.stack = limit.max;
-                }
-            }
             var file_limit: usize = 0;
             blk: {
                 const resource = std.posix.rlimit_resource.NOFILE;
@@ -986,7 +967,7 @@ pub const FileSystem = struct {
                     0,
                 );
             const fd = try dirfd.unwrap();
-            return fd.asDir();
+            return fd.stdDir();
         }
 
         fn readdir(
@@ -1008,7 +989,7 @@ pub const FileSystem = struct {
 
             if (store_fd) {
                 FileSystem.setMaxFd(handle.fd);
-                dir.fd = bun.toFD(handle.fd);
+                dir.fd = .fromStdDir(handle);
             }
 
             while (try iter.next().unwrap()) |*_entry| {
@@ -1058,6 +1039,8 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
+        /// Caller borrows the returned EntriesOption. When `FeatureFlags.enable_entry_cache` is `false`,
+        /// it is not safe to store this pointer past the current function call.
         pub fn readDirectoryWithIterator(
             fs: *RealFS,
             dir_maybe_trail_slash: string,
@@ -1131,8 +1114,8 @@ pub const FileSystem = struct {
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
-                if (store_fd and entries.fd == .zero)
-                    entries.fd = bun.toFD(handle.fd);
+                if (store_fd and !entries.fd.isValid())
+                    entries.fd = .fromStdDir(handle);
 
                 entries_ptr.* = entries;
                 const result = EntriesOption{
@@ -1176,16 +1159,16 @@ pub const FileSystem = struct {
             fs: *RealFS,
             allocator: std.mem.Allocator,
             path: string,
-            _size: ?usize,
-            file: std.fs.File,
+            size_hint: ?usize,
+            std_file: std.fs.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            FileSystem.setMaxFd(std_file.handle);
+            const file = bun.sys.File.from(std_file);
 
-            var file_contents: []u8 = undefined;
-
+            var file_contents: []u8 = "";
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
             // This imposes a performance hit because not reading from disk is faster than reading from disk
             // Part of that hit is allocating a temporary buffer to store the file contents in
@@ -1194,7 +1177,7 @@ pub const FileSystem = struct {
                 shared_buffer.reset();
 
                 // Skip the extra file.stat() call when possible
-                var size = _size orelse (file.getEndPos() catch |err| {
+                var size = size_hint orelse (file.getEndPos() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
@@ -1212,7 +1195,7 @@ pub const FileSystem = struct {
                     }
                 }
 
-                var offset: u64 = 0;
+                var bytes_read: u64 = 0;
                 try shared_buffer.growBy(size + 1);
                 shared_buffer.list.expandToCapacity();
 
@@ -1221,17 +1204,14 @@ pub const FileSystem = struct {
                 // stream because we assume that this only realistically happens
                 // during HMR
                 while (true) {
-
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
+                    const read_count = file.readAll(shared_buffer.list.items[bytes_read..]) catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
-                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
+                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + bytes_read];
                     file_contents = shared_buffer.list.items;
-                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                    debug("read({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
@@ -1241,12 +1221,12 @@ pub const FileSystem = struct {
                             return err;
                         };
 
-                        offset += read_count;
+                        bytes_read += read_count;
 
                         // don't infinite loop is we're still not reading more
                         if (read_count == 0) break;
 
-                        if (offset < new_size) {
+                        if (bytes_read < new_size) {
                             try shared_buffer.growBy(new_size - size);
                             shared_buffer.list.expandToCapacity();
                             size = new_size;
@@ -1266,28 +1246,23 @@ pub const FileSystem = struct {
                 }
             } else {
                 var initial_buf: [16384]u8 = undefined;
-                var prev_file_pos: ?u64 = null;
 
                 // Optimization: don't call stat() unless the file is big enough
                 // that we need to dynamically allocate memory to read it.
-                const initial_read = if (_size == null) brk: {
-                    var buf: []u8 = &initial_buf;
-                    prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(buf, 0) catch |err| {
+                const initial_read = if (size_hint == null) brk: {
+                    const buf: []u8 = &initial_buf;
+                    const read_count = file.readAll(buf).unwrap() catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
                     if (read_count + 1 < buf.len) {
-                        var allocation = try allocator.alloc(u8, read_count + 1);
-                        @memcpy(allocation[0..read_count], buf[0..read_count]);
-                        allocation[read_count] = 0;
+                        const allocation = try allocator.dupeZ(u8, buf[0..read_count]);
                         file_contents = allocation[0..read_count];
 
                         if (strings.BOM.detect(file_contents)) |bom| {
                             debug("Convert {s} BOM", .{@tagName(bom)});
                             file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
                         }
-                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
 
                         return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
                     }
@@ -1295,18 +1270,12 @@ pub const FileSystem = struct {
                     break :brk buf[0..read_count];
                 } else initial_buf[0..0];
 
-                if (comptime Environment.isWindows) {
-                    if (prev_file_pos == null) {
-                        prev_file_pos = try file.getPos();
-                    }
-                }
-
                 // Skip the extra file.stat() call when possible
-                const size = _size orelse (file.getEndPos() catch |err| {
+                const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+                debug("stat({}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1318,13 +1287,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.preadAll(buf[initial_read.len..], initial_read.len) catch |err| {
+                const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
                 file_contents = buf[0 .. read_count + initial_read.len];
-                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                debug("read({}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1343,7 +1311,7 @@ pub const FileSystem = struct {
         ) !Entry.Cache {
             var outpath: bun.PathBuffer = undefined;
 
-            const stat = try C.lstat_absolute(absolute_path);
+            const stat = try bun.sys.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
             var cache = Entry.Cache{
@@ -1414,12 +1382,23 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                var buf2: bun.PathBuffer = undefined;
-                var current_buf: *bun.PathBuffer = &buf2;
+                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buf3);
+
+                var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
+                var joining_buf: *bun.PathBuffer = buf3;
+
                 while (file.is_reparse_point) : (depth += 1) {
-                    const read = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
-                    std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
+                    var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
+                    if (std.fs.path.isAbsolute(read)) {
+                        std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
+                    } else {
+                        read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
+                        std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
+                    }
                     file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
                     absolute_path_c = read;
 
@@ -1441,38 +1420,36 @@ pub const FileSystem = struct {
                 return cache;
             }
 
-            const stat = try C.lstat_absolute(absolute_path_c);
+            const stat = try bun.sys.lstat_absolute(absolute_path_c);
             const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
-            var _kind = stat.kind;
+            var file_kind = stat.kind;
 
             var symlink: []const u8 = "";
 
             if (is_symlink) {
-                var file = try if (existing_fd != .zero)
-                    std.fs.File{ .handle = existing_fd.int() }
+                var file: bun.FD = if (existing_fd.unwrapValid()) |valid|
+                    valid
                 else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
+                    .fromStdFile(try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only }))
                 else
-                    bun.openFileForPath(absolute_path_c);
-                setMaxFd(file.handle);
+                    .fromStdFile(try bun.openFileForPath(absolute_path_c));
+                setMaxFd(file.native());
 
                 defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == .zero) {
+                    if ((!store_fd or fs.needToCloseFiles()) and !existing_fd.isValid()) {
                         file.close();
                     } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = bun.toFD(file.handle);
+                        cache.fd = file;
                     }
                 }
-                const _stat = try file.stat();
-
-                symlink = try bun.getFdPath(file.handle, &outpath);
-
-                _kind = _stat.kind;
+                const file_stat = try file.stdFile().stat();
+                symlink = try file.getFdPath(&outpath);
+                file_kind = file_stat.kind;
             }
 
-            bun.assert(_kind != .sym_link);
+            bun.assert(file_kind != .sym_link);
 
-            if (_kind == .directory) {
+            if (file_kind == .directory) {
                 cache.kind = .dir;
             } else {
                 cache.kind = .file;
@@ -1715,13 +1692,19 @@ pub const Path = struct {
     /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
     /// The location of this resource. For the `file` namespace, this is
-    /// an absolute path with native slashes.
+    /// usually an absolute path with native slashes or an empty string.
     text: string,
     namespace: string,
     // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
+
+    const ns_blob = "blob";
+    const ns_bun = "bun";
+    const ns_dataurl = "dataurl";
+    const ns_file = "file";
+    const ns_macro = "macro";
 
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
@@ -1788,15 +1771,15 @@ pub const Path = struct {
     }
 
     pub fn isDataURL(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "dataurl");
+        return strings.eqlComptime(this.namespace, ns_dataurl);
     }
 
     pub fn isBun(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "bun");
+        return strings.eqlComptime(this.namespace, ns_bun);
     }
 
     pub fn isMacro(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "macro");
+        return strings.eqlComptime(this.namespace, ns_macro);
     }
 
     pub const PackageRelative = struct {

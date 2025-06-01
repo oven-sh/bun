@@ -1,0 +1,11 @@
+--- CMakeLists.txt
++++ CMakeLists.txt
+@@ -6,7 +6,7 @@
+ #   XXH_INCLUDE_DIR
+ #   LSHPACK_XXH
+ 
+-CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
++CMAKE_MINIMUM_REQUIRED(VERSION 2.8...3.5)
+ PROJECT(ls-hpack C)
+ 
+ include(CheckIncludeFiles)

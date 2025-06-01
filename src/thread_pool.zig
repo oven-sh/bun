@@ -2,7 +2,7 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 

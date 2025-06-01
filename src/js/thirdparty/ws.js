@@ -8,7 +8,7 @@ const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
-const { kDeprecatedReplySymbol } = require("internal/http");
+
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -945,7 +945,7 @@ class BunWebSocketMocked extends EventEmitter {
    *     not to skip UTF-8 validation for text and close messages
    * @private
    */
-  setSocket(socket, head, options) {
+  setSocket(_socket, _head, _options) {
     throw new Error("Not implemented");
   }
 
@@ -999,7 +999,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   // TODO: implement this more proper
-  addEventListener(type, listener, options) {
+  addEventListener(type, listener, _options) {
     if (type === "message") {
       const l = data => listener({ data });
       l.listener = listener;
@@ -1325,7 +1325,7 @@ class WebSocketServer extends EventEmitter {
     if (secWebSocketProtocol !== undefined) {
       try {
         protocols = subprotocolParse(secWebSocketProtocol);
-      } catch (err) {
+      } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
         abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
         return;
@@ -1455,7 +1455,7 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = ws => {
+var createWebSocketStream = _ws => {
   throw new Error("Not supported yet in Bun");
 };
 

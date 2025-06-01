@@ -83,15 +83,13 @@ InspectorTestReporterAgent::~InspectorTestReporterAgent()
     }
 }
 
-void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter* frontendRouter, BackendDispatcher* backendDispatcher)
+void InspectorTestReporterAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
 {
-    this->m_frontendDispatcher = makeUnique<TestReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter()));
 }
 
 void InspectorTestReporterAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
     disable();
-    m_frontendDispatcher = nullptr;
 }
 
 Protocol::ErrorStringOr<void> InspectorTestReporterAgent::enable()

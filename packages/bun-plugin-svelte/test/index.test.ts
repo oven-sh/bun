@@ -1,10 +1,10 @@
-import { describe, beforeAll, it, expect, afterEach, afterAll } from "bun:test";
-import path from "node:path";
+import type { BuildOutput } from "bun";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { render } from "svelte/server";
 import { SveltePlugin } from "../src";
-import type { BuildOutput } from "bun";
 
 const fixturePath = (...segs: string[]) => path.join(import.meta.dirname, "fixtures", ...segs);
 
@@ -24,13 +24,32 @@ afterAll(() => {
   }
 });
 
-it("hello world component", async () => {
-  const res = await Bun.build({
-    entrypoints: [fixturePath("foo.svelte")],
-    outdir,
-    plugins: [SveltePlugin()],
+describe("given a hello world component", () => {
+  const entrypoints = [fixturePath("foo.svelte")];
+  it("when no options are provided, builds successfully", async () => {
+    const res = await Bun.build({
+      entrypoints,
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+    expect(res.success).toBeTrue();
   });
-  expect(res.success).toBeTrue();
+
+  describe("when a custom element is provided", () => {
+    let res: BuildOutput;
+
+    beforeAll(async () => {
+      res = await Bun.build({
+        entrypoints,
+        outdir,
+        plugins: [SveltePlugin({ compilerOptions: { customElement: true } })],
+      });
+    });
+
+    it("builds successfully", () => {
+      expect(res.success).toBeTrue();
+    });
+  });
 });
 
 describe("when importing `.svelte.ts` files with ESM", () => {

@@ -202,3 +202,23 @@ it("should encrypt & decrypt well-known values", () => {
     }
   });
 });
+
+it("should work with authTagLength missing from options", () => {
+  const cipher = createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {});
+  cipher.update("hi");
+  cipher.final();
+  const authTag = cipher.getAuthTag();
+  expect(authTag.length).toBe(16);
+});
+
+it("should not accept negative authTagLength, or other coercable values", () => {
+  const lengths = [-2, true, new Number(12), {}];
+
+  for (const length of lengths) {
+    expect(() => {
+      createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(16), {
+        authTagLength: length,
+      });
+    }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
+  }
+});

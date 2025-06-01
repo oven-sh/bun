@@ -240,7 +240,7 @@ const result = await sql.unsafe(
 
 ### Execute and Cancelling Queries
 
-Bun's SQL is lazy that means its will only start executing when awaited or executed with `.execute()`.
+Bun's SQL is lazy, which means it will only start executing when awaited or executed with `.execute()`.
 You can cancel a query that is currently executing by calling the `cancel()` method on the query object.
 
 ```ts

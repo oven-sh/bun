@@ -1,24 +1,16 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
-const root = @import("root");
+
 const std = @import("std");
-const lex = bun.js_lexer;
 const logger = bun.logger;
 const options = @import("options.zig");
-const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
-const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
-const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
 const File = bun.sys.File;
@@ -28,18 +20,15 @@ const debug = Output.scoped(.CLI, true);
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const transpiler = bun.transpiler;
 const DotEnv = @import("./env_loader.zig");
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
 const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
-const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
@@ -78,7 +67,7 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
-pub const debug_flags = if (Environment.isDebug) struct {
+pub const debug_flags = if (Environment.show_crash_trace) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
     var print_breakpoints: []const []const u8 = &.{};
 
@@ -104,7 +93,6 @@ pub const debug_flags = if (Environment.isDebug) struct {
     }
 } else @compileError("Do not access this namespace in a release build");
 
-const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
@@ -139,6 +127,7 @@ pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCo
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
 pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
@@ -184,7 +173,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
+    const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -203,6 +192,8 @@ pub const Arguments = struct {
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--preserve-symlinks               Preserve symlinks when resolving files") catch unreachable,
+        clap.parseParam("--preserve-symlinks-main          Preserve symlinks when resolving the main entry point") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
@@ -221,6 +212,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
+        clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
         clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
         clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
@@ -242,7 +234,9 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
-        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+        clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+        clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -331,7 +325,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-            .result => |fd| fd.asFile(),
+            .result => |fd| fd.stdFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -399,10 +393,10 @@ pub const Arguments = struct {
         if (config_path_.len == 0 and (user_config_path_ != null or
             Command.Tag.always_loads_config.get(cmd) or
             (cmd == .AutoCommand and
-            // "bun"
-            (ctx.positionals.len == 0 or
-            // "bun file.js"
-            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+                // "bun"
+                (ctx.positionals.len == 0 or
+                    // "bun file.js"
+                    ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
         {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
@@ -666,6 +660,13 @@ pub const Arguments = struct {
         opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
+        if (args.flag("--preserve-symlinks")) {
+            opts.preserve_symlinks = true;
+        }
+        if (args.flag("--preserve-symlinks-main")) {
+            ctx.runtime_options.preserve_symlinks_main = true;
+        }
+
         ctx.passthrough = args.remaining();
 
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand or cmd == .TestCommand) {
@@ -676,7 +677,13 @@ pub const Arguments = struct {
 
         // runtime commands
         if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
-            const preloads = args.options("--preload");
+            var preloads = args.options("--preload");
+            if (preloads.len == 0) {
+                if (bun.getenvZ("BUN_INSPECT_PRELOAD")) |preload| {
+                    preloads = bun.default_allocator.dupe([]const u8, &.{preload}) catch unreachable;
+                }
+            }
+            const preloads2 = args.options("--require");
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
@@ -698,6 +705,16 @@ pub const Arguments = struct {
 
             if (args.option("--origin")) |origin| {
                 opts.origin = origin;
+            }
+
+            if (args.flag("--redis-preconnect")) {
+                ctx.runtime_options.redis_preconnect = true;
+            }
+
+            if (args.flag("--no-addons")) {
+                // used for disabling process.dlopen and
+                // for disabling export condition "node-addons"
+                opts.allow_addons = false;
             }
 
             if (args.option("--port")) |port_str| {
@@ -756,13 +773,23 @@ pub const Arguments = struct {
                 }
             }
 
-            if (ctx.preloads.len > 0 and preloads.len > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+            if (ctx.preloads.len > 0 and (preloads.len > 0 or preloads2.len > 0)) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len + preloads2.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
                 all.appendSliceAssumeCapacity(preloads);
+                all.appendSliceAssumeCapacity(preloads2);
                 ctx.preloads = all.items;
             } else if (preloads.len > 0) {
-                ctx.preloads = preloads;
+                if (preloads2.len > 0) {
+                    var all = std.ArrayList(string).initCapacity(ctx.allocator, preloads.len + preloads2.len) catch unreachable;
+                    all.appendSliceAssumeCapacity(preloads);
+                    all.appendSliceAssumeCapacity(preloads2);
+                    ctx.preloads = all.items;
+                } else {
+                    ctx.preloads = preloads;
+                }
+            } else if (preloads2.len > 0) {
+                ctx.preloads = preloads2;
             }
 
             if (args.option("--print")) |script| {
@@ -1260,7 +1287,7 @@ pub const Arguments = struct {
             }
         }
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
             debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
@@ -1348,6 +1375,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>audit<r>                          Check installed packages for vulnerabilities
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
@@ -1518,6 +1546,7 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
+        redis_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
@@ -1527,6 +1556,7 @@ pub const Command = struct {
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.
         expose_gc: bool = false,
+        preserve_symlinks_main: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -1609,9 +1639,9 @@ pub const Command = struct {
 
             if (comptime Environment.isWindows) {
                 if (global_cli_ctx.debug.hot_reload == .watch) {
-                    if (!bun.isWatcherChild()) {
+                    if (!bun.windows.isWatcherChild()) {
                         // this is noreturn
-                        bun.becomeWatcherManager(allocator);
+                        bun.windows.becomeWatcherManager(allocator);
                     } else {
                         bun.auto_reload_on_crash = true;
                     }
@@ -1665,9 +1695,9 @@ pub const Command = struct {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
-                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
+                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
                     return .AddCommand;
-                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
+                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
                     return .ExecCommand;
                 }
             }
@@ -1738,6 +1768,7 @@ pub const Command = struct {
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
             RootCommandMatcher.case("publish") => .PublishCommand,
+            RootCommandMatcher.case("audit") => .AuditCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1886,6 +1917,13 @@ pub const Command = struct {
 
                 try PublishCommand.exec(ctx);
                 return;
+            },
+            .AuditCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AuditCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .AuditCommand);
+
+                try AuditCommand.exec(ctx);
+                unreachable;
             },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
@@ -2144,7 +2182,7 @@ pub const Command = struct {
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@')) and
+                        strings.startsWithChar(template_name, '@')) and
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
@@ -2314,6 +2352,7 @@ pub const Command = struct {
         PatchCommitCommand,
         OutdatedCommand,
         PublishCommand,
+        AuditCommand,
 
         /// Used by crash reports.
         ///
@@ -2347,6 +2386,7 @@ pub const Command = struct {
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
                 .PublishCommand => 'k',
+                .AuditCommand => 'A',
             };
         }
 
@@ -2401,10 +2441,15 @@ pub const Command = struct {
                         \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>              Accept all default options
                         \\  <cyan>-m, --minimal<r>          Only initialize type definitions
+                        \\  <cyan>-r, --react<r>            Initialize a React project
+                        \\      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+                        \\      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>
                         \\  <b><green>bun init<r> <cyan>--yes<r>
+                        \\  <b><green>bun init<r> <cyan>--react<r>
+                        \\  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
                     ;
 
                     Output.pretty(intro_text ++ "\n", .{});
@@ -2593,10 +2638,11 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .PublishCommand => {
+                .OutdatedCommand, .PublishCommand, .AuditCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
                         .PublishCommand => .publish,
+                        .AuditCommand => .audit,
                     });
                 },
                 else => {
@@ -2617,6 +2663,7 @@ pub const Command = struct {
                 .PatchCommitCommand,
                 .OutdatedCommand,
                 .PublishCommand,
+                .AuditCommand,
                 => true,
                 else => false,
             };
@@ -2636,6 +2683,7 @@ pub const Command = struct {
                 .PatchCommitCommand,
                 .OutdatedCommand,
                 .PublishCommand,
+                .AuditCommand,
                 => true,
                 else => false,
             };
@@ -2657,6 +2705,7 @@ pub const Command = struct {
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
+            .AuditCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2672,6 +2721,7 @@ pub const Command = struct {
             .BunxCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
+            .AuditCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2688,6 +2738,7 @@ pub const Command = struct {
             .BunxCommand = false,
             .OutdatedCommand = false,
             .PublishCommand = false,
+            .AuditCommand = false,
         });
     };
 };

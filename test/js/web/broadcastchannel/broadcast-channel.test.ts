@@ -1,3 +1,5 @@
+import util from "util";
+
 test("postMessage results in correct event", done => {
   let c1 = new BroadcastChannel("eventType");
   let c2 = new BroadcastChannel("eventType");
@@ -213,3 +215,10 @@ test("broadcast channel used with workers", async () => {
     console.count("Batch complete");
   }
 }, 99999);
+
+test("user options are forwarded through custom inspect", () => {
+  const bc = new BroadcastChannel("hello");
+  expect(util.inspect(bc, { compact: true, breakLength: 2 })).toBe(
+    "BroadcastChannel { name:\n   'hello',\n  active:\n   true }",
+  );
+});

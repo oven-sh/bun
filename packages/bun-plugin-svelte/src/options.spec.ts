@@ -1,8 +1,8 @@
-import { describe, beforeAll, it, expect } from "bun:test";
 import type { BuildConfig } from "bun";
+import { beforeAll, describe, expect, it } from "bun:test";
 import type { CompileOptions } from "svelte/compiler";
 
-import { getBaseCompileOptions, type SvelteOptions } from "./options";
+import { getBaseCompileOptions, validateOptions, type SvelteOptions } from "./options";
 
 describe("getBaseCompileOptions", () => {
   describe("when no options are provided", () => {
@@ -42,4 +42,13 @@ describe("getBaseCompileOptions", () => {
       );
     },
   );
-});
+}); // getBaseCompileOptions
+
+describe("validateOptions(options)", () => {
+  it.each(["", 1, null, undefined, true, false, Symbol("hi")])(
+    "throws if options is not an object (%p)",
+    (badOptions: any) => {
+      expect(() => validateOptions(badOptions)).toThrow();
+    },
+  );
+}); // validateOptions

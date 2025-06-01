@@ -279,14 +279,15 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     return context;
 }
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
+struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
 #ifndef LIBUS_NO_SSL
-    if (ssl) {
-        /* This function will call us, again, with SSL = false and a bigger ext_size */
-        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
-    }
+    /* This function will call us, again, with SSL = false and a bigger ext_size */
+    return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
 #endif
+    return us_create_bun_nossl_socket_context(loop, context_ext_size);
+}
 
+struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t *loop, int context_ext_size) {
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
@@ -369,9 +370,11 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
-    ls->s.low_prio_state = 0;
+    ls->s.flags.low_prio_state = 0;
+    ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
-    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -401,17 +404,17 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
-    ls->s.low_prio_state = 0;
+    ls->s.flags.low_prio_state = 0;
+    ls->s.flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    ls->s.flags.is_paused = 0;
+    ls->s.flags.is_ipc = 0;
     ls->s.next = 0;
-    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
 
     return ls;
 }
-
 
 struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
@@ -432,9 +435,12 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->context = context;
     socket->timeout = 255;
     socket->long_timeout = 255;
-    socket->low_prio_state = 0;
+    socket->flags.low_prio_state = 0;
+    socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    socket->flags.is_paused = 0;
+    socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
-    socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    socket->connect_next = NULL;
 
     us_internal_socket_context_link_socket(context, socket);
 
@@ -453,7 +459,7 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
     }
 }
 
-static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
+static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
     memset(storage, 0, sizeof(struct sockaddr_storage));
     // Try to parse as IPv4
     struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
@@ -463,7 +469,7 @@ static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *s
 #ifdef __APPLE__
         addr4->sin_len = sizeof(struct sockaddr_in);
 #endif
-        return 0;
+        return 1;
     }
 
     // Try to parse as IPv6
@@ -474,17 +480,17 @@ static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *s
 #ifdef __APPLE__
         addr6->sin6_len = sizeof(struct sockaddr_in6);
 #endif
-        return 0;
+        return 1;
     }
 
     // If we reach here, the input is neither IPv4 nor IPv6
-    return 1;
+    return 0;
 }
 
-void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* has_dns_resolved) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
-        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, has_dns_resolved);
     }
 #endif
 
@@ -492,8 +498,8 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     // fast path for IP addresses in text form
     struct sockaddr_storage addr;
-    if (try_parse_ip(host, port, &addr) == 0) {
-        *is_connecting = 1;
+    if (try_parse_ip(host, port, &addr)) {
+        *has_dns_resolved = 1;
         return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
     }
 
@@ -512,7 +518,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
         if (result->entries && result->entries->info.ai_next == NULL) {
             struct sockaddr_storage addr;
             init_addr_with_port(&result->entries->info, port, &addr);
-            *is_connecting = 1;
+            *has_dns_resolved = 1;
             struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;
@@ -556,8 +562,10 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->context = c->context;
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
-        s->low_prio_state = 0;
-        s->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+        s->flags.low_prio_state = 0;
+        s->flags.allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+        s->flags.is_paused = 0;
+        s->flags.is_ipc = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(s->context, s);
 
@@ -731,9 +739,12 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->context = context;
     connect_socket->timeout = 255;
     connect_socket->long_timeout = 255;
-    connect_socket->low_prio_state = 0;
+    connect_socket->flags.low_prio_state = 0;
+    connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    connect_socket->flags.is_paused = 0;
+    connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
-    connect_socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);
 
     return connect_socket;
@@ -764,7 +775,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         return s;
     }
 
-    if (s->low_prio_state != 1) {
+    if (s->flags.low_prio_state != 1) {
          /* We need to be sure that we still holding a reference*/
         us_socket_context_ref(ssl, context);
         /* This properly updates the iterator if in on_timeout */
@@ -788,7 +799,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 
-    if (new_s->low_prio_state == 1) {
+    if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
         if (!new_s->prev) new_s->context->loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
@@ -834,6 +845,14 @@ void us_socket_context_on_data(int ssl, struct us_socket_context_t *context, str
 #endif
 
     context->on_data = on_data;
+}
+
+void us_socket_context_on_fd(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_fd)(struct us_socket_t *s, int fd)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) return;
+#endif
+
+    context->on_fd = on_fd;
 }
 
 void us_socket_context_on_writable(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_writable)(struct us_socket_t *s)) {

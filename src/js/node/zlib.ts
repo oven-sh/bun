@@ -12,9 +12,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const StringPrototypeStartsWith = String.prototype.startsWith;
-const MathMax = Math.max;
-const ArrayPrototypeMap = Array.prototype.map;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
@@ -26,12 +23,7 @@ const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModul
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
-const {
-  checkRangesOrGetDefault,
-  validateFunction,
-  validateUint32,
-  validateFiniteNumber,
-} = require("internal/validators");
+const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
 const kError = Symbol("kError");
@@ -324,7 +316,7 @@ function processChunkSync(self, chunk, flushFlag) {
   let offset = self._outOffset;
   const chunkSize = self._chunkSize;
 
-  let error;
+  let error: Error | undefined;
   self.on("error", function onError(er) {
     error = er;
   });
@@ -339,8 +331,14 @@ function processChunkSync(self, chunk, flushFlag) {
       offset, // out_off
       availOutBefore, // out_len
     );
-    if (error) throw error;
-    else if (self[kError]) throw self[kError];
+    if (error) {
+      if (typeof error === "string") {
+        error = new Error(error);
+      } else if (!Error.isError(error)) {
+        error = new Error(String(error));
+      }
+      throw error;
+    } else if (self[kError]) throw self[kError];
 
     availOutAfter = state[0];
     availInAfter = state[1];

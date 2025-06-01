@@ -363,6 +363,18 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const napi_status status = napi_throw(env, nullptr);
+  printf("napi_throw -> %d\n", status);
+
+  bool is_exception_pending;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
+  printf("napi_is_exception_pending -> %s\n", is_exception_pending ? "true" : "false");
+
+  return ok(env);
+}
+
 // Call Node-API functions in ways that result in different error handling
 // (erroneous call, valid call, or valid call while an exception is pending) and
 // log information from napi_get_last_error_info
@@ -526,6 +538,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

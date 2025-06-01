@@ -314,6 +314,22 @@ for (let withOverridenBufferWrite of [false, true]) {
         Buffer.alloc(1).write("", 1, 0);
       });
 
+      it("write BigInt beyond 64-bit range", () => {
+        const b = Buffer.allocUnsafe(64);
+        for (const signedFunction of ["writeBigInt64BE", "writeBigInt64LE"]) {
+          expect(() => b[signedFunction](-(2n ** 63n) - 1n)).toThrow(RangeError);
+          expect(() => b[signedFunction](2n ** 63n)).toThrow(RangeError);
+          expect(() => b[signedFunction](-(2n ** 65n))).toThrow(RangeError);
+          expect(() => b[signedFunction](2n ** 65n)).toThrow(RangeError);
+        }
+        for (const unsignedFunction of ["writeBigUInt64BE", "writeBigUInt64LE"]) {
+          expect(() => b[unsignedFunction](-1n)).toThrow(RangeError);
+          expect(() => b[unsignedFunction](2n ** 64n)).toThrow(RangeError);
+          expect(() => b[unsignedFunction](-(2n ** 65n))).toThrow(RangeError);
+          expect(() => b[unsignedFunction](2n ** 65n)).toThrow(RangeError);
+        }
+      });
+
       it("copy() beyond end of buffer", () => {
         const b = Buffer.allocUnsafe(64);
         // Try to copy 0 bytes worth of data into an empty buffer
@@ -457,6 +473,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           const c = Buffer.from([0, 0, 0, 0, 0]);
           expect(c.length).toBe(5);
           expect(c.write("あいうえお", encoding)).toBe(4);
+          console.log(c.toString(encoding), { encoding });
           expect(c).toStrictEqual(Buffer.from([0x42, 0x30, 0x44, 0x30, 0x00]));
         });
 

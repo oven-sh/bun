@@ -1,16 +1,13 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const JSC = bun.JSC;
 
 // This is close to WHATWG URL, but we don't want the validation errors
@@ -151,6 +148,10 @@ pub const URL = struct {
 
     pub fn getDefaultPort(this: *const URL) u16 {
         return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
+    }
+
+    pub fn isIPAddress(this: *const URL) bool {
+        return bun.strings.isIPAddress(this.hostname);
     }
 
     pub fn hasValidPort(this: *const URL) bool {
@@ -618,7 +619,7 @@ pub const QueryStringMap = struct {
     pub fn initWithScanner(
         allocator: std.mem.Allocator,
         _scanner: CombinedScanner,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
         var scanner = _scanner;
 
@@ -727,7 +728,7 @@ pub const QueryStringMap = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         query_string: string,
-    ) !?QueryStringMap {
+    ) bun.OOM!?QueryStringMap {
         var list = Param.List{};
 
         var scanner = Scanner.init(query_string);
@@ -1056,7 +1057,7 @@ pub const FormData = struct {
     }
 
     comptime {
-        const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
+        const jsFunctionFromMultipartData = JSC.toJSHostFn(fromMultipartData);
         @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
@@ -1463,5 +1464,3 @@ pub const Scanner = struct {
 };
 
 const expect = std.testing.expect;
-const expectString = std.testing.expectEqualStrings;
-const expectEqual = std.testing.expectEqual;

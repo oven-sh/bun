@@ -1,6 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
+const bun = @import("bun");
 const ImportRecord = @import("./import_record.zig").ImportRecord;
 const ImportKind = @import("./import_record.zig").ImportKind;
 const lol = @import("./deps/lol-html.zig");

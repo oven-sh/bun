@@ -196,1956 +196,1956 @@ pub const Feature = enum {
             .border_radius, .border_top_left_radius, .border_top_right_radius, .border_bottom_right_radius, .border_bottom_left_radius => {
                 if (browsers.android) |version| {
                     if (version <= 131328) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 198144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version <= 197120) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .box_shadow => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 196608) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 197888 and version <= 198144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 327680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .animation, .animation_name, .animation_duration, .animation_delay, .animation_direction, .animation_fill_mode, .animation_iteration_count, .animation_play_state, .animation_timing_function, .at_keyframes => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 2752512) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 327680 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version == 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                     if (version >= 983040 and version <= 1900544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .transition, .transition_property, .transition_duration, .transition_delay, .transition_timing_function => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 655360 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .transform, .transform_origin => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 2293760) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 197888 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 656640 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                     if (version >= 983040 and version <= 1441792) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .perspective, .perspective_origin, .transform_style => {
                 if (browsers.android) |version| {
                     if (version >= 196608 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 786432 and version <= 2293760) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 655360 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 1441792) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .backface_visibility => {
                 if (browsers.android) |version| {
                     if (version >= 196608 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 786432 and version <= 2293760) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 655360 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 1441792) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .linear_gradient, .repeating_linear_gradient, .radial_gradient, .repeating_radial_gradient => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 198144 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 721152 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .box_sizing => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 196608) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 1835008) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 327680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .filter => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1179648 and version <= 3407872) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2555904) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393216 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 393728) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .filter_function => {
                 if (browsers.ios_saf) |version| {
                     if (version >= 589824 and version <= 590592) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .backdrop_filter => {
                 if (browsers.edge) |version| {
                     if (version >= 1114112 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 589824 and version <= 1115648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 589824 and version <= 1115648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .element => {
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 8650752) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
             },
             .columns, .column_width, .column_gap, .column_rule, .column_rule_color, .column_rule_width, .column_count, .column_rule_style, .column_span, .column_fill => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 3342336) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2359296) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .break_before, .break_after, .break_inside => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2359296) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .user_select => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 3473408) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 4456448) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2621440) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 327680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .display_flex, .inline_flex, .flex, .flex_grow, .flex_shrink, .flex_basis, .flex_direction, .flex_wrap, .flex_flow, .justify_content, .order, .align_items, .align_self, .align_content => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 1835008) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 1376256) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version == 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 1048576) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .calc => {
                 if (browsers.chrome) |version| {
                     if (version >= 1245184 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .background_origin, .background_size => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 131840) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version <= 198144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version <= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
             },
             .background_clip => {
                 if (browsers.android) |version| {
                     if (version >= 262144 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 7798784) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                     if (version >= 5177344 and version <= 7798784) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 852992) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 6881280) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 852224) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1572864) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .font_feature_settings, .font_variant_ligatures, .font_language_override => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1048576 and version <= 3080192) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 2162688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2228224) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .font_kerning => {
                 if (browsers.android) |version| {
                     if (version <= 263168) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1900544 and version <= 2097152) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 524288 and version <= 721664) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 1048576 and version <= 1245184) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 458752 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .border_image => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 197888 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 327680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 720896 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 327936) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_element_selection => {
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 3997696) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
             },
             .pseudo_element_placeholder => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 3670016) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 1179648 and version <= 3276800) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 262656 and version <= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2818048) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327680 and version <= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 393728) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_class_placeholder_shown => {
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 3276800) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .hyphens => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 393216 and version <= 2752512) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 262656 and version <= 1050112) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327936 and version <= 1050112) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_class_fullscreen => {
                 if (browsers.chrome) |version| {
                     if (version >= 983040 and version <= 4587520) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 655360 and version <= 4128768) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 720896) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 4128768) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327936 and version <= 1049344) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 590336) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_element_backdrop => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 2097152 and version <= 2359296) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie != null) {
-                    prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                    prefixes.ms = true;
                 }
                 if (browsers.opera) |version| {
                     if (version >= 1245184 and version <= 1507328) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_element_file_selector_button => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 5767168) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                     if (version >= 5177344 and version <= 5767168) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 4849664) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_class_autofill => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 7143424) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 7143424) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 918784) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 6225920) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 917760) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1310720) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .tab_size => {
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 5898240) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 656896 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
             },
             .max_content, .min_content => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1441792 and version <= 2949120) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 4259840) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 852992) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2097152) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .fill, .fill_available => {
                 if (browsers.chrome) |version| {
                     if (version >= 1441792 and version <= 8519680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 4259840) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 852992) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .fit_content => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1441792 and version <= 2949120) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 6094848) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 852992) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2097152) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .stretch => {
                 if (browsers.chrome) |version| {
                     if (version >= 1441792 and version <= 8519680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 8650752) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 458752 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 327680 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .zoom_in, .zoom_out => {
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 2359296) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 1507328) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 1507328) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .grab, .grabbing => {
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 4390912) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 1703936) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 3538944) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .sticky => {
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 786944) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .touch_action => {
                 if (browsers.ie) |version| {
                     if (version == 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .text_decoration_skip, .text_decoration_skip_ink => {
                 if (browsers.ios_saf) |version| {
                     if (version >= 524288 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 459008 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .text_decoration => {
                 if (browsers.ios_saf) |version| {
                     if (version >= 524288 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 524288 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .text_decoration_color, .text_decoration_line, .text_decoration_style => {
                 if (browsers.firefox) |version| {
                     if (version >= 393216 and version <= 2293760) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 524288 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 524288 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .text_size_adjust => {
                 if (browsers.firefox) |version| {
                     if (version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 327680 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .mask_clip, .mask_composite, .mask_image, .mask_origin, .mask_repeat, .mask_border_repeat, .mask_border_source, .mask, .mask_position, .mask_size, .mask_border, .mask_border_outset, .mask_border_width, .mask_border_slice => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 7798784) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 7798784) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 6881280) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1572864) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .clip_path => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1572864 and version <= 3538944) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2686976) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 458752 and version <= 589824) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 327680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .box_decoration_break => {
                 if (browsers.chrome) |version| {
                     if (version >= 1441792 and version <= 8519680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .object_fit, .object_position => {
                 if (browsers.opera) |version| {
                     if (version >= 656896 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
             },
             .shape_margin, .shape_outside, .shape_image_threshold => {
                 if (browsers.ios_saf) |version| {
                     if (version >= 524288 and version <= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 459008 and version <= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .text_overflow => {
                 if (browsers.opera) |version| {
                     if (version >= 589824 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
             },
             .at_viewport => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 720896 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
             },
             .at_resolution => {
                 if (browsers.android) |version| {
                     if (version >= 131840 and version <= 262656) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 1835008) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 197888 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 262144 and version <= 984576) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 591104 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 262144 and version <= 984576) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .text_align_last => {
                 if (browsers.firefox) |version| {
                     if (version >= 786432 and version <= 3145728) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
             },
             .pixelated => {
                 if (browsers.firefox) |version| {
                     if (version >= 198144 and version <= 4194304) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 327680 and version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 722432 and version <= 786688) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .o = true });
+                        prefixes.o = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version <= 393216) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .image_rendering => {
                 if (browsers.ie) |version| {
                     if (version >= 458752) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .border_inline_start, .border_inline_end, .margin_inline_start, .margin_inline_end, .padding_inline_start, .padding_inline_end => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 4456448) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 2621440) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 3604480) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 590336) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .border_block_start, .border_block_end, .margin_block_start, .margin_block_end, .padding_block_start, .padding_block_end => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 4456448) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 3604480) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 786432) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 590336) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .appearance => {
                 if (browsers.android) |version| {
                     if (version >= 131328 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 262144 and version <= 5439488) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                     if (version >= 5177344 and version <= 5439488) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 131072 and version <= 5177344) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ie != null) {
-                    prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                    prefixes.ms = true;
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 197120 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 4718592) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 196864 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 851968) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .scroll_snap_type, .scroll_snap_coordinate, .scroll_snap_destination, .scroll_snap_points_x, .scroll_snap_points_y => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 589824 and version <= 656128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 589824 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .flow_into, .flow_from, .region_fragment => {
                 if (browsers.chrome) |version| {
                     if (version >= 983040 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 720896) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 720896) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .image_set => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1376256 and version <= 7340032) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 7340032) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 590592) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 6422528) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393216 and version <= 590080) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1441792) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .writing_mode => {
                 if (browsers.android) |version| {
                     if (version >= 196608 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 524288 and version <= 3080192) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 328960) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 327680 and version <= 656128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2228224) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327936 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version <= 262144) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .cross_fade => {
                 if (browsers.chrome) |version| {
                     if (version >= 1114112 and version <= 8519680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 327680 and version <= 590592) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327936 and version <= 590080) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .pseudo_class_read_only, .pseudo_class_read_write => {
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 5046272) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
             },
             .text_emphasis, .text_emphasis_position, .text_emphasis_style, .text_emphasis_color => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 1638400 and version <= 6422528) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 6422528) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 5570560) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 458752) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1114112) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .display_grid, .inline_grid, .grid_template_columns, .grid_template_rows, .grid_row_start, .grid_column_start, .grid_row_end, .grid_column_end, .grid_row, .grid_column, .grid_area, .grid_template, .grid_template_areas, .place_self, .grid_column_align, .grid_row_align => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .text_spacing => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .pseudo_class_any_link => {
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 263171) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.chrome) |version| {
                     if (version >= 983040 and version <= 4194304) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 196608 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 524544) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 3342336) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393472 and version <= 524288) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 327680 and version <= 524800) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .isolate => {
                 if (browsers.chrome) |version| {
                     if (version >= 1048576 and version <= 3080192) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 655360 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 656128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040 and version <= 2228224) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393216 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .plaintext => {
                 if (browsers.firefox) |version| {
                     if (version >= 655360 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 656128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393216 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .isolate_override => {
                 if (browsers.firefox) |version| {
                     if (version >= 1114112 and version <= 3211264) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 458752 and version <= 656128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 458752 and version <= 655616) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .overscroll_behavior => {
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1114112) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
                 if (browsers.ie) |version| {
                     if (version >= 655360) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .ms = true });
+                        prefixes.ms = true;
                     }
                 }
             },
             .text_orientation => {
                 if (browsers.safari) |version| {
                     if (version >= 655616 and version <= 852224) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .print_color_adjust, .color_adjust => {
                 if (browsers.chrome) |version| {
                     if (version >= 1114112 and version <= 8519680) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 263168 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 8323072) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 3145728 and version <= 6291456) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 393216 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 983040) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 393216 and version <= 983552) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 262144 and version <= 1638400) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },
             .any_pseudo => {
                 if (browsers.chrome) |version| {
                     if (version >= 786432 and version <= 5701632) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 5177344 and version <= 5701632) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.firefox) |version| {
                     if (version >= 262144 and version <= 5111808) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                        prefixes.moz = true;
                     }
                 }
                 if (browsers.opera) |version| {
                     if (version >= 917504 and version <= 4784128) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.safari) |version| {
                     if (version >= 327680 and version <= 851968) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.ios_saf) |version| {
                     if (version >= 327680 and version <= 851968) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.samsung) |version| {
                     if (version >= 65536 and version <= 917504) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
                 if (browsers.android) |version| {
                     if (version >= 2424832 and version <= 5701632) {
-                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
+                        prefixes.webkit = true;
                     }
                 }
             },

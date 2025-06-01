@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -7,7 +7,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.name).toBe("name");
     expect(cookie.value).toBe("value");
     expect(cookie.path).toBe("/");
-    expect(cookie.domain).toBe(null);
+    expect(cookie.domain).toBeNull();
     expect(cookie.secure).toBe(false);
     expect(cookie.httpOnly).toBe(false);
     expect(cookie.partitioned).toBe(false);
@@ -55,7 +55,10 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(str).toInclude("Secure");
     expect(str).toInclude("HttpOnly");
     expect(str).toInclude("Partitioned");
-    expect(str).toInclude("SameSite=strict");
+    expect(str).toInclude("SameSite=Strict");
+    expect(str).toMatchInlineSnapshot(
+      `"name=value; Domain=example.com; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict"`,
+    );
   });
 
   test("can set Cookie expires as Date", () => {
@@ -99,7 +102,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.maxAge).toBe(3600);
     expect(cookie.secure).toBe(true);
     expect(cookie.httpOnly).toBe(true);
-    expect(cookie.expires).toEqual(Date.parse("Thu, 13 Mar 2025 12:00:00 GMT"));
+    expect(cookie.expires).toEqual(new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
     expect(cookie.partitioned).toBe(true);
     expect(cookie.sameSite).toBe("strict");
   });
@@ -108,16 +111,17 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     const cookie1 = new Bun.Cookie("foo", "bar");
     const cookie2 = new Bun.Cookie("baz", "qux");
 
-    const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
-
-    expect(cookieStr).toMatchInlineSnapshot(`"foo=bar; baz=qux"`);
+    expect(cookie1.serialize() + "\n" + cookie2.serialize()).toMatchInlineSnapshot(`
+      "foo=bar; Path=/; SameSite=Lax
+      baz=qux; Path=/; SameSite=Lax"
+    `);
   });
 
   // Basic CookieMap tests
   test("can create an empty CookieMap", () => {
     const map = new Bun.CookieMap();
     expect(map.size).toBe(0);
-    expect(map.toString()).toBe("");
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from string", () => {
@@ -126,15 +130,13 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     const cookie1 = map.get("name");
     expect(cookie1).toBeDefined();
-    expect(cookie1?.name).toBe("name");
-    expect(cookie1?.value).toBe("value");
+    expect(cookie1).toBe("value");
 
     const cookie2 = map.get("foo");
     expect(cookie2).toBeDefined();
-    expect(cookie2?.name).toBe("foo");
-    expect(cookie2?.value).toBe("bar");
+    expect(cookie2).toBe("bar");
 
-    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar"`);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from object", () => {
@@ -144,8 +146,9 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
 
     expect(map.size).toBe(2);
-    expect(map.get("name")?.value).toBe("value");
-    expect(map.get("foo")?.value).toBe("bar");
+    expect(map.get("name")).toBe("value");
+    expect(map.get("foo")).toBe("bar");
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("can create CookieMap from array pairs", () => {
@@ -155,8 +158,9 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     ]);
 
     expect(map.size).toBe(2);
-    expect(map.get("name")?.value).toBe("value");
-    expect(map.get("foo")?.value).toBe("bar");
+    expect(map.get("name")).toBe("value");
+    expect(map.get("foo")).toBe("bar");
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   test("CookieMap methods work", () => {
@@ -177,20 +181,26 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     );
     expect(map.size).toBe(2);
     expect(map.has("foo")).toBe(true);
-    expect(map.get("foo")?.secure).toBe(true);
-    expect(map.get("foo")?.httpOnly).toBe(true);
-    expect(map.get("foo")?.partitioned).toBe(true);
-    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar; Secure; HttpOnly; Partitioned"`);
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "name=value; Path=/; SameSite=Lax",
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
+      ]
+    `);
 
     // Delete a cookie
     map.delete("name");
     expect(map.size).toBe(1);
     expect(map.has("name")).toBe(false);
+    expect(map.get("name")).toBe(null);
 
-    // Get all (only one remains)
-    const all = map.getAll("foo");
-    expect(all.length).toBe(1);
-    expect(all[0].value).toBe("bar");
+    // Get changes
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
+        "name=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      ]
+    `);
   });
 
   test("CookieMap supports iteration", () => {
@@ -202,28 +212,30 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     // Test entries()
     let count = 0;
-    for (const [key, cookie] of map.entries()) {
+    for (const [key, value] of map.entries()) {
       count++;
       expect(typeof key).toBe("string");
-      expect(typeof cookie).toBe("object");
-      expect(cookie instanceof Bun.Cookie).toBe(true);
-      expect(["1", "2", "3"]).toContain(cookie.value);
+      expect(typeof value).toBe("string");
+      expect(["1", "2", "3"]).toContain(value);
     }
     expect(count).toBe(3);
 
     // Test forEach
     const collected: string[] = [];
-    map.forEach((cookie, key) => {
-      collected.push(`${key}=${cookie.value}`);
+    map.forEach((value, key) => {
+      collected.push(`${key}=${value}`);
     });
     expect(collected.sort()).toEqual(["a=1", "b=2", "c=3"]);
   });
 
-  test("CookieMap.toString() formats properly", () => {
+  test("CookieMap.toJSON() formats properly", () => {
     const map = new Bun.CookieMap("a=1; b=2");
-    const str = map.toString();
-    expect(str).toInclude("a=1");
-    expect(str).toInclude("b=2");
+    expect(map.toJSON()).toMatchInlineSnapshot(`
+      {
+        "a": "1",
+        "b": "2",
+      }
+    `);
   });
 
   test("CookieMap works with cookies with advanced attributes", () => {
@@ -237,12 +249,85 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
       maxAge: 3600,
     });
 
-    const cookie = map.get("session");
-    expect(cookie).toBeDefined();
-    expect(cookie?.httpOnly).toBe(true);
-    expect(cookie?.secure).toBe(true);
-    expect(cookie?.partitioned).toBe(true);
-    expect(cookie?.maxAge).toBe(3600);
-    expect(cookie?.value).toBe("abc123");
+    expect(map.get("session")).toBe("abc123");
+    expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "session=abc123; Path=/; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Lax",
+      ]
+    `);
+  });
+});
+
+describe("Cookie name field is immutable", () => {
+  test("can create a Cookie", () => {
+    const cookie = new Bun.Cookie("name", "value");
+    expect(cookie.name).toBe("name");
+    // @ts-expect-error
+    cookie.name = "foo";
+    expect(cookie.name).toBe("name");
+  });
+  test("mutate cookie in map", () => {
+    const cookieMap = new Bun.CookieMap();
+    const cookie = new Bun.Cookie("name", "value");
+    cookieMap.set(cookie);
+    expect(cookieMap.get("name")).toBe("value");
+    cookie.value = "value2";
+    expect(cookieMap.get("name")).toBe("value2");
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "name=value2; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
+});
+
+describe("iterator", () => {
+  test("delete in a loop", () => {
+    const map = new Bun.CookieMap();
+    for (let i = 0; i < 1000; i++) {
+      map.set(`name${i}`, `value${i}`);
+    }
+    for (const key of map.keys()) {
+      map.delete(key);
+    }
+    // expect(map.size).toBe(0);
+    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+  });
+  test("delete in a loop with predefined entries", () => {
+    const entries: [string, string][] = [];
+    for (let i = 0; i < 1000; i++) {
+      entries.push([`name${i}`, `value${i}`]);
+    }
+    const map = new Bun.CookieMap(entries);
+    for (const key of map.keys()) {
+      map.delete(key);
+    }
+    expect(map.size).toBe(0);
+  });
+  test("delete in a loop with both", () => {
+    const entries: [string, string][] = [];
+    for (let i = 0; i < 500; i++) {
+      entries.push([`pre${i}`, `pre${i}`]);
+    }
+    const map = new Bun.CookieMap(entries);
+    for (let i = 0; i < 1000; i++) {
+      map.set(`post${i}`, `post${i}`);
+    }
+    for (const key of map.keys()) {
+      map.delete(key);
+    }
+    // expect(map.size).toBe(0);
+    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+  });
+  test("basic iterator", () => {
+    const cookies = new Bun.CookieMap({ a: "b", c: "d" });
+    cookies.set("e", "f");
+    cookies.set("g", "h");
+    expect([...cookies.entries()].map(([key, value]) => `${key}=${value}`).join("\n")).toMatchInlineSnapshot(`
+    "e=f
+    g=h
+    c=d
+    a=b"
+  `);
   });
 });

@@ -26,7 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     const char* ptr = nullptr;
     size_t byteLength = 0;
     if (bufferView) {
-        if (UNLIKELY(bufferView->isDetached())) {
+        if (bufferView->isDetached()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, throwScope,
                 "ArrayBufferView is detached"_s);
             return {};
@@ -46,7 +46,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
             return JSValue::encode(jsBoolean(true));
         }
 
-        if (UNLIKELY(impl->isDetached())) {
+        if (impl->isDetached()) [[unlikely]] {
             return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
                 "Cannot validate on a detached buffer"_s);
         }
@@ -81,7 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     size_t byteLength = 0;
     if (bufferView) {
 
-        if (UNLIKELY(bufferView->isDetached())) {
+        if (bufferView->isDetached()) [[unlikely]] {
             return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
                 "Cannot validate on a detached buffer"_s);
         }
@@ -95,7 +95,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
         ptr = reinterpret_cast<const char*>(bufferView->vector());
     } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(buffer)) {
         auto* impl = arrayBuffer->impl();
-        if (UNLIKELY(impl->isDetached())) {
+        if (impl->isDetached()) [[unlikely]] {
             return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
                 "Cannot validate on a detached buffer"_s);
         }

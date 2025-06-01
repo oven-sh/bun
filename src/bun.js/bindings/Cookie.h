@@ -15,37 +15,80 @@ enum class CookieSameSite : uint8_t {
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CookieSameSite);
 
+struct CookieInit {
+    String name = String();
+    String value = String();
+    String domain = String();
+    String path = "/"_s;
+
+    int64_t expires = emptyExpiresAtValue;
+    bool secure = false;
+    CookieSameSite sameSite = CookieSameSite::Lax;
+    bool httpOnly = false;
+    double maxAge = std::numeric_limits<double>::quiet_NaN();
+    bool partitioned = false;
+    static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
+
+    static std::optional<CookieInit> fromJS(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value);
+    static std::optional<CookieInit> fromJS(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue input, String name, String cookieValue);
+};
+
 class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();
-
-    static Ref<Cookie> create(const String& name, const String& value,
+    static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
+    static ExceptionOr<Ref<Cookie>> create(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
+        int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
-    static ExceptionOr<Ref<Cookie>> parse(const String& cookieString);
-    static Ref<Cookie> from(const String& name, const String& value,
-        const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
-        bool httpOnly, double maxAge, bool partitioned);
+    static ExceptionOr<Ref<Cookie>> create(const CookieInit& init)
+    {
+        if (!isValidCookieName(init.name)) {
+            return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
+        }
+        if (!isValidCookiePath(init.path)) {
+            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        if (!isValidCookieDomain(init.domain)) {
+            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+        }
 
-    static String serialize(JSC::VM& vm, const Vector<Ref<Cookie>>& cookies);
+        return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
+    }
+
+    static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
+
+    static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
 
     const String& name() const { return m_name; }
-    void setName(const String& name) { m_name = name; }
 
     const String& value() const { return m_value; }
     void setValue(const String& value) { m_value = value; }
 
     const String& domain() const { return m_domain; }
-    void setDomain(const String& domain) { m_domain = domain; }
+    ExceptionOr<void> setDomain(const String& domain)
+    {
+        if (!isValidCookieDomain(domain)) {
+            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+        }
+        m_domain = domain;
+        return {};
+    }
 
     const String& path() const { return m_path; }
-    void setPath(const String& path) { m_path = path; }
+    ExceptionOr<void> setPath(const String& path)
+    {
+        if (!isValidCookiePath(path)) {
+            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        m_path = path;
+        return {};
+    }
 
-    double expires() const { return m_expires; }
-    void setExpires(double expires) { m_expires = expires; }
+    int64_t expires() const { return m_expires; }
+    void setExpires(int64_t ms) { m_expires = ms; }
+    bool hasExpiry() const { return m_expires != emptyExpiresAtValue; }
 
     bool secure() const { return m_secure; }
     void setSecure(bool secure) { m_secure = secure; }
@@ -69,22 +112,27 @@ public:
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
+    static bool isValidCookieName(const String& name);
+    static bool isValidCookieValue(const String& value); // values are uri component encoded, so this isn't needed
+    static bool isValidCookiePath(const String& path);
+    static bool isValidCookieDomain(const String& domain);
+
 private:
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite,
+        int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
     String m_name;
     String m_value;
     String m_domain;
     String m_path;
-    double m_expires;
-    bool m_secure;
-    CookieSameSite m_sameSite;
-    bool m_httpOnly;
-    double m_maxAge;
-    bool m_partitioned;
+    int64_t m_expires = Cookie::emptyExpiresAtValue;
+    bool m_secure = false;
+    CookieSameSite m_sameSite = CookieSameSite::Lax;
+    bool m_httpOnly = false;
+    double m_maxAge = 0;
+    bool m_partitioned = false;
 };
 
 } // namespace WebCore

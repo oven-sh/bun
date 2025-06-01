@@ -1,8 +1,8 @@
+import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
-import assert from "assert";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {

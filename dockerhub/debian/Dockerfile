@@ -56,7 +56,7 @@ RUN apt-get update -qq \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun
 
-FROM debian:bullseye
+FROM debian:bookworm
 
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun

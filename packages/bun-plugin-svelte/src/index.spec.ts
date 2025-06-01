@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { SveltePlugin } from "./index";
 
 describe("SveltePlugin", () => {
@@ -11,7 +11,11 @@ describe("SveltePlugin", () => {
     expect(() => SveltePlugin(undefined)).not.toThrow();
   });
 
-  it.each([null, 1, "hi", {}, "Client"])("throws if forceSide is not 'client' or 'server' (%p)", (forceSide: any) => {
+  it.each([1, "hi", {}, "Client"])("throws if forceSide is not 'client' or 'server' (%p)", (forceSide: any) => {
     expect(() => SveltePlugin({ forceSide })).toThrow(TypeError);
+  });
+
+  it.each([null, undefined])("forceSide may be nullish", (forceSide: any) => {
+    expect(() => SveltePlugin({ forceSide })).not.toThrow();
   });
 });

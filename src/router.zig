@@ -7,29 +7,24 @@ const Router = @This();
 
 const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const PathString = bun.PathString;
 const HashedString = bun.HashedString;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const DirInfo = @import("./resolver/dir_info.zig");
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
-const allocators = @import("./allocators.zig");
 const URLPath = @import("./http/url_path.zig");
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
 const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));
-const arbitrary_max_route = 4096;
 
 pub const Param = struct {
     name: string,
@@ -38,7 +33,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = .zero,
+dir: StoredFileDescriptorType = .invalid,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -70,11 +65,11 @@ pub fn deinit(this: *Router) void {
     }
 }
 
-pub fn getEntryPoints(this: *const Router) ![]const string {
+pub fn getEntryPoints(this: *const Router) []const string {
     return this.routes.list.items(.filepath);
 }
 
-pub fn getPublicPaths(this: *const Router) ![]const string {
+pub fn getPublicPaths(this: *const Router) []const string {
     return this.routes.list.items(.public_path);
 }
 
@@ -86,7 +81,7 @@ pub fn routeIndexByHash(this: *const Router, hash: u32) ?usize {
     return std.mem.indexOfScalar(u32, this.routes.list.items(.hash), hash);
 }
 
-pub fn getNames(this: *const Router) ![]const string {
+pub fn getNames(this: *const Router) []const string {
     return this.routes.list.items(.name);
 }
 
@@ -508,7 +503,7 @@ pub fn loadRoutes(
     this.loaded_routes = true;
 }
 
-pub const TinyPtr = packed struct {
+pub const TinyPtr = packed struct(u32) {
     offset: u16 = 0,
     len: u16 = 0,
 
@@ -756,8 +751,8 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != .zero) {
-                file = entry.cache.fd.asFile();
+            if (entry.cache.fd.unwrapValid()) |valid| {
+                file = valid.stdFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
@@ -770,10 +765,10 @@ pub const Route = struct {
                 FileSystem.setMaxFd(file.handle);
 
                 needs_close = FileSystem.instance.fs.needToCloseFiles();
-                if (!needs_close) entry.cache.fd = bun.toFD(file.handle);
+                if (!needs_close) entry.cache.fd = .fromStdFile(file);
             }
 
-            const _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
+            const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
@@ -1027,7 +1022,6 @@ pub const Test = struct {
     }
 
     pub fn make(comptime testName: string, data: anytype) !Router {
-        std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
@@ -1081,7 +1075,7 @@ pub const Test = struct {
             &resolver,
             FileSystem.instance.top_level_dir,
         );
-        const entry_points = try router.getEntryPoints();
+        const entry_points = router.getEntryPoints();
 
         try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
         return router;

@@ -353,15 +353,21 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     int change_length = 0;
 
     /* Do they differ in readable? */
+    int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
+    int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, (new_events & LIBUS_SOCKET_READABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
-
-    /* Do they differ in writable? */
-    if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+    
+    if(!is_readable && !is_writable) {
+        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
+            // if we are not reading or writing, we need to add writable to receive FIN
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
+    } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
+        /* Do they differ in writable? */    
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-    }
-
+    } 
     int ret;
     do {
         ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
@@ -399,6 +405,10 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
+    if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
+        events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+    }
     event.events = events;
     event.data.ptr = p;
     int ret;
@@ -423,6 +433,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
+        if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+             // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
+            events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+        }
         event.events = events;
         event.data.ptr = p;
         int rc;

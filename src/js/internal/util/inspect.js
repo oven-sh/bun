@@ -30,7 +30,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 
-
 const { pathToFileURL } = require("node:url");
 let BufferModule;
 
@@ -204,7 +203,6 @@ const {
   isStringObject,
   isNumberObject,
   isBooleanObject,
-  //isBigIntObject,
 } = require("node:util/types");
 
 //! temp workaround to apply is{BigInt,Symbol}Object fix
@@ -464,7 +462,6 @@ const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
 const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
 const classRegExp = /^(\s+[^(]*?)\s*{/;
-// eslint-disable-next-line node-core/no-unescaped-regexp-dot
 const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
 
 const kMinLineLength = 16;
@@ -1938,15 +1935,6 @@ function groupArrayElements(ctx, output, value) {
     output = tmp;
   }
   return output;
-}
-
-function handleMaxCallStackSize(ctx, err, constructorName, indentationLvl) {
-  ctx.seen.pop();
-  ctx.indentationLvl = indentationLvl;
-  return ctx.stylize(
-    `[${constructorName}: Inspection interrupted ` + "prematurely. Maximum call stack size exceeded.]",
-    "special",
-  );
 }
 
 function addNumericSeparator(integerString) {

@@ -1,6 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { isBroken, isMacOS } from "harness";
-import type { Server, ServeOptions, BunRequest } from "bun";
+import type { Server } from "bun";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("request cookies", () => {
   let server: Server;
@@ -14,8 +13,8 @@ describe("request cookies", () => {
           const cookies = req.cookies;
           expect(cookies).toBeDefined();
           expect(cookies.size).toBe(2);
-          expect(cookies.get("name")?.value).toBe("value");
-          expect(cookies.get("foo")?.value).toBe("bar");
+          expect(cookies.get("name")).toBe("value");
+          expect(cookies.get("foo")).toBe("bar");
 
           // Verify headers are still accessible afterward
           expect(req.headers.get("cookie")).toBe("name=value; foo=bar");
@@ -31,8 +30,8 @@ describe("request cookies", () => {
           const cookies = req.cookies;
           expect(cookies).toBeDefined();
           expect(cookies.size).toBe(2);
-          expect(cookies.get("name")?.value).toBe("value");
-          expect(cookies.get("foo")?.value).toBe("bar");
+          expect(cookies.get("name")).toBe("value");
+          expect(cookies.get("foo")).toBe("bar");
 
           return new Response("ok");
         },
@@ -96,58 +95,6 @@ describe("request cookies", () => {
   });
 });
 
-describe("cookie attributes", () => {
-  let server: Server;
-
-  beforeAll(() => {
-    server = Bun.serve({
-      port: 0,
-      routes: {
-        "/cookie-attributes": req => {
-          const cookie = req.cookies.get("complex");
-          expect(cookie).toBeDefined();
-
-          if (!cookie) {
-            return new Response("no cookie found", { status: 500 });
-          }
-
-          return new Response(
-            JSON.stringify({
-              name: cookie.name,
-              value: cookie.value,
-              path: cookie.path,
-              secure: cookie.secure,
-              sameSite: cookie.sameSite,
-            }),
-          );
-        },
-      },
-    });
-    server.unref();
-  });
-
-  afterAll(() => {
-    server.stop(true);
-  });
-
-  it("correctly parses cookie attributes", async () => {
-    const res = await fetch(`${server.url}cookie-attributes`, {
-      headers: {
-        "Cookie": "complex=value; simple=123",
-      },
-    });
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-
-    expect(data.name).toBe("complex");
-    expect(data.value).toBe("value");
-    expect(data.path).toBe("/");
-    expect(data.secure).toBe(false);
-    expect(data.sameSite).toBe("lax");
-  });
-});
-
 describe("instanceof and type checks", () => {
   let server: Server;
 
@@ -159,9 +106,8 @@ describe("instanceof and type checks", () => {
           // Check that cookies is an instance of Bun.CookieMap
           expect(req.cookies instanceof Bun.CookieMap).toBe(true);
 
-          // Check that cookie is an instance of Bun.Cookie
           const cookie = req.cookies.get("name");
-          expect(cookie instanceof Bun.Cookie).toBe(true);
+          expect(cookie).toBeTypeOf("string");
 
           return new Response("ok");
         },
@@ -170,7 +116,7 @@ describe("instanceof and type checks", () => {
           expect(req.cookies.constructor).toBe(Bun.CookieMap);
 
           const cookie = req.cookies.get("name");
-          expect(cookie?.constructor).toBe(Bun.Cookie);
+          expect(cookie).toBeTypeOf("string");
 
           return new Response("ok");
         },
@@ -211,20 +157,20 @@ describe("complex cookie parsing", () => {
       routes: {
         "/special-chars": req => {
           const cookie = req.cookies.get("complex");
-          if (!cookie) {
+          if (cookie == null) {
             return new Response("no cookie found", { status: 500 });
           }
 
-          expect(cookie.value).toBe("value with spaces");
+          expect(cookie).toBe("value with spaces");
           return new Response("ok");
         },
         "/equals-in-value": req => {
           const cookie = req.cookies.get("equation");
-          if (!cookie) {
+          if (cookie == null) {
             return new Response("no cookie found", { status: 500 });
           }
 
-          expect(cookie.value).toBe("x=y+z");
+          expect(cookie).toBe("x=y+z");
           return new Response("ok");
         },
         "/multiple-cookies": req => {
@@ -237,7 +183,7 @@ describe("complex cookie parsing", () => {
           expect(duplicateCookie).toBeDefined();
 
           // In most implementations, the first value should be preserved
-          expect(duplicateCookie?.value).toBe("first");
+          expect(duplicateCookie).toBe("first");
 
           return new Response("ok");
         },
@@ -250,11 +196,6 @@ describe("complex cookie parsing", () => {
 
           // Test size
           expect(cookies.size).toBe(2);
-
-          // Test toString() returns a valid cookie string
-          const cookieStr = cookies.toString();
-          expect(cookieStr).toInclude("name=value");
-          expect(cookieStr).toInclude("foo=bar");
 
           return new Response("ok");
         },
@@ -320,8 +261,7 @@ describe("CookieMap iterator", () => {
 
           // Entries should be [name, Cookie] pairs
           expect(entries[0][0]).toBeTypeOf("string");
-          expect(entries[0][1]).toBeTypeOf("object");
-          expect(entries[0][1].constructor).toBe(Bun.Cookie);
+          expect(entries[0][1]).toBeTypeOf("string");
 
           // Check that we can get cookies values
           const cookieNames = entries.map(([name, _]) => name);
@@ -329,7 +269,7 @@ describe("CookieMap iterator", () => {
           expect(cookieNames).toContain("b");
           expect(cookieNames).toContain("c");
 
-          const cookieValues = entries.map(([_, cookie]) => cookie.value);
+          const cookieValues = entries.map(([_, value]) => value);
           expect(cookieValues).toContain("1");
           expect(cookieValues).toContain("2");
           expect(cookieValues).toContain("3");
@@ -345,11 +285,10 @@ describe("CookieMap iterator", () => {
             // Check that we get [name, cookie] entries
             expect(entry.length).toBe(2);
             expect(entry[0]).toBeTypeOf("string");
-            expect(entry[1]).toBeTypeOf("object");
-            expect(entry[1].constructor).toBe(Bun.Cookie);
+            expect(entry[1]).toBeTypeOf("string");
 
-            const [name, cookie] = entry;
-            collected.push({ name, value: cookie.value });
+            const [name, value] = entry;
+            collected.push({ name, value });
           }
 
           expect(collected.length).toBe(3);
@@ -374,15 +313,12 @@ describe("CookieMap iterator", () => {
           expect(values.length).toBe(3);
 
           // Values should be Cookie objects
-          for (const cookie of values) {
-            expect(cookie).toBeTypeOf("object");
-            expect(cookie.constructor).toBe(Bun.Cookie);
-            expect(cookie.name).toBeTypeOf("string");
-            expect(cookie.value).toBeTypeOf("string");
+          for (const value of values) {
+            expect(value).toBeTypeOf("string");
           }
 
           // Values should include the expected cookies
-          const cookieValues = values.map(c => c.value);
+          const cookieValues = values;
           expect(cookieValues).toContain("1");
           expect(cookieValues).toContain("2");
           expect(cookieValues).toContain("3");
@@ -394,11 +330,10 @@ describe("CookieMap iterator", () => {
 
           // Test forEach method
           const collected: { key: string; value: string }[] = [];
-          cookies.forEach((cookie, key) => {
-            expect(cookie).toBeTypeOf("object");
-            expect(cookie.constructor).toBe(Bun.Cookie);
+          cookies.forEach((value, key) => {
+            expect(value).toBeTypeOf("string");
             expect(key).toBeTypeOf("string");
-            collected.push({ key, value: cookie.value });
+            collected.push({ key, value });
           });
 
           expect(collected.length).toBe(3);
@@ -497,12 +432,12 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(2);
 
     const nameCookie = cookieMap.get("name");
-    expect(nameCookie).toBeDefined();
-    expect(nameCookie?.value).toBe("value");
+    expect(nameCookie).toMatchInlineSnapshot(`"value"`);
 
     const fooCookie = cookieMap.get("foo");
-    expect(fooCookie).toBeDefined();
-    expect(fooCookie?.value).toBe("bar");
+    expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
+
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
   it("can create a CookieMap with an object", () => {
@@ -514,12 +449,10 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(2);
 
     const nameCookie = cookieMap.get("name");
-    expect(nameCookie).toBeDefined();
-    expect(nameCookie?.value).toBe("value");
+    expect(nameCookie).toMatchInlineSnapshot(`"value"`);
 
     const fooCookie = cookieMap.get("foo");
-    expect(fooCookie).toBeDefined();
-    expect(fooCookie?.value).toBe("bar");
+    expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
   });
 
   it("can create a CookieMap with an array of pairs", () => {
@@ -531,12 +464,10 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(2);
 
     const nameCookie = cookieMap.get("name");
-    expect(nameCookie).toBeDefined();
-    expect(nameCookie?.value).toBe("value");
+    expect(nameCookie).toMatchInlineSnapshot(`"value"`);
 
     const fooCookie = cookieMap.get("foo");
-    expect(fooCookie).toBeDefined();
-    expect(fooCookie?.value).toBe("bar");
+    expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
   });
 
   it("can set and get cookies in a CookieMap", () => {
@@ -557,14 +488,16 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
 
     const nameCookie = cookieMap.get("name");
     console.log(nameCookie);
-    expect(nameCookie).toBeDefined();
-    expect(nameCookie?.value).toBe("value");
+    expect(nameCookie).toMatchInlineSnapshot(`"value"`);
 
     const fooCookie = cookieMap.get("foo");
-    expect(fooCookie).toBeDefined();
-    expect(fooCookie?.value).toBe("bar");
-    expect(fooCookie?.secure).toBe(true);
-    expect(fooCookie?.path).toBe("/path");
+    expect(fooCookie).toMatchInlineSnapshot(`"bar"`);
+    expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
+      [
+        "name=value; Path=/; SameSite=Lax",
+        "foo=bar; Path=/path; Secure; SameSite=Lax",
+      ]
+    `);
   });
 
   it("can use Cookie.parse to parse cookie strings", () => {
@@ -604,11 +537,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     });
 
     const cookieStr = cookie.toString();
-    expect(cookieStr).toInclude("name=value");
-    expect(cookieStr).toInclude("Domain=example.com");
-    expect(cookieStr).toInclude("Path=/path");
-    expect(cookieStr).toInclude("Secure");
-    expect(cookieStr).not.toInclude("SameSite");
+    expect(cookieStr).toMatchInlineSnapshot(`"name=value; Domain=example.com; Path=/path; Secure; SameSite=Lax"`);
   });
 
   it("correctly handles toJSON methods", () => {
@@ -618,7 +547,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
       domain: "example.org",
       secure: true,
       sameSite: "lax",
-      expires: Date.now() + 3600000, // 1 hour in the future
+      expires: new Date("2025-03-21T12:00:00Z"),
     });
 
     const cookieJSON = cookie.toJSON();
@@ -628,19 +557,31 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieJSON.path).toBe("/test");
     expect(cookieJSON.domain).toBe("example.org");
     expect(cookieJSON.secure).toBe(true);
+    expect(cookieJSON).toMatchInlineSnapshot(`
+      {
+        "domain": "example.org",
+        "expires": 2025-03-21T12:00:00.000Z,
+        "httpOnly": false,
+        "name": "name",
+        "partitioned": false,
+        "path": "/test",
+        "sameSite": "lax",
+        "secure": true,
+        "value": "value",
+      }
+    `);
 
     // Create a CookieMap and test toJSON
     const cookieMap = new Bun.CookieMap("a=1; b=2; c=3");
 
     const mapJSON = cookieMap.toJSON();
-    expect(mapJSON).toBeInstanceOf(Array);
-    expect(mapJSON.length).toBe(3);
+    expect(mapJSON).toBeInstanceOf(Object);
+    expect([...Object.keys(mapJSON)].length).toBe(3);
 
-    // Each entry should be [name, value]
-    for (const entry of mapJSON) {
+    for (const entry of Object.entries(mapJSON)) {
       expect(entry.length).toBe(2);
       expect(entry[0]).toBeTypeOf("string");
-      expect(entry[1]).toBeTypeOf("object");
+      expect(entry[1]).toBeTypeOf("string");
     }
 
     // Verify JSON.stringify works as expected

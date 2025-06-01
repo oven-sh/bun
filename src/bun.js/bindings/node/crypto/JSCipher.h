@@ -119,4 +119,9 @@ private:
 
 void setupCipherClassStructure(JSC::LazyClassStructure::Initializer&);
 
+JSC_DECLARE_HOST_FUNCTION(jsPublicEncrypt);
+JSC_DECLARE_HOST_FUNCTION(jsPublicDecrypt);
+JSC_DECLARE_HOST_FUNCTION(jsPrivateEncrypt);
+JSC_DECLARE_HOST_FUNCTION(jsPrivateDecrypt);
+
 } // namespace Bun

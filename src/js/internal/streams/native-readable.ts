@@ -181,7 +181,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClos
     process.nextTick(() => {
       stream.push(null);
     });
-    return (chunk?.byteLength ?? 0 > 0) ? chunk : undefined;
+    return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
       adjustHighWaterMark(stream);

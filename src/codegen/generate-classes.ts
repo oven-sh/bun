@@ -1267,6 +1267,7 @@ function allCachedValues(obj: ClassDefinition) {
 }
 
 var extraIncludes = [];
+
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
 
@@ -1280,7 +1281,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     Object.keys(callbacks).length ||
     obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
+      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
@@ -1306,7 +1307,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                   return true;
               }
 
-              return visitor.containsOpaqueRoot(context);
+              return false;
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
@@ -1498,20 +1499,9 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
-
-template<typename Visitor>
-void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
-{
-    ${name}* thisObject = jsCast<${name}*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 

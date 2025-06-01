@@ -635,10 +635,28 @@ $toClass(Server, "Server", NetServer);
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-const DEFAULT_ECDH_CURVE = "auto",
-  // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
-  DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3";
+const DEFAULT_ECDH_CURVE = "auto";
+
+// Global TLS version variables that can be set by CLI flags
+// These will be accessed from the Zig side during initialization
+var global_tls_min_version: string = "TLSv1.2";
+var global_tls_max_version: string = "TLSv1.3";
+
+// Export these for Zig to access
+(globalThis as any).__BUN_TLS_MIN_VERSION = global_tls_min_version;
+(globalThis as any).__BUN_TLS_MAX_VERSION = global_tls_max_version;
+
+// Dynamic TLS version defaults based on CLI flags
+function getTLSDefaultMinVersion() {
+  return (globalThis as any).__BUN_TLS_MIN_VERSION || "TLSv1.2";
+}
+
+function getTLSDefaultMaxVersion() {
+  return (globalThis as any).__BUN_TLS_MAX_VERSION || "TLSv1.3";
+}
+
+const DEFAULT_MIN_VERSION = getTLSDefaultMinVersion();
+const DEFAULT_MAX_VERSION = getTLSDefaultMaxVersion();
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);

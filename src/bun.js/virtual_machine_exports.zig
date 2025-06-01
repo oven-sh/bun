@@ -155,6 +155,30 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
+export fn Bun__getTLSDefaultMinVersion() JSC.JSValue {
+    if (VirtualMachine.VMHolder.vm) |vm| {
+        const version = vm.getTLSDefaultMinVersion();
+        return JSC.ZigString.fromBytes(version).toValueGC(vm.global);
+    } else {
+        // VM not available yet, use global defaults
+        _ = VirtualMachine.global_tls_min_version orelse "TLSv1.2";
+        // Can't create JSValue without VM, return a simple string
+        return JSC.JSValue.jsUndefined();
+    }
+}
+
+export fn Bun__getTLSDefaultMaxVersion() JSC.JSValue {
+    if (VirtualMachine.VMHolder.vm) |vm| {
+        const version = vm.getTLSDefaultMaxVersion();
+        return JSC.ZigString.fromBytes(version).toValueGC(vm.global);
+    } else {
+        // VM not available yet, use global defaults
+        _ = VirtualMachine.global_tls_max_version orelse "TLSv1.3";
+        // Can't create JSValue without VM, return a simple string
+        return JSC.JSValue.jsUndefined();
+    }
+}
+
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());

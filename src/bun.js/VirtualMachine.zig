@@ -60,6 +60,8 @@ exit_handler: ExitHandler = .{},
 
 default_tls_reject_unauthorized: ?bool = null,
 default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
+default_tls_min_version: ?[]const u8 = null,
+default_tls_max_version: ?[]const u8 = null,
 
 /// Do not access this field directly!
 ///
@@ -259,6 +261,42 @@ pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
         this.default_verbose_fetch = .none;
         return .none;
     };
+}
+
+pub fn getTLSDefaultMinVersion(this: *const VirtualMachine) []const u8 {
+    return this.default_tls_min_version orelse global_tls_min_version orelse "TLSv1.2";
+}
+
+pub fn getTLSDefaultMaxVersion(this: *const VirtualMachine) []const u8 {
+    return this.default_tls_max_version orelse global_tls_max_version orelse "TLSv1.3";
+}
+
+pub fn setTLSDefaultMinVersion(version: []const u8) void {
+    global_tls_min_version = version;
+    if (VMHolder.vm) |vm| {
+        vm.default_tls_min_version = version;
+    }
+}
+
+pub fn setTLSDefaultMaxVersion(version: []const u8) void {
+    global_tls_max_version = version;
+    if (VMHolder.vm) |vm| {
+        vm.default_tls_max_version = version;
+    }
+}
+
+pub fn initializeTLSDefaults(this: *VirtualMachine) void {
+    // Apply global TLS defaults that were set during CLI parsing
+    if (global_tls_min_version) |version| {
+        this.default_tls_min_version = version;
+        // Also set JavaScript global variable
+        this.global.put("__BUN_TLS_MIN_VERSION", JSC.ZigString.fromBytes(version).toValueGC(this.global));
+    }
+    if (global_tls_max_version) |version| {
+        this.default_tls_max_version = version;
+        // Also set JavaScript global variable
+        this.global.put("__BUN_TLS_MAX_VERSION", JSC.ZigString.fromBytes(version).toValueGC(this.global));
+    }
 }
 
 pub const VMHolder = struct {
@@ -908,6 +946,9 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
+    // Initialize TLS defaults from CLI flags
+    vm.initializeTLSDefaults();
+
     return vm;
 }
 
@@ -1030,6 +1071,9 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+    // Initialize TLS defaults from CLI flags
+    vm.initializeTLSDefaults();
 
     return vm;
 }
@@ -1187,6 +1231,9 @@ pub fn initWorker(
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
     vm.transpiler.setAllocator(allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+    // Initialize TLS defaults from CLI flags
+    vm.initializeTLSDefaults();
 
     return vm;
 }
@@ -3566,3 +3613,7 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+
+// Global TLS default variables that can be set before VM creation
+var global_tls_min_version: ?[]const u8 = null;
+var global_tls_max_version: ?[]const u8 = null;

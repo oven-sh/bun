@@ -137,19 +137,22 @@ pub const MachoFile = struct {
         // We assume that the section is page-aligned, so we can calculate the number of new pages
         const num_of_new_pages = @divExact(size_diff, PAGE_SIZE);
 
-        // Since we're adding a new section, we also need to increase our CODE_SIGNATURE size to add the
-        // hashes for these pages.
-        const size_of_new_hashes = num_of_new_pages * HASH_SIZE;
-
-        // So, total increase in size is size of new section + size of hashes for the new pages added
-        // due to the section
-        try self.data.ensureUnusedCapacity(@intCast(size_diff + size_of_new_hashes));
-
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
                 @as(*align(1) macho.linkedit_data_command, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
             else
                 null;
+
+        var old_sig_size: usize = 0;
+        if (code_sign_cmd) |cs| {
+            old_sig_size = cs.datasize;
+        }
+
+        const new_sig_size = alignSize(old_sig_size + @as(usize, @intCast(num_of_new_pages * HASH_SIZE)), PAGE_SIZE);
+        const sig_increase = new_sig_size - old_sig_size;
+
+        // So, total increase in size is size of new section + size of the updated signature
+        try self.data.ensureUnusedCapacity(@intCast(size_diff + sig_increase));
         const linkedit_seg: *align(1) macho.segment_command_64 =
             if (linkedit_seg_idx) |idx|
                 @as(*align(1) macho.segment_command_64, @ptrCast(@constCast(@alignCast(&self.data.items[idx]))))
@@ -158,7 +161,7 @@ pub const MachoFile = struct {
 
         // Handle code signature specially
         var sig_data: ?[]u8 = null;
-        var sig_size: usize = 0;
+        var sig_size: usize = old_sig_size;
         defer if (sig_data) |sd| self.allocator.free(sd);
 
         const prev_data_slice = self.data.items[original_fileoff..];
@@ -182,7 +185,6 @@ pub const MachoFile = struct {
         @memset(padding_bytes, 0);
 
         if (code_sign_cmd) |cs| {
-            sig_size = cs.datasize;
             // Save existing signature if present
             sig_data = try self.allocator.alloc(u8, sig_size);
             @memcpy(sig_data.?, self.data.items[cs.dataoff..][0..sig_size]);
@@ -190,17 +192,16 @@ pub const MachoFile = struct {
 
         // Only update offsets if the size actually changed
         if (size_diff != 0) {
-            // New signature size is the old size plus the size of the hashes for the new pages
-            sig_size = sig_size + @as(usize, @intCast(size_of_new_hashes));
+            sig_size = new_sig_size;
 
             // We move the offsets of the LINKEDIT segment ahead by `size_diff`
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
             linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
 
             if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.getRuntimeFeatureFlag(.BUN_NO_CODESIGN_MACHO_BINARY)) {
-                // We also update the sizes of the LINKEDIT segment to account for the hashes we're adding
-                linkedit_seg.filesize += @as(usize, @intCast(size_of_new_hashes));
-                linkedit_seg.vmsize += @as(usize, @intCast(size_of_new_hashes));
+                // Update LINKEDIT size to include the new signature data
+                linkedit_seg.filesize += sig_increase;
+                linkedit_seg.vmsize += sig_increase;
 
                 // Finally, the vmsize of the segment should be page-aligned for an executable
                 linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize, PAGE_SIZE);

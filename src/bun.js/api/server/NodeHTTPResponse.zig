@@ -252,7 +252,7 @@ pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
 }
 
 pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame, thisValue: JSC.JSValue) bun.JSError!JSC.JSValue {
-    if (this.buffered_request_body_data_during_pause.len > 0) {
+    if (this.buffered_request_body_data_during_pause.cap > 0) {
         this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
     }
     if (!this.flags.request_has_completed) {

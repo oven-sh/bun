@@ -922,7 +922,7 @@ pub const FFI = struct {
         return ZigString.init(arraylist.items).toJS(global);
     }
 
-    pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
+    pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         if (is_callback_val) |is_callback| {
             if (is_callback.toBoolean()) {
@@ -968,7 +968,7 @@ pub const FFI = struct {
             strs.appendAssumeCapacity(bun.String.createUTF8(arraylist.items));
         }
 
-        const ret = bun.String.toJSArray(global, strs.items);
+        const ret = try bun.String.toJSArray(global, strs.items);
 
         for (symbols.keys()) |key| {
             allocator.free(@constCast(key));

@@ -37,7 +37,7 @@ pub fn myersDiff(
     // moot since BunStrings with non-zero reference counds should never be
     // dead.
     if (actual.length() == 0 and expected.length() == 0) {
-        return JSC.JSValue.createEmptyArray(global, 0);
+        return try JSC.JSValue.createEmptyArray(global, 0);
     }
 
     const actual_encoding = actual.encoding();
@@ -112,9 +112,9 @@ fn diffLines(
 }
 
 fn diffListToJS(comptime T: type, global: *JSC.JSGlobalObject, diff_list: MyersDiff.DiffList(T)) bun.JSError!JSC.JSValue {
-    var array = JSC.JSValue.createEmptyArray(global, diff_list.items.len);
+    var array = try JSC.JSValue.createEmptyArray(global, diff_list.items.len);
     for (diff_list.items, 0..) |*line, i| {
-        array.putIndex(global, @truncate(i), JSC.JSObject.createNullProto(line.*, global).toJS());
+        array.putIndex(global, @truncate(i), (try JSC.JSObject.createNullProto(line.*, global)).toJS());
     }
     return array;
 }

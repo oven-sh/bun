@@ -330,8 +330,8 @@ pub const UpgradedDuplex = struct {
         };
     }
 
-    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const array = JSC.JSValue.createEmptyArray(globalThis, 4);
+    pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+        const array = try JSC.JSValue.createEmptyArray(globalThis, 4);
         array.ensureStillAlive();
 
         {

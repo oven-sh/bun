@@ -5409,7 +5409,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
         const args = callFrame.arguments();
-        const array = JSValue.createEmptyArray(globalThis, args.len);
+        const array = try JSValue.createEmptyArray(globalThis, args.len);
         for (args, 0..) |arg, i| {
             array.putIndex(globalThis, @truncate(i), arg);
         }

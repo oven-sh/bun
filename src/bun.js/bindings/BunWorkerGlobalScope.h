@@ -49,8 +49,5 @@ public:
     MessagePortChannelProvider& messagePortChannelProvider();
 
     ScriptExecutionContext* m_context;
-
-private:
-    MessagePortChannelProviderImpl* m_messagePortChannelProvider;
 };
 }

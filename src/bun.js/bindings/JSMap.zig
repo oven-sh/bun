@@ -1,9 +1,7 @@
-const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSCell = @import("./JSCell.zig").JSCell;
 
 pub const JSMap = opaque {
     extern fn JSC__JSMap__create(*JSGlobalObject) JSValue;

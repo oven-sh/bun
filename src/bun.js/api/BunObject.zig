@@ -11,7 +11,7 @@ pub const BunObject = struct {
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
     pub const color = toJSCallback(bun.css.CssColor.jsFunctionColor);
-    pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
+    pub const connect = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "connect", false));
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
@@ -21,7 +21,7 @@ pub const BunObject = struct {
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
-    pub const listen = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "listen", false));
+    pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
     pub const openInEditor = toJSCallback(Bun.openInEditor);
@@ -29,15 +29,20 @@ pub const BunObject = struct {
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
     pub const serve = toJSCallback(Bun.serve);
-    pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
+    pub const sha = toJSCallback(host_fn.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const shrink = toJSCallback(Bun.shrink);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
-    pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
-    pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
-    pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
+    pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
+    pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
+    pub const udpSocket = toJSCallback(host_fn.wrapStaticMethod(api.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
+    pub const zstdCompressSync = toJSCallback(JSZstd.compressSync);
+    pub const zstdDecompressSync = toJSCallback(JSZstd.decompressSync);
+    pub const zstdCompress = toJSCallback(JSZstd.compress);
+    pub const zstdDecompress = toJSCallback(JSZstd.decompress);
+
     // --- Callbacks ---
 
     // --- Getters ---
@@ -71,6 +76,8 @@ pub const BunObject = struct {
     pub const unsafe = toJSGetter(Bun.getUnsafe);
     pub const S3Client = toJSGetter(Bun.getS3ClientConstructor);
     pub const s3 = toJSGetter(Bun.getS3DefaultClient);
+    pub const ValkeyClient = toJSGetter(Bun.getValkeyClientConstructor);
+    pub const valkey = toJSGetter(Bun.getValkeyDefaultClient);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -81,14 +88,14 @@ pub const BunObject = struct {
         return "BunObject_callback_" ++ baseName;
     }
 
-    const toJSCallback = JSC.toJSHostFunction;
+    const toJSCallback = JSC.toJSHostFn;
 
     const LazyPropertyCallback = fn (*JSC.JSGlobalObject, *JSC.JSObject) callconv(JSC.conv) JSValue;
 
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return @call(.always_inline, getter, .{ this, object });
+                return bun.jsc.toJSHostValue(this, getter(this, object));
             }
         }.callback;
     }
@@ -130,7 +137,8 @@ pub const BunObject = struct {
         @export(&BunObject.embeddedFiles, .{ .name = getterName("embeddedFiles") });
         @export(&BunObject.S3Client, .{ .name = getterName("S3Client") });
         @export(&BunObject.s3, .{ .name = getterName("s3") });
-
+        @export(&BunObject.ValkeyClient, .{ .name = getterName("ValkeyClient") });
+        @export(&BunObject.valkey, .{ .name = getterName("valkey") });
         // --- Getters --
 
         // -- Callbacks --
@@ -164,6 +172,10 @@ pub const BunObject = struct {
         @export(&BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(&BunObject.which, .{ .name = callbackName("which") });
         @export(&BunObject.write, .{ .name = callbackName("write") });
+        @export(&BunObject.zstdCompressSync, .{ .name = callbackName("zstdCompressSync") });
+        @export(&BunObject.zstdDecompressSync, .{ .name = callbackName("zstdDecompressSync") });
+        @export(&BunObject.zstdCompress, .{ .name = callbackName("zstdCompress") });
+        @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
         // -- Callbacks --
     }
 };
@@ -261,7 +273,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const arguments_ = callframe.arguments_old(2);
     const path_buf = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(path_buf);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         return globalThis.throw("which: expected 1 argument, got 0", .{});
@@ -361,7 +373,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
+    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -419,7 +431,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -451,7 +463,7 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -464,7 +476,7 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
-    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
     defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
@@ -590,7 +602,7 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
                 0,
             ).unwrap() catch break :use_resolved_path;
 
-            defer _ = bun.sys.close(fd);
+            defer fd.close();
             if (comptime Environment.isWindows) {
                 var wpath: bun.WPathBuffer = undefined;
                 const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
@@ -615,15 +627,15 @@ pub fn getMain(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
 }
 
 pub fn getArgv(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.Node.Process.getArgv(globalThis);
+    return node.process.getArgv(globalThis);
 }
 
 const Editor = @import("../../open.zig").Editor;
 
-pub fn openInEditor(globalThis: js.JSContextRef, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn openInEditor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
     const args = callframe.arguments_old(4);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
+    var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -772,7 +784,7 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!
 }
 
 fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JSError!JSC.JSValue {
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         return globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
@@ -813,7 +825,7 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
     );
 }
 
-fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
+fn doResolveWithArgs(ctx: *JSC.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -835,7 +847,7 @@ fn doResolveWithArgs(ctx: js.JSContextRef, specifier: bun.String, from: bun.Stri
     );
 
     if (!errorable.success) {
-        return ctx.throwValue(bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?).?.value());
+        return ctx.throwValue(bun.cast(JSC.C.JSValueRef, errorable.result.err.ptr.?).?.value());
     }
 
     if (query_string.len > 0) {
@@ -862,7 +874,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     const arguments = callframe.arguments_old(3);
     const value = doResolve(globalObject, arguments.slice()) catch {
         const err = globalObject.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -876,7 +888,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true, false) catch {
         const err = global.tryTakeException().?;
-        return JSC.JSPromise.rejectedPromiseValue(global, err);
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -887,11 +899,40 @@ export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: 
     defer specifier_str.deref();
 
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
 
     const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
+
+    return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
+}
+
+export fn Bun__resolveSyncWithPaths(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+    is_esm: bool,
+    is_user_require_resolve: bool,
+    paths_ptr: ?[*]const bun.String,
+    paths_len: usize,
+) JSC.JSValue {
+    const paths: []const bun.String = if (paths_len == 0) &.{} else paths_ptr.?[0..paths_len];
+
+    const specifier_str = specifier.toBunString(global) catch return .zero;
+    defer specifier_str.deref();
+
+    if (specifier_str.length() == 0) {
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+    }
+
+    const source_str = source.toBunString(global) catch return .zero;
+    defer source_str.deref();
+
+    const bun_vm = global.bunVM();
+    bun.assert(bun_vm.transpiler.resolver.custom_dir_paths == null);
+    bun_vm.transpiler.resolver.custom_dir_paths = paths;
+    defer bun_vm.transpiler.resolver.custom_dir_paths = null;
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true, is_user_require_resolve));
 }
@@ -905,7 +946,7 @@ export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue
     const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     if (specifier_str.length() == 0) {
-        return global.ERR_INVALID_ARG_VALUE("The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
+        return global.ERR(.INVALID_ARG_VALUE, "The argument 'id' must be a non-empty string. Received ''", .{}).throw() catch .zero;
     }
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true, is_user_require_resolve));
 }
@@ -967,7 +1008,7 @@ pub fn nanoseconds(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSErr
 pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();
     var config: JSC.API.ServerConfig = brk: {
-        var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
 
         try JSC.API.ServerConfig.fromJS(
@@ -989,8 +1030,10 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
         break :brk config;
     };
 
+    const vm = globalObject.bunVM();
+
     if (config.allow_hot) {
-        if (globalObject.bunVM().hotMap()) |hot| {
+        if (vm.hotMap()) |hot| {
             if (config.id.len == 0) {
                 config.id = config.computeID(globalObject.allocator());
             }
@@ -1048,7 +1091,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     }
                     const obj = server.toJS(globalObject);
                     if (route_list_object != .zero) {
-                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                        ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
                     server.js_value.set(globalObject, obj);
 
@@ -1057,6 +1100,16 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                             hot.insert(config.id, server);
                         }
                     }
+
+                    if (vm.debugger) |*debugger| {
+                        debugger.http_server_agent.notifyServerStarted(
+                            JSC.API.AnyServer.from(server),
+                        );
+                        debugger.http_server_agent.notifyServerRoutesUpdated(
+                            JSC.API.AnyServer.from(server),
+                        ) catch bun.outOfMemory();
+                    }
+
                     return obj;
                 },
             }
@@ -1141,7 +1194,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const arguments_ = callframe.arguments_old(2);
-    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+    var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
     var buf: bun.PathBuffer = undefined;
@@ -1208,11 +1261,11 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 }
 
 pub fn getTranspilerConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.JSTranspiler.getConstructor(globalThis);
+    return JSC.API.JSTranspiler.js.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.FileSystemRouter.getConstructor(globalThis);
+    return JSC.API.FileSystemRouter.js.getConstructor(globalThis);
 }
 
 pub fn getHashObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -1224,17 +1277,35 @@ pub fn getTOMLObject(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVa
 }
 
 pub fn getGlobConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.API.Glob.getConstructor(globalThis);
+    return JSC.API.Glob.js.getConstructor(globalThis);
 }
 pub fn getS3ClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
-    return JSC.WebCore.S3Client.getConstructor(globalThis);
+    return JSC.WebCore.S3Client.js.getConstructor(globalThis);
 }
+
 pub fn getS3DefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
 }
-pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+
+pub fn getValkeyDefaultClient(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    const valkey = JSC.API.Valkey.create(globalThis, &[_]JSValue{.undefined}) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return valkey.toJS(globalThis);
+}
+
+pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return JSC.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.JSError!JSC.JSValue {
     const vm = globalThis.bunVM();
-    const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
+    const graph = vm.standalone_module_graph orelse return try JSC.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
     var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
@@ -1249,7 +1320,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.J
     }
 
     var i: u32 = 0;
-    var array = JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
+    var array = try JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
     std.mem.sort(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
     for (sort_indices.items) |index| {
         const file = &unsorted_files[index];
@@ -1272,15 +1343,6 @@ pub fn getSemver(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue 
 pub fn getUnsafe(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
     return UnsafeObject.create(globalThis);
 }
-
-pub const HashObject = @import("./HashObject.zig");
-pub const UnsafeObject = @import("./UnsafeObject.zig");
-pub const TOMLObject = @import("./TOMLObject.zig");
-
-const Debugger = JSC.Debugger;
-
-pub const Timer = @import("./Timer.zig");
-pub const FFIObject = @import("./FFIObject.zig");
 
 pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
     if (str.length() == 0)
@@ -1661,35 +1723,314 @@ pub const JSZlib = struct {
     }
 };
 
-pub const Subprocess = @import("./bun/subprocess.zig");
+pub const JSZstd = struct {
+    export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        comptime assert(bun.use_mimalloc);
+        bun.Mimalloc.mi_free(ctx);
+    }
 
-const InternalTestingAPIs = struct {
-    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
-        const args = callframe.arguments_old(1);
-        if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
+    inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue } {
+        const arguments = callframe.arguments();
+        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const options_val: ?JSValue =
+            if (arguments.len > 1 and arguments[1].isObject())
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
+
+        if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
+            return .{ buffer, options_val };
         }
 
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-        defer code.deinit();
-        var buffer = MutableString.initEmpty(bun.default_allocator);
+        return globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
+    }
+
+    fn getLevel(globalThis: *JSGlobalObject, options_val: ?JSValue) bun.JSError!i32 {
+        if (options_val) |option_obj| {
+            if (try option_obj.get(globalThis, "level")) |level_val| {
+                const value = level_val.coerce(i32, globalThis);
+                if (globalThis.hasException()) return error.JSError;
+
+                if (value < 1 or value > 22) {
+                    return globalThis.throwInvalidArguments("Compression level must be between 1 and 22", .{});
+                }
+
+                return value;
+            }
+        }
+
+        return 3;
+    }
+
+    inline fn getOptionsAsync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!struct { JSC.Node.StringOrBuffer, ?JSValue, i32 } {
+        const arguments = callframe.arguments();
+        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
+        const options_val: ?JSValue =
+            if (arguments.len > 1 and arguments[1].isObject())
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
+
+        const level = try getLevel(globalThis, options_val);
+
+        const allow_string_object = true;
+        if (try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, buffer_value, true, allow_string_object)) |buffer| {
+            return .{ buffer, options_val, level };
+        }
+
+        return globalThis.throwInvalidArguments("Expected buffer to be a string or buffer", .{});
+    }
+
+    pub fn compressSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, const options_val = try getOptions(globalThis, callframe);
         defer buffer.deinit();
-        var writer = buffer.bufferedWriter();
-        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
-            .enable_colors = true,
-            .check_for_unhighlighted_write = false,
-        });
-        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
+
+        const level = try getLevel(globalThis, options_val);
+
+        const input = buffer.slice();
+        const allocator = bun.default_allocator;
+
+        // Calculate max compressed size
+        const max_size = bun.zstd.compressBound(input.len);
+        var output = try allocator.alloc(u8, max_size);
+
+        // Perform compression with context
+        const compressed_size = switch (bun.zstd.compress(output, input, level)) {
+            .success => |size| size,
+            .err => |err| {
+                allocator.free(output);
+                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
+            },
         };
 
-        writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting code");
+        // Resize to actual compressed size
+        if (compressed_size < output.len) {
+            output = try allocator.realloc(output, compressed_size);
+        }
+
+        return JSC.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+    }
+
+    pub fn decompressSync(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, _ = try getOptions(globalThis, callframe);
+        defer buffer.deinit();
+
+        const input = buffer.slice();
+        const allocator = bun.default_allocator;
+
+        // Try to get the decompressed size
+        const decompressed_size = bun.zstd.getDecompressedSize(input);
+
+        if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
+            // If size is unknown, we'll need to decompress in chunks
+            return globalThis.ERR(.ZSTD, "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large. If you run into this error with a valid input, please file an issue at https://github.com/oven-sh/bun/issues", .{}).throw();
+        }
+
+        // Allocate output buffer based on decompressed size
+        var output = try allocator.alloc(u8, decompressed_size);
+
+        // Perform decompression
+        const actual_size = switch (bun.zstd.decompress(output, input)) {
+            .success => |actual_size| actual_size,
+            .err => |err| {
+                allocator.free(output);
+                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
+            },
         };
 
-        return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
+        bun.debugAssert(actual_size <= output.len);
+
+        // mimalloc doesn't care about the self-reported size of the slice.
+        output.len = actual_size;
+
+        return JSC.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+    }
+
+    // --- Async versions ---
+
+    pub const ZstdJob = struct {
+        buffer: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
+        is_compress: bool = true,
+        level: i32 = 3,
+        task: JSC.WorkPoolTask = .{ .callback = &runTask },
+        promise: JSC.JSPromise.Strong = .{},
+        vm: *JSC.VirtualMachine,
+        output: []u8 = &[_]u8{},
+        error_message: ?[]const u8 = null,
+        any_task: JSC.AnyTask = undefined,
+        poll: Async.KeepAlive = .{},
+
+        pub const new = bun.TrivialNew(@This());
+
+        pub fn runTask(task: *JSC.WorkPoolTask) void {
+            const job: *ZstdJob = @fieldParentPtr("task", task);
+            defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+
+            const input = job.buffer.slice();
+            const allocator = bun.default_allocator;
+
+            if (job.is_compress) {
+                // Compression path
+                // Calculate max compressed size
+                const max_size = bun.zstd.compressBound(input.len);
+                job.output = allocator.alloc(u8, max_size) catch {
+                    job.error_message = "Out of memory";
+                    return;
+                };
+
+                // Perform compression
+                job.output = switch (bun.zstd.compress(job.output, input, job.level)) {
+                    .success => |size| blk: {
+                        // Resize to actual compressed size
+                        if (size < job.output.len) {
+                            break :blk allocator.realloc(job.output, size) catch {
+                                job.error_message = "Out of memory";
+                                return;
+                            };
+                        }
+                        break :blk job.output;
+                    },
+                    .err => |err| {
+                        allocator.free(job.output);
+                        job.output = &[_]u8{};
+                        job.error_message = err;
+                        return;
+                    },
+                };
+            } else {
+                // Decompression path
+                // Try to get the decompressed size
+                const decompressed_size = bun.zstd.getDecompressedSize(input);
+
+                if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
+                    job.error_message = "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large";
+                    return;
+                }
+
+                // Allocate output buffer based on decompressed size
+                job.output = allocator.alloc(u8, decompressed_size) catch {
+                    job.error_message = "Out of memory";
+                    return;
+                };
+
+                // Perform decompression
+                switch (bun.zstd.decompress(job.output, input)) {
+                    .success => |actual_size| {
+                        if (actual_size < job.output.len) {
+                            job.output.len = actual_size;
+                        }
+                    },
+                    .err => |err| {
+                        allocator.free(job.output);
+                        job.output = &[_]u8{};
+                        job.error_message = err;
+                        return;
+                    },
+                }
+            }
+        }
+
+        pub fn runFromJS(this: *ZstdJob) void {
+            defer this.deinit();
+            if (this.vm.isShuttingDown()) {
+                return;
+            }
+
+            const globalThis = this.vm.global;
+            const promise = this.promise.swap();
+
+            if (this.error_message) |err_msg| {
+                promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
+                return;
+            }
+
+            const output_slice = this.output;
+            const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+            if (globalThis.hasException()) {
+                promise.reject(globalThis, error.JSError);
+                return;
+            }
+            if (buffer_value == .zero) {
+                promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
+                return;
+            }
+
+            this.output = &[_]u8{};
+            promise.resolve(globalThis, buffer_value);
+        }
+
+        pub fn deinit(this: *ZstdJob) void {
+            this.poll.unref(this.vm);
+            this.buffer.deinitAndUnprotect();
+            this.promise.deinit();
+            bun.default_allocator.free(this.output);
+            bun.destroy(this);
+        }
+
+        pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, buffer: JSC.Node.StringOrBuffer, is_compress: bool, level: i32) *ZstdJob {
+            var job = ZstdJob.new(.{
+                .buffer = buffer,
+                .is_compress = is_compress,
+                .level = level,
+                .vm = vm,
+                .any_task = undefined,
+            });
+
+            job.promise = JSC.JSPromise.Strong.init(globalThis);
+            job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+            job.poll.ref(vm);
+            JSC.WorkPool.schedule(&job.task);
+
+            return job;
+        }
+    };
+
+    pub fn compress(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, _, const level = try getOptionsAsync(globalThis, callframe);
+
+        const vm = globalThis.bunVM();
+        var job = ZstdJob.create(vm, globalThis, buffer, true, level);
+        return job.promise.value();
+    }
+
+    pub fn decompress(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const buffer, _, _ = try getOptionsAsync(globalThis, callframe);
+
+        const vm = globalThis.bunVM();
+        var job = ZstdJob.create(vm, globalThis, buffer, false, 0); // level is ignored for decompression
+        return job.promise.value();
     }
 };
+
+// const InternalTestingAPIs = struct {
+//     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+//         const args = callframe.arguments_old(1);
+//         if (args.len < 1) {
+//             globalThis.throwNotEnoughArguments("code", 1, 0);
+//         }
+
+//         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
+//         defer code.deinit();
+//         var buffer = MutableString.initEmpty(bun.default_allocator);
+//         defer buffer.deinit();
+//         var writer = buffer.bufferedWriter();
+//         const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+//             .enable_colors = true,
+//             .check_for_unhighlighted_write = false,
+//         });
+//         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
+
+//         writer.flush() catch |err| {
+//             return globalThis.throwError(err, "Error formatting code");
+//         };
+
+//         return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
+//     }
+// };
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
@@ -1700,82 +2041,39 @@ comptime {
 const assert = bun.assert;
 
 const conv = std.builtin.CallingConvention.Unspecified;
-const S3File = @import("../webcore/S3File.zig");
 const Bun = @This();
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
-const uv = bun.windows.libuv;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const Fs = @import("../../fs.zig");
-const Resolver = @import("../../resolver/resolver.zig");
-const ast = @import("../../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
-const logger = bun.logger;
-const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
-const js_printer = bun.js_printer;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../../node_fallbacks.zig");
-const ImportKind = ast.ImportKind;
-const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const Router = @import("./filesystem_router.zig");
-const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.transpiler.ParseResult;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
-const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("../base.zig").JSError;
-
-const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
-const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const ExceptionValueRef = bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
-const Node = bun.JSC.Node;
-const ZigException = bun.JSC.ZigException;
-const ZigStackTrace = bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = bun.JSC.ResolvedSource;
+const api = bun.api;
+const node = bun.api.node;
+const host_fn = bun.jsc.host_fn;
 const JSPromise = bun.JSC.JSPromise;
-const JSInternalPromise = bun.JSC.JSInternalPromise;
-const JSModuleLoader = bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = bun.JSC.ErrorableZigString;
-const VM = bun.JSC.VM;
-const JSFunction = bun.JSC.JSFunction;
-const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = bun.JSC.API.JSTranspiler;
 const JSBundler = bun.JSC.API.JSBundler;
 const VirtualMachine = JSC.VirtualMachine;
-const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
-const Shell = @import("../../shell/shell.zig");
+
+const HashObject = bun.api.HashObject;
+const UnsafeObject = bun.api.UnsafeObject;
+const TOMLObject = bun.api.TOMLObject;
+const FFIObject = bun.api.FFIObject;

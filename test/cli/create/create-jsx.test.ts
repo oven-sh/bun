@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles as tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {

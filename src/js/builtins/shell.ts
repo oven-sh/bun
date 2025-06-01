@@ -1,10 +1,14 @@
-import type { ShellOutput } from "bun";
+export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
+  const createShellInterpreter = createShellInterpreter_ as (
+    resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
+    reject: (code: number, stdout: Buffer, stderr: Buffer) => void,
+    args: $ZigGeneratedClasses.ParsedShellScript,
+  ) => $ZigGeneratedClasses.ShellInterpreter;
+  const createParsedShellScript = createParsedShellScript_ as (
+    raw: string,
+    args: string[],
+  ) => $ZigGeneratedClasses.ParsedShellScript;
 
-type ShellInterpreter = any;
-type ParsedShellScript = any;
-type Resolve = (value: ShellOutput) => void;
-
-export function createBunShellTemplateFunction(createShellInterpreter, createParsedShellScript) {
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
   }
@@ -99,18 +103,14 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     }
   }
 
-  function autoStartShell(shell) {
-    return shell.run();
-  }
-
   class ShellPromise extends Promise<ShellOutput> {
-    #args: ParsedShellScript | undefined = undefined;
+    #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
-    #resolve: Function;
-    #reject: Function;
+    #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
 
-    constructor(args: ParsedShellScript, throws: boolean) {
+    constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
@@ -151,7 +151,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
         newCwd = defaultCwd;
       }
-      this.#args.setCwd(newCwd);
+      this.#args!.setCwd(newCwd);
       return this;
     }
 
@@ -161,7 +161,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
         newEnv = defaultEnv;
       }
 
-      this.#args.setEnv(newEnv);
+      this.#args!.setEnv(newEnv);
       return this;
     }
 
@@ -169,16 +169,15 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args);
+        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
         this.#args = undefined;
         interp.run();
-        interp = undefined;
       }
     }
 
     #quiet(): this {
       this.#throwIfRunning();
-      this.#args.setQuiet();
+      this.#args!.setQuiet();
       return this;
     }
 

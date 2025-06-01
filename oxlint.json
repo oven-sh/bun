@@ -1,10 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/refs/heads/main/npm/oxlint/configuration_schema.json",
   "categories": {
-    "correctness": "warn" // TODO: gradually fix bugs and turn this to error
+    "correctness": "error"
   },
   "rules": {
-    "const-comparisons": "off", // TODO: there's a bug when comparing private identifiers. Re-enable once it's fixed.
+    "const-comparisons": "error",
     "no-cond-assign": "error",
     "no-const-assign": "error",
     "no-debugger": "error",
@@ -13,12 +13,35 @@
     "no-empty-pattern": "error",
     "import/no-duplicates": "error",
 
-    "no-useless-escape": "off" // there's a lot of these. Should be fixed eventually.
+    "no-control-regex": "off",
+
+    "no-useless-escape": "off",
+    "no-this-alias": "off", // many intentional this aliases
+    "triple-slash-reference": "off", // many intentional triple slash references
+
+    // This rule is dumb.
+    // Array.from is MUCH slower than new Array(size).
+    "no-new-array": "off",
+
+    // We have custom thenables. This is not a bug.
+    "no-thenable": "off",
+
+    "no-undef-init": "error",
+
+    // We use this in some cases. The ordering is deliberate.
+    "no-unsafe-finally": "off",
+
+    // We use !!$debug to check if the debugger is enabled.
+    // Boolean() is also generally slower than !!.
+    "no-extra-boolean-cast": "off",
+
+    // Eslint is not a type checker.
+    "no-throw-literal": "off"
   },
   "ignorePatterns": [
     "vendor",
     "build",
-    "test/snapshots/**",
+    "bench",
     "bench/react-hello-world/*.js",
     "bun.lock",
 
@@ -32,8 +55,13 @@
     "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
     "test/js/node/module/extensions-fixture", // these files are not meant to be linted
     "test/cli/run/module-type-fixture",
-    "test/bundler/transpiler/with-statement-works.js" // parser doesn't allow `with` statement
+    "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
+
+    // TODO: fix these
+    "src/js/node/http2.ts",
+    "src/js/node/http.ts"
   ],
+
   "overrides": [
     {
       "files": ["test/**", "examples/**", "packages/bun-internal/test/runners/**"],

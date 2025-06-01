@@ -9,7 +9,7 @@ pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSVa
     }
 }
 
-pub const dom_call = JSC.DOMCall("FFI", @This(), "ptr", JSC.DOMEffect.forRead(.TypedArrayProperties));
+pub const dom_call = DOMCall("FFI", @This(), "ptr", DOMEffect.forRead(.TypedArrayProperties));
 
 pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
@@ -28,26 +28,26 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub const Reader = struct {
-    pub const DOMCalls = .{
-        .u8 = JSC.DOMCall("Reader", @This(), "u8", JSC.DOMEffect.forRead(.World)),
-        .u16 = JSC.DOMCall("Reader", @This(), "u16", JSC.DOMEffect.forRead(.World)),
-        .u32 = JSC.DOMCall("Reader", @This(), "u32", JSC.DOMEffect.forRead(.World)),
-        .ptr = JSC.DOMCall("Reader", @This(), "ptr", JSC.DOMEffect.forRead(.World)),
-        .i8 = JSC.DOMCall("Reader", @This(), "i8", JSC.DOMEffect.forRead(.World)),
-        .i16 = JSC.DOMCall("Reader", @This(), "i16", JSC.DOMEffect.forRead(.World)),
-        .i32 = JSC.DOMCall("Reader", @This(), "i32", JSC.DOMEffect.forRead(.World)),
-        .i64 = JSC.DOMCall("Reader", @This(), "i64", JSC.DOMEffect.forRead(.World)),
-        .u64 = JSC.DOMCall("Reader", @This(), "u64", JSC.DOMEffect.forRead(.World)),
-        .intptr = JSC.DOMCall("Reader", @This(), "intptr", JSC.DOMEffect.forRead(.World)),
-        .f32 = JSC.DOMCall("Reader", @This(), "f32", JSC.DOMEffect.forRead(.World)),
-        .f64 = JSC.DOMCall("Reader", @This(), "f64", JSC.DOMEffect.forRead(.World)),
+    pub const dom_calls = .{
+        .u8 = DOMCall("Reader", @This(), "u8", DOMEffect.forRead(.World)),
+        .u16 = DOMCall("Reader", @This(), "u16", DOMEffect.forRead(.World)),
+        .u32 = DOMCall("Reader", @This(), "u32", DOMEffect.forRead(.World)),
+        .ptr = DOMCall("Reader", @This(), "ptr", DOMEffect.forRead(.World)),
+        .i8 = DOMCall("Reader", @This(), "i8", DOMEffect.forRead(.World)),
+        .i16 = DOMCall("Reader", @This(), "i16", DOMEffect.forRead(.World)),
+        .i32 = DOMCall("Reader", @This(), "i32", DOMEffect.forRead(.World)),
+        .i64 = DOMCall("Reader", @This(), "i64", DOMEffect.forRead(.World)),
+        .u64 = DOMCall("Reader", @This(), "u64", DOMEffect.forRead(.World)),
+        .intptr = DOMCall("Reader", @This(), "intptr", DOMEffect.forRead(.World)),
+        .f32 = DOMCall("Reader", @This(), "f32", DOMEffect.forRead(.World)),
+        .f64 = DOMCall("Reader", @This(), "f64", DOMEffect.forRead(.World)),
     };
 
     pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(@TypeOf(Reader.DOMCalls)).len);
+        const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(@TypeOf(Reader.dom_calls)).len);
 
-        inline for (comptime std.meta.fieldNames(@TypeOf(Reader.DOMCalls))) |field| {
-            @field(Reader.DOMCalls, field).put(globalThis, obj);
+        inline for (comptime std.meta.fieldNames(@TypeOf(Reader.dom_calls))) |field| {
+            @field(Reader.dom_calls, field).put(globalThis, obj);
         }
 
         return obj;
@@ -358,11 +358,11 @@ fn ptr_(
     }
 
     const array_buffer = value.asArrayBuffer(globalThis) orelse {
-        return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis);
+        return globalThis.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())});
     };
 
     if (array_buffer.len == 0) {
-        return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis);
+        return globalThis.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{});
     }
 
     var addr: usize = @intFromPtr(array_buffer.ptr);
@@ -372,7 +372,7 @@ fn ptr_(
     if (byteOffset) |off| {
         if (!off.isEmptyOrUndefinedOrNull()) {
             if (!off.isNumber()) {
-                return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis);
+                return globalThis.toInvalidArguments("Expected number for byteOffset", .{});
             }
         }
 
@@ -384,20 +384,20 @@ fn ptr_(
         }
 
         if (addr > @intFromPtr(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
-            return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis);
+            return globalThis.toInvalidArguments("byteOffset out of bounds", .{});
         }
     }
 
     if (addr > max_addressable_memory) {
-        return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
+        return globalThis.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{});
     }
 
     if (addr == 0) {
-        return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis);
+        return globalThis.toInvalidArguments("Pointer must not be 0", .{});
     }
 
     if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-        return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis);
+        return globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{});
     }
 
     if (comptime Environment.allow_assert) {
@@ -414,16 +414,16 @@ const ValueOrError = union(enum) {
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
     if (!value.isNumber()) {
-        return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
     const num = value.asPtrAddress();
     if (num == 0) {
-        return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
     }
 
     // if (!std.math.isFinite(num)) {
-    //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
+    //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
     // }
 
     var addr = @as(usize, @bitCast(num));
@@ -438,40 +438,40 @@ pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSV
             }
 
             if (addr == 0) {
-                return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}) };
             }
 
             if (!std.math.isFinite(byte_off.asNumber())) {
-                return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
             }
         } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
             // do nothing
         } else {
-            return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis) };
+            return .{ .err = globalThis.toInvalidArguments("Expected number for byteOffset", .{}) };
         }
     }
 
     if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-        return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis) };
+        return .{ .err = globalThis.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}) };
     }
 
     if (byteLength) |valueLength| {
         if (!valueLength.isEmptyOrUndefinedOrNull()) {
             if (!valueLength.isNumber()) {
-                return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be a number.", .{}) };
             }
 
             if (valueLength.asNumber() == 0.0) {
-                return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}) };
             }
 
             const length_i = valueLength.toInt64();
             if (length_i < 0) {
-                return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}) };
             }
 
             if (length_i > max_addressable_memory) {
-                return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
+                return .{ .err = globalThis.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}) };
             }
 
             const length = @as(usize, @intCast(length_i));
@@ -520,17 +520,17 @@ pub fn toArrayBuffer(
                         if (getCPtr(ctx_value)) |ctx_ptr| {
                             ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                         } else if (!ctx_value.isUndefinedOrNull()) {
-                            return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            return globalThis.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
                         }
                     }
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
                     callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
@@ -562,17 +562,17 @@ pub fn toBuffer(
                         if (getCPtr(ctx_value)) |ctx_ptr| {
                             ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                         } else if (!ctx_value.isEmptyOrUndefinedOrNull()) {
-                            return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            return globalThis.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{});
                         }
                     }
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             } else if (finalizationCtxOrPtr) |callback_value| {
                 if (getCPtr(callback_value)) |callback_ptr| {
                     callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                 } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
-                    return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    return globalThis.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{});
                 }
             }
 
@@ -609,18 +609,14 @@ pub fn getter(
 }
 
 const fields = .{
-    .viewSource = JSC.wrapStaticMethod(
-        JSC.FFI,
-        "print",
-        false,
-    ),
-    .dlopen = JSC.wrapStaticMethod(JSC.FFI, "open", false),
-    .callback = JSC.wrapStaticMethod(JSC.FFI, "callback", false),
-    .linkSymbols = JSC.wrapStaticMethod(JSC.FFI, "linkSymbols", false),
-    .toBuffer = JSC.wrapStaticMethod(@This(), "toBuffer", false),
-    .toArrayBuffer = JSC.wrapStaticMethod(@This(), "toArrayBuffer", false),
-    .closeCallback = JSC.wrapStaticMethod(JSC.FFI, "closeCallback", false),
-    .CString = JSC.wrapStaticMethod(Bun.FFIObject, "newCString", false),
+    .viewSource = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "print", false),
+    .dlopen = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "open", false),
+    .callback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "callback", false),
+    .linkSymbols = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "linkSymbols", false),
+    .toBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toBuffer", false),
+    .toArrayBuffer = JSC.host_fn.wrapStaticMethod(@This(), "toArrayBuffer", false),
+    .closeCallback = JSC.host_fn.wrapStaticMethod(bun.api.FFI, "closeCallback", false),
+    .CString = JSC.host_fn.wrapStaticMethod(bun.api.FFIObject, "newCString", false),
 };
 const max_addressable_memory = std.math.maxInt(u56);
 
@@ -628,7 +624,9 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
-const bun = @import("root").bun;
+const DOMCall = JSC.host_fn.DOMCall;
+const DOMEffect = JSC.host_fn.DOMEffect;
+const bun = @import("bun");
 const FFIObject = @This();
 const Bun = JSC.API.Bun;
 

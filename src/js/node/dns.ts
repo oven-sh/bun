@@ -1,7 +1,7 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
-const { isIP } = require("./net");
+const { isIP } = require("node:net");
 const {
   validateFunction,
   validateArray,
@@ -302,22 +302,28 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns.lookup(hostname, options).then(res => {
-    throwIfEmpty(res);
+  dns
+    .lookup(hostname, options)
+    .then(res => {
+      throwIfEmpty(res);
 
-    if (options.order == "ipv4first") {
-      res.sort((a, b) => a.family - b.family);
-    } else if (options.order == "ipv6first") {
-      res.sort((a, b) => b.family - a.family);
-    }
+      if (options.order == "ipv4first") {
+        res.sort((a, b) => a.family - b.family);
+      } else if (options.order == "ipv6first") {
+        res.sort((a, b) => b.family - a.family);
+      }
 
-    if (options?.all) {
-      callback(null, res.map(mapLookupAll));
-    } else {
-      const [{ address, family }] = res;
-      callback(null, address, family);
-    }
-  }, callback);
+      if (options?.all) {
+        callback(null, res.map(mapLookupAll));
+      } else {
+        const [{ address, family }] = res;
+        callback(null, address, family);
+      }
+    })
+    .catch(err => {
+      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      callback(err, undefined, undefined);
+    });
 }
 
 function lookupService(address, port, callback) {
@@ -639,9 +645,7 @@ var InternalResolver = class Resolver {
 function Resolver(options) {
   return new InternalResolver(options);
 }
-Resolver.prototype = {};
-Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
-Object.setPrototypeOf(Resolver, InternalResolver);
+$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,

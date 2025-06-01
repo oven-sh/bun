@@ -56,12 +56,12 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     return function;
 }
 
-fn hashWrap(comptime Hasher_: anytype) JSC.JSHostZigFunction {
+fn hashWrap(comptime Hasher_: anytype) JSC.JSHostFnZig {
     return struct {
         const Hasher = Hasher_;
         pub fn hash(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(2).slice();
-            var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+            var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
             defer args.deinit();
 
             var input: []const u8 = "";
@@ -138,7 +138,6 @@ const HashObject = @This();
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const JSObject = JSC.JSObject;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ZigString = JSC.ZigString;

@@ -16,11 +16,15 @@ ignore_bom: bool = false,
 fatal: bool = false,
 encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-pub usingnamespace bun.New(TextDecoder);
-pub usingnamespace JSC.Codegen.JSTextDecoder;
+pub const js = JSC.Codegen.JSTextDecoder;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+pub const new = bun.TrivialNew(TextDecoder);
 
 pub fn finalize(this: *TextDecoder) void {
-    this.destroy();
+    bun.destroy(this);
 }
 
 pub fn getIgnoreBOM(
@@ -41,7 +45,7 @@ pub fn getEncoding(
     this: *TextDecoder,
     globalThis: *JSC.JSGlobalObject,
 ) JSC.JSValue {
-    return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
+    return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
 const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -166,7 +170,7 @@ pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *J
 
     const stream = stream: {
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].fastGet(globalThis, .stream)) |stream_value| {
+            if (try arguments[1].fastGet(globalThis, .stream)) |stream_value| {
                 const stream_bool = stream_value.coerce(bool, globalThis);
                 if (globalThis.hasException()) {
                     return .zero;
@@ -227,7 +231,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
                     if (deinit) bun.default_allocator.free(input);
                     if (comptime fail_if_invalid) {
                         if (err == error.InvalidByteSequence) {
-                            return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
+                            return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "Invalid byte sequence", .{}).throw();
                         }
                     }
 
@@ -266,63 +270,50 @@ fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice
 
             if (saw_error and this.fatal) {
                 decoded.deinit(bun.default_allocator);
-                return globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
+                return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
             }
 
             var output = bun.String.fromUTF16(decoded.items);
             return output.toJS(globalThis);
         },
-        else => {
-            return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
-        },
     }
 }
 
 pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*TextDecoder {
-    var args_ = callframe.arguments_old(2);
-    var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
+    const encoding_value, const options_value = callframe.argumentsAsArray(2);
 
     var decoder = TextDecoder{};
 
-    if (arguments.len > 0) {
-        // encoding
-        if (arguments[0].isString()) {
-            var str = try arguments[0].toSlice(globalThis, bun.default_allocator);
-            defer if (str.isAllocated()) str.deinit();
+    if (encoding_value.isString()) {
+        var str = try encoding_value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-            if (EncodingLabel.which(str.slice())) |label| {
-                decoder.encoding = label;
-            } else {
-                return globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
-            }
-        } else if (arguments[0].isUndefined()) {
-            // default to utf-8
-            decoder.encoding = EncodingLabel.@"UTF-8";
+        if (EncodingLabel.which(str.slice())) |label| {
+            decoder.encoding = label;
         } else {
-            return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+            return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
+        }
+    } else if (encoding_value.isUndefined()) {
+        // default to utf-8
+        decoder.encoding = EncodingLabel.@"UTF-8";
+    } else {
+        return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+    }
+
+    if (!options_value.isUndefined()) {
+        if (!options_value.isObject()) {
+            return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
         }
 
-        if (arguments.len >= 2) {
-            const options = arguments[1];
+        if (try options_value.get(globalThis, "fatal")) |fatal| {
+            decoder.fatal = fatal.toBoolean();
+        }
 
-            if (!options.isObject()) {
-                return globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
-            }
-
-            if (try options.get(globalThis, "fatal")) |fatal| {
-                if (fatal.isBoolean()) {
-                    decoder.fatal = fatal.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
-                }
-            }
-
-            if (try options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
-                if (ignoreBOM.isBoolean()) {
-                    decoder.ignore_bom = ignoreBOM.asBoolean();
-                } else {
-                    return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
-                }
+        if (try options_value.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+            if (ignoreBOM.isBoolean()) {
+                decoder.ignore_bom = ignoreBOM.asBoolean();
+            } else {
+                return globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
             }
         }
     }
@@ -333,18 +324,12 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 const TextDecoder = @This();
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const Output = bun.Output;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
-const string = bun.string;
-const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = JSC.ArrayBuffer;
 const JSUint8Array = JSC.JSUint8Array;
 const ZigString = JSC.ZigString;
-const JSInternalPromise = JSC.JSInternalPromise;
-const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const EncodingLabel = JSC.WebCore.EncodingLabel;

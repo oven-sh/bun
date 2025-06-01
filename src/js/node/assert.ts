@@ -23,7 +23,17 @@
 
 const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
-const { isKeyObject, isPromise, isRegExp, isMap, isSet, isDate, isWeakSet, isWeakMap } = require("node:util/types");
+const {
+  isKeyObject,
+  isPromise,
+  isRegExp,
+  isMap,
+  isSet,
+  isDate,
+  isWeakSet,
+  isWeakMap,
+  isAnyArrayBuffer,
+} = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
 
@@ -32,6 +42,7 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayBufferIsView = ArrayBuffer.isView;
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectIs = Object.is;
@@ -383,6 +394,16 @@ function compareBranch(actual, expected, comparedObjects?) {
     return Bun.deepEquals(actual, expected, true);
   }
 
+  // Check for ArrayBuffer object equality
+  if (
+    ArrayBufferIsView(actual) ||
+    isAnyArrayBuffer(actual) ||
+    ArrayBufferIsView(expected) ||
+    isAnyArrayBuffer(expected)
+  ) {
+    return Bun.deepEquals(actual, expected, true);
+  }
+
   for (const type of typesToCallDeepStrictEqualWith) {
     if (type(actual) || type(expected)) {
       return isDeepStrictEqual(actual, expected);
@@ -693,7 +714,7 @@ async function waitForActual(promiseFn) {
   } else if (checkIsPromise(promiseFn)) {
     resultPromise = promiseFn;
   } else {
-    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["Function", "Promise"], promiseFn);
+    throw $ERR_INVALID_ARG_TYPE("promiseFn", ["function", "an instance of Promise"], promiseFn);
   }
 
   try {

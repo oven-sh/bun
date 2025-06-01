@@ -317,3 +317,21 @@ clearInterval(1);
 clearTimeout(1);
 setImmediate(() => {});
 clearImmediate(1);
+
+const err = new Error("test");
+err.cause = "asdf";
+err.cause = new Error("asdf");
+err.cause = new RangeError("asdf");
+err.cause = new TypeError("asdf");
+err.cause = new URIError("asdf");
+
+expectType<unknown>(err.cause);
+expectType<typeof Error>().is<ErrorConstructor>();
+
+new Error("asdf", {
+  cause: "asdf",
+});
+
+new Error("asdf", {
+  cause: new Error("asdf"),
+});

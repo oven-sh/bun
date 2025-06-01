@@ -513,20 +513,12 @@ let enumify = f =>
       .replace(/(^|-)([a-z])/g, (_, a, x) => (a === "-" ? "_" + x : x)),
   );
 
-let allBrowsers = Object.keys(browsers)
-  .filter(b => !(b in BROWSER_MAPPING))
-  .sort();
-let browsersZig = `pub const Browsers = struct {
-  ${allBrowsers.join(": ?u32 = null,\n")}: ?u32 = null,
-    pub usingnamespace BrowsersImpl(@This());
-}`;
 let field_len = 0;
 let flagsZig = `pub const Features = packed struct(u32) {
     ${flags
       .map((flag, i) => {
         if (Array.isArray(flag)) {
-          // return `const ${flag[0]} = ${flag[1].map(f => `Self::${f}.bits()`).join(" | ")};`;
-          return `pub const ${flag[0]} = Features.fromNames(&.{${flag[1].map(f => `"${f}"`).join(", ")}});`;
+          return `pub const ${flag[0]}: @This() = .{${flag[1].map(f => `.${f} = true,`).join("")}};`;
         } else {
           field_len++;
           return `${flag}: bool = false,`;
@@ -541,14 +533,10 @@ let flagsZig = `pub const Features = packed struct(u32) {
         return 0;
       })
       .join("\n    ")}
-
-      pub usingnamespace css.Bitflags(@This());
-      pub usingnamespace FeaturesImpl(@This());
   }`;
 let targets = fs
   .readFileSync("src/css/targets.zig", "utf8")
-  .replace(/pub const Browsers = struct \{((?:.|\n)+?)\}/, browsersZig)
-  .replace(/pub const Features = packed struct\(u32\) \{((?:.|\n)+?)\}/, flagsZig);
+  .replace(/pub const Features = packed struct\(u32\) \{((?:.|\n)+?)\n\}/, flagsZig);
 
 console.log("TARGETS", targets);
 fs.writeFileSync("src/css/targets.zig", targets);

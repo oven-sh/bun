@@ -41,8 +41,11 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
-// This is a mix of bun's builtin module names and also the ones reported by
-// node v20.4.0
+// This is a list of builtin module names that do not have the node prefix. It
+// also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
+// The reason for overstuffing this list is so that uses that use these as the
+// 'external' option to a bundler will properly exclude things like 'ws' which
+// only work with Bun's native 'ws' implementation and not the JS one on NPM.
 static constexpr ASCIILiteral builtinModuleNames[] = {
     "_http_agent"_s,
     "_http_client"_s,
@@ -88,7 +91,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
-    "node:test"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -409,16 +411,9 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
     return true;
 }
 
-extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);
-
-struct Parent {
-    JSArray* paths;
-    JSString* filename;
-};
-
-Parent getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
+PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
 {
-    Parent value { nullptr, nullptr };
+    PathResolveModule value { nullptr, nullptr, false };
 
     if (!maybe_parent) {
         return value;
@@ -461,8 +456,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
         return JSC::JSValue::encode(JSC::jsNull());
     }
 
-    auto parent = getParent(vm, globalObject, callFrame->argument(1));
+    PathResolveModule parent = getParent(vm, globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resolveLookupPaths(globalObject, request, parent)));
+}
+
+JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String request, PathResolveModule parent)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Check for node modules paths.
     if (request.characterAt(0) != '.' || (request.length() > 1 && request.characterAt(1) != '.' && request.characterAt(1) != '/' &&
@@ -472,16 +474,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
             true
 #endif
             )) {
-        auto array = JSC::constructArray(
-            globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
         if (parent.paths) {
+            auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
                 array->push(globalObject, path);
             }
+            RELEASE_AND_RETURN(scope, array);
+        } else if (parent.pathsArrayLazy && parent.filename) {
+            auto filenameValue = parent.filename->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto filename = Bun::toString(filenameValue);
+            auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
+            RELEASE_AND_RETURN(scope, paths);
+        } else {
+            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, array);
         }
-        return JSValue::encode(array);
     }
 
     JSValue dirname;
@@ -499,9 +511,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     }
 
     JSValue values[] = { dirname };
-    auto array = JSC::constructArray(
-        globalObject, (ArrayAllocationProfile*)nullptr, values, 1);
-    RELEASE_AND_RETURN(scope, JSValue::encode(array));
+    auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, values, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, array);
 }
 
 extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
@@ -703,11 +715,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -840,8 +847,8 @@ static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 _cache                  getModuleCacheObject              PropertyCallback
 _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
-_findPath                jsFunctionFindPath                Function 3
-_initPaths              jsFunctionInitPaths               Function 0
+_findPath                jsFunctionFindPath               Function 3
+_initPaths              JSBuiltin                         Function|Builtin 0
 _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback
@@ -1030,11 +1037,11 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->getIfPropertyExists(globalObject, property);
 
-        if (UNLIKELY(catchScope.exception())) {
+        if (catchScope.exception()) [[unlikely]] {
             value = {};
             catchScope.clearException();
         }
-        if (UNLIKELY(value.isEmpty())) {
+        if (value.isEmpty()) [[unlikely]] {
             value = JSC::jsUndefined();
         }
 

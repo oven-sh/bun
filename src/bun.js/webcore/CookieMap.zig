@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const CookieMap = opaque {
     extern fn CookieMap__write(cookie_map: *CookieMap, global_this: *bun.JSC.JSGlobalObject, ssl_enabled: bool, uws_http_response: *anyopaque) void;

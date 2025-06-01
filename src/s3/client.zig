@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const picohttp = bun.picohttp;
 
@@ -23,6 +23,10 @@ pub const S3UploadResult = S3SimpleRequest.S3UploadResult;
 pub const S3StatResult = S3SimpleRequest.S3StatResult;
 pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
+const S3ListObjects = @import("./list_objects.zig");
+pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
+pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
+pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
 pub fn stat(
     this: *S3Credentials,
@@ -99,6 +103,131 @@ pub fn delete(
     }, .{ .delete = callback }, callback_context);
 }
 
+pub fn listObjects(
+    this: *S3Credentials,
+    listOptions: S3ListObjectsOptions,
+    callback: *const fn (S3ListObjectsResult, *anyopaque) void,
+    callback_context: *anyopaque,
+    proxy_url: ?[]const u8,
+) void {
+    var search_params: bun.ByteList = .{};
+
+    search_params.append(bun.default_allocator, "?") catch bun.outOfMemory();
+
+    if (listOptions.continuation_token) |continuation_token| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(continuation_token, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "continuation-token={s}", .{encoded}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.delimiter) |delimiter| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(delimiter, &buff, true) catch bun.outOfMemory();
+
+        if (listOptions.continuation_token != null) {
+            search_params.appendFmt(bun.default_allocator, "&delimiter={s}", .{encoded}) catch bun.outOfMemory();
+        } else {
+            search_params.appendFmt(bun.default_allocator, "delimiter={s}", .{encoded}) catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.encoding_type != null) {
+        if (listOptions.continuation_token != null or listOptions.delimiter != null) {
+            search_params.append(bun.default_allocator, "&encoding-type=url") catch bun.outOfMemory();
+        } else {
+            search_params.append(bun.default_allocator, "encoding-type=url") catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.fetch_owner) |fetch_owner| {
+        if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null) {
+            search_params.appendFmt(bun.default_allocator, "&fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+        } else {
+            search_params.appendFmt(bun.default_allocator, "fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+        }
+    }
+
+    if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null or listOptions.fetch_owner != null) {
+        search_params.append(bun.default_allocator, "&list-type=2") catch bun.outOfMemory();
+    } else {
+        search_params.append(bun.default_allocator, "list-type=2") catch bun.outOfMemory();
+    }
+
+    if (listOptions.max_keys) |max_keys| {
+        search_params.appendFmt(bun.default_allocator, "&max-keys={}", .{max_keys}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.prefix) |prefix| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(prefix, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "&prefix={s}", .{encoded}) catch bun.outOfMemory();
+    }
+
+    if (listOptions.start_after) |start_after| {
+        var buff: [1024]u8 = undefined;
+        const encoded = S3Credentials.encodeURIComponent(start_after, &buff, true) catch bun.outOfMemory();
+        search_params.appendFmt(bun.default_allocator, "&start-after={s}", .{encoded}) catch bun.outOfMemory();
+    }
+
+    const result = this.signRequest(.{
+        .path = "",
+        .method = .GET,
+        .search_params = search_params.slice(),
+    }, true, null) catch |sign_err| {
+        search_params.deinitWithAllocator(bun.default_allocator);
+
+        const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
+        callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
+
+        return;
+    };
+
+    search_params.deinitWithAllocator(bun.default_allocator);
+
+    const headers = bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+
+    const task = bun.new(S3HttpSimpleTask, .{
+        .http = undefined,
+        .range = null,
+        .sign_result = result,
+        .callback_context = callback_context,
+        .callback = .{ .listObjects = callback },
+        .headers = headers,
+        .vm = JSC.VirtualMachine.get(),
+    });
+
+    task.poll_ref.ref(task.vm);
+
+    const url = bun.URL.parse(result.url);
+    const proxy = proxy_url orelse "";
+
+    task.http = bun.http.AsyncHTTP.init(
+        bun.default_allocator,
+        .GET,
+        url,
+        task.headers.entries,
+        task.headers.buf.items,
+        &task.response_buffer,
+        "",
+        bun.http.HTTPClientResult.Callback.New(
+            *S3HttpSimpleTask,
+            S3HttpSimpleTask.httpCallback,
+        ).init(task),
+        .follow,
+        .{
+            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .verbose = task.vm.getVerboseFetch(),
+            .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
+        },
+    );
+
+    // queue http request
+    bun.http.HTTPThread.init(&.{});
+    var batch = bun.ThreadPool.Batch{};
+    task.http.schedule(bun.default_allocator, &batch);
+    bun.http.http_thread.schedule(batch);
+}
+
 pub fn upload(
     this: *S3Credentials,
     path: []const u8,
@@ -155,7 +284,8 @@ pub fn writableStream(
     };
     const proxy_url = (proxy orelse "");
     this.ref(); // ref the credentials
-    const task = MultiPartUpload.new(.{
+    const task = bun.new(MultiPartUpload, .{
+        .ref_count = .init(),
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -193,16 +323,19 @@ pub fn writableStream(
 }
 
 const S3UploadStreamWrapper = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
     readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
     sink: *JSC.WebCore.NetworkSink,
     task: *MultiPartUpload,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
-    ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
     global: *JSC.JSGlobalObject,
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
@@ -223,12 +356,12 @@ const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn deinit(self: *@This()) void {
+    fn deinit(self: *@This()) void {
         self.readable_stream_ref.deinit();
         self.sink.finalize();
-        self.sink.destroy();
+        self.sink.deinit();
         self.task.deref();
-        self.destroy();
+        bun.destroy(self);
     }
 };
 
@@ -273,9 +406,9 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 comptime {
-    const jsonResolveRequestStream = JSC.toJSHostFunction(onUploadStreamResolveRequestStream);
+    const jsonResolveRequestStream = JSC.toJSHostFn(onUploadStreamResolveRequestStream);
     @export(&jsonResolveRequestStream, .{ .name = "Bun__S3UploadStream__onResolveRequestStream" });
-    const jsonRejectRequestStream = JSC.toJSHostFunction(onUploadStreamRejectRequestStream);
+    const jsonRejectRequestStream = JSC.toJSHostFn(onUploadStreamRejectRequestStream);
     @export(&jsonRejectRequestStream, .{ .name = "Bun__S3UploadStream__onRejectRequestStream" });
 }
 
@@ -297,12 +430,12 @@ pub fn uploadStream(
     const proxy_url = (proxy orelse "");
 
     if (readable_stream.isDisturbed(globalThis)) {
-        return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
+        return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis));
     }
 
     switch (readable_stream.ptr) {
         .Invalid => {
-            return JSC.JSPromise.rejectedPromiseValue(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
+            return JSC.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis));
         },
         inline .File, .Bytes => |stream| {
             if (stream.pending.result == .err) {
@@ -314,13 +447,14 @@ pub fn uploadStream(
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
-                return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
         },
         else => {},
     }
 
-    const task = MultiPartUpload.new(.{
+    const task = bun.new(MultiPartUpload, .{
+        .ref_count = .init(),
         .credentials = this,
         .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
         .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
@@ -349,7 +483,8 @@ pub fn uploadStream(
     task.ref(); // + 1 for the stream wrapper
 
     const endPromise = response_stream.sink.endPromise.value();
-    const ctx = S3UploadStreamWrapper.new(.{
+    const ctx = bun.new(S3UploadStreamWrapper, .{
+        .ref_count = .init(),
         .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable_stream, globalThis),
         .sink = &response_stream.sink,
         .callback = callback,
@@ -484,7 +619,7 @@ pub fn downloadStream(
     var result = this.signRequest(.{
         .path = path,
         .method = .GET,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{
@@ -498,9 +633,9 @@ pub fn downloadStream(
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
         } else {
-            break :brk JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
         }
     };
     const proxy = proxy_url orelse "";
@@ -568,7 +703,7 @@ pub fn readableStream(
     const readable_value = reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
-        pub usingnamespace bun.New(@This());
+        pub const new = bun.TrivialNew(@This());
 
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         path: []const u8,
@@ -606,7 +741,7 @@ pub fn readableStream(
         pub fn deinit(self: *@This()) void {
             self.readable_stream_ref.deinit();
             bun.default_allocator.free(self.path);
-            self.destroy();
+            bun.destroy(self);
         }
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {

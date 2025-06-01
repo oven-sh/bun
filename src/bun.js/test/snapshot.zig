@@ -1,8 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const default_allocator = bun.default_allocator;
+const bun = @import("bun");
 const string = bun.string;
-const MutableString = bun.MutableString;
 const strings = bun.strings;
 const logger = bun.logger;
 const jest = @import("./jest.zig");
@@ -11,7 +9,6 @@ const TestRunner = jest.TestRunner;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
 const VirtualMachine = JSC.VirtualMachine;
 const Expect = @import("./expect.zig").Expect;
 
@@ -253,7 +250,7 @@ pub const Snapshots = struct {
             };
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 
@@ -521,7 +518,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = fd.asFile(),
+                .file = fd.stdFile(),
             };
             errdefer file.file.close();
 

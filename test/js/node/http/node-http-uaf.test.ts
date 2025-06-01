@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
 
 uafTest("node-http-uaf-fixture.ts");
 uafTest("node-http-uaf-fixture-2.ts");

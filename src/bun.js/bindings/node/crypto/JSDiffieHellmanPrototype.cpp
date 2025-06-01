@@ -19,7 +19,6 @@ JSC_DECLARE_HOST_FUNCTION(jsDiffieHellmanProtoFuncGetPublicKey);
 JSC_DECLARE_HOST_FUNCTION(jsDiffieHellmanProtoFuncGetPrivateKey);
 JSC_DECLARE_HOST_FUNCTION(jsDiffieHellmanProtoFuncSetPublicKey);
 JSC_DECLARE_HOST_FUNCTION(jsDiffieHellmanProtoFuncSetPrivateKey);
-JSC_DECLARE_CUSTOM_GETTER(jsDiffieHellmanGetter_verifyError);
 
 const JSC::ClassInfo JSDiffieHellmanPrototype::s_info = { "DiffieHellman"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDiffieHellmanPrototype) };
 
@@ -32,7 +31,6 @@ static const JSC::HashTableValue JSDiffieHellmanPrototypeTableValues[] = {
     { "getPrivateKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsDiffieHellmanProtoFuncGetPrivateKey, 0 } },
     { "setPublicKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsDiffieHellmanProtoFuncSetPublicKey, 1 } },
     { "setPrivateKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsDiffieHellmanProtoFuncSetPrivateKey, 1 } },
-    { "verifyError"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsDiffieHellmanGetter_verifyError, 0 } },
 };
 
 void JSDiffieHellmanPrototype::finishCreation(JSC::VM& vm)
@@ -81,26 +79,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanProtoFuncSetPublicKey, (JSC::JSGlobalObj
 JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanProtoFuncSetPrivateKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return jsDiffieHellmanProtoFuncSetPrivateKeyTemplate<JSDiffieHellman>(globalObject, callFrame);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsDiffieHellmanGetter_verifyError, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = JSC::jsDynamicCast<JSDiffieHellman*>(JSC::JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
-        throwThisTypeError(*globalObject, scope, "JSDiffieHellman"_s, "verifyError"_s);
-        return {};
-    }
-
-    auto& dh = thisObject->getImpl();
-    auto result = dh.check();
-    if (result == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
-        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
-    }
-
-    return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(result)));
 }
 
 } // namespace Bun

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ArrayList = std.ArrayListUnmanaged;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
@@ -10,7 +10,6 @@ const PrintErr = css.PrintErr;
 const CssColor = css.css_values.color.CssColor;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Url = css.css_values.url.Url;
 const Angle = css.css_values.angle.Angle;
 const AnglePercentage = css.css_values.angle.AnglePercentage;
 const HorizontalPositionKeyword = css.css_values.position.HorizontalPositionKeyword;
@@ -212,7 +211,7 @@ pub const Gradient = union(enum) {
 
         switch (this.*) {
             .linear, .repeating_linear => |*linear| {
-                try linear.toCss(W, dest, linear.vendor_prefix.neq(css.VendorPrefix{ .none = true }));
+                try linear.toCss(W, dest, linear.vendor_prefix != css.VendorPrefix{ .none = true });
             },
             .radial, .repeating_radial => |*radial| {
                 try radial.toCss(W, dest);
@@ -330,21 +329,21 @@ pub const Gradient = union(enum) {
 
     /// Returns the color fallback types needed for the given browser targets.
     pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
-        var fallbacks = css.ColorFallbackKind.empty();
+        var fallbacks = css.ColorFallbackKind{};
         switch (this.*) {
             .linear, .repeating_linear => |*linear| {
                 for (linear.items.items) |*item| {
-                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                    bun.bits.insert(css.ColorFallbackKind, &fallbacks, item.getNecessaryFallbacks(targets));
                 }
             },
             .radial, .repeating_radial => |*radial| {
                 for (radial.items.items) |*item| {
-                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                    bun.bits.insert(css.ColorFallbackKind, &fallbacks, item.getNecessaryFallbacks(targets));
                 }
             },
             .conic, .repeating_conic => |*conic| {
                 for (conic.items.items) |*item| {
-                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                    bun.bits.insert(css.ColorFallbackKind, &fallbacks, item.getNecessaryFallbacks(targets));
                 }
             },
             .@"webkit-gradient" => {},
@@ -363,7 +362,7 @@ pub const LinearGradient = struct {
     items: ArrayList(GradientItem(LengthPercentage)),
 
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(LinearGradient) {
-        const direction: LineDirection = if (input.tryParse(LineDirection.parse, .{vendor_prefix.neq(VendorPrefix{ .none = true })}).asValue()) |dir| direction: {
+        const direction: LineDirection = if (input.tryParse(LineDirection.parse, .{vendor_prefix != VendorPrefix{ .none = true }}).asValue()) |dir| direction: {
             if (input.expectComma().asErr()) |e| return .{ .err = e };
             break :direction dir;
         } else LineDirection{ .vertical = .bottom };
@@ -1083,7 +1082,7 @@ pub fn GradientItem(comptime D: type) type {
         pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
             return switch (this.*) {
                 .color_stop => |*stop| stop.color.getNecessaryFallbacks(targets),
-                .hint => css.ColorFallbackKind.empty(),
+                .hint => css.ColorFallbackKind{},
             };
         }
     };
@@ -1098,8 +1097,8 @@ pub const EndingShape = union(enum) {
     /// A circle.
     circle: Circle,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn default() EndingShape {
         return .{ .ellipse = .{ .extent = .@"farthest-corner" } };

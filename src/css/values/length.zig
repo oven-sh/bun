@@ -1,13 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
 const MathFunction = css.css_values.calc.MathFunction;
 const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
@@ -19,8 +17,8 @@ pub const LengthOrNumber = union(enum) {
     /// A length.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deinit(this: *const LengthOrNumber, allocator: std.mem.Allocator) void {
         switch (this.*) {
@@ -57,8 +55,8 @@ pub const LengthPercentageOrAuto = union(enum) {
     /// A [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage).
     length: LengthPercentage,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
         return switch (this.*) {

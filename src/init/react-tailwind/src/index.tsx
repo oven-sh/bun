@@ -21,7 +21,7 @@ const server = serve({
       },
     },
 
-    "/api/hello/:name": async (req) => {
+    "/api/hello/:name": async req => {
       const name = req.params.name;
       return Response.json({
         message: `Hello, ${name}!`,
@@ -29,7 +29,11 @@ const server = serve({
     },
   },
 
-  development: process.env.NODE_ENV !== "production",
-});
+  development: process.env.NODE_ENV !== "production" && {
+    // Enable browser hot reloading in development
+    hmr: true,
 
-console.log(`🚀 Server running at ${server.url}`);
+    // Echo console logs from the browser to the server
+    console: true,
+  },
+});

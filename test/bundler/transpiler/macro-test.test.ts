@@ -1,8 +1,11 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
-import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
 import defaultMacro, {
+  addStrings,
+  addStringsUTF16,
   default as defaultMacroAlias,
+  escape,
+  identity,
   identity as identity1,
   identity as identity2,
 } from "./macro.ts" assert { type: "macro" };

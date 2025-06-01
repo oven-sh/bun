@@ -2,8 +2,7 @@
 //! Implemented as a linked list of potentially-owned slices and a length.
 const StringJoiner = @This();
 const std = @import("std");
-const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const NullableAllocator = bun.NullableAllocator;
 const assert = bun.assert;

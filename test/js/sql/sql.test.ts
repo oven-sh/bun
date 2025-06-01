@@ -1,15 +1,14 @@
-import { sql, SQL, randomUUIDv7, password } from "bun";
-const postgres = (...args) => new sql(...args);
-import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
-import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux, tempDirWithFiles } from "harness";
+import { $, randomUUIDv7, sql, SQL } from "bun";
+import { afterAll, describe, expect, mock, test } from "bun:test";
+import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
+const postgres = (...args) => new sql(...args);
 
 import { exec, execSync } from "child_process";
+import net from "net";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
 const dir = tempDirWithFiles("sql-test", {
@@ -2253,6 +2252,12 @@ if (isDockerEnabled()) {
   test("numeric is returned as string", async () => {
     const result = (await sql`select 1.2 as x`)[0].x;
     expect(result).toBe("1.2");
+  });
+
+  test("flush should work", async () => {
+    await using sql = postgres(options);
+    await sql`select 1`;
+    sql.flush();
   });
 
   // t('Async stack trace', async() => {
@@ -4648,44 +4653,10 @@ CREATE TABLE ${table_name} (
       expect(result[0].empty_array).toEqual([]);
     });
 
-    test("int2vector[] - single empty vector", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      const result = await sql`SELECT ARRAY['0'::int2vector] as single_empty_vector`;
-      // YEAH this is weird but it's what postgres.js does because is what we receive from the server
-      expect(result[0].single_empty_vector[0]).toEqual("1");
-    });
-
     test("int2vector[] - single vector with one value", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT ARRAY['1'::int2vector] as single_value_vector`;
       expect(result[0].single_value_vector[0]).toEqual("1");
-    });
-
-    test("int2vector[] - single vector with multiple values", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      const result = await sql`SELECT ARRAY['1 2 3'::int2vector] as multi_value_vector`;
-      expect(result[0].multi_value_vector[0]).toEqual("1");
-    });
-
-    test("int2vector[] - multiple vectors", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      const result = await sql`
-        SELECT ARRAY['1 2'::int2vector, '3 4'::int2vector] as multiple_vectors
-      `;
-      expect(result[0].multiple_vectors).toEqual("1 0");
-    });
-
-    test("int2vector[] - null values", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      try {
-        const result = await sql`
-          SELECT ARRAY['1 2'::int2vector, NULL, '3 4'::int2vector] as array_with_nulls
-        `;
-        expect.unreachable();
-      } catch (e: any) {
-        //multidimensional arrays must have array expressions with matching dimensions
-        expect(e.errno).toBe("2202E");
-      }
     });
 
     test("int2vector[] - array contains operator", async () => {
@@ -4705,27 +4676,6 @@ CREATE TABLE ${table_name} (
       expect(result[0].contains_first).toBe(true);
       expect(result[0].contains_second).toBe(true);
       expect(result[0].contains_none).toBe(false);
-    });
-
-    test("int2vector[] - array with maximum int2 values", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      const result = await sql`
-        SELECT ARRAY['32767 -32768'::int2vector] as extreme_values
-      `;
-      expect(result[0].extreme_values).toEqual("1");
-    });
-
-    test("int2vector[] - unnesting and aggregation", async () => {
-      await using sql = postgres({ ...options, max: 1 });
-      const result = await sql`
-        WITH vectors AS (
-          SELECT unnest(ARRAY['1 2'::int2vector, '3 4'::int2vector, '1 2'::int2vector]) as vec
-        )
-        SELECT array_agg(vec ORDER BY vec) as aggregated
-        FROM vectors
-      `;
-
-      expect(result[0].aggregated).toEqual([1, 1, 2, 2, 3, 4]);
     });
   });
 

@@ -183,6 +183,9 @@ export default {
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),
+    page("install/catalogs", "Catalogs", {
+      description: "Use catalogs to share dependency versions between packages in a monorepo.",
+    }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
@@ -203,6 +206,9 @@ export default {
     page("install/patch", "Patch dependencies", {
       description:
         "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
+    }),
+    page("install/audit", "Audit dependencies", {
+      description: "Check installed packages for vulnerabilities.",
     }),
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
@@ -265,11 +271,24 @@ export default {
     page("test/time", "Dates and times", {
       description: "Control the date & time in your tests for more reliable and deterministic tests",
     }),
-    page("test/dom", "DOM testing", {
-      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
-    }),
+
     page("test/coverage", "Code coverage", {
       description: "Generate code coverage reports with `bun test --coverage`",
+    }),
+    page("test/reporters", "Test reporters", {
+      description: "Add a junit reporter to your test runs",
+    }),
+    page("test/configuration", "Test configuration", {
+      description: "Configure the test runner with bunfig.toml",
+    }),
+    page("test/runtime-behavior", "Runtime behavior", {
+      description: "Learn how the test runner affects Bun's runtime behavior",
+    }),
+    page("test/discovery", "Finding tests", {
+      description: "Learn how the test runner discovers tests",
+    }),
+    page("test/dom", "DOM testing", {
+      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
     }),
 
     divider("Package runner"),
@@ -331,6 +350,9 @@ export default {
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
+    page("api/redis", "Redis client", {
+      description: `Bun provides a fast, native Redis client with automatic command pipelining for better performance.`,
+    }),
     page("api/import-meta", "import.meta", {
       description: `Module-scoped metadata and utilities`,
     }), // "`bun:sqlite`"),
@@ -373,7 +395,7 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
-    page("api/test", "Testing", {
+    page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),
     page("api/utils", "Utils", {

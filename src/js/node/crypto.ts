@@ -1,29 +1,11 @@
 // Hardcoded module "node:crypto"
-const StreamModule = require("node:stream");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { defineCustomPromisifyArgs } = require("internal/promisify");
+const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
 
 const {
-  symmetricKeySize,
-  asymmetricKeyDetails,
-  asymmetricKeyType,
-  equals,
-  exports,
-  createSecretKey,
-  createPublicKey,
-  createPrivateKey,
-  generateKeySync,
-  generateKeyPairSync,
-  publicEncrypt,
-  privateDecrypt,
-  privateEncrypt,
-  publicDecrypt,
-  X509Certificate,
-} = $cpp("KeyObject.cpp", "createKeyObjectBinding");
-
-const {
-  statelessDH,
   getCurves,
   certVerifySpkac,
   certExportPublicKey,
@@ -37,8 +19,9 @@ const {
   Hmac: _Hmac,
   Hash: _Hash,
   ECDH,
-  DiffieHellman: _DiffieHellman,
-  DiffieHellmanGroup: _DiffieHellmanGroup,
+  DiffieHellman,
+  DiffieHellmanGroup,
+  diffieHellman,
   checkPrime,
   checkPrimeSync,
   generatePrime,
@@ -46,6 +29,24 @@ const {
   Cipher,
   hkdf,
   hkdfSync,
+
+  publicEncrypt,
+  publicDecrypt,
+  privateEncrypt,
+  privateDecrypt,
+
+  KeyObject,
+
+  createSecretKey,
+  createPublicKey,
+  createPrivateKey,
+
+  generateKey,
+  generateKeySync,
+  generateKeyPair,
+  generateKeyPairSync,
+
+  X509Certificate,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -68,7 +69,7 @@ const {
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
 
-const { validateObject, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
 
@@ -133,326 +134,20 @@ var crypto_exports: any = {};
 crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
 crypto_exports.constants = $processBindingConstants.crypto;
 
-class KeyObject {
-  // we use $bunNativePtr so that util.types.isKeyObject can detect it
-  $bunNativePtr = undefined;
-  constructor(key) {
-    // TODO: check why this is fails
-    // if(!(key instanceof CryptoKey)) {
-    //   throw new TypeError("The \"key\" argument must be an instance of CryptoKey.");
-    // }
-    if (typeof key !== "object") {
-      throw new TypeError('The "key" argument must be an instance of CryptoKey.');
-    }
-    this.$bunNativePtr = key;
-  }
-
-  get [Symbol.toStringTag]() {
-    return "KeyObject";
-  }
-
-  static from(key) {
-    if (key instanceof KeyObject) {
-      key = key.$bunNativePtr;
-    }
-    return new KeyObject(key);
-  }
-
-  get asymmetricKeyDetails() {
-    return asymmetricKeyDetails(this.$bunNativePtr);
-  }
-
-  get symmetricKeySize() {
-    return symmetricKeySize(this.$bunNativePtr);
-  }
-
-  get asymmetricKeyType() {
-    return asymmetricKeyType(this.$bunNativePtr);
-  }
-
-  ["export"](options) {
-    switch (arguments.length) {
-      case 0:
-        switch (this.type) {
-          case "secret":
-            options = {
-              format: "buffer",
-            };
-            break;
-          case "public":
-            options = {
-              format: "pem",
-              type: "spki",
-            };
-            break;
-          case "private":
-            options = {
-              format: "pem",
-              type: "pkcs8",
-            };
-            break;
-        }
-        break;
-      case 1:
-        if (typeof options === "object" && !options.format) {
-          switch (this.type) {
-            case "secret":
-              options.format = "buffer";
-              break;
-            default:
-              options.format = "pem";
-              break;
-          }
-        }
-    }
-    return exports(this.$bunNativePtr, options);
-  }
-
-  equals(otherKey) {
-    if (!(otherKey instanceof KeyObject)) {
-      throw new TypeError("otherKey must be a KeyObject");
-    }
-    return equals(this.$bunNativePtr, otherKey.$bunNativePtr);
-  }
-
-  get type() {
-    return this.$bunNativePtr.type;
-  }
-}
-
-crypto_exports.generateKeySync = function (algorithm, options) {
-  return KeyObject.from(generateKeySync(algorithm, options?.length));
-};
-
-crypto_exports.generateKey = function (algorithm, options, callback) {
-  try {
-    const key = KeyObject.from(generateKeySync(algorithm, options?.length));
-    typeof callback === "function" && callback(null, KeyObject.from(key));
-  } catch (err) {
-    typeof callback === "function" && callback(err);
-  }
-};
-
-function _generateKeyPairSync(algorithm, options) {
-  const result = generateKeyPairSync(algorithm, options);
-  if (result) {
-    const publicKeyEncoding = options?.publicKeyEncoding;
-    const privateKeyEncoding = options?.privateKeyEncoding;
-    result.publicKey = publicKeyEncoding
-      ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
-      : KeyObject.from(result.publicKey);
-    result.privateKey = privateKeyEncoding
-      ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
-      : KeyObject.from(result.privateKey);
-  }
-  return result;
-}
-crypto_exports.generateKeyPairSync = _generateKeyPairSync;
-
-function _generateKeyPair(algorithm, options, callback) {
-  try {
-    const result = _generateKeyPairSync(algorithm, options);
-    typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
-  } catch (err) {
-    typeof callback === "function" && callback(err);
-  }
-}
-const { defineCustomPromisifyArgs } = require("internal/promisify");
-defineCustomPromisifyArgs(_generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = _generateKeyPair;
-
-crypto_exports.createSecretKey = function (key, encoding) {
-  if (key instanceof KeyObject || key instanceof CryptoKey) {
-    if (key.type !== "secret") {
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    }
-    return KeyObject.from(key);
-  }
-
-  const buffer = getArrayBufferOrView(key, encoding || "utf8");
-  return KeyObject.from(createSecretKey(buffer));
-};
-
-function _createPrivateKey(key) {
-  if (typeof key === "string") {
-    key = Buffer.from(key, "utf8");
-    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
-  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
-    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
-  } else if (typeof key === "object") {
-    if (key instanceof KeyObject || key instanceof CryptoKey) {
-      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    } else {
-      let actual_key = key.key;
-      if (typeof actual_key === "string") {
-        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
-        key.key = actual_key;
-      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
-        const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
-        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-        throw error;
-      }
-      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
-        var error = new TypeError(
-          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
-            actual_key,
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      if (!key.format) {
-        key.format = "pem";
-      }
-      return KeyObject.from(createPrivateKey(key));
-    }
-  } else {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
-        key,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-}
-crypto_exports.createPrivateKey = _createPrivateKey;
-
-function _createPublicKey(key) {
-  if (typeof key === "string") {
-    key = Buffer.from(key, "utf8");
-    return KeyObject.from(createPublicKey({ key, format: "pem" }));
-  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
-    return KeyObject.from(createPublicKey({ key, format: "pem" }));
-  } else if (typeof key === "object") {
-    if (key instanceof KeyObject || key instanceof CryptoKey) {
-      if (key.type === "private") {
-        return KeyObject.from(createPublicKey({ key: key.$bunNativePtr || key, format: "" }));
-      }
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    } else {
-      // must be an encrypted private key (this option is not documented at all)
-      if (key.passphrase) {
-        //TODO: handle encrypted keys in one native call
-        let actual_key = key.key;
-        if (typeof actual_key === "string") {
-          actual_key = Buffer.from(actual_key, key.encoding || "utf8");
-        }
-        return KeyObject.from(
-          createPublicKey({
-            key: createPrivateKey({ key: actual_key, format: key.format || "pem", passphrase: key.passphrase }),
-            format: "",
-          }),
-        );
-      }
-      let actual_key = key.key;
-      if (typeof actual_key === "string") {
-        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
-        key.key = actual_key;
-      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
-        if (actual_key.type === "private") {
-          return KeyObject.from(createPublicKey({ key: actual_key.$bunNativePtr || actual_key, format: "" }));
-        }
-        const error = new TypeError(
-          `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
-        );
-        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-        throw error;
-      }
-      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
-        var error = new TypeError(
-          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
-            key,
-        );
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      if (!key.format) {
-        key.format = "pem";
-      }
-      return KeyObject.from(createPublicKey(key));
-    }
-  } else {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
-        key,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-}
-crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
+
+crypto_exports.generateKey = generateKey;
+crypto_exports.generateKeySync = generateKeySync;
+defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = generateKeyPair;
+crypto_exports.generateKeyPairSync = generateKeyPairSync;
+
+crypto_exports.createSecretKey = createSecretKey;
+crypto_exports.createPublicKey = createPublicKey;
+crypto_exports.createPrivateKey = createPrivateKey;
+
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-
-// We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
-// KeyObject/CryptoKey of the same type (public/private).
-function toCryptoKey(key, asPublic) {
-  // Top level CryptoKey.
-  if (key instanceof KeyObject || key instanceof CryptoKey) {
-    if (asPublic && key.type === "private") {
-      return _createPublicKey(key).$bunNativePtr;
-    }
-    return key.$bunNativePtr || key;
-  }
-
-  // Nested CryptoKey.
-  if (key.key instanceof KeyObject || key.key instanceof CryptoKey) {
-    if (asPublic && key.key.type === "private") {
-      return _createPublicKey(key.key).$bunNativePtr;
-    }
-    return key.key.$bunNativePtr || key.key;
-  }
-
-  // One of string, ArrayBuffer, Buffer, TypedArray, DataView, or Object.
-  return asPublic ? _createPublicKey(key).$bunNativePtr : _createPrivateKey(key).$bunNativePtr;
-}
-
-function doAsymmetricCipher(key, message, operation, isEncrypt) {
-  // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
-  const cryptoKey = toCryptoKey(key, isEncrypt);
-  const oaepLabel = typeof key.oaepLabel === "string" ? Buffer.from(key.oaepLabel, key.encoding) : key.oaepLabel;
-  const keyObject = {
-    key: cryptoKey,
-    oaepHash: key.oaepHash,
-    oaepLabel,
-    padding: key.padding,
-  };
-  const buffer = typeof message === "string" ? Buffer.from(message, key.encoding) : message;
-  return operation(keyObject, buffer);
-}
-
-crypto_exports.publicEncrypt = function (key, message) {
-  return doAsymmetricCipher(key, message, publicEncrypt, true);
-};
-
-crypto_exports.privateDecrypt = function (key, message) {
-  return doAsymmetricCipher(key, message, privateDecrypt, false);
-};
-
-function doAsymmetricSign(key, message, operation, isEncrypt) {
-  // Our crypto bindings expect the key to be a `JSCryptoKey` property within an object.
-  const cryptoKey = toCryptoKey(key, isEncrypt);
-  const buffer = typeof message === "string" ? Buffer.from(message, key.encoding) : message;
-  return operation(cryptoKey, buffer, key.padding);
-}
-
-crypto_exports.privateEncrypt = function (key, message) {
-  return doAsymmetricSign(key, message, privateEncrypt, false);
-};
-
-crypto_exports.publicDecrypt = function (key, message) {
-  return doAsymmetricSign(key, message, publicDecrypt, true);
-};
 
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
@@ -500,9 +195,9 @@ function Sign(algorithm, options): void {
   this[kHandle] = new _Sign();
   this[kHandle].init(algorithm);
 
-  StreamModule.Writable.$apply(this, [options]);
+  Writable.$apply(this, [options]);
 }
-$toClass(Sign, "Sign", StreamModule.Writable);
+$toClass(Sign, "Sign", Writable);
 
 Sign.prototype._write = function _write(chunk, encoding, callback) {
   this.update(chunk, encoding);
@@ -535,9 +230,9 @@ function Verify(algorithm, options): void {
   this[kHandle] = new _Verify();
   this[kHandle].init(algorithm);
 
-  StreamModule.Writable.$apply(this, [options]);
+  Writable.$apply(this, [options]);
 }
-$toClass(Verify, "Verify", StreamModule.Writable);
+$toClass(Verify, "Verify", Writable);
 
 Verify.prototype._write = Sign.prototype._write;
 Verify.prototype.update = Sign.prototype.update;
@@ -663,47 +358,15 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   });
 }
 
-export default crypto_exports;
-/*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
-
 function createDiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding) {
-  return new _DiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding);
+  return new DiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding);
 }
-crypto_exports.DiffieHellmanGroup = _DiffieHellmanGroup;
-crypto_exports.getDiffieHellman = crypto_exports.createDiffieHellmanGroup = _DiffieHellmanGroup;
+crypto_exports.DiffieHellmanGroup = DiffieHellmanGroup;
+crypto_exports.getDiffieHellman = crypto_exports.createDiffieHellmanGroup = DiffieHellmanGroup;
 crypto_exports.createDiffieHellman = createDiffieHellman;
-crypto_exports.DiffieHellman = _DiffieHellman;
+crypto_exports.DiffieHellman = DiffieHellman;
 
-crypto_exports.diffieHellman = function diffieHellman(options) {
-  validateObject(options, "options");
-
-  const { privateKey, publicKey } = options;
-
-  if (!(privateKey instanceof KeyObject)) {
-    throw $ERR_INVALID_ARG_VALUE("options.privateKey", privateKey);
-  }
-
-  if (!(publicKey instanceof KeyObject)) {
-    throw $ERR_INVALID_ARG_VALUE("options.publicKey", publicKey);
-  }
-
-  if (privateKey.type !== "private") {
-    throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(privateKey.type, "private");
-  }
-
-  const publicKeyType = publicKey.type;
-  if (publicKeyType !== "public" && publicKeyType !== "private") {
-    throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(publicKeyType, "private or public");
-  }
-
-  const privateType = privateKey.asymmetricKeyType;
-  const publicType = publicKey.asymmetricKeyType;
-  if (privateType !== publicType || !["dh", "ec", "x448", "x25519"].includes(privateType)) {
-    throw $ERR_CRYPTO_INCOMPATIBLE_KEY("key types for Diffie-Hellman", `${privateType} and ${publicType}`);
-  }
-
-  return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);
-};
+crypto_exports.diffieHellman = diffieHellman;
 
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
@@ -834,3 +497,10 @@ crypto_exports.createECDH = function createECDH(curve) {
 
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
+
+crypto_exports.publicEncrypt = publicEncrypt;
+crypto_exports.publicDecrypt = publicDecrypt;
+crypto_exports.privateEncrypt = privateEncrypt;
+crypto_exports.privateDecrypt = privateDecrypt;
+
+export default crypto_exports;

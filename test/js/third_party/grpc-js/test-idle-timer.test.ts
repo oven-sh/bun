@@ -15,10 +15,9 @@
  *
  */
 
-import assert from "node:assert";
 import grpc from "@grpc/grpc-js";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
-import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { afterAll as after, afterEach, beforeAll as before, describe, it } from "bun:test";
+import assert from "node:assert";
 
 import { TestClient, TestServer } from "./common";
 

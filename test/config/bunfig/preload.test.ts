@@ -1,6 +1,6 @@
-import { join, resolve } from "path";
-import { bunExe, bunEnv } from "harness";
 import type { SpawnOptions } from "bun";
+import { bunEnv, bunExe } from "harness";
+import { join, resolve } from "path";
 
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
 

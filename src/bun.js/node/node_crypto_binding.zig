@@ -1,13 +1,9 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const Environment = bun.Environment;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const string = bun.string;
-const Output = bun.Output;
-const ZigString = JSC.ZigString;
 const Crypto = JSC.API.Bun.Crypto;
 const BoringSSL = bun.BoringSSL.c;
-const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
@@ -18,7 +14,6 @@ const String = bun.String;
 const UUID = bun.UUID;
 const Async = bun.Async;
 const Node = JSC.Node;
-const OOM = bun.OOM;
 
 fn ExternCryptoJob(comptime name: []const u8) type {
     return struct {
@@ -26,7 +21,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
         task: JSC.WorkPoolTask,
         any_task: JSC.AnyTask,
         poll: Async.KeepAlive = .{},
-        callback: JSC.Strong,
+        callback: JSC.Strong.Optional,
 
         ctx: *Ctx,
 
@@ -46,7 +41,7 @@ fn ExternCryptoJob(comptime name: []const u8) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx,
-                .callback = JSC.Strong.create(callback, global),
+                .callback = .create(callback, global),
             });
             job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
             return job;
@@ -104,11 +99,27 @@ fn ExternCryptoJob(comptime name: []const u8) type {
 pub const CheckPrimeJob = ExternCryptoJob("CheckPrimeJob");
 pub const GeneratePrimeJob = ExternCryptoJob("GeneratePrimeJob");
 pub const HkdfJob = ExternCryptoJob("HkdfJob");
+pub const SecretKeyJob = ExternCryptoJob("SecretKeyJob");
+pub const RsaKeyPairJob = ExternCryptoJob("RsaKeyPairJob");
+pub const DsaKeyPairJob = ExternCryptoJob("DsaKeyPairJob");
+pub const EcKeyPairJob = ExternCryptoJob("EcKeyPairJob");
+pub const NidKeyPairJob = ExternCryptoJob("NidKeyPairJob");
+pub const DhKeyPairJob = ExternCryptoJob("DhKeyPairJob");
+pub const DhJob = ExternCryptoJob("DhJob");
+pub const SignJob = ExternCryptoJob("SignJob");
 
 comptime {
     _ = CheckPrimeJob;
     _ = GeneratePrimeJob;
     _ = HkdfJob;
+    _ = SecretKeyJob;
+    _ = RsaKeyPairJob;
+    _ = DsaKeyPairJob;
+    _ = EcKeyPairJob;
+    _ = NidKeyPairJob;
+    _ = DhKeyPairJob;
+    _ = DhJob;
+    _ = SignJob;
 }
 
 fn CryptoJob(comptime Ctx: type) type {
@@ -118,7 +129,7 @@ fn CryptoJob(comptime Ctx: type) type {
         any_task: JSC.AnyTask,
         poll: Async.KeepAlive = .{},
 
-        callback: JSC.Strong,
+        callback: JSC.Strong.Optional,
 
         ctx: Ctx,
 
@@ -131,7 +142,7 @@ fn CryptoJob(comptime Ctx: type) type {
                 },
                 .any_task = undefined,
                 .ctx = ctx.*,
-                .callback = JSC.Strong.create(callback, global),
+                .callback = .create(callback, global),
             });
             errdefer bun.destroy(job);
             try job.ctx.init(global);
@@ -239,7 +250,7 @@ const random = struct {
         const max: i64 = @intFromFloat(@trunc(max_value.asNumber()));
 
         if (max <= min) {
-            return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be greater than the value of \"min\" ({d}). Received {d}", .{
+            return global.ERR(.OUT_OF_RANGE, "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({d}). Received {d}", .{
                 min,
                 max,
             }).throw();
@@ -247,9 +258,9 @@ const random = struct {
 
         if (max - min > max_range) {
             if (min_specified) {
-                return global.ERR_OUT_OF_RANGE("The value of \"max - min\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
+                return global.ERR(.OUT_OF_RANGE, "The value of \"max - min\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
             }
-            return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
+            return global.ERR(.OUT_OF_RANGE, "The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
         }
 
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
@@ -453,17 +464,17 @@ pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSErr
     const l_value, const r_value = callFrame.argumentsAsArray(2);
 
     const l_buf = l_value.asArrayBuffer(global) orelse {
-        return global.ERR_INVALID_ARG_TYPE("The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+        return global.ERR(.INVALID_ARG_TYPE, "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
     };
     const l = l_buf.byteSlice();
 
     const r_buf = r_value.asArrayBuffer(global) orelse {
-        return global.ERR_INVALID_ARG_TYPE("The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+        return global.ERR(.INVALID_ARG_TYPE, "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
     };
     const r = r_buf.byteSlice();
 
     if (l.len != r.len) {
-        return global.ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH("Input buffers must have the same byte length", .{}).throw();
+        return global.ERR(.CRYPTO_TIMING_SAFE_EQUAL_LENGTH, "Input buffers must have the same byte length", .{}).throw();
     }
 
     return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
@@ -482,7 +493,7 @@ pub fn setFips(_: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
 }
 
 pub fn setEngine(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
-    return global.ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by BoringSSL", .{}).throw();
+    return global.ERR(.CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED, "Custom engines not supported by BoringSSL", .{}).throw();
 }
 
 fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
@@ -498,7 +509,7 @@ fn getHashes(global: *JSGlobalObject, _: *JSC.CallFrame) JSError!JSValue {
     // TODO(dylan-conway): cache the names
     BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
 
-    const array = JSValue.createEmptyArray(global, hashes.count());
+    const array = try JSValue.createEmptyArray(global, hashes.count());
 
     for (hashes.keys(), 0..) |hash, i| {
         const str = String.createUTF8ForJS(global, hash);
@@ -518,7 +529,7 @@ const Scrypt = struct {
     keylen: u32,
 
     // used in async mode
-    buf: JSC.Strong = .empty,
+    buf: JSC.Strong.Optional = .empty,
     result: []u8 = &.{},
     err: ?u32 = null,
 
@@ -663,7 +674,7 @@ const Scrypt = struct {
 
         // to be filled in later
         this.result = bytes;
-        this.buf = JSC.Strong.create(buf, global);
+        this.buf = .create(buf, global);
     }
 
     fn runTask(this: *Scrypt, key: []u8) void {
@@ -706,12 +717,12 @@ const Scrypt = struct {
             if (err != 0) {
                 var buf: [256]u8 = undefined;
                 const msg = BoringSSL.ERR_error_string_n(err, &buf, buf.len);
-                const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed: {s}", .{msg}).toJS();
+                const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed: {s}", .{msg}).toJS();
                 vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
                 return;
             }
 
-            const exception = global.ERR_CRYPTO_OPERATION_FAILED("Scrypt failed", .{}).toJS();
+            const exception = global.ERR(.CRYPTO_OPERATION_FAILED, "Scrypt failed", .{}).toJS();
             vm.eventLoop().runCallback(callback, global, .undefined, &.{exception});
             return;
         }

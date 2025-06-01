@@ -113,6 +113,9 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
+/**
+ * `JSC::JSModuleLoader`
+ */
 declare var Loader: {
   registry: Map<string, LoaderEntry>;
 
@@ -219,4 +222,12 @@ declare function $newZigFunction<T = (...args: any) => any>(
  * @param symbol - The name of the function to call.
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
-// NOTE: $debug, $assert, and $isPromiseResolved omitted
+// NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+
+declare module "node:net" {
+  export function _normalizeArgs(args: any[]): unknown[];
+
+  interface Socket {
+    _handle: Bun.Socket<{ self: Socket; req?: object }> | null;
+  }
+}

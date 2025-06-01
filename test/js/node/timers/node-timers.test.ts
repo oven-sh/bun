@@ -1,9 +1,9 @@
-import { describe, expect, it, test, mock } from "bun:test";
-import { clearInterval, clearTimeout, promises, setInterval, setTimeout, setImmediate } from "node:timers";
-import { promisify } from "util";
-import { bunEnv, bunExe, isWindows } from "harness";
 import jsc from "bun:jsc";
+import { describe, expect, it, mock, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
+import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
+import { promisify } from "util";
 
 for (const fn of [setTimeout, setInterval]) {
   describe(fn.name, () => {
@@ -249,4 +249,8 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
     },
     5000,
   );
+});
+
+it("should defer microtasks when an exception is thrown in an immediate", async () => {
+  expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
 });

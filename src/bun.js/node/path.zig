@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const std = @import("std");
 const windows = bun.windows;
@@ -72,10 +72,6 @@ const CHAR_STR_BACKWARD_SLASH = "\\";
 const CHAR_STR_FORWARD_SLASH = "/";
 const CHAR_STR_DOT = ".";
 
-const StringBuilder = bun.StringBuilder;
-
-const toJSString = JSC.JSValue.toJSString;
-
 /// Based on Node v21.6.1 path.parse:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
 /// The structs returned by parse methods.
@@ -86,13 +82,14 @@ fn PathParsed(comptime T: type) type {
         base: []const T = "",
         ext: []const T = "",
         name: []const T = "",
+
         pub fn toJSObject(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             var jsObject = JSC.JSValue.createEmptyObject(globalObject, 5);
-            jsObject.put(globalObject, JSC.ZigString.static("root"), toJSString(globalObject, this.root));
-            jsObject.put(globalObject, JSC.ZigString.static("dir"), toJSString(globalObject, this.dir));
-            jsObject.put(globalObject, JSC.ZigString.static("base"), toJSString(globalObject, this.base));
-            jsObject.put(globalObject, JSC.ZigString.static("ext"), toJSString(globalObject, this.ext));
-            jsObject.put(globalObject, JSC.ZigString.static("name"), toJSString(globalObject, this.name));
+            jsObject.put(globalObject, JSC.ZigString.static("root"), bun.String.createUTF8ForJS(globalObject, this.root));
+            jsObject.put(globalObject, JSC.ZigString.static("dir"), bun.String.createUTF8ForJS(globalObject, this.dir));
+            jsObject.put(globalObject, JSC.ZigString.static("base"), bun.String.createUTF8ForJS(globalObject, this.base));
+            jsObject.put(globalObject, JSC.ZigString.static("ext"), bun.String.createUTF8ForJS(globalObject, this.ext));
+            jsObject.put(globalObject, JSC.ZigString.static("name"), bun.String.createUTF8ForJS(globalObject, this.name));
             return jsObject;
         }
     };
@@ -421,11 +418,11 @@ pub fn basenameWindowsT(comptime T: type, path: []const T, suffix: ?[]const T) [
 }
 
 pub inline fn basenamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) JSC.JSValue {
-    return toJSString(globalObject, basenamePosixT(T, path, suffix));
+    return bun.String.createUTF8ForJS(globalObject, basenamePosixT(T, path, suffix));
 }
 
 pub inline fn basenameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) JSC.JSValue {
-    return toJSString(globalObject, basenameWindowsT(T, path, suffix));
+    return bun.String.createUTF8ForJS(globalObject, basenameWindowsT(T, path, suffix));
 }
 
 pub inline fn basenameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T, suffix: ?[]const T) JSC.JSValue {
@@ -455,7 +452,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -622,11 +619,11 @@ pub fn dirnameWindowsT(comptime T: type, path: []const T) []const T {
 }
 
 pub inline fn dirnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
-    return toJSString(globalObject, dirnamePosixT(T, path));
+    return bun.String.createUTF8ForJS(globalObject, dirnamePosixT(T, path));
 }
 
 pub inline fn dirnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
-    return toJSString(globalObject, dirnameWindowsT(T, path));
+    return bun.String.createUTF8ForJS(globalObject, dirnameWindowsT(T, path));
 }
 
 pub inline fn dirnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) JSC.JSValue {
@@ -645,9 +642,9 @@ pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
     };
 
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
-    if (pathZStr.len == 0) return toJSString(globalObject, CHAR_STR_DOT);
+    if (pathZStr.len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -821,11 +818,11 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
 }
 
 pub inline fn extnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
-    return toJSString(globalObject, extnamePosixT(T, path));
+    return bun.String.createUTF8ForJS(globalObject, extnamePosixT(T, path));
 }
 
 pub inline fn extnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
-    return toJSString(globalObject, extnameWindowsT(T, path));
+    return bun.String.createUTF8ForJS(globalObject, extnameWindowsT(T, path));
 }
 
 pub inline fn extnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) JSC.JSValue {
@@ -846,7 +843,7 @@ pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -930,11 +927,11 @@ fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []con
 }
 
 pub inline fn formatPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) JSC.JSValue {
-    return toJSString(globalObject, _formatT(T, pathObject, CHAR_FORWARD_SLASH, buf));
+    return bun.String.createUTF8ForJS(globalObject, _formatT(T, pathObject, CHAR_FORWARD_SLASH, buf));
 }
 
 pub inline fn formatWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) JSC.JSValue {
-    return toJSString(globalObject, _formatT(T, pathObject, CHAR_BACKWARD_SLASH, buf));
+    return bun.String.createUTF8ForJS(globalObject, _formatT(T, pathObject, CHAR_BACKWARD_SLASH, buf));
 }
 
 pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, pathObject: PathParsed(T)) JSC.JSValue {
@@ -957,7 +954,7 @@ pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]J
         return .zero;
     };
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
@@ -1237,11 +1234,11 @@ pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: 
 }
 
 pub inline fn joinPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
-    return toJSString(globalObject, joinPosixT(T, paths, buf, buf2));
+    return bun.String.createUTF8ForJS(globalObject, joinPosixT(T, paths, buf, buf2));
 }
 
 pub inline fn joinWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
-    return toJSString(globalObject, joinWindowsT(T, paths, buf, buf2));
+    return bun.String.createUTF8ForJS(globalObject, joinWindowsT(T, paths, buf, buf2));
 }
 
 pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) JSC.JSValue {
@@ -1257,7 +1254,7 @@ pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: 
 }
 
 pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    if (args_len == 0) return toJSString(globalObject, CHAR_STR_DOT);
+    if (args_len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -1652,11 +1649,11 @@ pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
 }
 
 pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
-    return toJSString(globalObject, normalizePosixT(T, path, buf));
+    return bun.String.createUTF8ForJS(globalObject, normalizePosixT(T, path, buf));
 }
 
 pub inline fn normalizeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
-    return toJSString(globalObject, normalizeWindowsT(T, path, buf));
+    return bun.String.createUTF8ForJS(globalObject, normalizeWindowsT(T, path, buf));
 }
 
 pub fn normalizeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) JSC.JSValue {
@@ -1675,9 +1672,9 @@ pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [
     };
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     const len = pathZStr.len;
-    if (len == 0) return toJSString(globalObject, CHAR_STR_DOT);
+    if (len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -2000,7 +1997,7 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JS
     const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);
@@ -2327,14 +2324,14 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
 
 pub inline fn relativePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
     return switch (relativePosixT(T, from, to, buf, buf2, buf3)) {
-        .result => |r| toJSString(globalObject, r),
+        .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJSC(globalObject),
     };
 }
 
 pub inline fn relativeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
     return switch (relativeWindowsT(T, from, to, buf, buf2, buf3)) {
-        .result => |r| toJSString(globalObject, r),
+        .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJSC(globalObject),
     };
 }
@@ -2367,7 +2364,7 @@ pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     const toZigStr = to_ptr.getZigString(globalObject) catch return .zero;
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     var fromZigSlice = fromZigStr.toSlice(allocator);
@@ -2781,14 +2778,14 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
 
 pub inline fn resolvePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (resolvePosixT(T, paths, buf, buf2)) {
-        .result => |r| toJSString(globalObject, r),
+        .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJSC(globalObject),
     };
 }
 
 pub inline fn resolveWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (resolveWindowsT(T, paths, buf, buf2)) {
-        .result => |r| toJSString(globalObject, r),
+        .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJSC(globalObject),
     };
 }
@@ -2927,13 +2924,13 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
 
 pub inline fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) JSC.JSValue {
     return switch (toNamespacedPathWindowsT(T, path, buf, buf2)) {
-        .result => |r| toJSString(globalObject, r),
+        .result => |r| bun.String.createUTF8ForJS(globalObject, r),
         .err => |e| e.toJSC(globalObject),
     };
 }
 
 pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) JSC.JSValue {
-    if (!isWindows or path.len == 0) return toJSString(globalObject, path);
+    if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
     const bufLen = @max(path.len, PATH_SIZE(T));
     const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
     defer allocator.free(buf);
@@ -2956,7 +2953,7 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     const len = pathZStr.len;
     if (len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
+    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     const pathZSlice = pathZStr.toSlice(allocator);

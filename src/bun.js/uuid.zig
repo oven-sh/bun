@@ -1,9 +1,7 @@
 //https://github.com/dmgk/zig-uuid
 const std = @import("std");
-const crypto = std.crypto;
 const fmt = std.fmt;
-const testing = std.testing;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();

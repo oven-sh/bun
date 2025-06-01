@@ -1,9 +1,6 @@
-const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
-const FeatureFlags = @import("../feature_flags.zig");
-const default_allocator = @import("../allocators/memory_allocator.zig").c_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Fs = @import("../fs.zig");
 
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
@@ -782,12 +779,12 @@ pub fn normalizeStringGenericTZ(
     var dotdot: usize = 0;
     var path_begin: usize = 0;
 
-    const volLen, const indexOfThirdUNCSlash = if (isWindows and !options.allow_above_root)
+    const volLen, const indexOfThirdUNCSlash = if (isWindows)
         windowsVolumeNameLenT(T, path_)
     else
         .{ 0, 0 };
 
-    if (isWindows and !options.allow_above_root) {
+    if (isWindows) {
         if (volLen > 0) {
             if (options.add_nt_prefix) {
                 @memcpy(buf[buf_i .. buf_i + 4], strings.literal(T, "\\??\\"));
@@ -839,19 +836,6 @@ pub fn normalizeStringGenericTZ(
             buf_i += 1;
             dotdot = buf_i;
             path_begin = 1;
-        }
-    }
-    if (isWindows and options.allow_above_root) {
-        if (path_.len >= 2 and path_[1] == ':') {
-            if (options.add_nt_prefix) {
-                @memcpy(buf[buf_i .. buf_i + 4], &strings.literalBuf(T, "\\??\\"));
-                buf_i += 4;
-            }
-            buf[buf_i] = std.ascii.toUpper(@truncate(path_[0]));
-            buf[buf_i + 1] = ':';
-            buf_i += 2;
-            dotdot = buf_i;
-            path_begin = 2;
         }
     }
 

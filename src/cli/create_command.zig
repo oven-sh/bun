@@ -1,29 +1,20 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const linker = @import("../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
@@ -38,7 +29,6 @@ const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
 const clap = bun.clap;
-const Lock = bun.Mutex;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
@@ -444,12 +434,12 @@ pub const CreateCommand = struct {
                 if (!create_options.skip_package_json) {
                     const plucker = pluckers[0];
 
-                    if (plucker.found and plucker.fd != .zero) {
+                    if (plucker.found and plucker.fd.isValid()) {
                         node.name = "Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = plucker.fd.asFile();
+                        package_json_file = plucker.fd.stdFile();
                     }
                 }
             },
@@ -557,7 +547,7 @@ pub const CreateCommand = struct {
                             }
                             if (entry.kind != .file) continue;
 
-                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
+                            var outfile = bun.FD.fromStdFile(destination_dir_.createFile(entry.path, .{}) catch brk: {
                                 if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
                                     bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
@@ -567,22 +557,22 @@ pub const CreateCommand = struct {
                                     Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     Global.crash();
                                 };
-                            };
+                            });
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            const infile = bun.FD.fromStdFile(try entry.dir.openFile(entry.basename, .{ .mode = .read_only }));
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
-                            switch (bun.sys.fstat(bun.toFD(infile.handle))) {
+                            switch (infile.stat()) {
                                 .err => {},
                                 .result => |stat| {
-                                    _ = bun.sys.fchmod(bun.toFD(outfile.handle), @intCast(stat.mode));
+                                    _ = outfile.chmod(@intCast(stat.mode));
                                 },
                             }
 
-                            CopyFile.copyFile(infile.handle, outfile.handle).unwrap() catch |err| {
+                            CopyFile.copyFile(infile, outfile).unwrap() catch |err| {
                                 node_.end();
                                 progress_.refresh();
                                 Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
@@ -1429,9 +1419,9 @@ pub const CreateCommand = struct {
                     package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
                 }
 
-                const file = package_json_file.?;
+                const file: bun.FD = .fromStdFile(package_json_file.?);
 
-                var buffer_writer = try JSPrinter.BufferWriter.init(bun.default_allocator);
+                var buffer_writer = JSPrinter.BufferWriter.init(bun.default_allocator);
                 buffer_writer.append_newline = true;
                 var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
@@ -1446,14 +1436,13 @@ pub const CreateCommand = struct {
                     package_json_file = null;
                     break :process_package_json;
                 };
-                const fd = bun.toFD(file);
                 const written = package_json_writer.ctx.getWritten();
-                bun.sys.File.writeAll(.{ .handle = fd }, written).unwrap() catch |err| {
+                bun.sys.File.writeAll(.{ .handle = file }, written).unwrap() catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;
                 };
-                bun.sys.ftruncate(fd, @intCast(written.len)).unwrap() catch |err| {
+                file.truncate(@intCast(written.len)).unwrap() catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;
@@ -1741,7 +1730,7 @@ pub const CreateCommand = struct {
                 const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                 if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
 
-                if (bun.sys.existsAtType(bun.toFD(std.fs.cwd()), outdir_path_).asValue()) |exists_at_type| {
+                if (bun.FD.cwd().existsAtType(outdir_path_).asValue()) |exists_at_type| {
                     if (exists_at_type == .file) {
                         const extension = std.fs.path.extension(positional);
                         if (Example.Tag.fromFileExtension(extension)) |tag| {
@@ -1765,7 +1754,7 @@ pub const CreateCommand = struct {
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                        if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                        if (bun.FD.cwd().directoryExistsAt(outdir_path_).isTrue()) {
                             example_tag = Example.Tag.local_folder;
                             break :brk outdir_path;
                         }
@@ -1778,7 +1767,7 @@ pub const CreateCommand = struct {
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                     if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                    if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                    if (bun.FD.cwd().directoryExistsAt(outdir_path_).isTrue()) {
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
                     }
@@ -1791,7 +1780,7 @@ pub const CreateCommand = struct {
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                        if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                        if (bun.FD.cwd().directoryExistsAt(outdir_path_).isTrue()) {
                             example_tag = Example.Tag.local_folder;
                             break :brk outdir_path;
                         }
@@ -1852,7 +1841,6 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = bun.picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -1911,26 +1899,26 @@ pub const Example = struct {
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
-                bun.invalid_fd.asDir(),
-                bun.invalid_fd.asDir(),
-                bun.invalid_fd.asDir(),
+                bun.invalid_fd.stdDir(),
+                bun.invalid_fd.stdDir(),
+                bun.invalid_fd.stdDir(),
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
             // subfolders with package.json

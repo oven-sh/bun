@@ -1,5 +1,4 @@
 const mem = @import("std").mem;
-const builtin = @import("std").builtin;
 const std = @import("std");
 
 const mimalloc = @import("./mimalloc.zig");
@@ -7,7 +6,7 @@ const Environment = @import("../env.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = bun.assert;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const log = bun.Output.scoped(.mimalloc, true);
 
 pub const Arena = struct {

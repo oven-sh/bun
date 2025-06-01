@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
@@ -10,7 +8,6 @@ const ArrayList = std.ArrayListUnmanaged;
 
 const Length = css.css_values.length.Length;
 const CSSNumber = css.css_values.number.CSSNumber;
-const Integer = css.css_values.number.Integer;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
@@ -24,7 +21,6 @@ const DashedIdentFns = css.css_values.ident.DashedIdentFns;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const PrintResult = css.PrintResult;
 const Result = css.Result;
 
 pub fn ValidQueryCondition(comptime T: type) void {
@@ -201,12 +197,12 @@ pub const MediaQuery = struct {
         };
 
         const condition = if (explicit_media_type == null)
-            switch (MediaCondition.parseWithFlags(input, QueryConditionFlags{ .allow_or = true })) {
+            switch (MediaCondition.parseWithFlags(input, .{ .allow_or = true })) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             }
         else if (input.tryParse(css.Parser.expectIdentMatching, .{"and"}).isOk())
-            switch (MediaCondition.parseWithFlags(input, QueryConditionFlags.empty())) {
+            switch (MediaCondition.parseWithFlags(input, .{})) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             }
@@ -274,8 +270,6 @@ pub const QueryConditionFlags = packed struct(u8) {
     /// Whether to allow style container queries.
     allow_style: bool = false,
     __unused: u6 = 0,
-
-    pub usingnamespace css.Bitflags(@This());
 };
 
 pub fn toCssWithParensIfNeeded(
@@ -488,7 +482,7 @@ pub fn parseQueryCondition(
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "not")) break :brk .{ true, false };
             },
             .function => |f| {
-                if (flags.contains(QueryConditionFlags{ .allow_style = true }) and
+                if (flags.allow_style and
                     bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "style"))
                 {
                     break :brk .{ false, true };
@@ -536,7 +530,7 @@ pub fn parseQueryCondition(
     else
         return .{ .result = first_condition };
 
-    if (!flags.contains(QueryConditionFlags{ .allow_or = true }) and operator == .@"or") {
+    if (!flags.allow_or and operator == .@"or") {
         return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = "or" }) };
     }
 
@@ -587,7 +581,7 @@ pub fn parseParensOrFunction(
     switch (t.*) {
         .open_paren => return parseParenBlock(QueryCondition, input, flags),
         .function => |f| {
-            if (flags.contains(QueryConditionFlags{ .allow_style = true }) and
+            if (flags.allow_style and
                 bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "style"))
             {
                 return QueryCondition.parseStyleQuery(input);
@@ -708,7 +702,7 @@ pub const MediaFeatureId = enum {
     /// The non-standard -moz-device-pixel-ratio media feature.
     @"-moz-device-pixel-ratio",
 
-    pub usingnamespace css.DeriveValueType(@This(), ValueTypeMap);
+    pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
 
     pub const ValueTypeMap = .{
         .width = MediaFeatureType.length,

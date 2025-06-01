@@ -2,17 +2,8 @@
 // Thank you @frmdstryr.
 const std = @import("std");
 
-const posix = std.posix;
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 pub const Opcode = enum(u4) {
     Continue = 0x0,
@@ -37,7 +28,7 @@ pub const Opcode = enum(u4) {
     }
 };
 
-pub const WebsocketHeader = packed struct {
+pub const WebsocketHeader = packed struct(u16) {
     len: u7,
     mask: bool,
     opcode: Opcode,
@@ -95,31 +86,5 @@ pub const WebsocketHeader = packed struct {
 
     pub fn fromSlice(bytes: [2]u8) WebsocketHeader {
         return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
-    }
-};
-
-pub const WebsocketDataFrame = struct {
-    header: WebsocketHeader,
-    mask: [4]u8 = undefined,
-    data: []const u8,
-
-    pub fn isValid(dataframe: WebsocketDataFrame) bool {
-        // Validate control frame
-        if (dataframe.header.opcode.isControl()) {
-            if (!dataframe.header.final) {
-                return false; // Control frames cannot be fragmented
-            }
-            if (dataframe.data.len > 125) {
-                return false; // Control frame payloads cannot exceed 125 bytes
-            }
-        }
-
-        // Validate header len field
-        const expected = switch (dataframe.data.len) {
-            0...126 => dataframe.data.len,
-            127...0xFFFF => 126,
-            else => 127,
-        };
-        return dataframe.header.len == expected;
     }
 };

@@ -1,18 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
 const Url = css_values.url.Url;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 // const Location = css.Location;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub const DependencyOptions = struct {

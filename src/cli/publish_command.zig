@@ -1,11 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Command = bun.CLI.Command;
 const Output = bun.Output;
 const Global = bun.Global;
 const http = bun.http;
 const OOM = bun.OOM;
-const Headers = http.Headers;
 const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = bun.URL;
@@ -34,7 +33,6 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 const E = bun.JSAst.E;
 const G = bun.JSAst.G;
-const BabyList = bun.BabyList;
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
@@ -680,11 +678,11 @@ pub const PublishCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
+            bun.windows.updateStdioModeFlags(.std_in, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
-                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+                _ = bun.c.SetConsoleMode(bun.FD.stdin().native(), mode);
             }
         };
 
@@ -951,7 +949,7 @@ pub const PublishCommand = struct {
                 Output.err(err, "failed to open workspace directory", .{});
                 Global.crash();
             };
-            defer _ = bun.sys.close(workspace_root);
+            defer workspace_root.close();
 
             try normalizeBin(
                 allocator,
@@ -961,7 +959,7 @@ pub const PublishCommand = struct {
             );
         }
 
-        const buffer_writer = try bun.js_printer.BufferWriter.init(allocator);
+        const buffer_writer = bun.js_printer.BufferWriter.init(allocator);
         var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
         const written = bun.js_printer.printJSON(
@@ -1145,7 +1143,7 @@ pub const PublishCommand = struct {
                 var dirs: std.ArrayListUnmanaged(struct { std.fs.Dir, string, bool }) = .{};
                 defer dirs.deinit(allocator);
 
-                try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir, false });
+                try dirs.append(allocator, .{ bin_dir.stdDir(), normalized_bin_dir, false });
 
                 while (dirs.pop()) |dir_info| {
                     var dir, const dir_subpath, const close_dir = dir_info;

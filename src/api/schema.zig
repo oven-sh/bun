@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const js_ast = bun.JSAst;
 const OOM = bun.OOM;
 
@@ -1706,6 +1706,9 @@ pub const Api = struct {
         serve_public_path: ?[]const u8 = null,
         serve_hmr: ?bool = null,
         serve_define: ?StringMap = null,
+
+        // from --no-addons. null == true
+        allow_addons: ?bool = null,
 
         bunfig_path: []const u8,
 

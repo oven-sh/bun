@@ -1,11 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const testing = std.testing;
 
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList

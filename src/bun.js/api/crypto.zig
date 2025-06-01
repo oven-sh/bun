@@ -21,12 +21,7 @@ comptime {
     CryptoHasher.Extern.@"export"();
 }
 
-const std = @import("std");
-const bun = @import("root").bun;
-const string = bun.string;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;

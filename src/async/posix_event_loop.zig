@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const JSC = bun.JSC;
 const uws = bun.uws;
@@ -157,9 +157,9 @@ pub const FilePoll = struct {
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
     const FileSink = JSC.WebCore.FileSink.Poll;
-    const DNSResolver = JSC.DNS.DNSResolver;
-    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
-    const Request = JSC.DNS.InternalDNS.Request;
+    const DNSResolver = bun.api.DNS.DNSResolver;
+    const GetAddrInfoRequest = bun.api.DNS.GetAddrInfoRequest;
+    const Request = bun.api.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
 
@@ -664,7 +664,7 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(this: *FilePoll, loop: *Loop) void {
-        loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        if (this.flags.contains(.has_incremented_poll_count)) loop.dec();
         this.flags.remove(.has_incremented_poll_count);
 
         loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
@@ -676,7 +676,7 @@ pub const FilePoll = struct {
     fn activate(this: *FilePoll, loop: *Loop) void {
         this.flags.remove(.closed);
 
-        loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
+        if (!this.flags.contains(.has_incremented_poll_count)) loop.inc();
         this.flags.insert(.has_incremented_poll_count);
 
         if (this.flags.contains(.keeps_event_loop_alive)) {
@@ -904,7 +904,7 @@ pub const FilePoll = struct {
                         &timeout,
                     );
 
-                    if (bun.C.getErrno(rc) == .INTR) continue;
+                    if (bun.sys.getErrno(rc) == .INTR) continue;
                     break :rc rc;
                 }
             };
@@ -921,7 +921,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
 
             if (errno != .SUCCESS) {
                 this.deactivate(loop);
@@ -957,7 +957,7 @@ pub const FilePoll = struct {
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (Environment.allow_assert) {
-            bun.assert(fd.int() >= 0 and fd != bun.invalid_fd);
+            bun.assert(fd.native() >= 0 and fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 
@@ -1073,7 +1073,7 @@ pub const FilePoll = struct {
                 // indicate the error condition.
             }
 
-            const errno = bun.C.getErrno(rc);
+            const errno = bun.sys.getErrno(rc);
             switch (rc) {
                 std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
@@ -1105,7 +1105,7 @@ pub const LinuxWaker = struct {
     fd: bun.FileDescriptor,
 
     pub fn init() !Waker {
-        return initWithFileDescriptor(bun.toFD(try std.posix.eventfd(0, 0)));
+        return initWithFileDescriptor(.fromNative(try std.posix.eventfd(0, 0)));
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
@@ -1151,7 +1151,7 @@ pub const KEventWaker = struct {
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
-        return bun.toFD(this.kq);
+        return .fromNative(this.kq);
     }
 
     pub fn wait(this: Waker) void {
@@ -1205,20 +1205,20 @@ pub const Closer = struct {
     fd: bun.FileDescriptor,
     task: JSC.WorkPoolTask = .{ .callback = &onClose },
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn close(
         fd: bun.FileDescriptor,
-        /// for compatibiltiy with windows version
-        _: anytype,
+        /// for compatibility with windows version
+        _: void,
     ) void {
-        bun.assert(fd != bun.invalid_fd);
+        bun.assert(fd.isValid());
         JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }
 
     fn onClose(task: *JSC.WorkPoolTask) void {
         const closer: *Closer = @fieldParentPtr("task", task);
-        defer closer.destroy();
-        _ = bun.sys.close(closer.fd);
+        defer bun.destroy(closer);
+        closer.fd.close();
     }
 };

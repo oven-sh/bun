@@ -15,10 +15,10 @@
  *
  */
 
-import assert from "node:assert";
 import grpc from "@grpc/grpc-js";
+import { afterAll, afterEach, beforeAll, describe, it } from "bun:test";
+import assert from "node:assert";
 import { loadProtoFile } from "./common.ts";
-import { afterAll, beforeAll, describe, it, afterEach } from "bun:test";
 
 function multiDone(done: () => void, target: number) {
   let count = 0;

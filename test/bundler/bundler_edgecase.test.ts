@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
+import { isBroken, isWindows } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -2321,6 +2321,51 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: {
       stdout: "",
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello,world,etc,blah];
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// @bun
+        // entry.ts
+        import * as hello from "node:test";
+        import * as world from "fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello, world, etc, blah];
+        "
+      `);
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix2", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello,world,etc];
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello, world, etc];
+        "
+      `);
     },
   });
 });

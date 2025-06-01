@@ -1,7 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
-const OOM = bun.OOM;
 
 pub const WTFStringImpl = *WTFStringImplStruct;
 const ZigString = bun.JSC.ZigString;
@@ -205,7 +204,7 @@ pub const WTFStringImplStruct = extern struct {
     pub fn utf8ByteLength(this: WTFStringImpl) usize {
         if (this.is8Bit()) {
             const input = this.latin1Slice();
-            return if (input.len > 0) JSC.WebCore.Encoder.byteLengthU8(input.ptr, input.len, .utf8) else 0;
+            return if (input.len > 0) JSC.WebCore.encoding.byteLengthU8(input.ptr, input.len, .utf8) else 0;
         } else {
             const input = this.utf16Slice();
             return if (input.len > 0) bun.strings.elementLengthUTF16IntoUTF8([]const u16, input) else 0;

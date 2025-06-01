@@ -84,25 +84,17 @@ const StringPrototypeTrim = String.prototype.trim;
 const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
-const NumberIsInteger = Number.isInteger;
-const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-const NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const FunctionPrototype = Function.prototype;
 const StringPrototype = String.prototype;
 const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
 const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const ObjectAssign = Object.assign;
 const ObjectCreate = Object.create;
-const ObjectKeys = Object.keys;
-const ObjectSeal = Object.seal;
 
 var createSafeIterator = (factory, next) => {
   class SafeIterator {
@@ -2276,32 +2268,34 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-Interface.prototype.question[promisify.custom] = function question(query, options) {
-  if (options === null || typeof options !== "object") {
-    options = kEmptyObject;
-  }
-
-  var signal = options?.signal;
-
-  if (signal && signal.aborted) {
-    return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
-  }
-
-  return new Promise((resolve, reject) => {
-    var cb = resolve;
-    if (signal) {
-      var onAbort = () => {
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
+{
+  Interface.prototype.question[promisify.custom] = function question(query, options) {
+    if (options === null || typeof options !== "object") {
+      options = kEmptyObject;
     }
-    this.question(query, options, cb);
-  });
-};
+
+    var signal = options?.signal;
+
+    if (signal && signal.aborted) {
+      return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+    }
+
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (signal) {
+        var onAbort = () => {
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this.question(query, options, cb);
+    });
+  };
+}
 
 /**
  * Creates a new `readline.Interface` instance.
@@ -2695,11 +2689,17 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    const { resolve, promise } = $newPromiseCapability(Promise);
-    this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
-    this.#todo = [];
+    const { resolve, reject, promise } = $newPromiseCapability(Promise);
 
-    return promise;
+    try {
+      const data = ArrayPrototypeJoin.$call(this.#todo, "");
+      this.#stream.write(data, resolve);
+      this.#todo = [];
+    } catch (err) {
+      reject(err);
+    } finally {
+      return promise;
+    }
   }
 
   /**

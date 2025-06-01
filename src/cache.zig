@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -6,24 +6,16 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const FeatureFlags = bun.FeatureFlags;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const js_ast = bun.JSAst;
 const logger = bun.logger;
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
-const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
-const sync = @import("sync.zig");
-
-const import_record = @import("./import_record.zig");
-
-const ImportRecord = import_record.ImportRecord;
 
 pub const Set = struct {
     js: JavaScript,
@@ -73,11 +65,9 @@ pub const Fs = struct {
         }
 
         pub fn closeFD(entry: *Entry) ?bun.sys.Error {
-            if (entry.fd != bun.invalid_fd) {
-                defer {
-                    entry.fd = bun.invalid_fd;
-                }
-                return bun.sys.close(entry.fd);
+            if (entry.fd.isValid()) {
+                defer entry.fd = .invalid;
+                return entry.fd.closeAllowingBadFileDescriptor(@returnAddress());
             }
             return null;
         }
@@ -123,19 +113,19 @@ pub const Fs = struct {
         this: *Fs,
         _fs: *fs.FileSystem,
         path: [:0]const u8,
-        _: StoredFileDescriptorType,
-        _file_handle: ?StoredFileDescriptorType,
+        cached_file_descriptor: ?StoredFileDescriptorType,
         shared: *MutableString,
     ) !Entry {
         var rfs = _fs.fs;
 
-        const file_handle: std.fs.File = if (_file_handle) |__file|
-            std.fs.File{ .handle = __file }
-        else
-            try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+        const file_handle: std.fs.File = if (cached_file_descriptor) |fd| handle: {
+            const handle = std.fs.File{ .handle = fd };
+            try handle.seekTo(0);
+            break :handle handle;
+        } else try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
 
         defer {
-            if (rfs.needToCloseFiles() and _file_handle == null) {
+            if (rfs.needToCloseFiles() and cached_file_descriptor == null) {
                 file_handle.close();
             }
         }
@@ -183,10 +173,10 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
+        var file_handle: std.fs.File = if (_file_handle) |__file| __file.stdFile() else undefined;
 
         if (_file_handle == null) {
-            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd != .zero) {
+            if (FeatureFlags.store_file_descriptors and dirname_fd.isValid()) {
                 file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
                         error.ENOENT => {
@@ -195,18 +185,20 @@ pub const Fs = struct {
                                 "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
-                            break :brk bun.toFD(handle.handle);
+                            break :brk bun.FD.fromStdFile(handle);
                         },
                         else => return err,
                     }
-                }).asFile();
+                }).stdFile();
             } else {
                 file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
+        } else {
+            try file_handle.seekTo(0);
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
-            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.toFD(file_handle.handle) });
+            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
@@ -233,7 +225,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) bun.toFD(file_handle.handle) else bun.invalid_fd,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) .fromStdFile(file_handle) else bun.invalid_fd,
         };
     }
 };

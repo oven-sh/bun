@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.Cookie expires validation", () => {
   describe("Date objects", () => {
@@ -85,13 +85,17 @@ describe("Bun.Cookie expires validation", () => {
     test("throws for arrays", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: [2023, 11, 25] });
-      }).toThrowErrorMatchingInlineSnapshot(`"The argument 'expires' Invalid expires value. Must be a Date or a number. Received [ 2023, 11, 25 ]"`);
+      }).toThrowErrorMatchingInlineSnapshot(
+        `"The argument 'expires' Invalid expires value. Must be a Date or a number. Received [ 2023, 11, 25 ]"`,
+      );
     });
 
     test("throws for booleans", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: true });
-      }).toThrowErrorMatchingInlineSnapshot(`"The argument 'expires' Invalid expires value. Must be a Date or a number. Received true"`);
+      }).toThrowErrorMatchingInlineSnapshot(
+        `"The argument 'expires' Invalid expires value. Must be a Date or a number. Received true"`,
+      );
     });
   });
 

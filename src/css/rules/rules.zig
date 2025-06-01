@@ -1,20 +1,13 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
-const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
 const Dependency = css.Dependency;
 const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
-const fontprops = css.css_properties.font;
 
 pub const import = @import("./import.zig");
 pub const layer = @import("./layer.zig");
@@ -497,7 +490,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 } else {
                     if (!dest.minify and
                         !(last_without_block and
-                        (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
+                            (rule.* == .import or rule.* == .namespace or rule.* == .layer_statement)))
                     {
                         try dest.writeChar('\n');
                     }
@@ -651,10 +644,10 @@ fn mergeStyleRules(
         {
             // If the new rule is unprefixed, replace the prefixes of the last rule.
             // Otherwise, add the new prefix.
-            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+            if (sty.vendor_prefix.none and context.targets.shouldCompileSelectors()) {
                 last_style_rule.vendor_prefix = sty.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                bun.bits.insert(css.VendorPrefix, &last_style_rule.vendor_prefix, sty.vendor_prefix);
             }
             return true;
         }
@@ -666,10 +659,10 @@ fn mergeStyleRules(
                 sty.selectors.v.slice(),
             );
             sty.selectors.v.clearRetainingCapacity();
-            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+            if (sty.vendor_prefix.none and context.targets.shouldCompileSelectors()) {
                 last_style_rule.vendor_prefix = sty.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                bun.bits.insert(css.VendorPrefix, &last_style_rule.vendor_prefix, sty.vendor_prefix);
             }
             return true;
         }

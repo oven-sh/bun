@@ -1,7 +1,3 @@
-/*
-Skipped test
-https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/script/node-disabled-tests.json#L20
-
 'use strict';
 
 const common = require('../common');
@@ -306,11 +302,11 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
   }, hasOpenSSL3 ? {
     message: 'error:1E08010C:DECODER routines::unsupported',
   } : {
-    message: 'error:0909006C:PEM routines:get_name:no start line',
-    code: 'ERR_OSSL_PEM_NO_START_LINE',
-    reason: 'no start line',
+    message: /error:(0909006C|0900006e):PEM routines:(get_name|OPENSSL_internal):(no start line|NO_START_LINE)/,
+    code: /ERR_OSSL_(PEM_)?NO_START_LINE/,
+    reason: /no start line|NO_START_LINE/,
     library: 'PEM routines',
-    function: 'get_name',
+    function: /get_name|OPENSSL_internal/,
   });
 
   // This should not abort either: https://github.com/nodejs/node/issues/29904
@@ -333,12 +329,12 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     message: /error:1E08010C:DECODER routines::unsupported/,
     library: 'DECODER routines'
   } : {
-    message: /asn1 encoding/,
-    library: 'asn1 encoding routines'
+    message: /asn1 encoding|public key routines/,
+    library: /asn1 encoding routines|public key routines/
   });
 }
 
-[
+const keyTypeTests = [
   { private: fixtures.readKey('ed25519_private.pem', 'ascii'),
     public: fixtures.readKey('ed25519_public.pem', 'ascii'),
     keyType: 'ed25519',
@@ -346,17 +342,6 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
       crv: 'Ed25519',
       x: 'K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768',
       d: 'wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA',
-      kty: 'OKP'
-    } },
-  { private: fixtures.readKey('ed448_private.pem', 'ascii'),
-    public: fixtures.readKey('ed448_public.pem', 'ascii'),
-    keyType: 'ed448',
-    jwk: {
-      crv: 'Ed448',
-      x: 'oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o' +
-         'Dgc2V5ZUA',
-      d: '060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX' +
-         'jcR9mxppY',
       kty: 'OKP'
     } },
   { private: fixtures.readKey('x25519_private.pem', 'ascii'),
@@ -368,18 +353,36 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
       d: 'mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc',
       kty: 'OKP'
     } },
-  { private: fixtures.readKey('x448_private.pem', 'ascii'),
-    public: fixtures.readKey('x448_public.pem', 'ascii'),
-    keyType: 'x448',
-    jwk: {
-      crv: 'X448',
-      x: 'ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg' +
-         'vSKsDFPA',
-      d: 'tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy' +
-         'S0jlSYJk',
-      kty: 'OKP'
-    } },
-].forEach((info) => {
+];
+    
+if (!common.openSSLIsBoringSSL) {
+  keyTypeTests.push(
+    { private: fixtures.readKey('ed448_private.pem', 'ascii'),
+      public: fixtures.readKey('ed448_public.pem', 'ascii'),
+      keyType: 'ed448',
+      jwk: {
+        crv: 'Ed448',
+        x: 'oX_ee5-jlcU53-BbGRsGIzly0V-SZtJ_oGXY0udf84q2hTW2RdstLktvwpkVJOoNb7o' +
+           'Dgc2V5ZUA',
+        d: '060Ke71sN0GpIc01nnGgMDkp0sFNQ09woVo4AM1ffax1-mjnakK0-p-S7-Xf859QewX' +
+           'jcR9mxppY',
+        kty: 'OKP'
+      } },
+    { private: fixtures.readKey('x448_private.pem', 'ascii'),
+      public: fixtures.readKey('x448_public.pem', 'ascii'),
+      keyType: 'x448',
+      jwk: {
+        crv: 'X448',
+        x: 'ioHSHVpTs6hMvghosEJDIR7ceFiE3-Xccxati64oOVJ7NWjfozE7ae31PXIUFq6cVYg' +
+          'vSKsDFPA',
+        d: 'tMNtrO_q8dlY6Y4NDeSTxNQ5CACkHiPvmukidPnNIuX_EkcryLEXt_7i6j6YZMKsrWy' +
+          'S0jlSYJk',
+        kty: 'OKP'
+      } },
+  );
+}
+
+for (const info of keyTypeTests) {
   const keyType = info.keyType;
 
   {
@@ -419,9 +422,9 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
         key.export({ format: 'jwk' }), jwk);
     }
   }
-});
+}
 
-[
+const namedCurveEcTests = [
   { private: fixtures.readKey('ec_p256_private.pem', 'ascii'),
     public: fixtures.readKey('ec_p256_public.pem', 'ascii'),
     keyType: 'ec',
@@ -432,17 +435,6 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
       kty: 'EC',
       x: 'X0mMYR_uleZSIPjNztIkAS3_ud5LhNpbiIFp6fNf2Gs',
       y: 'UbJuPy2Xi0lW7UYTBxPK3yGgDu9EAKYIecjkHX5s2lI'
-    } },
-  { private: fixtures.readKey('ec_secp256k1_private.pem', 'ascii'),
-    public: fixtures.readKey('ec_secp256k1_public.pem', 'ascii'),
-    keyType: 'ec',
-    namedCurve: 'secp256k1',
-    jwk: {
-      crv: 'secp256k1',
-      d: 'c34ocwTwpFa9NZZh3l88qXyrkoYSxvC0FEsU5v1v4IM',
-      kty: 'EC',
-      x: 'cOzhFSpWxhalCbWNdP2H_yUkdC81C9T2deDpfxK7owA',
-      y: '-A3DAZTk9IPppN-f03JydgHaFvL1fAHaoXf4SX4NXyo'
     } },
   { private: fixtures.readKey('ec_p384_private.pem', 'ascii'),
     public: fixtures.readKey('ec_p384_public.pem', 'ascii'),
@@ -469,7 +461,25 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
       y: 'Ad3flexBeAfXceNzRBH128kFbOWD6W41NjwKRqqIF26vmgW_8COldGKZjFkOSEASxPB' +
          'cvA2iFJRUyQ3whC00j0Np'
     } },
-].forEach((info) => {
+];
+
+if (!common.openSSLIsBoringSSL) {
+  namedCurveEcTests.push(
+    { private: fixtures.readKey('ec_secp256k1_private.pem', 'ascii'),
+      public: fixtures.readKey('ec_secp256k1_public.pem', 'ascii'),
+      keyType: 'ec',
+      namedCurve: 'secp256k1',
+      jwk: {
+        crv: 'secp256k1',
+        d: 'c34ocwTwpFa9NZZh3l88qXyrkoYSxvC0FEsU5v1v4IM',
+        kty: 'EC',
+        x: 'cOzhFSpWxhalCbWNdP2H_yUkdC81C9T2deDpfxK7owA',
+        y: '-A3DAZTk9IPppN-f03JydgHaFvL1fAHaoXf4SX4NXyo'
+      } },
+  );
+}
+
+for (const info of namedCurveEcTests) {
   const { keyType, namedCurve } = info;
 
   {
@@ -512,7 +522,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
         key.export({ format: 'jwk' }), jwk);
     }
   }
-});
+}
 
 {
   // Reading an encrypted key without a passphrase should fail.
@@ -533,7 +543,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     format: 'pem',
     passphrase: Buffer.alloc(1025, 'a')
   }), hasOpenSSL3 ? { name: 'Error' } : {
-    code: 'ERR_OSSL_PEM_BAD_PASSWORD_READ',
+    code: /ERR_OSSL_(PEM_)?BAD_PASSWORD_READ/,
     name: 'Error'
   });
 
@@ -544,7 +554,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     format: 'pem',
     passphrase: Buffer.alloc(1024, 'a')
   }), {
-    message: /bad decrypt/
+    message: /bad decrypt|BAD_DECRYPT/
   });
 
   const publicKey = createPublicKey(publicDsa);
@@ -570,7 +580,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
 
 {
   // Test RSA-PSS.
-  {
+  if (!common.openSSLIsBoringSSL){
     // This key pair does not restrict the message digest algorithm or salt
     // length.
     const publicPem = fixtures.readKey('rsa_pss_public_2048.pem');
@@ -631,7 +641,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     });
   }
 
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key pair enforces sha1 as the message digest and the MGF1
     // message digest and a salt length of 20 bytes.
 
@@ -663,7 +673,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     assert.deepStrictEqual(privateKey.asymmetricKeyDetails, expectedKeyDetails);
   }
 
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key pair enforces sha256 as the message digest and the MGF1
     // message digest and a salt length of at least 16 bytes.
     const publicPem =
@@ -710,7 +720,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     }
   }
 
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key enforces sha512 as the message digest and sha256 as the MGF1
     // message digest.
     const publicPem =
@@ -863,7 +873,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
 
 {
   const first = generateKeyPairSync('ed25519');
-  const second = generateKeyPairSync('ed448');
+  const second = generateKeyPairSync(common.openSSLIsBoringSSL ? 'x25519' : 'ed448');
 
   assert(!first.publicKey.equals(second.publicKey));
   assert(!first.publicKey.equals(second.privateKey));
@@ -892,5 +902,3 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     }, { code: 'ERR_INVALID_ARG_TYPE', message: /The "key\.key" property must be of type object/ });
   }
 }
-
-*/

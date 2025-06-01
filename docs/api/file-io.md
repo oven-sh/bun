@@ -67,7 +67,7 @@ Bun.stderr;
 You can delete a file by calling the `.delete()` function.
 
 ```ts
-await Bun.file("logs.json").delete()
+await Bun.file("logs.json").delete();
 ```
 
 ## Writing files (`Bun.write()`)

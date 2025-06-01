@@ -1,25 +1,9 @@
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
 
-const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = bun.http;
 
-const URL = @import("../url.zig").URL;
-const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
-const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = bun.http.Headers;
-const Futex = @import("../futex.zig");
 const Semver = bun.Semver;
 
 /// Enables analytics. This is used by:
@@ -79,7 +63,7 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+    pub var builtin_modules = std.enums.EnumSet(bun.jsc.ModuleLoader.HardcodedModule).initEmpty();
 
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
@@ -128,6 +112,7 @@ pub const Features = struct {
     pub var process_dlopen: usize = 0;
     pub var postgres_connections: usize = 0;
     pub var s3: usize = 0;
+    pub var valkey: usize = 0;
     pub var csrf_verify: usize = 0;
     pub var csrf_generate: usize = 0;
     pub var unsupported_uv_function: usize = 0;
@@ -274,7 +259,6 @@ pub const EventName = enum(u8) {
 };
 
 var random: std.rand.DefaultPrng = undefined;
-const DotEnv = @import("../env_loader.zig");
 
 const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else Analytics.Architecture.x64;
 

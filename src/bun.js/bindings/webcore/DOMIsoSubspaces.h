@@ -35,7 +35,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForImportMeta;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSourceTextModule;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSyntheticModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSExtensions;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
@@ -57,12 +60,14 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
     std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEType;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSMIMEParams;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -920,7 +925,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
-    
+
     std::unique_ptr<IsoSubspace> m_subspaceForCookie;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
@@ -939,6 +944,13 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCipher;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForJSConnectionsList;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHTTPParser;
 };
 } // namespace WebCore
 

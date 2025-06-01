@@ -37,7 +37,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 /// Returns the optimal static bit set type for the specified number
@@ -83,7 +83,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         }
 
         /// Returns the number of bits in this bit set
-        pub inline fn capacity(self: Self) usize {
+        pub fn capacity(self: Self) callconv(bun.callconv_inline) usize {
             _ = self;
             return bit_length;
         }
@@ -408,7 +408,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         }
 
         /// Returns the number of bits in this bit set
-        pub inline fn capacity(self: Self) usize {
+        pub fn capacity(self: Self) callconv(bun.callconv_inline) usize {
             _ = self;
             return bit_length;
         }
@@ -669,13 +669,13 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             return BitSetIterator(MaskInt, options);
         }
 
-        inline fn maskBit(index: usize) MaskInt {
+        fn maskBit(index: usize) callconv(bun.callconv_inline) MaskInt {
             return @as(MaskInt, 1) << @as(ShiftInt, @truncate(index));
         }
-        inline fn maskIndex(index: usize) usize {
+        fn maskIndex(index: usize) callconv(bun.callconv_inline) usize {
             return index >> @bitSizeOf(ShiftInt);
         }
-        inline fn boolMaskBit(index: usize, value: bool) MaskInt {
+        fn boolMaskBit(index: usize, value: bool) callconv(bun.callconv_inline) MaskInt {
             return @as(MaskInt, @intFromBool(value)) << @as(ShiftInt, @intCast(index));
         }
     };
@@ -868,7 +868,7 @@ pub const DynamicBitSetUnmanaged = struct {
     }
 
     /// Returns the number of bits in this bit set
-    pub inline fn capacity(self: Self) usize {
+    pub fn capacity(self: Self) callconv(bun.callconv_inline) usize {
         return self.bit_length;
     }
 
@@ -1191,7 +1191,7 @@ pub const AutoBitSet = union(enum) {
     static: Static,
     dynamic: DynamicBitSetUnmanaged,
 
-    pub inline fn needsDynamic(bit_length: usize) bool {
+    pub fn needsDynamic(bit_length: usize) callconv(bun.callconv_inline) bool {
         return bit_length > Static.bit_length;
     }
 
@@ -1351,7 +1351,7 @@ pub const DynamicBitSet = struct {
     }
 
     /// Returns the number of bits in this bit set
-    pub inline fn capacity(self: Self) usize {
+    pub fn capacity(self: Self) callconv(bun.callconv_inline) usize {
         return self.unmanaged.capacity();
     }
 
@@ -1543,7 +1543,7 @@ pub fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions)
         // isn't a next word.  If the next word is the
         // last word, mask off the padding bits so we
         // don't visit them.
-        inline fn nextWord(self: *Self, comptime is_first_word: bool) void {
+        fn nextWord(self: *Self, comptime is_first_word: bool) callconv(bun.callconv_inline) void {
             var word = switch (direction) {
                 .forward => self.words_remain[0],
                 .reverse => self.words_remain[self.words_remain.len - 1],

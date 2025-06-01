@@ -1,37 +1,12 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const Error = css.Error;
-
-const ContainerName = css.css_rules.container.ContainerName;
-
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
-const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
-const Rect = css.css_values.rect.Rect;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Angle = css.css_values.angle.Angle;
-const Url = css.css_values.url.Url;
-const Percentage = css.css_values.percentage.Percentage;
-
-const GenericBorder = css.css_properties.border.GenericBorder;
-const LineStyle = css.css_properties.border.LineStyle;
 
 const Property = css.css_properties.Property;
 const PropertyId = css.css_properties.PropertyId;
@@ -51,9 +26,6 @@ pub const Transition = struct {
     delay: Time,
     /// The easing function for the transition.
     timing_function: EasingFunction,
-
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.transition, PropertyFieldMap);
-    pub usingnamespace css.DefineListShorthand(@This());
 
     pub const PropertyFieldMap = .{
         .property = css.PropertyIdTag.@"transition-property",
@@ -211,7 +183,7 @@ pub const TransitionHandler = struct {
             const v = &p.*[0];
             const prefixes = &p.*[1];
             v.* = val.deepClone(context.allocator);
-            prefixes.insert(vp);
+            bun.bits.insert(VendorPrefix, prefixes, vp);
             prefixes.* = context.targets.prefixes(prefixes.*, feature);
         } else {
             const prefixes = context.targets.prefixes(vp, feature);
@@ -227,7 +199,7 @@ pub const TransitionHandler = struct {
         if (@field(this, prop)) |*p| {
             const v = &p.*[0];
             const prefixes = &p.*[1];
-            if (!val.eql(v) and !prefixes.contains(vp)) {
+            if (!val.eql(v) and !bun.bits.contains(VendorPrefix, prefixes.*, vp)) {
                 this.flush(dest, context);
             }
         }
@@ -279,10 +251,10 @@ pub const TransitionHandler = struct {
                     ) catch bun.outOfMemory();
                 }
 
-                property_prefixes.remove(intersection);
-                duration_prefixes.remove(intersection);
-                delay_prefixes.remove(intersection);
-                timing_prefixes.remove(intersection);
+                bun.bits.remove(VendorPrefix, property_prefixes, intersection);
+                bun.bits.remove(VendorPrefix, duration_prefixes, intersection);
+                bun.bits.remove(VendorPrefix, timing_prefixes, intersection);
+                bun.bits.remove(VendorPrefix, delay_prefixes, intersection);
             }
         }
 
@@ -435,7 +407,7 @@ fn expandProperties(properties: *css.SmallList(PropertyId, 1), context: *css.Pro
 
             // Expand mask properties, which use different vendor-prefixed names.
             if (css.css_properties.masking.getWebkitMaskProperty(properties.at(i))) |property_id| {
-                if (context.targets.prefixes(VendorPrefix.NONE, Feature.mask_border).contains(VendorPrefix.WEBKIT)) {
+                if (context.targets.prefixes(VendorPrefix.NONE, Feature.mask_border).webkit) {
                     properties.insert(context.allocator, i, property_id);
                     i += 1;
                 }
@@ -445,7 +417,7 @@ fn expandProperties(properties: *css.SmallList(PropertyId, 1), context: *css.Pro
                 rtl_props.mut(i).setPrefixesForTargets(context.targets);
 
                 if (css.css_properties.masking.getWebkitMaskProperty(rtl_props.at(i))) |property_id| {
-                    if (context.targets.prefixes(VendorPrefix.NONE, Feature.mask_border).contains(VendorPrefix.WEBKIT)) {
+                    if (context.targets.prefixes(VendorPrefix.NONE, Feature.mask_border).webkit) {
                         rtl_props.insert(context.allocator, i, property_id);
                         i += 1;
                     }

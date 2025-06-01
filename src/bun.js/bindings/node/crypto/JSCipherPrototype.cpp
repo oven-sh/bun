@@ -323,18 +323,20 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         encodingValue = optionsValue.get(globalObject, Identifier::fromString(vm, "encoding"_s));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        if (!encodingValue.isUndefinedOrNull()) {
+            V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
+            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        }
 
         JSValue plaintextLengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "plaintextLength"_s));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        if (!plaintextLengthValue.isUndefinedOrNull()) {
+            std::optional<int32_t> maybePlaintextLength = plaintextLengthValue.tryGetAsInt32();
+            if (!maybePlaintextLength || *maybePlaintextLength < 0) {
+                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.plaintextLength"_s, plaintextLengthValue);
+            }
 
-        double plaintextLengthNumber = plaintextLengthValue.toNumber(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-        plaintextLength = JSC::toInt32(plaintextLengthNumber);
-        if (plaintextLengthNumber != plaintextLength) {
-            return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.plaintextLength"_s, plaintextLengthValue);
+            plaintextLength = *maybePlaintextLength;
         }
     }
 

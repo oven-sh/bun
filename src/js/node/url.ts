@@ -74,8 +74,6 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
   hostEndingChars = ["/", "?", "#"],
   hostnameMaxLen = 255,
-  hostnamePartPattern = /^[+a-z0-9A-Z_-]{0,63}$/,
-  hostnamePartStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
     javascript: true,

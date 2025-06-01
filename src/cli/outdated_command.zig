@@ -1,11 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
 const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
 const PackageID = Install.PackageID;
 const DependencyID = Install.DependencyID;
 const Behavior = Install.Dependency.Behavior;
@@ -22,6 +21,17 @@ const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const OOM = bun.OOM;
 
 pub const OutdatedCommand = struct {
+    fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
+        return if (dep.version.tag == .catalog) blk: {
+            const catalog_dep = manager.lockfile.catalogs.get(
+                manager.lockfile,
+                dep.version.value.catalog,
+                dep.name,
+            ) orelse return null;
+            break :blk catalog_dep.version;
+        } else dep.version;
+    }
+
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -282,7 +292,8 @@ pub const OutdatedCommand = struct {
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
                 if (package_id == invalid_package_id) continue;
                 const dep = lockfile.buffers.dependencies.items[dep_id];
-                if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
 
@@ -321,10 +332,10 @@ pub const OutdatedCommand = struct {
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
 
-                const update_version = if (dep.version.tag == .npm)
-                    manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+                const update_version = if (resolved_version.tag == .npm)
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                 else
-                    manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
                 if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
@@ -441,10 +452,11 @@ pub const OutdatedCommand = struct {
                     ) orelse continue;
 
                     const latest = manifest.findByDistTag("latest") orelse continue;
-                    const update = if (dep.version.tag == .npm)
-                        manifest.findBestVersion(dep.version.value.npm.version, string_buf) orelse continue
+                    const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                    const update = if (resolved_version.tag == .npm)
+                        manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                     else
-                        manifest.findByDistTag(dep.version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                        manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
                     table.printLineSeparator();
 
@@ -538,7 +550,8 @@ pub const OutdatedCommand = struct {
                 const package_id = resolutions[dep_id];
                 if (package_id == invalid_package_id) continue;
                 const dep = dependencies[dep_id];
-                if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution: Install.Resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
 

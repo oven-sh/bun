@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 
@@ -13,8 +11,6 @@ const MediaQuery = css.media_query.MediaQuery;
 const MediaCondition = css.media_query.MediaCondition;
 const MediaList = css.media_query.MediaList;
 const MediaFeature = css.media_query.MediaFeature;
-const MediaFeatureName = css.media_query.MediaFeatureName;
-const MediaFeatureValue = css.media_query.MediaFeatureValue;
 const MediaFeatureId = css.media_query.MediaFeatureId;
 
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

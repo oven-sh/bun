@@ -1,8 +1,6 @@
 const std = @import("std");
 const PackageID = @import("../install.zig").PackageID;
 const Lockfile = @import("../install.zig").Lockfile;
-const initializeStore = @import("../install.zig").initializeStore;
-const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
 const logger = bun.logger;
@@ -16,7 +14,7 @@ const strings = bun.strings;
 const Resolution = @import("../resolution.zig").Resolution;
 const String = bun.Semver.String;
 const Semver = bun.Semver;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,

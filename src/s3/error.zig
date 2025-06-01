@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 pub const ErrorCodeAndMessage = struct {
     code: []const u8,
@@ -16,22 +16,22 @@ pub fn getSignErrorMessage(comptime err: anyerror) [:0]const u8 {
 }
 pub fn getJSSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
     return switch (err) {
-        error.MissingCredentials => return globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
-        error.InvalidMethod => return globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
-        error.InvalidPath => return globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).toJS(),
-        error.InvalidEndpoint => return globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
-        error.InvalidSessionToken => return globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
-        else => return globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).toJS(),
+        error.MissingCredentials => return globalThis.ERR(.S3_MISSING_CREDENTIALS, getSignErrorMessage(error.MissingCredentials), .{}).toJS(),
+        error.InvalidMethod => return globalThis.ERR(.S3_INVALID_METHOD, getSignErrorMessage(error.InvalidMethod), .{}).toJS(),
+        error.InvalidPath => return globalThis.ERR(.S3_INVALID_PATH, getSignErrorMessage(error.InvalidPath), .{}).toJS(),
+        error.InvalidEndpoint => return globalThis.ERR(.S3_INVALID_ENDPOINT, getSignErrorMessage(error.InvalidEndpoint), .{}).toJS(),
+        error.InvalidSessionToken => return globalThis.ERR(.S3_INVALID_SESSION_TOKEN, getSignErrorMessage(error.InvalidSessionToken), .{}).toJS(),
+        else => return globalThis.ERR(.S3_INVALID_SIGNATURE, getSignErrorMessage(error.SignError), .{}).toJS(),
     };
 }
 pub fn throwSignError(err: anyerror, globalThis: *JSC.JSGlobalObject) bun.JSError {
     return switch (err) {
-        error.MissingCredentials => globalThis.ERR_S3_MISSING_CREDENTIALS(getSignErrorMessage(error.MissingCredentials), .{}).throw(),
-        error.InvalidMethod => globalThis.ERR_S3_INVALID_METHOD(getSignErrorMessage(error.InvalidMethod), .{}).throw(),
-        error.InvalidPath => globalThis.ERR_S3_INVALID_PATH(getSignErrorMessage(error.InvalidPath), .{}).throw(),
-        error.InvalidEndpoint => globalThis.ERR_S3_INVALID_ENDPOINT(getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
-        error.InvalidSessionToken => globalThis.ERR_S3_INVALID_SESSION_TOKEN(getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
-        else => globalThis.ERR_S3_INVALID_SIGNATURE(getSignErrorMessage(error.SignError), .{}).throw(),
+        error.MissingCredentials => globalThis.ERR(.S3_MISSING_CREDENTIALS, getSignErrorMessage(error.MissingCredentials), .{}).throw(),
+        error.InvalidMethod => globalThis.ERR(.S3_INVALID_METHOD, getSignErrorMessage(error.InvalidMethod), .{}).throw(),
+        error.InvalidPath => globalThis.ERR(.S3_INVALID_PATH, getSignErrorMessage(error.InvalidPath), .{}).throw(),
+        error.InvalidEndpoint => globalThis.ERR(.S3_INVALID_ENDPOINT, getSignErrorMessage(error.InvalidEndpoint), .{}).throw(),
+        error.InvalidSessionToken => globalThis.ERR(.S3_INVALID_SESSION_TOKEN, getSignErrorMessage(error.InvalidSessionToken), .{}).throw(),
+        else => globalThis.ERR(.S3_INVALID_SIGNATURE, getSignErrorMessage(error.SignError), .{}).throw(),
     };
 }
 pub fn getSignErrorCodeAndMessage(err: anyerror) ErrorCodeAndMessage {

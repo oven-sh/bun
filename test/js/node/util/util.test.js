@@ -303,7 +303,7 @@ describe("util", () => {
         false,
       );
       //   strictEqual( // FIXME: failing test
-      //     util.types.isNativeError(new errors.codes.ERR_IPC_CHANNEL_CLOSED()),
+      //     util.types.isNativeError(new errors.codes.ERR(.IPC_CHANNEL_CLOSED, )),
       //     true
       //   );
     });

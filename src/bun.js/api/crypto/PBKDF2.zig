@@ -42,7 +42,7 @@ pub const Job = struct {
     any_task: JSC.AnyTask = undefined,
     poll: Async.KeepAlive = .{},
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn runTask(task: *JSC.WorkPoolTask) void {
         const job: *PBKDF2.Job = @fieldParentPtr("task", task);
@@ -90,7 +90,7 @@ pub const Job = struct {
         this.pbkdf2.deinitAndUnprotect();
         this.promise.deinit();
         bun.default_allocator.free(this.output);
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {
@@ -175,7 +175,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, is_asy
             const slice = try arg4.toSlice(globalThis, bun.default_allocator);
             defer slice.deinit();
             const name = slice.slice();
-            return globalThis.ERR_CRYPTO_INVALID_DIGEST("Invalid digest: {s}", .{name}).throw();
+            return globalThis.ERR(.CRYPTO_INVALID_DIGEST, "Invalid digest: {s}", .{name}).throw();
         }
         return error.JSError;
     };
@@ -244,11 +244,8 @@ pub fn pbkdf2(
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const JSC = bun.JSC;
 const Async = bun.Async;

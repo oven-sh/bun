@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { hideFromStackTrace, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3459,6 +3459,18 @@ describe("await can only be used inside an async function message", () => {
 
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
+  });
+});
+
+describe("malformed function definition does not crash due to invalid scope initialization", () => {
+  it("fails with a parse error and exits cleanly", async () => {
+    const tests = ["function:", "function a() {function:}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow("Parse error");
+      }
+    }
   });
 });
 

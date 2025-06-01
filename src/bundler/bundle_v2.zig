@@ -42,25 +42,22 @@
 //     make mimalloc-debug
 //
 const Transpiler = bun.Transpiler;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const C = bun.C;
+
 const std = @import("std");
 const lex = @import("../js_lexer.zig");
 const Logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
 const Part = js_ast.Part;
-const json_parser = @import("../json_parser.zig");
 const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
@@ -68,8 +65,6 @@ const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 pub const Ref = @import("../ast/base.zig").Ref;
-const Define = @import("../defines.zig").Define;
-const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
 const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
 const BabyList = @import("../baby_list.zig").BabyList;
@@ -81,27 +76,18 @@ const sync = bun.ThreadPool;
 const ImportRecord = bun.ImportRecord;
 const ImportKind = bun.ImportKind;
 const allocators = @import("../allocators.zig");
-const MimeType = @import("../http/mime_type.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const runtime = @import("../runtime.zig");
 const Timer = @import("../system_timer.zig");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const DebugLogs = _resolver.DebugLogs;
 const OOM = bun.OOM;
 
 const HTMLScanner = @import("../HTMLScanner.zig");
-const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
-const Lock = bun.Mutex;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
-const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
-const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
-const EntryPoints = bun.transpiler.EntryPoints;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
@@ -129,7 +115,6 @@ const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
 const lol = bun.LOLHTML;
-const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 const DataURL = @import("../resolver/resolver.zig").DataURL;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -210,12 +195,12 @@ pub const ThreadPool = struct {
     }
 
     pub fn usesIOPool(_: *const ThreadPool) bool {
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_IO_POOL)) {
             // For testing.
             return true;
         }
 
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IO_POOL)) {
             // For testing.
             return false;
         }
@@ -408,7 +393,7 @@ pub const ThreadPool = struct {
     };
 };
 
-const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
+const Watcher = bun.JSC.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
@@ -1089,6 +1074,7 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
+    /// `heap` is not freed when `deinit`ing the BundleV2
     pub fn init(
         transpiler: *Transpiler,
         bake_options: ?BakeOptions,
@@ -1096,7 +1082,7 @@ pub const BundleV2 = struct {
         event_loop: EventLoop,
         cli_watch_flag: bool,
         thread_pool: ?*ThreadPoolLib,
-        heap: ?ThreadlocalArena,
+        heap: ThreadlocalArena,
     ) !*BundleV2 {
         transpiler.env.loadTracy();
 
@@ -1111,7 +1097,7 @@ pub const BundleV2 = struct {
             .framework = null,
             .graph = .{
                 .pool = undefined,
-                .heap = heap orelse try ThreadlocalArena.init(),
+                .heap = heap,
                 .allocator = undefined,
                 .kit_referenced_server_data = false,
                 .kit_referenced_client_data = false,
@@ -1285,16 +1271,23 @@ pub const BundleV2 = struct {
                 },
                 .dev_server => {
                     for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
-                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch |err| {
+
+                        // Ensure we have the proper conditions set for client-side entrypoints.
+                        const transpiler = if (flags.client and !flags.server and !flags.ssr)
+                            this.transpilerForTarget(.browser)
+                        else
+                            this.transpiler;
+
+                        const resolved = transpiler.resolveEntryPoint(abs_path) catch |err| {
                             const dev = this.transpiler.options.dev_server orelse unreachable;
                             dev.handleParseTaskFailure(
                                 err,
                                 if (flags.client) .client else .server,
                                 abs_path,
-                                this.transpiler.log,
+                                transpiler.log,
                                 this,
                             ) catch bun.outOfMemory();
-                            this.transpiler.log.reset();
+                            transpiler.log.reset();
                             continue;
                         };
 
@@ -1637,7 +1630,7 @@ pub const BundleV2 = struct {
                     if (path.len > 0 and
                         // Check for either node or bun builtins
                         // We don't use the list from .bun because that includes third-party packages in some cases.
-                        !JSC.HardcodedModule.Alias.has(path, .node) and
+                        !JSC.ModuleLoader.HardcodedModule.Alias.has(path, .node) and
                         !strings.hasPrefixComptime(path, "bun:") and
                         !strings.eqlComptime(path, "bun"))
                     {
@@ -1666,7 +1659,15 @@ pub const BundleV2 = struct {
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(transpiler, null, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(
+            transpiler,
+            null,
+            allocator,
+            event_loop,
+            enable_reloading,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -1718,11 +1719,19 @@ pub const BundleV2 = struct {
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
         server_transpiler: *Transpiler,
-        kit_options: BakeOptions,
+        bake_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(server_transpiler, kit_options, allocator, event_loop, false, null, null);
+        var this = try BundleV2.init(
+            server_transpiler,
+            bake_options,
+            allocator,
+            event_loop,
+            false,
+            null,
+            try ThreadlocalArena.init(),
+        );
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -1850,7 +1859,8 @@ pub const BundleV2 = struct {
         event_loop: *bun.JSC.EventLoop,
         _: std.mem.Allocator,
     ) OOM!*JSBundleCompletionTask {
-        const completion = JSBundleCompletionTask.new(.{
+        const completion = bun.new(JSBundleCompletionTask, .{
+            .ref_count = .init(),
             .config = config,
             .jsc_event_loop = event_loop,
             .globalThis = globalThis,
@@ -1917,6 +1927,11 @@ pub const BundleV2 = struct {
     };
 
     pub const JSBundleCompletionTask = struct {
+        pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit, .{});
+        // pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         config: bun.JSC.API.JSBundler.Config,
         jsc_event_loop: *bun.JSC.EventLoop,
         task: bun.JSC.AnyTask,
@@ -1934,10 +1949,7 @@ pub const BundleV2 = struct {
         next: ?*JSBundleCompletionTask = null,
         transpiler: *BundleV2 = undefined,
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         started_at_ns: u64 = 0,
-
-        pub usingnamespace bun.NewThreadSafeRefCounted(JSBundleCompletionTask, _deinit, null);
 
         pub fn configureBundler(
             completion: *JSBundleCompletionTask,
@@ -2018,7 +2030,7 @@ pub const BundleV2 = struct {
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
-        fn _deinit(this: *JSBundleCompletionTask) void {
+        fn deinit(this: *JSBundleCompletionTask) void {
             this.result.deinit();
             this.log.deinit();
             this.poll_ref.disable();
@@ -2027,7 +2039,7 @@ pub const BundleV2 = struct {
             }
             this.config.deinit(bun.default_allocator);
             this.promise.deinit();
-            this.destroy();
+            bun.destroy(this);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -2056,7 +2068,7 @@ pub const BundleV2 = struct {
                     }
 
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("success"),
@@ -2065,14 +2077,16 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
@@ -2130,7 +2144,9 @@ pub const BundleV2 = struct {
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator),
+                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                            return promise.reject(globalThis, err);
+                        },
                     );
                     promise.resolve(globalThis, root_obj);
                 },
@@ -2450,7 +2466,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn deinit(this: *BundleV2) void {
+    pub fn deinitWithoutFreeingArena(this: *BundleV2) void {
         {
             // We do this first to make it harder for any dangling pointers to data to be used in there.
             var on_parse_finalizers = this.finalizers;
@@ -2554,7 +2570,9 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        var ctx: DevServerInput = .{ .css_entry_points = .{} };
+        var ctx: DevServerInput = .{
+            .css_entry_points = .{},
+        };
         try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
@@ -2797,7 +2815,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try dev_server.finalizeBundle(this, .{
+        try dev_server.finalizeBundle(this, &.{
             .chunks = chunks,
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
@@ -2996,8 +3014,15 @@ pub const BundleV2 = struct {
             }
 
             if (ast.target.isBun()) {
-                if (JSC.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
-                    import_record.path.text = replacement.path;
+                if (JSC.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun)) |replacement| {
+                    // When bundling node builtins, remove the "node:" prefix.
+                    // This supports special use cases where the bundle is put
+                    // into a non-node module resolver that doesn't support
+                    // node's prefix. https://github.com/oven-sh/bun/issues/18545
+                    import_record.path.text = if (replacement.node_builtin and !replacement.node_only_prefix)
+                        replacement.path[5..]
+                    else
+                        replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
@@ -3243,7 +3268,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (path.loader(&this.transpiler.options.loaders) == .html) {
+                if (path.loader(&this.transpiler.options.loaders) == .html and (import_record.loader == null or import_record.loader.? == .html)) {
                     // This use case is currently not supported. This error
                     // blocks an assertion failure because the DevServer
                     // reserves the HTML file's spot in IncrementalGraph for the
@@ -3424,7 +3449,7 @@ pub const BundleV2 = struct {
 
         // To minimize contention, watchers are appended by the transpiler thread.
         if (this.bun_watcher) |watcher| {
-            if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
+            if (parse_result.watcher_data.fd != bun.invalid_fd) {
                 const source = switch (parse_result.value) {
                     inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
                     .success => |val| val.source,
@@ -3437,7 +3462,7 @@ pub const BundleV2 = struct {
                         graph.input_files.items(.loader)[source.index.get()],
                         parse_result.watcher_data.dir_fd,
                         null,
-                        false,
+                        bun.Environment.isWindows,
                     );
                 }
             }
@@ -3845,7 +3870,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             defer {
                 this.graph.pool.reset();
                 ast_memory_allocator.pop();
-                this.deinit();
+                this.deinitWithoutFreeingArena();
             }
 
             errdefer {
@@ -4132,7 +4157,7 @@ pub const ParseTask = struct {
             // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
             else =>
             \\var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
-            \\var __asyncDispose =  Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
+            \\var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.asyncDispose');
             \\
             \\export var __using = (stack, value, async) => {
             \\  if (value != null) {
@@ -4580,10 +4605,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (contents.file != bun.invalid_fd and contents.file != .zero)
-                        contents.file
-                    else
-                        null,
+                    contents.file.unwrapValid(),
                 ) catch |err| {
                     const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
@@ -5041,7 +5063,8 @@ pub const ParseTask = struct {
         }
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
-            entry.fd.isValid() and !entry.fd.isStdio() and
+            entry.fd.isValid() and
+            entry.fd.stdioTag() == null and
             this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
@@ -5155,7 +5178,7 @@ pub const ParseTask = struct {
             .key = "",
             .content_hash = 0,
         };
-        var ast: JSAst = if (!is_empty)
+        var ast: JSAst = if (!is_empty or loader.handlesEmptyFile())
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
@@ -5522,7 +5545,6 @@ pub const ServerComponentParseTask = struct {
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
-const RefVoidMapManaged = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
 pub const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
@@ -5653,7 +5675,7 @@ pub const JSMeta = struct {
 
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -7005,7 +7027,7 @@ pub const LinkerContext = struct {
                 };
                 defer dir.close();
 
-                break :dir try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf);
+                break :dir try bun.FD.fromStdDir(dir).getFdPath(&real_path_buf);
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
@@ -10757,11 +10779,11 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
@@ -10785,7 +10807,7 @@ pub const LinkerContext = struct {
         defer trace.end();
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
         defer _ = arena.reset(.retain_capacity);
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
@@ -10913,17 +10935,17 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        defer if (Environment.isDebug) {
+        const prev_action = if (Environment.show_crash_trace) bun.crash_handler.current_action;
+        defer if (Environment.show_crash_trace) {
             bun.crash_handler.current_action = prev_action;
         };
-        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        if (Environment.show_crash_trace) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
         } };
 
-        if (Environment.isDebug) {
+        if (Environment.show_crash_trace) {
             const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
             if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
                 @breakpoint();
@@ -10948,7 +10970,7 @@ pub const LinkerContext = struct {
             default_allocator;
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(allocator) catch bun.outOfMemory();
+        var buffer_writer = js_printer.BufferWriter.init(allocator);
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 
@@ -14177,7 +14199,7 @@ pub const LinkerContext = struct {
                                                 // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
                                                 hoist.decls.append(hoist.allocator, decl.*) catch bun.outOfMemory();
                                             } else {
-                                                // if the value cannot be moved, add every destructuring key seperately
+                                                // if the value cannot be moved, add every destructuring key separately
                                                 // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                                 const binding = decl.binding.toExpr(&hoist);
                                                 value = value.joinWithComma(
@@ -15244,11 +15266,11 @@ pub const LinkerContext = struct {
                         code_result.buffer = buf.items;
                     }
 
-                    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                    switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,
-                        JSC.Node.Arguments.WriteFile{
+                        .{
                             .data = JSC.Node.StringOrBuffer{
-                                .buffer = JSC.Buffer{
+                                .buffer = bun.api.node.Buffer{
                                     .buffer = .{
                                         .ptr = @constCast(output_source_map.ptr),
                                         // TODO: handle > 4 GB files
@@ -15258,10 +15280,10 @@ pub const LinkerContext = struct {
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = bun.toFD(root_dir.fd),
+                            .dirfd = .fromStdDir(root_dir),
                             .file = .{
-                                .path = JSC.Node.PathLike{
-                                    .string = JSC.PathString.init(source_map_final_rel_path),
+                                .path = .{
+                                    .string = bun.PathString.init(source_map_final_rel_path),
                                 },
                             },
                         },
@@ -15335,11 +15357,11 @@ pub const LinkerContext = struct {
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
                             defer cached_bytecode.deref();
-                            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                                 &pathbuf,
-                                JSC.Node.Arguments.WriteFile{
-                                    .data = JSC.Node.StringOrBuffer{
-                                        .buffer = JSC.Buffer{
+                                .{
+                                    .data = .{
+                                        .buffer = .{
                                             .buffer = .{
                                                 .ptr = @constCast(bytecode.ptr),
                                                 .len = @as(u32, @truncate(bytecode.len)),
@@ -15350,10 +15372,10 @@ pub const LinkerContext = struct {
                                     .encoding = .buffer,
                                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                                    .dirfd = bun.toFD(root_dir.fd),
+                                    .dirfd = .fromStdDir(root_dir),
                                     .file = .{
-                                        .path = JSC.Node.PathLike{
-                                            .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
+                                        .path = .{
+                                            .string = bun.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
                                         },
                                     },
                                 },
@@ -15391,11 +15413,11 @@ pub const LinkerContext = struct {
                 break :brk null;
             };
 
-            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
-                JSC.Node.Arguments.WriteFile{
-                    .data = JSC.Node.StringOrBuffer{
-                        .buffer = JSC.Buffer{
+                .{
+                    .data = .{
+                        .buffer = .{
                             .buffer = .{
                                 .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
@@ -15407,10 +15429,10 @@ pub const LinkerContext = struct {
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = bun.toFD(root_dir.fd),
+                    .dirfd = .fromStdDir(root_dir),
                     .file = .{
                         .path = JSC.Node.PathLike{
-                            .string = JSC.PathString.init(rel_path),
+                            .string = bun.PathString.init(rel_path),
                         },
                     },
                 },
@@ -15511,11 +15533,11 @@ pub const LinkerContext = struct {
                     }
                 }
 
-                switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                switch (JSC.Node.fs.NodeFS.writeFileWithPathBuffer(
                     &pathbuf,
-                    JSC.Node.Arguments.WriteFile{
-                        .data = JSC.Node.StringOrBuffer{
-                            .buffer = JSC.Buffer{
+                    .{
+                        .data = .{
+                            .buffer = .{
                                 .buffer = .{
                                     .ptr = @constCast(bytes.ptr),
                                     .len = @as(u32, @truncate(bytes.len)),
@@ -15524,10 +15546,10 @@ pub const LinkerContext = struct {
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = bun.toFD(root_dir.fd),
+                        .dirfd = .fromStdDir(root_dir),
                         .file = .{
                             .path = JSC.Node.PathLike{
-                                .string = JSC.PathString.init(src.dest_path),
+                                .string = bun.PathString.init(src.dest_path),
                             },
                         },
                     },
@@ -15992,7 +16014,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and JSC.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -16798,7 +16820,7 @@ pub const PartRange = struct {
     part_index_end: u32 = 0,
 };
 
-const StableRef = packed struct {
+const StableRef = packed struct(u96) {
     stable_source_index: Index.Int,
     ref: Ref,
 
@@ -18004,15 +18026,15 @@ pub const DevServerOutput = struct {
     css_file_list: std.AutoArrayHashMapUnmanaged(Index, CssEntryPointMeta),
     html_files: std.AutoArrayHashMapUnmanaged(Index, void),
 
-    pub fn jsPseudoChunk(out: DevServerOutput) *Chunk {
+    pub fn jsPseudoChunk(out: *const DevServerOutput) *Chunk {
         return &out.chunks[0];
     }
 
-    pub fn cssChunks(out: DevServerOutput) []Chunk {
+    pub fn cssChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1..][0..out.css_file_list.count()];
     }
 
-    pub fn htmlChunks(out: DevServerOutput) []Chunk {
+    pub fn htmlChunks(out: *const DevServerOutput) []Chunk {
         return out.chunks[1 + out.css_file_list.count() ..][0..out.html_files.count()];
     }
 };

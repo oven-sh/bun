@@ -1,12 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
 
 pub const Percentage = struct {
@@ -471,8 +469,8 @@ pub const NumberOrPercentage = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
     //     _ = input; // autofix

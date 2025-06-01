@@ -6,33 +6,24 @@ const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
-const Lock = bun.Mutex;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const FileDescriptorType = bun.FileDescriptor;
 
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
-
-const LocRef = js_ast.LocRef;
 const S = js_ast.S;
 const B = js_ast.B;
 const G = js_ast.G;
-const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
@@ -40,15 +31,12 @@ const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
 const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Ast = js_ast.Ast;
 
 const hex_chars = "0123456789ABCDEF";
 const first_ascii = 0x20;
 const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
-const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
@@ -165,7 +153,7 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     var remaining = input;
     var len: usize = 2; // for quotes
 
-    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
+    while (strings.indexOfNeedsEscapeForJavaScriptString(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
@@ -249,7 +237,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
 
             switch (encoding) {
                 .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
+                    if (strings.indexOfNeedsEscapeForJavaScriptString(remain, quote_char)) |j| {
                         const text_chunk = text[i .. i + clamped_width];
                         try writer.writeAll(text_chunk);
                         i += clamped_width;
@@ -1375,7 +1363,7 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            bun.assert(!ref.isNull());
+            bun.assert(!ref.isNull()); // Invalid Symbol
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1689,10 +1677,11 @@ fn NewPrinter(
                     .bun => {
                         if (record.kind == .dynamic) {
                             p.print("Promise.resolve(globalThis.Bun)");
-                        } else if (record.kind == .require) {
+                            return;
+                        } else if (record.kind == .require or record.kind == .stmt) {
                             p.print("globalThis.Bun");
+                            return;
                         }
-                        return;
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {
@@ -5559,12 +5548,9 @@ pub const BufferWriter = struct {
         return this.buffer.list.items;
     }
 
-    pub fn init(allocator: std.mem.Allocator) !BufferWriter {
+    pub fn init(allocator: std.mem.Allocator) BufferWriter {
         return BufferWriter{
-            .buffer = MutableString.init(
-                allocator,
-                0,
-            ) catch unreachable,
+            .buffer = MutableString.initEmpty(allocator),
         };
     }
 
@@ -5938,7 +5924,7 @@ pub fn print(
     const trace = bun.perf.trace("JSPrinter.print");
     defer trace.end();
 
-    const buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    const buffer_writer = BufferWriter.init(allocator);
     var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(

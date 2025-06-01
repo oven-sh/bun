@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
@@ -139,7 +139,6 @@ pub fn OOM(e: anyerror) noreturn {
 }
 
 pub const SmallList = @import("./small_list.zig").SmallList;
-pub const Bitflags = bun.Bitflags;
 
 pub const todo_stuff = struct {
     pub const think_mem_mgmt = "TODO: think about memory management";
@@ -173,6 +172,15 @@ pub const VendorPrefix = packed struct(u8) {
     o: bool = false,
     __unused: u3 = 0,
 
+    pub const empty = VendorPrefix{};
+    pub const all = VendorPrefix{
+        .none = true,
+        .moz = true,
+        .ms = true,
+        .o = true,
+        .webkit = true,
+    };
+
     pub const NONE = VendorPrefix{ .none = true };
     pub const WEBKIT = VendorPrefix{ .webkit = true };
     pub const MOZ = VendorPrefix{ .moz = true };
@@ -181,8 +189,6 @@ pub const VendorPrefix = packed struct(u8) {
 
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
-
-    pub usingnamespace Bitflags(@This());
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
@@ -194,6 +200,14 @@ pub const VendorPrefix = packed struct(u8) {
         };
     }
 
+    pub inline fn fromName(comptime name: []const u8) VendorPrefix {
+        comptime {
+            var vp: VendorPrefix = .{};
+            @field(vp, name) = true;
+            return vp;
+        }
+    }
+
     /// Returns VendorPrefix::None if empty.
     pub inline fn orNone(this: VendorPrefix) VendorPrefix {
         return this._or(VendorPrefix{ .none = true });
@@ -203,6 +217,22 @@ pub const VendorPrefix = packed struct(u8) {
     pub inline fn _or(this: VendorPrefix, other: VendorPrefix) VendorPrefix {
         if (this.isEmpty()) return other;
         return this;
+    }
+
+    pub fn difference(left: @This(), right: @This()) @This() {
+        return @bitCast(@as(u8, @bitCast(left)) - @as(u8, @bitCast(right)));
+    }
+
+    pub fn isEmpty(this: VendorPrefix) bool {
+        return this == VendorPrefix{};
+    }
+
+    pub fn bitwiseAnd(a: @This(), b: @This()) @This() {
+        return bun.bits.@"and"(@This(), a, b);
+    }
+
+    pub fn asBits(vp: @This()) u8 {
+        return @bitCast(vp);
     }
 };
 
@@ -576,7 +606,7 @@ pub fn DeriveParse(comptime T: type) type {
                     break :counts .{ payload_count, first_payload_index.?, void_count, first_void_index };
                 };
 
-                return gnerateCode(input, first_payload_index, first_void_index, void_count, payload_count);
+                return generateCode(input, first_payload_index, first_void_index, void_count, payload_count);
             }
 
             const location = input.currentSourceLocation();
@@ -625,7 +655,7 @@ pub fn DeriveParse(comptime T: type) type {
         /// and then try to parse the void fields.
         ///
         /// This parsing order is a detail copied from LightningCSS. I'm not sure if it is necessary. But it could be.
-        inline fn gnerateCode(
+        inline fn generateCode(
             input: *Parser,
             comptime first_payload_index: usize,
             comptime maybe_first_void_index: ?usize,
@@ -873,14 +903,6 @@ pub fn DefineEnumProperty(comptime T: type) type {
             return @intFromEnum(lhs.*) == @intFromEnum(rhs.*);
         }
 
-        pub fn asStr(this: *const T) []const u8 {
-            const tag = @intFromEnum(this.*);
-            inline for (fields) |field| {
-                if (tag == field.value) return field.name;
-            }
-            unreachable;
-        }
-
         pub fn parse(input: *Parser) Result(T) {
             const location = input.currentSourceLocation();
             const ident = switch (input.expectIdent()) {
@@ -894,13 +916,10 @@ pub fn DefineEnumProperty(comptime T: type) type {
             }
 
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
-            // @panic("TODO renable this");
         }
 
-        pub fn deinit(_: *T, _: std.mem.Allocator) void {}
-
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            return dest.writeStr(asStr(this));
+            return dest.writeStr(@tagName(this.*));
         }
 
         pub inline fn deepClone(this: *const T, _: std.mem.Allocator) T {
@@ -1151,7 +1170,7 @@ fn parse_until_before(
     closure: anytype,
     comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
 ) Result(T) {
-    const delimiters = parser.stop_before.bitwiseOr(delimiters_);
+    const delimiters = bun.bits.@"or"(Delimiters, parser.stop_before, delimiters_);
     const result = result: {
         var delimited_parser = Parser{
             .input = parser.input,
@@ -1176,7 +1195,7 @@ fn parse_until_before(
 
     // FIXME: have a special-purpose tokenizer method for this that does less work.
     while (true) {
-        if (delimiters.contains(Delimiters.fromByte(parser.input.tokenizer.nextByte()))) break;
+        if (bun.bits.contains(Delimiters, delimiters, Delimiters.fromByte(parser.input.tokenizer.nextByte()))) break;
 
         switch (parser.input.tokenizer.next()) {
             .result => |token| {
@@ -1207,8 +1226,9 @@ pub fn parse_until_after(
         return result;
     }
     const next_byte = parser.input.tokenizer.nextByte();
-    if (next_byte != null and !parser.stop_before.contains(Delimiters.fromByte(next_byte))) {
-        bun.debugAssert(delimiters.contains(Delimiters.fromByte(next_byte)));
+    if (next_byte != null and !bun.bits.contains(Delimiters, parser.stop_before, .fromByte(next_byte))) {
+        if (bun.Environment.isDebug) bun.debugAssert(bun.bits.contains(Delimiters, delimiters, Delimiters.fromByte(next_byte)));
+
         // We know this byte is ASCII.
         parser.input.tokenizer.advance(1);
         if (next_byte == '{') {
@@ -1697,15 +1717,15 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
 
                             const layer: ?struct { value: ?LayerName } =
                                 if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
-                                .{ .value = null }
-                            else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
-                                break :brk .{
-                                    .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
-                                        .result => |v| v,
-                                        .err => |e| return .{ .err = e },
-                                    },
-                                };
-                            } else null;
+                                    .{ .value = null }
+                                else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
+                                    break :brk .{
+                                        .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
+                                            .result => |v| v,
+                                            .err => |e| return .{ .err = e },
+                                        },
+                                    };
+                                } else null;
 
                             const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
                                 const Func = struct {
@@ -2453,7 +2473,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                     .style = css_rules.style.StyleRule(T.CustomAtRuleParser.AtRule){
                                         .selectors = selectors,
                                         .declarations = declarations,
-                                        .vendor_prefix = VendorPrefix.empty(),
+                                        .vendor_prefix = .{},
                                         .rules = rules,
                                         .loc = loc,
                                     },
@@ -2671,7 +2691,7 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
         };
 
-        /// If css modules is enabled, we want to record each occurence of the `composes` property
+        /// If css modules is enabled, we want to record each occurrence of the `composes` property
         /// for the bundler so we can generate the lazy JS import object later.
         pub fn recordComposes(this: *This, allocator: Allocator, composes: *Composes) void {
             for (this.composes_refs.slice()) |ref| {
@@ -2778,7 +2798,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                                 selector.parser.Selector.fromComponent(input.allocator(), .nesting),
                             ),
                             .declarations = declarations,
-                            .vendor_prefix = VendorPrefix.empty(),
+                            .vendor_prefix = .{},
                             .rules = .{},
                             .loc = loc,
                         },
@@ -2947,8 +2967,6 @@ pub const CssRef = packed struct(u32) {
         pub const ID = Tag{ .id = true };
         pub const CLASS = Tag{ .class = true };
 
-        pub usingnamespace Bitflags(@This());
-
         pub fn canBeComposed(this: @This()) bool {
             return this.class;
         }
@@ -3088,7 +3106,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
             // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
             // of a stylesheet. Do a pre-scan here and create a lookup table by name.
-            var custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
+            var custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.custom_media and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
                 var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
 
                 for (this.rules.v.items) |*rule| {
@@ -3768,8 +3786,6 @@ pub const ParserFlags = packed struct(u8) {
     /// Whether to enable the non-standard >>> and /deep/ selector combinators used by Vue and Angular.
     deep_selector_combinator: bool = false,
     __unused: u5 = 0,
-
-    pub usingnamespace Bitflags(@This());
 };
 
 const ParseUntilErrorBehavior = enum {
@@ -3816,7 +3832,7 @@ pub const Parser = struct {
         bun.assert(this.extra != null);
         if (comptime bun.Environment.allow_assert) {
             // tag should only have one bit set, or none
-            bun.assert(@popCount(tag.asBits()) <= 1);
+            bun.assert(@popCount(bun.bits.asInt(CssRef.Tag, tag)) <= 1);
         }
 
         const extra = this.extra.?;
@@ -3838,7 +3854,7 @@ pub const Parser = struct {
             const prev_tag = entry.value_ptr.ref.tag;
             if (!prev_tag.class and tag.class) {
                 entry.value_ptr.loc = loc;
-                entry.value_ptr.ref.tag = entry.value_ptr.ref.tag.bitwiseOr(tag);
+                entry.value_ptr.ref.tag = bun.bits.@"or"(CssRef.Tag, entry.value_ptr.ref.tag, tag);
             }
         }
 
@@ -4000,7 +4016,7 @@ pub const Parser = struct {
     /// the internal state of the parser  (including position within the input)
     /// is restored to what it was before the call.
     ///
-    /// func needs to be a funtion like this: `fn func(*Parser, ...@TypeOf(args_)) T`
+    /// func needs to be a function like this: `fn func(*Parser, ...@TypeOf(args_)) T`
     pub inline fn tryParse(this: *Parser, comptime func: anytype, args_: anytype) bun.meta.ReturnOf(func) {
         const start = this.state();
         const result = result: {
@@ -4405,7 +4421,7 @@ pub const Parser = struct {
 
     pub fn nextByte(this: *@This()) ?u8 {
         const byte = this.input.tokenizer.nextByte();
-        if (this.stop_before.contains(Delimiters.fromByte(byte))) {
+        if (bun.bits.contains(Delimiters, this.stop_before, .fromByte(byte))) {
             return null;
         }
         return byte;
@@ -4440,7 +4456,7 @@ pub const Parser = struct {
         }
 
         const byte = this.input.tokenizer.nextByte();
-        if (this.stop_before.contains(Delimiters.fromByte(byte))) {
+        if (bun.bits.contains(Delimiters, this.stop_before, .fromByte(byte))) {
             return .{ .err = this.newError(BasicParseErrorKind.end_of_input) };
         }
 
@@ -4504,8 +4520,6 @@ pub const Delimiters = packed struct(u8) {
     close_square_bracket: bool = false,
     close_parenthesis: bool = false,
     __unused: u1 = 0,
-
-    pub usingnamespace Bitflags(Delimiters);
 
     const NONE: Delimiters = .{};
 
@@ -4710,11 +4724,12 @@ pub const nth = struct {
         if (bytes.len >= 3 and
             bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
             brk: {
-            for (bytes[2..]) |b| {
-                if (b < '0' or b > '9') break :brk false;
-            }
-            break :brk true;
-        }) {
+                for (bytes[2..]) |b| {
+                    if (b < '0' or b > '9') break :brk false;
+                }
+                break :brk true;
+            })
+        {
             return parse_number_saturate(allocator, str[1..]); // Include the minus sign
         } else {
             return .{ .err = {} };

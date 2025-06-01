@@ -154,7 +154,7 @@ public:
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         resolve(*lexicalGlobalObject, callback(*globalObject()));
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             handleUncaughtException(scope, *lexicalGlobalObject);
     }
 
@@ -171,7 +171,7 @@ public:
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         reject(*lexicalGlobalObject, callback(*globalObject()), rejectAsHandled);
-        if (UNLIKELY(scope.exception()))
+        if (scope.exception()) [[unlikely]]
             handleUncaughtException(scope, *lexicalGlobalObject);
     }
 

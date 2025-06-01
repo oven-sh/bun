@@ -1,27 +1,26 @@
-const bun = @import("root").bun;
-const ArrayList = std.ArrayList;
+const bun = @import("bun");
 const std = @import("std");
-const builtin = @import("builtin");
-const Arena = std.heap.ArenaAllocator;
+const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const SmolStr = @import("../string.zig").SmolStr;
 
-/// Using u16 because anymore tokens than that results in an unreasonably high
-/// amount of brace expansion (like around 32k variants to expand)
-pub const ExpansionVariant = packed struct {
-    start: u16 = 0,
-    end: u16 = 0,
-};
-
+const assert = bun.assert;
 const log = bun.Output.scoped(.BRACES, false);
 
-const TokenTag = enum { open, comma, text, close, eof };
-const Token = union(TokenTag) {
+/// Using u16 because anymore tokens than that results in an unreasonably high
+/// amount of brace expansion (like around 32k variants to expand)
+const ExpansionVariant = packed struct(u32) {
+    start: u16 = 0,
+    end: u16 = 0, // must be >= start
+};
+
+const Token = union(enum) {
     open: ExpansionVariants,
     comma,
     text: SmolStr,
     close,
     eof,
+    const Tag = @typeInfo(Token).@"union".tag_type.?;
 
     const ExpansionVariants = struct {
         idx: u16 = 0,
@@ -58,33 +57,33 @@ pub const AST = struct {
 
 const MAX_NESTED_BRACES = 10;
 
+const StackError = error{
+    StackFull,
+};
+
 /// A stack on the stack
-pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeType) type {
+fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeType) type {
     return struct {
         items: [N]T = undefined,
         len: SizeType = 0,
 
-        pub const Error = error{
-            StackFull,
-        };
-
-        pub fn top(this: *@This()) ?T {
+        fn top(this: *@This()) ?T {
             if (this.len == 0) return null;
             return this.items[this.len - 1];
         }
 
-        pub fn topPtr(this: *@This()) ?*T {
+        fn topPtr(this: *@This()) ?*T {
             if (this.len == 0) return null;
             return &this.items[this.len - 1];
         }
 
-        pub fn push(this: *@This(), value: T) Error!void {
-            if (this.len == N) return Error.StackFull;
+        fn push(this: *@This(), value: T) StackError!void {
+            if (this.len == N) return StackError.StackFull;
             this.items[this.len] = value;
             this.len += 1;
         }
 
-        pub fn pop(this: *@This()) ?T {
+        fn pop(this: *@This()) ?T {
             if (this.top()) |v| {
                 this.len -= 1;
                 return v;
@@ -94,62 +93,7 @@ pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeTyp
     };
 }
 
-/// This may have false positives but it is fast
-pub fn fastDetect(src: []const u8) bool {
-    const Quote = enum { single, double };
-    _ = Quote;
-
-    var has_open = false;
-    var has_close = false;
-    if (src.len < 16) {
-        for (src) |char| {
-            switch (char) {
-                '{' => {
-                    has_open = true;
-                },
-                '}' => {
-                    has_close = true;
-                },
-            }
-            if (has_close and has_close) return true;
-        }
-        return false;
-    }
-
-    const needles = comptime [2]@Vector(16, u8){
-        @splat('{'),
-        @splat('}'),
-        @splat('"'),
-    };
-
-    const i: usize = 0;
-    while (i + 16 <= src.len) {
-        const haystack = src[i .. i + 16].*;
-        if (std.simd.firstTrue(needles[0] == haystack)) {
-            has_open = true;
-        }
-        if (std.simd.firstTrue(needles[1] == haystack)) {
-            has_close = true;
-        }
-        if (has_open and has_close) return true;
-    }
-
-    if (i < src.len) {
-        for (src) |char| {
-            switch (char) {
-                '{' => {
-                    has_open = true;
-                },
-                '}' => {
-                    has_close = true;
-                },
-            }
-            if (has_close and has_open) return true;
-        }
-        return false;
-    }
-    return false;
-}
+const ExpandError = StackError || ParserError;
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
@@ -157,7 +101,7 @@ pub fn expand(
     tokens: []Token,
     out: []std.ArrayList(u8),
     contains_nested: bool,
-) (error{StackFull} || ParserError)!void {
+) ExpandError!void {
     var out_key_counter: u16 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
@@ -176,7 +120,7 @@ fn expandNested(
     out_key: u16,
     out_key_counter: *u16,
     start: u32,
-) !void {
+) ExpandError!void {
     if (root.atoms == .single) {
         if (start > 0) {
             if (root.bubble_up) |bubble_up| {
@@ -302,9 +246,7 @@ fn expandFlat(
     }
 }
 
-// pub fn expandNested()
-
-pub fn calculateVariantsAmount(tokens: []const Token) u32 {
+fn calculateVariantsAmount(tokens: []const Token) u32 {
     var brace_count: u32 = 0;
     var count: u32 = 0;
     for (tokens) |tok| {
@@ -415,8 +357,8 @@ pub const Parser = struct {
         return self.peek() == .eof;
     }
 
-    fn expect(self: *Parser, toktag: TokenTag) Token {
-        assert(toktag == @as(TokenTag, self.peek()));
+    fn expect(self: *Parser, toktag: Token.Tag) Token {
+        assert(toktag == @as(Token.Tag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
@@ -424,15 +366,15 @@ pub const Parser = struct {
     }
 
     /// Consumes token if it matches
-    fn match(self: *Parser, toktag: TokenTag) bool {
-        if (@as(TokenTag, self.peek()) == toktag) {
+    fn match(self: *Parser, toktag: Token.Tag) bool {
+        if (@as(Token.Tag, self.peek()) == toktag) {
             _ = self.advance();
             return true;
         }
         return false;
     }
 
-    fn match_any2(self: *Parser, comptime toktags: []const TokenTag) ?Token {
+    fn match_any2(self: *Parser, comptime toktags: []const Token.Tag) ?Token {
         const peeked = self.peek();
         inline for (toktags) |tag| {
             if (peeked == tag) {
@@ -443,8 +385,8 @@ pub const Parser = struct {
         return null;
     }
 
-    fn match_any(self: *Parser, comptime toktags: []const TokenTag) bool {
-        const peeked = @as(TokenTag, self.peek());
+    fn match_any(self: *Parser, comptime toktags: []const Token.Tag) bool {
+        const peeked = @as(Token.Tag, self.peek());
         inline for (toktags) |tag| {
             if (peeked == tag) {
                 _ = self.advance();
@@ -454,8 +396,8 @@ pub const Parser = struct {
         return false;
     }
 
-    fn check(self: *Parser, toktag: TokenTag) bool {
-        return @as(TokenTag, self.peek()) == @as(TokenTag, toktag);
+    fn check(self: *Parser, toktag: Token.Tag) bool {
+        return @as(Token.Tag, self.peek()) == @as(Token.Tag, toktag);
     }
 
     fn peek(self: *Parser) Token {
@@ -480,18 +422,15 @@ pub const Parser = struct {
     }
 };
 
-pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
+pub fn calculateExpandedAmount(tokens: []const Token) StackError!u32 {
     var nested_brace_stack = StackStack(u8, u8, MAX_NESTED_BRACES){};
     var variant_count: u32 = 0;
-    var i: usize = 0;
-
     var prev_comma: bool = false;
-    while (i < tokens.len) : (i += 1) {
+
+    for (tokens) |tok| {
         prev_comma = false;
-        switch (tokens[i]) {
-            .open => {
-                try nested_brace_stack.push(0);
-            },
+        switch (tok) {
+            .open => try nested_brace_stack.push(0),
             .comma => {
                 const val = nested_brace_stack.topPtr().?;
                 val.* += 1;
@@ -518,16 +457,13 @@ pub fn calculateExpandedAmount(tokens: []const Token) !u32 {
     return variant_count;
 }
 
-pub fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token) !std.ArrayList(ExpansionVariant) {
+fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token) !std.ArrayList(ExpansionVariant) {
     var table = std.ArrayList(ExpansionVariant).init(alloc);
     try buildExpansionTable(tokens, &table);
     return table;
 }
 
-pub fn buildExpansionTable(
-    tokens: []Token,
-    table: *std.ArrayList(ExpansionVariant),
-) !void {
+fn buildExpansionTable(tokens: []Token, table: *std.ArrayList(ExpansionVariant)) !void {
     const BraceState = struct {
         tok_idx: u16,
         variants: u16,
@@ -594,7 +530,7 @@ const NewChars = @import("./shell.zig").ShellCharIter;
 
 pub const Lexer = NewLexer(.ascii);
 
-pub fn NewLexer(comptime encoding: Encoding) type {
+fn NewLexer(comptime encoding: Encoding) type {
     const Chars = NewChars(encoding);
     return struct {
         chars: Chars,
@@ -803,4 +739,32 @@ pub fn NewLexer(comptime encoding: Encoding) type {
     };
 }
 
-const assert = bun.assert;
+const t = std.testing;
+test Lexer {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+
+    const TestCase = struct { []const u8, []const Token };
+    const test_cases: []const TestCase = &[_]TestCase{
+        .{
+            "{}",
+            &[_]Token{ .{ .open = .{} }, .close, .eof },
+        },
+        .{
+            "{foo}",
+            &[_]Token{ .{ .open = .{} }, .{ .text = try SmolStr.fromSlice(arena.allocator(), "foo") }, .close, .eof },
+        },
+    };
+
+    for (test_cases) |test_case| {
+        const src, const expected = test_case;
+        // NOTE: don't use arena here so that we can test for memory leaks
+        var result = try Lexer.tokenize(t.allocator, src);
+        defer result.tokens.deinit();
+        try t.expectEqualSlices(
+            Token,
+            expected,
+            result.tokens.items,
+        );
+    }
+}

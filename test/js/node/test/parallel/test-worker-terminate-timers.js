@@ -8,7 +8,7 @@ for (const fn of ['setTimeout', 'setImmediate', 'setInterval']) {
   const worker = new Worker(`
   const { parentPort } = require('worker_threads');
   ${fn}(() => {
-    parentPort.postMessage({});
+    require('worker_threads').parentPort.postMessage({});
     while (true);
   });`, { eval: true });
 

@@ -226,14 +226,14 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     // not, check the same with right if right exists and has prerelease.
     pre_matched.* = pre_matched.* or
         (range.left.version.tag.hasPre() and
-        version.patch == range.left.version.patch and
-        version.minor == range.left.version.minor and
-        version.major == range.left.version.major) or
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
         (has_right and
-        range.right.version.tag.hasPre() and
-        version.patch == range.right.version.patch and
-        version.minor == range.right.version.minor and
-        version.major == range.right.version.major);
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
 
     if (!range.left.satisfies(version, range_buf, version_buf)) {
         return false;
@@ -249,25 +249,10 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
 const Range = @This();
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const JSC = bun.JSC;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const OOM = bun.OOM;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
-const Lockfile = bun.install.Lockfile;
-const ExternalString = bun.Semver.ExternalString;
-const SlicedString = bun.Semver.SlicedString;
-const String = bun.Semver.String;
+
 const Version = bun.Semver.Version;
 const Query = bun.Semver.Query;
 const assert = bun.assert;

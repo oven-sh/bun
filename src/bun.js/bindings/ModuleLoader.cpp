@@ -39,6 +39,8 @@
 
 #include "JSCommonJSExtensions.h"
 
+#include "BunProcess.h"
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -101,8 +103,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-
+        object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
 
         auto len = properties.size() + 1;
@@ -112,11 +113,13 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         bool hasDefault = false;
 
         for (auto& entry : properties) {
-            if (UNLIKELY(entry == vm.propertyNames->defaultKeyword)) {
+            if (entry == vm.propertyNames->defaultKeyword) [[unlikely]] {
                 hasDefault = true;
             }
             exportNames.append(entry);
-            exportValues.append(object->get(globalObject, entry));
+            JSValue value = object->get(globalObject, entry);
+            RETURN_IF_EXCEPTION(throwScope, void());
+            exportValues.append(value);
         }
 
         if (!hasDefault) {
@@ -218,7 +221,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     JSC::JSObject* object = objectValue.getObject();
-    if (UNLIKELY(!object)) {
+    if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
 
         result.value.error = scope.exception();
@@ -252,7 +255,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(loader == BunLoaderTypeNone)) {
+    if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
         result.value.error = scope.exception();
         return result;
@@ -274,7 +277,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         }
     }
 
-    if (UNLIKELY(result.value.sourceText.value.isEmpty())) {
+    if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
         return result;
@@ -531,7 +534,8 @@ JSValue resolveAndFetchBuiltinModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    memset(&res, 0, sizeof(ErrorableResolvedSource));
+    res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
         ASSERT(res.success);
 
@@ -574,13 +578,10 @@ void evaluateCommonJSCustomExtension(
     JSCommonJSModule* target,
     String filename,
     JSValue filenameValue,
-    uint32_t extensionIndex)
+    JSValue extension)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    JSValue extension = extensions->m_registeredFunctions[extensionIndex].get();
-
     if (!extension) {
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
@@ -609,7 +610,8 @@ JSValue fetchCommonJSModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
-    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
+    resValue.success = false;
+    memset(&resValue.result, 0, sizeof resValue.result);
 
     ErrorableResolvedSource* res = &resValue;
     ResolvedSourceCodeHolder sourceCodeHolder(res);
@@ -792,7 +794,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, res->result.value.cjsCustomExtensionIndex);
+        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }
@@ -1076,8 +1078,9 @@ using namespace Bun;
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    ErrorableResolvedSource res = {};
+    ErrorableResolvedSource res;
     res.success = false;
+    memset(&res.result, 0, sizeof res.result);
     JSC::JSValue objectResult = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     JSC::JSValue specifierString = pendingModule->internalField(0).get();

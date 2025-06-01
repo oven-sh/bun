@@ -1,10 +1,14 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 
 pub const S3Stat = struct {
     const log = bun.Output.scoped(.S3Stat, false);
-    pub usingnamespace JSC.Codegen.JSS3Stat;
-    pub usingnamespace bun.New(@This());
+    pub const js = JSC.Codegen.JSS3Stat;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
+
+    pub const new = bun.TrivialNew(@This());
 
     size: u64,
     etag: bun.String,
@@ -53,6 +57,6 @@ pub const S3Stat = struct {
     pub fn finalize(this: *@This()) void {
         this.etag.deref();
         this.contentType.deref();
-        this.destroy();
+        bun.destroy(this);
     }
 };

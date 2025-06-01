@@ -1,7 +1,6 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
 
 pub const css = @import("../css_parser.zig");
 
@@ -9,16 +8,7 @@ const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
-const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
-const Ratio = css.css_values.ratio.Ratio;
 const Length = css.css_values.length.Length;
 
 const PropertyCategory = css.PropertyCategory;
@@ -194,7 +184,12 @@ pub const LineStyle = enum {
     /// Two parallel solid lines with some space between them.
     double,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn isCompatible(_: *const @This(), _: bun.css.targets.Browsers) bool {
         return true;
@@ -216,8 +211,8 @@ pub const BorderSideWidth = union(enum) {
     /// An explicit width.
     length: Length,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn isCompatible(this: *const @This(), browsers: bun.css.targets.Browsers) bool {
         return switch (this.*) {
@@ -250,9 +245,11 @@ pub const BorderColor = struct {
     left: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
-    pub usingnamespace css.DefineRectShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
+    const css_impl = css.DefineRectShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-color",
@@ -278,8 +275,10 @@ pub const BorderStyle = struct {
     left: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
-    pub usingnamespace css.DefineRectShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
+    const css_impl = css.DefineRectShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-style",
@@ -305,8 +304,10 @@ pub const BorderWidth = struct {
     left: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
-    pub usingnamespace css.DefineRectShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
+    const css_impl = css.DefineRectShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .top = css.PropertyIdTag.@"border-top-width",
@@ -333,9 +334,11 @@ pub const BorderBlockColor = struct {
     end: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
-    pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
+    const css_impl = css.DefineSizeShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-color",
@@ -359,8 +362,10 @@ pub const BorderBlockStyle = struct {
     end: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
+    const css_impl = css.DefineSizeShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-style",
@@ -384,8 +389,10 @@ pub const BorderBlockWidth = struct {
     end: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
-    pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
+    const css_impl = css.DefineSizeShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-width",
@@ -410,9 +417,11 @@ pub const BorderInlineColor = struct {
     end: CssColor,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
-    pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
-    pub usingnamespace ImplFallbacks(@This());
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
+    const css_impl = css.DefineSizeShorthand(@This(), CssColor);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
+    pub const getFallbacks = ImplFallbacks(@This()).getFallbacks;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-color",
@@ -436,8 +445,10 @@ pub const BorderInlineStyle = struct {
     end: LineStyle,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
-    pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
+    const css_impl = css.DefineSizeShorthand(@This(), LineStyle);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-style",
@@ -461,8 +472,10 @@ pub const BorderInlineWidth = struct {
     end: BorderSideWidth,
 
     // TODO: bring this back
-    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
-    pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
+    // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
+    const css_impl = css.DefineSizeShorthand(@This(), BorderSideWidth);
+    pub const toCss = css_impl.toCss;
+    pub const parse = css_impl.parse;
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-width",
@@ -479,35 +492,36 @@ pub const BorderInlineWidth = struct {
 };
 
 pub fn ImplFallbacks(comptime T: type) type {
-    const field_names = std.meta.fieldNames(T);
     return struct {
+        const fields = std.meta.fields(T);
+
         pub fn getFallbacks(this: *T, allocator: std.mem.Allocator, targets: css.Targets) css.SmallList(T, 2) {
             const ColorFallbackKind = css.css_values.color.ColorFallbackKind;
-            var fallbacks = ColorFallbackKind.empty();
-            inline for (field_names) |name| {
-                fallbacks.insert(@field(this, name).getNecessaryFallbacks(targets));
+            var fallbacks = ColorFallbackKind{};
+            inline for (fields) |field| {
+                bun.bits.insert(ColorFallbackKind, &fallbacks, @field(this, field.name).getNecessaryFallbacks(targets));
             }
 
             var res = css.SmallList(T, 2){};
-            if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) {
+            if (fallbacks.rgb) {
                 var out: T = undefined;
-                inline for (field_names) |name| {
-                    @field(out, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .rgb = true });
+                inline for (fields) |field| {
+                    @field(out, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .rgb = true });
                 }
                 res.append(allocator, out);
             }
 
-            if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
+            if (fallbacks.p3) {
                 var out: T = undefined;
-                inline for (field_names) |name| {
-                    @field(out, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .p3 = true });
+                inline for (fields) |field| {
+                    @field(out, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .p3 = true });
                 }
                 res.append(allocator, out);
             }
 
-            if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
-                inline for (field_names) |name| {
-                    @field(this, name) = @field(this, name).getFallback(allocator, ColorFallbackKind{ .lab = true });
+            if (fallbacks.lab) {
+                inline for (fields) |field| {
+                    @field(this, field.name) = @field(this, field.name).getFallback(allocator, ColorFallbackKind{ .lab = true });
                 }
             }
 
@@ -576,8 +590,6 @@ const BorderProperty = packed struct(u32) {
     @"inline-start-style": bool = false,
     @"inline-end-style": bool = false,
     __unused: u8 = 0,
-
-    pub usingnamespace css.Bitflags(@This());
 
     const @"border-top-color" = BorderProperty{ .@"top-color" = true };
     const @"border-bottom-color" = BorderProperty{ .@"bottom-color" = true };
@@ -855,13 +867,13 @@ pub const BorderHandler = struct {
         }
 
         inline fn push(f: *FlushContext, comptime p: []const u8, val: anytype) void {
-            f.self.flushed_properties.insert(@field(BorderProperty, p));
+            bun.bits.insert(BorderProperty, &f.self.flushed_properties, @field(BorderProperty, p));
             f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, val.deepClone(f.ctx.allocator))) catch bun.outOfMemory();
         }
 
         inline fn fallbacks(f: *FlushContext, comptime p: []const u8, _val: anytype) void {
             var val = _val;
-            if (!f.self.flushed_properties.contains(@field(BorderProperty, p))) {
+            if (!bun.bits.contains(BorderProperty, f.self.flushed_properties, @field(BorderProperty, p))) {
                 const fbs = val.getFallbacks(f.ctx.allocator, f.ctx.targets);
                 for (css.generic.slice(@TypeOf(fbs), &fbs)) |fallback| {
                     f.dest.append(f.ctx.allocator, @unionInit(css.Property, p, fallback)) catch bun.outOfMemory();
@@ -1400,7 +1412,7 @@ pub const BorderHandler = struct {
         if (logical_supported) {
             var up = unparsed.deepClone(context.allocator);
             context.addUnparsedFallbacks(&up);
-            this.flushed_properties.insert(BorderProperty.tryFromPropertyId(up.property_id).?);
+            bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
             dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
             return;
         }
@@ -1410,7 +1422,7 @@ pub const BorderHandler = struct {
                 _ = d; // autofix
                 var upppppppppp = up.withPropertyId(c.allocator, @unionInit(css.PropertyId, id, {}));
                 c.addUnparsedFallbacks(&upppppppppp);
-                self.flushed_properties.insert(@field(BorderProperty, id));
+                bun.bits.insert(BorderProperty, &self.flushed_properties, @field(BorderProperty, id));
             }
         }.prop;
 
@@ -1459,7 +1471,7 @@ pub const BorderHandler = struct {
             else => {
                 var up = unparsed.deepClone(context.allocator);
                 context.addUnparsedFallbacks(&up);
-                this.flushed_properties.insert(BorderProperty.tryFromPropertyId(up.property_id).?);
+                bun.bits.insert(BorderProperty, &this.flushed_properties, BorderProperty.tryFromPropertyId(up.property_id).?);
                 dest.append(context.allocator, .{ .unparsed = up }) catch bun.outOfMemory();
             },
         }

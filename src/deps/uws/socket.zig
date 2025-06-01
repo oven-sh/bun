@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uws = @import("../uws.zig");
 
 const SocketContext = uws.SocketContext;
@@ -62,13 +62,17 @@ pub const Socket = opaque {
         return us_socket_local_port(@intFromBool(ssl), this);
     }
 
+    pub fn remotePort(this: *Socket, ssl: bool) i32 {
+        return us_socket_remote_port(@intFromBool(ssl), this);
+    }
+
     /// Returned slice is a view into `buf`.
     pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) ![]const u8 {
         var length: i32 = @intCast(buf.len);
 
         us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
-            const errno = bun.C.getErrno(length);
+            const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
             return bun.errnoToZigErr(errno);
         }
@@ -83,7 +87,7 @@ pub const Socket = opaque {
 
         us_socket_remote_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
-            const errno = bun.C.getErrno(length);
+            const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
             return bun.errnoToZigErr(errno);
         }
@@ -125,8 +129,16 @@ pub const Socket = opaque {
     }
 
     pub fn write(this: *Socket, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        debug("us_socket_write({d}, {d})", .{ @intFromPtr(this), data.len });
-        return us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        const rc = us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        return rc;
+    }
+
+    pub fn writeFd(this: *Socket, data: []const u8, file_descriptor: bun.FD) i32 {
+        if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
+        const rc = us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
+        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
+        return rc;
     }
 
     pub fn write2(this: *Socket, ssl: bool, first: []const u8, second: []const u8) i32 {
@@ -148,9 +160,14 @@ pub const Socket = opaque {
         us_socket_sendfile_needs_more(this);
     }
 
+    pub fn getFd(this: *Socket) bun.FD {
+        return .fromNative(us_socket_get_fd(this));
+    }
+
     extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 
     extern fn us_socket_local_port(ssl: i32, s: ?*Socket) i32;
+    extern fn us_socket_remote_port(ssl: i32, s: ?*Socket) i32;
     extern fn us_socket_remote_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_local_address(ssl: i32, s: ?*Socket, buf: [*c]u8, length: [*c]i32) void;
     extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
@@ -162,6 +179,7 @@ pub const Socket = opaque {
     extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 
     extern fn us_socket_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
+    extern fn us_socket_ipc_write_fd(s: ?*Socket, data: [*c]const u8, length: i32, fd: i32) i32;
     extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
     extern fn us_socket_raw_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
     extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;
@@ -178,4 +196,9 @@ pub const Socket = opaque {
     extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 
     extern fn us_socket_sendfile_needs_more(socket: *Socket) void;
+    extern fn us_socket_get_fd(s: ?*Socket) LIBUS_SOCKET_DESCRIPTOR;
+    const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
+        true => *anyopaque,
+        false => i32,
+    };
 };

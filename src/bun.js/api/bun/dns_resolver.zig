@@ -1415,12 +1415,12 @@ pub const InternalDNS = struct {
     };
     pub fn getHints() std.c.addrinfo {
         var hints_copy = default_hints;
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG)) {
             hints_copy.flags.ADDRCONFIG = false;
         }
-        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6")) {
+        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV6)) {
             hints_copy.family = std.c.AF.INET;
-        } else if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4")) {
+        } else if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV4)) {
             hints_copy.family = std.c.AF.INET6;
         }
 

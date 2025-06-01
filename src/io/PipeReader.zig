@@ -436,8 +436,6 @@ const PosixBufferedReader = struct {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
 
-        var received_hup = received_hup_;
-
         if (streaming) {
             const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
             while (resizable_buffer.capacity == 0) {
@@ -467,41 +465,18 @@ const PosixBufferedReader = struct {
 
                             if (comptime file_type == .pipe) {
                                 if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                                    switch (bun.isReadable(fd)) {
-                                        .ready => {},
-                                        .hup => {
-                                            received_hup = true;
-                                        },
-                                        .not_ready => {
-                                            if (received_hup) {
-                                                parent.closeWithoutReporting();
-                                            }
-                                            defer {
-                                                if (received_hup) {
-                                                    parent.done();
-                                                }
-                                            }
-                                            if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                                if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained)) {
-                                                    return;
-                                                }
-                                            }
-
-                                            if (!received_hup) {
-                                                parent.registerPoll();
-                                            }
-
+                                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
+                                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained)) {
                                             return;
-                                        },
+                                        }
                                     }
-                                }
-                            }
 
-                            if (comptime file_type != .pipe) {
-                                // blocking pipes block a process, so we have to keep reading as much as we can
-                                // otherwise, we do want to stream the data
+                                    parent.registerPoll();
+                                    return;
+                                }
+                            } else {
                                 if (stack_buffer_head.len < stack_buffer_cutoff) {
-                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
+                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress)) {
                                         return;
                                     }
                                     stack_buffer_head = stack_buffer;
@@ -530,7 +505,7 @@ const PosixBufferedReader = struct {
                 }
 
                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
+                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress)) {
                         return;
                     }
                 }
@@ -561,28 +536,8 @@ const PosixBufferedReader = struct {
 
                     if (comptime file_type == .pipe) {
                         if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                            switch (bun.isReadable(fd)) {
-                                .ready => {},
-                                .hup => {
-                                    received_hup = true;
-                                },
-                                .not_ready => {
-                                    if (received_hup) {
-                                        parent.closeWithoutReporting();
-                                    }
-                                    defer {
-                                        if (received_hup) {
-                                            parent.done();
-                                        }
-                                    }
-
-                                    if (!received_hup) {
-                                        parent.registerPoll();
-                                    }
-
-                                    return;
-                                },
-                            }
+                            parent.registerPoll();
+                            return;
                         }
                     }
                 },
@@ -623,41 +578,20 @@ const PosixBufferedReader = struct {
 
                     if (comptime file_type == .pipe) {
                         if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                            switch (bun.isReadable(fd)) {
-                                .ready => {},
-                                .hup => {
-                                    received_hup = true;
-                                },
-                                .not_ready => {
-                                    if (received_hup) {
-                                        parent.closeWithoutReporting();
-                                    }
-                                    defer {
-                                        if (received_hup) {
-                                            parent.done();
-                                        }
-                                    }
-
-                                    if (parent.vtable.isStreamingEnabled()) {
-                                        defer {
-                                            resizable_buffer.clearRetainingCapacity();
-                                        }
-                                        if (!parent.vtable.onReadChunk(resizable_buffer.items, if (received_hup) .eof else .drained) and !received_hup) {
-                                            return;
-                                        }
-                                    }
-
-                                    if (!received_hup) {
-                                        parent.registerPoll();
-                                    }
-
+                            if (parent.vtable.isStreamingEnabled()) {
+                                defer {
+                                    resizable_buffer.clearRetainingCapacity();
+                                }
+                                if (!parent.vtable.onReadChunk(resizable_buffer.items, .drained)) {
                                     return;
-                                },
+                                }
                             }
-                        }
-                    }
 
-                    if (comptime file_type != .pipe) {
+                            parent.registerPoll();
+
+                            return;
+                        }
+                    } else {
                         if (parent.vtable.isStreamingEnabled()) {
                             if (resizable_buffer.items.len > 128_000) {
                                 defer {

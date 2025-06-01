@@ -1,0 +1,10 @@
+await Bun.sleep(200);
+console.log("line 1");
+await Bun.sleep(200);
+console.log("line 2");
+await Bun.sleep(200);
+console.log("line 3");
+await Bun.sleep(200);
+console.log("line 4");
+await Bun.sleep(200);
+console.log("line 5");

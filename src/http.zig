@@ -2939,6 +2939,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_header = false;
     var override_host_header = false;
     var override_user_agent = false;
+    var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
     for (header_names, 0..) |head, i| {
@@ -2975,6 +2976,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             },
             hashHeaderConst("Accept-Encoding") => {
                 override_accept_encoding = true;
+            },
+            hashHeaderConst(chunked_encoded_header.name) => {
+                // We don't want to override chunked encoding header if it was set by the user
+                add_transfer_encoding = false;
             },
             else => {},
         }
@@ -3031,14 +3036,17 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
-            request_headers_buf[header_count] = chunked_encoded_header;
+            if (add_transfer_encoding) {
+                request_headers_buf[header_count] = chunked_encoded_header;
+                header_count += 1;
+            }
         } else {
             request_headers_buf[header_count] = .{
                 .name = content_length_header_name,
                 .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
             };
+            header_count += 1;
         }
-        header_count += 1;
     } else if (original_content_length) |content_length| {
         request_headers_buf[header_count] = .{
             .name = content_length_header_name,

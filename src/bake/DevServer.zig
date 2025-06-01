@@ -1303,7 +1303,7 @@ fn ensureRouteIsBundled(
     kind: DeferredRequest.Handler.Kind,
     req: *Request,
     resp: AnyResponse,
-) bun.OOM!void {
+) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
     sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
@@ -1416,7 +1416,7 @@ fn ensureRouteIsBundled(
             );
         },
         .loaded => switch (kind) {
-            .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
+            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
             .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
         },
     }
@@ -1525,7 +1525,7 @@ fn onFrameworkRequestWithBundle(
     route_bundle_index: RouteBundle.Index,
     req: bun.JSC.API.SavedRequest.Union,
     resp: AnyResponse,
-) void {
+) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
     const bundle = &route_bundle.data.framework;
@@ -1559,7 +1559,7 @@ fn onFrameworkRequestWithBundle(
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                const arr = JSValue.createEmptyArray(global, n);
+                const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 arr.putIndex(global, 0, route_name.transferToJS(global));
@@ -2123,7 +2123,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     return client_bundle;
 }
 
-fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.JSValue {
+fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!JSC.JSValue {
     assert(route_bundle.data == .framework); // a JSC.JSValue has no purpose, and therefore isn't implemented.
     if (Environment.allow_assert) assert(!route_bundle.data.framework.cached_css_file_array.has());
     assert(route_bundle.server_state == .loaded); // page is unfit to load
@@ -2143,7 +2143,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.J
     try dev.traceAllRouteImports(route_bundle, &gts, .find_css);
 
     const names = dev.client_graph.current_css_files.items;
-    const arr = JSC.JSArray.createEmpty(dev.vm.global, names.len);
+    const arr = try JSC.JSArray.createEmpty(dev.vm.global, names.len);
     for (names, 0..) |item, i| {
         var buf: [asset_prefix.len + @sizeOf(u64) * 2 + "/.css".len]u8 = undefined;
         const path = std.fmt.bufPrint(&buf, asset_prefix ++ "/{s}.css", .{
@@ -2187,9 +2187,9 @@ fn traceAllRouteImports(dev: *DevServer, route_bundle: *RouteBundle, gts: *Graph
     }
 }
 
-fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) JSValue {
+fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObject, items: []const IncrementalGraph(.server).FileIndex) bun.JSError!JSValue {
     if (items.len == 0) return .null;
-    const arr = JSC.JSArray.createEmpty(global, items.len);
+    const arr = try JSC.JSArray.createEmpty(global, items.len);
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
         const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
@@ -2248,7 +2248,7 @@ pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
     result: *const bun.bundle_v2.DevServerOutput,
-) bun.OOM!void {
+) bun.JSError!void {
     assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
     defer {
@@ -2539,8 +2539,8 @@ pub fn finalizeBundle(
             dev.vm.global.toJSValue(),
             &.{
                 server_modules,
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
-                dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
+                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                try dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
             },
         ) catch |err| {
             // One module replacement error should NOT prevent follow-up
@@ -2902,7 +2902,7 @@ pub fn finalizeBundle(
 
         switch (req.handler) {
             .aborted => continue,
-            .server_handler => |saved| dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
+            .server_handler => |saved| try dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }

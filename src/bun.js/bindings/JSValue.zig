@@ -690,8 +690,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__createEmptyArray(global: *JSGlobalObject, len: usize) JSValue;
-    pub fn createEmptyArray(global: *JSGlobalObject, len: usize) JSValue {
-        return JSC__JSValue__createEmptyArray(global, len);
+    pub fn createEmptyArray(global: *JSGlobalObject, len: usize) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostValue(JSC__JSValue__createEmptyArray(global, len));
     }
 
     extern fn JSC__JSValue__putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void;
@@ -2652,8 +2652,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
         comptime T: type,
         value: T,
-        comptime lifetime: FromAnyLifetime,
-    ) JSC.JSValue {
+    ) bun.JSError!JSC.JSValue {
         const Type = comptime brk: {
             var CurrentType = T;
             if (@typeInfo(T) == .optional) {
@@ -2688,7 +2687,7 @@ pub const JSValue = enum(i64) {
             JSC.JSValue => return if (Type != T) value.* else value,
 
             inline []const u16, []const u32, []const i16, []const i8, []const i32, []const f32 => {
-                var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                 for (value, 0..) |item, i| {
                     array.putIndex(
                         globalObject,
@@ -2705,9 +2704,9 @@ pub const JSValue = enum(i64) {
                 if (bun.trait.isSlice(Type)) {
                     const Child = comptime std.meta.Child(Type);
 
-                    var array = JSC.JSValue.createEmptyArray(globalObject, value.len);
+                    var array = try JSC.JSValue.createEmptyArray(globalObject, value.len);
                     for (value, 0..) |*item, i| {
-                        const res = fromAny(globalObject, *Child, item, lifetime);
+                        const res = try fromAny(globalObject, *Child, item);
                         if (res == .zero) return .zero;
                         array.putIndex(
                             globalObject,

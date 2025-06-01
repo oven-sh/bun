@@ -92,6 +92,11 @@ pub fn toJSHostValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSE
     return normal;
 }
 
+pub fn fromJSHostValue(value: JSValue) bun.JSError!JSValue {
+    if (value == .zero) return error.JSError;
+    return value;
+}
+
 const ParsedHostFunctionErrorSet = struct {
     OutOfMemory: bool = false,
     JSError: bool = false,

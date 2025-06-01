@@ -473,7 +473,6 @@ src/io/PipeReader.zig
 src/io/pipes.zig
 src/io/PipeWriter.zig
 src/io/source.zig
-src/io/time.zig
 src/js_ast.zig
 src/js_lexer_tables.zig
 src/js_lexer.zig

@@ -14,10 +14,8 @@ const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 
 const PropertyCategory = css.logical.PropertyCategory;
 
-
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Ratio = css.css_values.ratio.Ratio;
-
 
 pub const BoxSizing = enum {
     /// Exclude the margin/border/padding from the width and height.

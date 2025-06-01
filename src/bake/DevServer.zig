@@ -112,7 +112,7 @@ watcher_atomics: WatcherAtomics,
 /// and bundling times, where the test harness (bake-harness.ts) would not wait
 /// long enough for processing to complete. Checking client logs, for example,
 /// not only must wait on DevServer, but also wait on all connected WebSocket
-/// clients to recieve their update, but also wait for those modules
+/// clients to receive their update, but also wait for those modules
 /// (potentially async) to finish loading.
 ///
 /// To solve the first part of this, DevServer exposes a special WebSocket
@@ -133,7 +133,7 @@ testing_batch_events: union(enum) {
     enable_after_bundle,
     /// DevServer will not start new bundles, but instead write all files into
     /// this `TestingBatch` object. Additionally, writes into this will signal
-    /// a message saying that new files have been seen. Once DevServer recieves
+    /// a message saying that new files have been seen. Once DevServer receives
     /// that signal, or times out, it will "release" this batch.
     enabled: TestingBatch,
 },
@@ -8495,7 +8495,6 @@ const Transpiler = bun.transpiler.Transpiler;
 const BundleV2 = bun.bundle_v2.BundleV2;
 const Chunk = bun.bundle_v2.Chunk;
 const ContentHasher = bun.bundle_v2.ContentHasher;
-
 
 const uws = bun.uws;
 const AnyWebSocket = uws.AnyWebSocket;

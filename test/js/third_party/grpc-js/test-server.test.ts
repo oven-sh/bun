@@ -659,7 +659,7 @@ describe("Echo service", () => {
     server.forceShutdown();
   });
 
-  it("should echo the recieved message directly", done => {
+  it("should echo the received message directly", done => {
     client.echo({ value: "test value", value2: 3 }, (error: ServiceError, response: any) => {
       assert.ifError(error);
       assert.deepStrictEqual(response, { value: "test value", value2: 3 });

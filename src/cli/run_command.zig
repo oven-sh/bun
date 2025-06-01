@@ -37,8 +37,6 @@ const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
 
 const ShellCompletions = @import("./shell_completions.zig");
 
-
-
 const windows = std.os.windows;
 
 pub const RunCommand = struct {

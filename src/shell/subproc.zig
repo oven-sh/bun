@@ -12,7 +12,6 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const uws = bun.uws;
 const sh = bun.shell;
 
-
 const util = @import("./util.zig");
 
 pub const Stdio = util.Stdio;
@@ -942,7 +941,6 @@ pub const ShellSubprocess = struct {
         }
     }
 };
-
 
 pub const PipeReader = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});

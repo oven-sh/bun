@@ -486,7 +486,7 @@ const Readable = union(enum) {
                 defer pipe.detach();
                 this.* = .{ .closed = {} };
             },
-            .buffer => |buf| {
+            .buffer => |*buf| {
                 buf.deinit(bun.default_allocator);
             },
             else => {},
@@ -517,8 +517,7 @@ const Readable = union(enum) {
                 const own = buffer.takeSlice(bun.default_allocator) catch {
                     globalThis.throwOutOfMemory() catch return .zero;
                 };
-                const blob = JSC.WebCore.Blob.init(own, bun.default_allocator, globalThis);
-                return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
                 return JSValue.jsUndefined();
@@ -1087,6 +1086,12 @@ pub const PipeReader = struct {
         const out = this.reader._buffer;
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
+
+        if (out.capacity > 0 and out.items.len == 0) {
+            out.deinit();
+            return &.{};
+        }
+
         return out.items;
     }
 
@@ -1109,9 +1114,8 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
                 _ = err; // autofix

@@ -20,7 +20,7 @@ $currentSystemType = (Get-CimInstance Win32_ComputerSystem).SystemType
 # filter out 32 bit
 if (-not ($allowedSystemTypes | Where-Object { $currentSystemType -match $_ })) {
   Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
+  Write-Output "Bun for Windows is currently only available for 64-bit Windows (x64 or ARM64).`n"
   return 1
 }
 

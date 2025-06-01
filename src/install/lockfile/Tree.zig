@@ -246,6 +246,10 @@ pub fn Builder(comptime method: BuilderMethod) type {
         install_root_dependencies: if (method == .filter) bool else void,
         path_buf: []u8,
 
+        pub fn hasNohoistPatterns(this: *const @This()) bool {
+            return this.lockfile.nohoist_patterns.items.len != 0;
+        }
+
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
         }
@@ -388,7 +392,7 @@ pub fn processSubtree(
         DepSorter.isLessThan,
     );
 
-    for (builder.sort_buf.items) |dep_id| {
+    next_dep: for (builder.sort_buf.items) |dep_id| {
         const pkg_id = builder.resolutions[dep_id];
         // Skip unresolved packages, e.g. "peerDependencies"
         if (pkg_id >= max_package_id) continue;
@@ -494,7 +498,7 @@ pub fn processSubtree(
 
         const dependency = builder.dependencies[dep_id];
         var dep_subpath: std.ArrayListUnmanaged(u8) = .{};
-        if (builder.lockfile.nohoist_patterns.items.len > 0) {
+        if (builder.hasNohoistPatterns()) {
             try dep_subpath.ensureTotalCapacity(
                 builder.allocator,
                 subpath.items.len + dependency.name.len() + @intFromBool(subpath.items.len != 0),
@@ -540,6 +544,22 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
+                if (builder.hasNohoistPatterns()) {
+                    // Look for cycles. Only done when nohoist patterns are used because
+                    // they can cause cyclic dependencies to not deduplicate, resulting
+                    // in infinite loops (e.g. can happen easily if all hoisting is
+                    // disabled with '**')
+                    var parent_id = this.id;
+                    while (parent_id != invalid_id) {
+                        for (dependency_lists[parent_id].items) |placed_parent_dep_id| {
+                            const placed_parent_pkg_id = builder.resolutions[placed_parent_dep_id];
+                            if (placed_parent_pkg_id == pkg_id) {
+                                continue :next_dep;
+                            }
+                        }
+                        parent_id = trees[parent_id].parent;
+                    }
+                }
                 dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {

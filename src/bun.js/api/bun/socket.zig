@@ -1402,7 +1402,7 @@ fn NewSocket(comptime ssl: bool) type {
             pub fn onData(this: NativeCallbacks, data: []const u8) bool {
                 switch (this) {
                     .h2 => |h2| {
-                        h2.onNativeRead(data);
+                        h2.onNativeRead(data) catch return false; // TODO: properly propagate exception upwards
                         return true;
                     },
                     .none => return false,

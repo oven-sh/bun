@@ -199,7 +199,7 @@ pub const WalkTask = struct {
             return;
         }
 
-        const jsStrings = globWalkResultToJS(this.walker, this.global) catch @panic("oops"); //?
+        const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
         promise.resolve(this.global, jsStrings);
     }
 

@@ -526,7 +526,7 @@ pub const CAresNameInfo = struct {
             return;
         }
         var name_info = result.?;
-        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis) catch .zero; //?
+        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis) catch .zero; // TODO: properly propagate exception upwards
         this.onComplete(array);
         return;
     }
@@ -942,7 +942,7 @@ pub const CAresReverse = struct {
             return;
         }
         var node = result.?;
-        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "") catch .zero; //?
+        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "") catch .zero; // TODO: properly propagate exception upwards
         this.onComplete(array);
         return;
     }
@@ -1023,7 +1023,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
 
             var node = result.?;
-            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name) catch .zero; //?
+            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name) catch .zero; // TODO: properly propagate exception upwards
             this.onComplete(array);
             return;
         }
@@ -1084,7 +1084,7 @@ pub const DNSLookup = struct {
 
     pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
         log("onCompleteNative", .{});
-        const array = (result.toJS(this.globalThis) catch .zero).?; //?
+        const array = (result.toJS(this.globalThis) catch .zero).?; // TODO: properly propagate exception upwards
         this.onCompleteWithArray(array);
     }
 
@@ -1117,7 +1117,7 @@ pub const DNSLookup = struct {
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
         log("onComplete", .{});
 
-        const array = result.toJSArray(this.globalThis) catch .zero; //?
+        const array = result.toJSArray(this.globalThis) catch .zero; // TODO: properly propagate exception upwards
         this.onCompleteWithArray(array);
     }
 
@@ -2026,7 +2026,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name) catch .zero; //?
+        var array = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
@@ -2037,7 +2037,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, lookup_name) catch .zero; //?
+                array = addr.toJSResponse(this.vm.allocator, new_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
                 prev_global = new_global;
             }
             pending = value.next;
@@ -2070,7 +2070,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(prev_global) catch .zero; //?
+        var array = addr.toJSArray(prev_global) catch .zero; // TODO: properly propagate exception upwards
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onCompleteWithArray(array);
@@ -2082,7 +2082,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(new_global) catch .zero; //?
+                array = addr.toJSArray(new_global) catch .zero; // TODO: properly propagate exception upwards
                 prev_global = new_global;
             }
             pending = value.next;
@@ -2102,7 +2102,7 @@ pub const DNSResolver = struct {
         this.ref();
         defer this.deref();
 
-        var array = (result.toJS(globalObject) catch .zero) orelse { //?
+        var array = (result.toJS(globalObject) catch .zero) orelse { // TODO: properly propagate exception upwards
             var pending: ?*DNSLookup = key.lookup.head.next;
             var head = key.lookup.head;
             head.processGetAddrInfoNative(err, null);
@@ -2131,7 +2131,7 @@ pub const DNSResolver = struct {
             const new_global = value.globalThis;
             pending = value.next;
             if (prev_global != new_global) {
-                array = (result.toJS(new_global) catch .zero).?; //?
+                array = (result.toJS(new_global) catch .zero).?; // TODO: properly propagate exception upwards
                 prev_global = new_global;
             }
 
@@ -2166,7 +2166,7 @@ pub const DNSResolver = struct {
         //  The callback need not and should not attempt to free the memory
         //  pointed to by hostent; the ares library will free it when the
         //  callback returns.
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, "") catch .zero; //?
+        var array = addr.toJSResponse(this.vm.allocator, prev_global, "") catch .zero; // TODO: properly propagate exception upwards
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);
@@ -2176,7 +2176,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, "") catch .zero; //?
+                array = addr.toJSResponse(this.vm.allocator, new_global, "") catch .zero; // TODO: properly propagate exception upwards
                 prev_global = new_global;
             }
             pending = value.next;
@@ -2210,7 +2210,7 @@ pub const DNSResolver = struct {
         var pending: ?*CAresNameInfo = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
 
-        var array = name_info.toJSResponse(this.vm.allocator, prev_global) catch .zero; //?
+        var array = name_info.toJSResponse(this.vm.allocator, prev_global) catch .zero; // TODO: properly propagate exception upwards
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
         bun.default_allocator.destroy(key.lookup);
@@ -2220,7 +2220,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             const new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = name_info.toJSResponse(this.vm.allocator, new_global) catch .zero; //?
+                array = name_info.toJSResponse(this.vm.allocator, new_global) catch .zero; // TODO: properly propagate exception upwards
                 prev_global = new_global;
             }
             pending = value.next;

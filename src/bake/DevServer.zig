@@ -1303,7 +1303,7 @@ fn ensureRouteIsBundled(
     kind: DeferredRequest.Handler.Kind,
     req: *Request,
     resp: AnyResponse,
-) bun.OOM!void {
+) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
     sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
@@ -1416,7 +1416,7 @@ fn ensureRouteIsBundled(
             );
         },
         .loaded => switch (kind) {
-            .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
+            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
             .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
         },
     }
@@ -1525,7 +1525,7 @@ fn onFrameworkRequestWithBundle(
     route_bundle_index: RouteBundle.Index,
     req: bun.JSC.API.SavedRequest.Union,
     resp: AnyResponse,
-) void {
+) bun.JSError!void {
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
     const bundle = &route_bundle.data.framework;
@@ -1559,7 +1559,7 @@ fn onFrameworkRequestWithBundle(
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                const arr = JSValue.createEmptyArray(global, n) catch .zero; //?
+                const arr = try JSValue.createEmptyArray(global, n);
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 arr.putIndex(global, 0, route_name.transferToJS(global));
@@ -2902,7 +2902,7 @@ pub fn finalizeBundle(
 
         switch (req.handler) {
             .aborted => continue,
-            .server_handler => |saved| dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
+            .server_handler => |saved| try dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }

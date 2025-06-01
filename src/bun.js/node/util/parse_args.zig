@@ -267,7 +267,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
 /// - `option_value`: value from user args
 /// - `options`: option configs, from `parseArgs({ options })`
 /// - `values`: option values returned in `values` by parseArgs
-fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, negative: bool, options: []const OptionDefinition, values: JSValue) void {
+fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, negative: bool, options: []const OptionDefinition, values: JSValue) bun.JSError!void {
     var key = option_name.asBunString(globalThis);
     if (key.eqlComptime("__proto__")) {
         return;
@@ -288,7 +288,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         if (values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
-            var value_list = JSValue.createEmptyArray(globalThis, 1) catch return; //?
+            var value_list = try JSValue.createEmptyArray(globalThis, 1);
             value_list.putIndex(globalThis, 0, new_value);
             values.putMayBeIndex(globalThis, &key, value_list);
         }
@@ -590,7 +590,7 @@ const ParseArgsState = struct {
                     try checkOptionUsage(globalThis, this.option_defs, this.allow_positionals, token);
                     try checkOptionLikeValue(globalThis, token);
                 }
-                storeOption(globalThis, token.name, token.value, token.option_idx, token.negative, this.option_defs, this.values);
+                try storeOption(globalThis, token.name, token.value, token.option_idx, token.negative, this.option_defs, this.values);
             },
             .positional => |token| {
                 if (!this.allow_positionals) {

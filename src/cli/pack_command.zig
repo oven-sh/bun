@@ -2302,7 +2302,7 @@ pub const PackCommand = struct {
     };
 
     pub const IgnorePatterns = struct {
-        list: []Pattern,
+        list: []const Pattern,
         kind: Kind,
         depth: usize,
 

@@ -35,8 +35,7 @@ $MinBuildName = "Windows 10 1809 / Windows Server 2019"
 
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
-  Write-Warning "Bun requires at ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
-  return 1
+  Write-Warning "Bun requires at least ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
 }
 
 $ErrorActionPreference = "Stop"

@@ -237,6 +237,12 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--tls-max-v1.2                    Set default max TLS version to TLSv1.2") catch unreachable,
+        clap.parseParam("--tls-max-v1.3                    Set default max TLS version to TLSv1.3") catch unreachable,
+        clap.parseParam("--tls-min-v1.0                    Set default min TLS version to TLSv1.0") catch unreachable,
+        clap.parseParam("--tls-min-v1.1                    Set default min TLS version to TLSv1.1") catch unreachable,
+        clap.parseParam("--tls-min-v1.2                    Set default min TLS version to TLSv1.2") catch unreachable,
+        clap.parseParam("--tls-min-v1.3                    Set default min TLS version to TLSv1.3") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -850,6 +856,27 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
+            }
+
+            if (args.flag("--throw-deprecation")) {
+                ctx.runtime_options.deprecation_warnings = .throw;
+            }
+
+            // Handle TLS version flags for Node.js compatibility
+            if (args.flag("--tls-max-v1.2")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMaxVersion("TLSv1.2");
+            } else if (args.flag("--tls-max-v1.3")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMaxVersion("TLSv1.3");
+            }
+
+            if (args.flag("--tls-min-v1.0")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMinVersion("TLSv1");
+            } else if (args.flag("--tls-min-v1.1")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMinVersion("TLSv1.1");
+            } else if (args.flag("--tls-min-v1.2")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMinVersion("TLSv1.2");
+            } else if (args.flag("--tls-min-v1.3")) {
+                bun.JSC.VirtualMachine.setTLSDefaultMinVersion("TLSv1.3");
             }
         }
 

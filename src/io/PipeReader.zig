@@ -432,7 +432,7 @@ const PosixBufferedReader = struct {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, wrapReadFn(bun.sys.readNonblocking));
     }
 
-    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
+    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
 
@@ -466,17 +466,20 @@ const PosixBufferedReader = struct {
                             if (comptime file_type == .pipe) {
                                 if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained)) {
+                                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained)) {
                                             return;
                                         }
                                     }
 
-                                    parent.registerPoll();
+                                    if (!received_hup) {
+                                        parent.registerPoll();
+                                    }
+
                                     return;
                                 }
                             } else {
                                 if (stack_buffer_head.len < stack_buffer_cutoff) {
-                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress)) {
+                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
                                         return;
                                     }
                                     stack_buffer_head = stack_buffer;
@@ -505,7 +508,7 @@ const PosixBufferedReader = struct {
                 }
 
                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress)) {
+                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
                         return;
                     }
                 }
@@ -536,7 +539,19 @@ const PosixBufferedReader = struct {
 
                     if (comptime file_type == .pipe) {
                         if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                            parent.registerPoll();
+                            if (received_hup) {
+                                parent.closeWithoutReporting();
+                            }
+                            defer {
+                                if (received_hup) {
+                                    parent.done();
+                                }
+                            }
+
+                            if (!received_hup) {
+                                parent.registerPoll();
+                            }
+
                             return;
                         }
                     }
@@ -582,7 +597,7 @@ const PosixBufferedReader = struct {
                                 defer {
                                     resizable_buffer.clearRetainingCapacity();
                                 }
-                                if (!parent.vtable.onReadChunk(resizable_buffer.items, .drained)) {
+                                if (!parent.vtable.onReadChunk(resizable_buffer.items, if (received_hup) .eof else .drained) and !received_hup) {
                                     return;
                                 }
                             }

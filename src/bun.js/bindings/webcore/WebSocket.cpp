@@ -934,10 +934,11 @@ String WebSocket::binaryType() const
 
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
-    // if (binaryType == "blob"_s) {
-    //     m_binaryType = BinaryType::Blob;
-    //     return {};
-    // }
+    if (binaryType == "blob"_s) {
+        // NOTE: this is a temporary solution
+        m_binaryType = BinaryType::NodeBuffer;
+        return {};
+    }
     if (binaryType == "arraybuffer"_s) {
         m_binaryType = BinaryType::ArrayBuffer;
         return {};

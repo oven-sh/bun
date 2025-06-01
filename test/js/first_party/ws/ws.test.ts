@@ -56,6 +56,10 @@ const binaryTypes = [
     label: "arraybuffer",
     type: ArrayBuffer,
   },
+  {
+    label: "blob",
+    type: Blob,
+  },
 ] as const;
 
 let servers: Subprocess[] = [];

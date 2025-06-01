@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { BuildCommand } from "./build-layer";
 
 export class PublishCommand extends BuildCommand {
@@ -6,9 +5,7 @@ export class PublishCommand extends BuildCommand {
 
   #aws(args: string[]): string {
     this.debug("$", "aws", ...args);
-    const { status, stdout, stderr } = spawnSync("aws", args, {
-      stdio: "pipe",
-    });
+    const { status, stdout, stderr } = Bun.spawnSync(["aws", ...args]);
     const result = stdout.toString("utf-8").trim();
     if (status === 0) {
       return result;

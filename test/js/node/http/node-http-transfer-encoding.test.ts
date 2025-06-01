@@ -7,7 +7,7 @@ const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header`, async () => {
   const { resolve, promise } = Promise.withResolvers();
   const tcpServer = new Server();
-  tcpServer.listen(0, "::1");
+  tcpServer.listen(0, "127.0.0.1");
 
   await once(tcpServer, "listening");
 

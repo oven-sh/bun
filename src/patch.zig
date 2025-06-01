@@ -1508,7 +1508,7 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
     }
 }
 
-/// We need to remove occurences of "a/" and "b/" and "$old_folder/" and
+/// We need to remove occurrences of "a/" and "b/" and "$old_folder/" and
 /// "$new_folder/" but we don't want to remove them from the actual patch
 /// content (maybe someone had a/$old_folder/foo.txt in the changed files).
 ///

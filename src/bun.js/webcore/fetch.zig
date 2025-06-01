@@ -1,4 +1,3 @@
-
 const JSType = JSC.C.JSType;
 
 pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";

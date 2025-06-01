@@ -25,7 +25,6 @@ pub const css = @import("../css_parser.zig");
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;
 
-
 const ArrayList = std.ArrayListUnmanaged;
 
 const parser = css.selector.parser;

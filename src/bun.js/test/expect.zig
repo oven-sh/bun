@@ -38,7 +38,6 @@ pub var active_test_expectation_counter: Counter = .{};
 pub var is_expecting_assertions: bool = false;
 pub var is_expecting_assertions_count: bool = false;
 
-
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
     if (T.flagsGetCached(value)) |flagsValue| {

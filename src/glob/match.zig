@@ -25,8 +25,6 @@
 const std = @import("std");
 const bun = @import("bun");
 
-const Allocator = std.mem.Allocator;
-
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces
 /// One such stack buffer is created recursively for each pair of braces

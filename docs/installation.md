@@ -225,7 +225,7 @@ The `musl` binaries are built for distributions that do not ship with the glibc 
 
 ### CPU requirements and `baseline` builds
 
-Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
+Bun's `x64` binaries target the Haswell CPU architecture, which means they require AVX and AVX2 instructions. For Linux and Windows, the `x64-baseline` binaries are also available which target the Nehalem architecture. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install script automatically chooses the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
 
 | Build        | Intel requirement                                                  | AMD requirement    |
 | ------------ | ------------------------------------------------------------------ | ------------------ |

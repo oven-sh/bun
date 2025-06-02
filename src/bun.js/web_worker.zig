@@ -562,7 +562,18 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        vm.jsc.notifyNeedTermination();
+
+        // for process.exit() called from JavaScript, we only need to set the flag
+        // and wake up the event loop. The event loop will check hasRequestedTerminate()
+        // and exit cleanly. Calling notifyNeedTermination() while holding the js lock
+        // causes assertion failures in jsc
+        if (!this.exit_called) {
+            // only call jsc traps for external terminate requests
+            // (e.g worker.terminate() from parent thread)
+            vm.jsc.notifyNeedTermination();
+        }
+        // if exit_called is true we're in process.exit() context and should
+        // let the event loop handle termination naturally
     }
 
     // TODO(@190n) delete

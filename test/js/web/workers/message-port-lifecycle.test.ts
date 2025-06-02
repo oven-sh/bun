@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
-test("MessagePort postMessage uses immediate C++ tasks correctly", async () => {
+test("MessagePort postMessage respects event loop timing", async () => {
   const { port1, port2 } = new MessageChannel();
 
   const messages: string[] = [];
@@ -90,7 +90,7 @@ test("MessagePort messages execute after process.nextTick (Node.js compatibility
   port2.close();
 });
 
-test("MessagePort immediate C++ tasks work with workers", async () => {
+test("MessagePort message delivery works with workers", async () => {
   const worker = new Worker(
     `
     const { parentPort, MessageChannel } = require('worker_threads');
@@ -169,7 +169,7 @@ test("MessagePort immediate C++ tasks work with workers", async () => {
   worker.terminate();
 });
 
-test("immediate C++ tasks don't starve microtasks", async () => {
+test("MessagePort messages don't starve microtasks", async () => {
   const { port1, port2 } = new MessageChannel();
 
   const executionOrder: string[] = [];
@@ -252,7 +252,7 @@ test("high volume MessagePort operations maintain order", async () => {
   port2.close();
 });
 
-test("MessagePort close behavior with immediate C++ tasks", async () => {
+test("MessagePort close behavior during message handling", async () => {
   const { port1, port2 } = new MessageChannel();
 
   let messageReceived = false;
@@ -286,7 +286,7 @@ test("MessagePort close behavior with immediate C++ tasks", async () => {
   port1.close();
 });
 
-test("receiveMessageOnPort works with immediate C++ tasks", () => {
+test("receiveMessageOnPort synchronous message retrieval", () => {
   const { port1, port2 } = new MessageChannel();
 
   port1.postMessage("msg1");

@@ -185,7 +185,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     auto* context = scriptExecutionContext();
     if (!context->canSendMessage()) {
-        context->postImmediateCppTask([protectedThis = Ref { *this }, message = WTFMove(message)](ScriptExecutionContext& ctx) mutable {
+        context->postTask([protectedThis = Ref { *this }, message = WTFMove(message)](ScriptExecutionContext& ctx) mutable {
             if (protectedThis->isEntangled()) {
                 MessagePortChannelProvider::fromContext(ctx).postMessageToRemote(WTFMove(message), protectedThis->m_remoteIdentifier);
             }
@@ -289,7 +289,7 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
 
     if (!deferredMessages.isEmpty()) {
         // remaining messages should happen on da next tick
-        context.postImmediateCppTask(
+        context.postTask(
             [protectedThis = Ref { *this }, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
                 RefPtr<ScriptExecutionContext> contextPtr = protectedThis->scriptExecutionContext();
                 if (!contextPtr || contextPtr->activeDOMObjectsAreSuspended() || !protectedThis->isEntangled()) {

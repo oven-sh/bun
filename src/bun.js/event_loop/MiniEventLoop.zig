@@ -1,9 +1,23 @@
-//! This is a no-JS version of JSC.EventLoop. This lets us re-use code
-//! originally meant to support JavaScript execution in `bun build` or in the Bun
-//! Shell or in `bun install`.
+//! MiniEventLoop: A lightweight event loop for non-JavaScript contexts
 //!
-//! This is not a full event loop, it's just a wrapper around the uWS loop.
-//! It's used to run tasks that are not part of the main event loop, like the GC or the signal handler.
+//! This is a simplified version of JSC.EventLoop that provides event loop functionality
+//! without requiring a JavaScript runtime. It enables code reuse between JavaScript-enabled
+//! contexts (like `bun run`) and JavaScript-free contexts (like `bun build`, `bun install`,
+//! and the Bun Shell).
+//!
+//! Key characteristics:
+//! - Wraps the uSockets event loop, same as JSC.EventLoop
+//! - Supports concurrent task execution via thread pools
+//! - Provides file polling capabilities for watching filesystem changes
+//! - Manages stdout/stderr streams without JavaScript bindings
+//! - Handles environment variable loading and management
+//!
+//! Use cases:
+//! - Build processes that need async I/O without JavaScript execution
+//! - Package installation with concurrent network requests
+//! - Shell command execution with proper I/O handling
+//! - Any Bun subsystem that needs event-driven architecture without JS overhead
+//!
 const MiniEventLoop = @This();
 
 tasks: Queue,

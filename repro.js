@@ -51,7 +51,10 @@ const server = https.createServer(options, (req, res) => {
 
 const proxy = net.createServer(clientSocket => {
   console.log("PROXY: got a client connection");
-  process.exit(0);
+  clientSocket.on("data", chunk => {
+    console.log("PROXY: got data: \n====\n" + chunk.toString() + "\n====");
+    process.exit(0);
+  });
 });
 
 server.listen(0, () => {

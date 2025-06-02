@@ -3251,15 +3251,6 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    // If the session has been destroyed, go ahead and emit 'connect',
-    // but do nothing else. The various on('connect') handlers set by
-    // core will check for session.destroyed before progressing, this
-    // ensures that those at least get cleared out.
-    if (this.destroyed) {
-      process.nextTick(emitConnectNT, this, socket);
-      return;
-    }
-
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -3273,13 +3264,12 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#alpnProtocol = "h2c";
     }
-
     const nativeSocket = socket._handle;
     if (nativeSocket) {
       this.#parser.setNativeSocket(nativeSocket);
-      this.#parser.flush();
     }
     process.nextTick(emitConnectNT, this, socket);
+    this.#parser.flush();
   }
 
   #onClose() {

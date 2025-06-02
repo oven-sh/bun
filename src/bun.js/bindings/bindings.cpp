@@ -3944,7 +3944,10 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JS
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
-
+    if (auto index = parseIndex(property)) {
+        JSC::JSValue result = object->getIndex(globalObject, index.value());
+        return JSC::JSValue::encode(result);
+    }
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 

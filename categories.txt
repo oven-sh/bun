@@ -7,9 +7,6 @@ that to `localhost:${port}localhost:${port}` which is an invalid url
 missing socket.on('data') event when data received after socket.end():
 - test-tls-net-socket-keepalive.js
 
-connect() callback never called when invalid pfx provided:
-- test-tls-invalid-pfx.js
-
 getTLSPeerFinishedMessage not working right? and same for getFinished
 - test-tls-finished.js
 
@@ -27,6 +24,7 @@ No cipher match: (look at electron? openssl.c)
 - no cipher match: test-tls-connect-stream-writes.js
 - errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
 - errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
+connect() callback never called when invalid pfx provided: test-tls-invalid-pfx.js
 
 SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext.
 

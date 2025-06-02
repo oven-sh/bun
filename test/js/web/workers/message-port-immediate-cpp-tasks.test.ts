@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert";
+import { test } from "node:test";
 import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("MessagePort postMessage uses immediate C++ tasks correctly", async () => {

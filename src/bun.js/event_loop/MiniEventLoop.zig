@@ -32,6 +32,10 @@ after_event_loop_callback: ?JSC.OpaqueCallback = null,
 pipe_read_buffer: ?*PipeReadBuffer = null,
 stdout_store: ?*bun.webcore.Blob.Store = null,
 stderr_store: ?*bun.webcore.Blob.Store = null,
+
+/// Map file descriptors to FilePoll for Darwin select fallback
+darwin_select_fd_map: if (Environment.isMac) ?*Async.DarwinSelectFallbackThread.Map else void = if (Environment.isMac) null,
+
 const PipeReadBuffer = [256 * 1024]u8;
 
 pub threadlocal var globalInitialized: bool = false;
@@ -280,6 +284,47 @@ pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         this.stdout_store = store;
         break :brk store;
     };
+}
+
+/// Called from the Darwin select fallback thread when a file descriptor becomes readable
+pub fn onDarwinSelectThreadFdIsReadable(this: *MiniEventLoop, fd: i32) void {
+    if (comptime !Environment.isMac) return;
+
+    // Dispatch just the fd number to the main thread for safe lookup
+    const DarwinSelectReadyTask = struct {
+        fd: i32,
+
+        pub fn runFromJSThreadMini(task: *@This(), mini_event_loop_ptr: *anyopaque) void {
+            defer bun.default_allocator.destroy(task);
+            const mini_event_loop: *MiniEventLoop = @ptrCast(@alignCast(mini_event_loop_ptr));
+            // Look up the FilePoll on the main thread where it's safe
+            if (mini_event_loop.darwin_select_fd_map) |map| {
+                if (map.get(task.fd)) |file_poll| {
+                    file_poll.onUpdate(0);
+                }
+            }
+        }
+    };
+
+    const darwin_select_ready_task = bun.new(DarwinSelectReadyTask, .{
+        .fd = fd,
+    });
+
+    this.enqueueTaskConcurrent(JSC.AnyTaskWithExtraContext.fromCallbackAutoDeinit(darwin_select_ready_task, "runFromJSThreadMini"));
+}
+
+/// Get or create the Darwin select fallback map
+pub fn getDarwinSelectFdMap(this: *MiniEventLoop) *Async.DarwinSelectFallbackThread.Map {
+    if (comptime !Environment.isMac) unreachable;
+
+    if (this.darwin_select_fd_map) |map| {
+        return map;
+    }
+
+    const map = this.allocator.create(Async.DarwinSelectFallbackThread.Map) catch bun.outOfMemory();
+    map.* = .{};
+    this.darwin_select_fd_map = map;
+    return map;
 }
 
 pub const JsVM = struct {

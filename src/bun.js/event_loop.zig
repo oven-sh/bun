@@ -29,6 +29,9 @@ imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
 signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
+/// Map file descriptors to FilePoll for Darwin select fallback
+darwin_select_fd_map: if (Environment.isMac) ?*Async.DarwinSelectFallbackThread.Map else void = if (Environment.isMac) null,
+
 pub const Debug = if (Environment.isDebug) struct {
     is_inside_tick_queue: bool = false,
     js_call_count_outside_tick_queue: usize = 0,
@@ -604,6 +607,48 @@ pub fn unrefConcurrently(this: *EventLoop) void {
     // TODO maybe this should be AcquireRelease
     _ = this.concurrent_ref.fetchSub(1, .seq_cst);
     this.wakeup();
+}
+
+// Dispatch just the fd number to the main thread for safe lookup
+pub const DarwinSelectReadyTask = struct {
+    fd: i32,
+
+    pub fn decode(task_ptr_but_not_actually_a_task: *@This()) i32 {
+        return @bitCast(@as(u32, @truncate(@intFromPtr(task_ptr_but_not_actually_a_task))));
+    }
+
+    pub fn runOnJSThread(task_ptr_but_not_actually_a_task: *@This(), event_loop: *EventLoop) void {
+        if (comptime !Environment.isMac) unreachable;
+
+        const fd: i32 = decode(task_ptr_but_not_actually_a_task);
+        // Look up the FilePoll on the main thread where it's safe
+        if (event_loop.darwin_select_fd_map) |map| {
+            if (map.get(fd)) |file_poll| {
+                file_poll.onUpdate(0);
+            }
+        }
+    }
+};
+
+/// Called from the Darwin select fallback thread when a file descriptor becomes readable
+pub fn onDarwinSelectThreadFdIsReadable(this: *EventLoop, fd: i32) void {
+    if (comptime !Environment.isMac) return;
+
+    // This works because its a 32 bit integer which is less than the 48 bits of address space
+    const store_fd_without_allocating_memory_by_stuffing_it_into_a_pointer: *DarwinSelectReadyTask = @ptrFromInt(@as(usize, @as(u32, @bitCast(fd))));
+    this.enqueueTaskConcurrent(ConcurrentTask.create(Task.init(store_fd_without_allocating_memory_by_stuffing_it_into_a_pointer)));
+}
+
+/// Get or create the Darwin select fallback map
+pub fn getDarwinSelectFdMap(this: *EventLoop) *Async.DarwinSelectFallbackThread.Map {
+    if (comptime !Environment.isMac) unreachable;
+
+    return this.darwin_select_fd_map orelse brk: {
+        const map = bun.default_allocator.create(Async.DarwinSelectFallbackThread.Map) catch bun.outOfMemory();
+        map.* = .{};
+        this.darwin_select_fd_map = map;
+        break :brk map;
+    };
 }
 
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;

@@ -89,6 +89,7 @@ pub const Task = TaggedPointerUnion(.{
     WriteFile,
     WriteFileTask,
     Writev,
+    DarwinSelectReadyTask,
 });
 
 pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
@@ -479,7 +480,14 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *FlushPendingFileSinkTask = task.get(FlushPendingFileSinkTask).?;
                 any.runFromJSThread();
             },
-
+            @field(Task.Tag, @typeName(DarwinSelectReadyTask)) => {
+                if (comptime Environment.isMac) {
+                    var any: *DarwinSelectReadyTask = task.get(DarwinSelectReadyTask).?;
+                    any.runOnJSThread(this);
+                } else {
+                    unreachable;
+                }
+            },
             else => {
                 bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
             },
@@ -581,6 +589,7 @@ const ShellAsyncSubprocessDone = shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.ModuleLoader.RuntimeTranspilerStore;
 const ServerAllConnectionsClosedTask = @import("../api/server.zig").ServerAllConnectionsClosedTask;
 const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
+const DarwinSelectReadyTask = JSC.EventLoop.DarwinSelectReadyTask;
 
 const bun = @import("bun");
 const JSC = bun.JSC;

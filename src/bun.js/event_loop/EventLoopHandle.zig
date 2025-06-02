@@ -114,6 +114,13 @@ pub const EventLoopHandle = union(EventLoopKind) {
         this.loop().unref();
     }
 
+    pub fn eq(this: EventLoopHandle, other: EventLoopHandle) bool {
+        return switch (this) {
+            .js => this.js == other.js,
+            .mini => this.mini == other.mini,
+        };
+    }
+
     pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]const u8 {
         return switch (this) {
             .js => this.js.virtual_machine.transpiler.env.map.createNullDelimitedEnvMap(alloc),

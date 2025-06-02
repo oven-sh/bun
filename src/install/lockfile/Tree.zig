@@ -52,7 +52,7 @@ pub const HoistDependencyResult = union(enum) {
     hoisted,
     placement: struct {
         id: Id,
-        is_hoist_root: bool = false,
+        is_new_hoist_root: bool = false,
     },
     // replace: struct {
     //     dest_id: Id,
@@ -320,8 +320,18 @@ pub fn Builder(comptime method: BuilderMethod) type {
     };
 }
 
+const SubtreeKind = enum(u8) {
+    root,
+    workspace,
+    // direct dependencies for both workspaces
+    // and the root package
+    direct_dependency,
+    transitive,
+};
+
 pub fn processSubtree(
     this: *const Tree,
+    subtree_kind: SubtreeKind,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
     subpath: std.ArrayListUnmanaged(u8),
@@ -514,19 +524,32 @@ pub fn processSubtree(
 
             // don't hoist if it's a folder dependency or a bundled dependency.
             if (dependency.behavior.isBundled()) {
-                break :hoisted .{ .placement = .{ .id = next.id, .is_hoist_root = true } };
+                break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = true } };
             }
 
             if (pkg_resolutions[pkg_id].tag == .folder) {
                 break :hoisted .{ .placement = .{ .id = next.id } };
             }
 
+            const is_new_hoist_root = switch (builder.lockfile.hoisting_limits) {
+                .none => false,
+                .workspaces => subtree_kind == .root or subtree_kind == .workspace,
+
+                // hoist root for the workspace and for each direct dependency. this will keep
+                // the direct dependencies in their own workspace
+                .dependencies => subtree_kind == .workspace or subtree_kind == .direct_dependency,
+            };
+
             for (builder.lockfile.nohoist_patterns.items) |pattern| {
                 if (bun.glob.match(pattern.slice(builder.buf()), dep_subpath.items).matches()) {
                     // prevent hoisting this package. it's dependencies
                     // are allowed to hoist beyond it.
-                    break :hoisted .{ .placement = .{ .id = next.id } };
+                    break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = is_new_hoist_root } };
                 }
+            }
+
+            if (is_new_hoist_root) {
+                break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = true } };
             }
 
             break :hoisted try next.hoistDependency(
@@ -565,11 +588,15 @@ pub fn processSubtree(
                 if (builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
+                        .subtree_kind = switch (subtree_kind) {
+                            .root => if (dependency.behavior.isWorkspaceOnly()) .workspace else .direct_dependency,
+                            .workspace => .direct_dependency,
+                            .direct_dependency => .transitive,
+                            .transitive => .transitive,
+                        },
                         .dependency_id = dep_id,
                         .subpath = dep_subpath,
-
-                        // if it's bundled, start a new hoist root
-                        .hoist_root_id = if (dest.is_hoist_root) dest.id else hoist_root_id,
+                        .hoist_root_id = if (dest.is_new_hoist_root) dest.id else hoist_root_id,
                     });
                 }
             },
@@ -675,6 +702,8 @@ pub const FillItem = struct {
     tree_id: Tree.Id,
     dependency_id: DependencyID,
     subpath: std.ArrayListUnmanaged(u8),
+
+    subtree_kind: SubtreeKind,
 
     /// If valid, dependencies will not hoist
     /// beyond this tree if they're in a subtree

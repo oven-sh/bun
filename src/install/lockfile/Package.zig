@@ -528,6 +528,7 @@ pub const Package = extern struct {
             overrides_changed: bool = false,
             catalogs_changed: bool = false,
             nohoist_changed: bool = false,
+            hoisting_limits_changed: bool = false,
 
             // bool for if this dependency should be added to lockfile trusted dependencies.
             // it is false when the new trusted dependency is coming from the default list.
@@ -543,7 +544,11 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or this.nohoist_changed or
+                return this.add > 0 or this.remove > 0 or this.update > 0 or
+                    this.overrides_changed or
+                    this.catalogs_changed or
+                    this.nohoist_changed or
+                    this.hoisting_limits_changed or
                     this.added_trusted_dependencies.count() > 0 or
                     this.removed_trusted_dependencies.count() > 0 or
                     this.patched_dependencies_changed;
@@ -686,6 +691,11 @@ pub const Package = extern struct {
                             break :nohoist;
                         }
                     }
+                }
+
+                // hoistingLimits
+                if (from_lockfile.hoisting_limits != to_lockfile.hoisting_limits) {
+                    summary.hoisting_limits_changed = true;
                 }
             }
 
@@ -1626,6 +1636,19 @@ pub const Package = extern struct {
                             return error.InvalidPackageJSON;
                         },
                     }
+                }
+
+                if (workspaces_expr.get("hoistingLimits")) |hoisting_limits_expr| {
+                    if (!hoisting_limits_expr.isString()) {
+                        try log.addError(&source, hoisting_limits_expr.loc, "Expected one string value of \"none\", \"workspaces\", or \"dependencies\"");
+                        return error.InvalidPackageJSON;
+                    }
+
+                    const hoisting_limits_str = hoisting_limits_expr.data.e_string.slice(allocator);
+                    lockfile.hoisting_limits = Lockfile.HoistingLimits.fromStr(hoisting_limits_str) orelse {
+                        try log.addError(&source, hoisting_limits_expr.loc, "Expected one of \"none\", \"workspaces\", or \"dependencies\"");
+                        return error.InvalidPackageJSON;
+                    };
                 }
             }
         }

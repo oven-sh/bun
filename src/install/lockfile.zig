@@ -27,6 +27,20 @@ overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 nohoist_patterns: std.ArrayListUnmanaged(String) = .{},
 
+hoisting_limits: HoistingLimits = .none,
+
+pub const HoistingLimits = enum(u8) {
+    none,
+    workspaces,
+    dependencies,
+
+    const Map = bun.ComptimeEnumMap(HoistingLimits);
+
+    pub fn fromStr(input: string) ?HoistingLimits {
+        return Map.get(input);
+    }
+};
+
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
@@ -338,6 +352,7 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.catalogs = .{};
     this.nohoist_patterns = .{};
     this.patched_dependencies = .{};
+    this.hoisting_limits = .none;
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
         return LoadResult{ .err = .{ .step = .parse_file, .value = err, .lockfile_path = "bun.lockb", .format = .binary } };
@@ -614,6 +629,10 @@ pub fn cleanWithLogger(
     new.initEmpty(
         old.allocator,
     );
+
+    // important to set this before cloner.flush()
+    new.hoisting_limits = old.hoisting_limits;
+
     try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
     try new.package_index.ensureTotalCapacity(old.package_index.capacity());
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
@@ -900,6 +919,7 @@ pub fn hoist(
     };
 
     try (Tree{}).processSubtree(
+        .root,
         Tree.root_dep_id,
         Tree.invalid_id,
         .{},
@@ -913,6 +933,7 @@ pub fn hoist(
         var subpath = item.subpath;
         defer subpath.deinit(builder.allocator);
         try builder.list.items(.tree)[item.tree_id].processSubtree(
+            item.subtree_kind,
             item.dependency_id,
             item.hoist_root_id,
             subpath,
@@ -1221,6 +1242,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .overrides = .{},
         .catalogs = .{},
         .nohoist_patterns = .{},
+        .hoisting_limits = .none,
         .meta_hash = zero_hash,
     };
 }

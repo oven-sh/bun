@@ -396,6 +396,14 @@ pub const Stringifier = struct {
                 try writer.writeAll("],\n");
             }
 
+            if (lockfile.hoisting_limits != .none) {
+                try writeIndent(writer, indent);
+                try writer.print(
+                    \\"hoistingLimits": "{s}",
+                    \\
+                , .{@tagName(lockfile.hoisting_limits)});
+            }
+
             var tree_deps_sort_buf: std.ArrayListUnmanaged(DependencyID) = .{};
             defer tree_deps_sort_buf.deinit(allocator);
 
@@ -1027,6 +1035,7 @@ const ParseError = OOM || error{
     InvalidCatalogObject,
     InvalidCatalogsObject,
     InvalidNohoistArray,
+    InvalidHoistingLimitsValue,
     InvalidDependencyName,
     InvalidDependencyVersion,
     InvalidPackageResolution,
@@ -1437,6 +1446,19 @@ pub fn parseIntoBinaryLockfile(
         }
 
         lockfile.nohoist_patterns = nohoist_patterns;
+    }
+
+    if (root.get("hoistingLimits")) |hoisting_limits_expr| {
+        if (!hoisting_limits_expr.isString()) {
+            try log.addError(source, hoisting_limits_expr.loc, "Expected a string");
+            return error.InvalidHoistingLimitsValue;
+        }
+
+        const hoisting_limits_str = hoisting_limits_expr.data.e_string.slice(allocator);
+        lockfile.hoisting_limits = BinaryLockfile.HoistingLimits.fromStr(hoisting_limits_str) orelse {
+            try log.addError(source, hoisting_limits_expr.loc, "Expected one of \"none\", \"workspaces\", or \"dependencies\"");
+            return error.InvalidHoistingLimitsValue;
+        };
     }
 
     const workspaces_obj = root.getObject("workspaces") orelse {

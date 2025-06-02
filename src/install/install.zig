@@ -12603,6 +12603,8 @@ pub const PackageManager = struct {
                         }
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
+                        manager.lockfile.hoisting_limits = lockfile.hoisting_limits;
+
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                         const len = @as(u32, @truncate(new_dependencies.len));
                         var packages = manager.lockfile.packages.slice();

@@ -11,6 +11,7 @@ src/analytics/analytics_schema.zig
 src/analytics/analytics_thread.zig
 src/api/schema.zig
 src/ast/base.zig
+src/async/darwin_select_fallback_thread.zig
 src/async/posix_event_loop.zig
 src/async/stub_event_loop.zig
 src/async/windows_event_loop.zig

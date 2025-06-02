@@ -31,13 +31,6 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
     };
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
 const Task = JSC.Task;
-const VirtualMachine = JSC.VirtualMachine;
-const JSPromise = JSC.JSPromise;
-const WorkPoolTask = JSC.WorkPoolTask;
-const ConcurrentTask = JSC.ConcurrentTask;

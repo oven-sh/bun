@@ -36,13 +36,8 @@ comptime {
     _ = Bun__tickWhilePaused;
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
 const VirtualMachine = JSC.VirtualMachine;
-const JSPromise = JSC.JSPromise;
-const WorkPoolTask = JSC.WorkPoolTask;
 const Task = JSC.Task;
 const ConcurrentTask = JSC.ConcurrentTask;

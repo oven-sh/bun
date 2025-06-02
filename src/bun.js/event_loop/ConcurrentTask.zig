@@ -54,11 +54,6 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const Async = bun.Async;
-const WorkPool = JSC.WorkPool;
-const VirtualMachine = JSC.VirtualMachine;
-const JSPromise = JSC.JSPromise;
-const WorkPoolTask = JSC.WorkPoolTask;
 const Task = JSC.Task;
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const ManagedTask = JSC.ManagedTask;

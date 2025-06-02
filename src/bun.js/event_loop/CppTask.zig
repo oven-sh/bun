@@ -56,7 +56,6 @@ comptime {
     _ = ConcurrentCppTask.ConcurrentCppTask__createAndRun;
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;

@@ -839,10 +839,8 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             // Check if this needs the select fallback (for stdin or problematic pipes)
-            const needs_select_fallback = flag == .readable and (
-                (fd.cast() == 0 and DarwinSelectFallbackThread.isNeededForStdin()) or
-                (this.flags.contains(.fifo) and DarwinSelectFallbackThread.isNeededForFd(fd.cast()))
-            );
+            const needs_select_fallback = flag == .readable and ((fd.cast() == 0 and DarwinSelectFallbackThread.isNeededForStdin()) or
+                (this.flags.contains(.fifo) and DarwinSelectFallbackThread.isNeededForFd(fd.cast())));
             if (needs_select_fallback) {
                 // Register with the Darwin select fallback thread instead of kqueue
                 const event_loop_handle = switch (this.allocator_type) {
@@ -853,16 +851,16 @@ pub const FilePoll = struct {
                     .js => VirtualMachine.get().eventLoop().getDarwinSelectFdMap(),
                     .mini => JSC.MiniEventLoop.global.getDarwinSelectFdMap(),
                 };
-                
+
                 DarwinSelectFallbackThread.register(event_loop_handle, fd);
                 map.put(fd.cast(), this);
-                
+
                 this.activate(loop);
                 this.flags.insert(.poll_readable);
                 this.flags.insert(.was_ever_registered);
                 return JSC.Maybe(void).success;
             }
-            
+
             var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
                 0
@@ -1034,10 +1032,8 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             // Check if this is registered with the select fallback (stdin or problematic pipes)
-            const was_select_fallback = flag == .readable and (
-                (fd.cast() == 0 and DarwinSelectFallbackThread.isNeededForStdin()) or
-                (this.flags.contains(.fifo) and DarwinSelectFallbackThread.isNeededForFd(fd.cast()))
-            );
+            const was_select_fallback = flag == .readable and ((fd.cast() == 0 and DarwinSelectFallbackThread.isNeededForStdin()) or
+                (this.flags.contains(.fifo) and DarwinSelectFallbackThread.isNeededForFd(fd.cast())));
             if (was_select_fallback) {
                 // Unregister from the Darwin select fallback thread
                 const event_loop_handle = switch (this.allocator_type) {
@@ -1048,17 +1044,17 @@ pub const FilePoll = struct {
                     .js => VirtualMachine.get().eventLoop().getDarwinSelectFdMap(),
                     .mini => JSC.MiniEventLoop.global.getDarwinSelectFdMap(),
                 };
-                
+
                 DarwinSelectFallbackThread.unregister(event_loop_handle, fd);
                 map.remove(fd.cast());
-                
+
                 this.flags.remove(.poll_readable);
                 this.flags.remove(.poll_writable);
                 this.flags.remove(.poll_process);
                 this.flags.remove(.poll_machport);
                 return JSC.Maybe(void).success;
             }
-            
+
             var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
 
             changelist[0] = switch (flag) {

@@ -153,5 +153,4 @@ comptime {
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
-const Environment = bun.Environment;
 const FilePoll = bun.Async.FilePoll;

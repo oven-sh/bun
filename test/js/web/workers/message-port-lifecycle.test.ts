@@ -122,7 +122,18 @@ test("MessagePort immediate C++ tasks work with workers", async () => {
   let readyReceived = false;
   let doneReceived = false;
 
-  const { promise, resolve } = Promise.withResolvers<void>();
+  const { promise, resolve, reject: rejectWorker } = Promise.withResolvers<void>();
+  const {
+    promise: allMessagesReceived,
+    resolve: resolveAllMessages,
+    reject: rejectAllMessages,
+  } = Promise.withResolvers<void>();
+
+  AbortSignal.timeout(100).addEventListener("abort", () => {
+    worker.terminate();
+    rejectWorker(new Error("timeout"));
+    rejectAllMessages(new Error("timeout"));
+  });
 
   worker.on("message", msg => {
     if (msg === "ready") {
@@ -139,11 +150,15 @@ test("MessagePort immediate C++ tasks work with workers", async () => {
 
   port1.on("message", msg => {
     messages.push(msg);
+
+    if (messages.length === 3) {
+      resolveAllMessages();
+    }
   });
 
   worker.postMessage({ port: port2 }, [port2]);
 
-  await promise;
+  await Promise.all([promise, allMessagesReceived]);
 
   assert.strictEqual(readyReceived, true);
   assert.strictEqual(doneReceived, true);

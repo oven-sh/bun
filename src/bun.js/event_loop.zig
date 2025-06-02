@@ -38,18 +38,6 @@ signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Env
 // https://github.com/oven-sh/bun/blob/6cbd25820128bf9ac75ace6eb1d160a9ae531226/src/bun.js/event_loop.zig#L939-L943
 is_inside_spawn_sync: bool = false,
 
-pub export fn Bun__ensureSignalHandler() void {
-    if (Environment.isPosix) {
-        if (VirtualMachine.getMainThreadVM()) |vm| {
-            const this = vm.eventLoop();
-            if (this.signal_handler == null) {
-                this.signal_handler = PosixSignalHandle.new(.{});
-                @memset(&this.signal_handler.?.signals, 0);
-            }
-        }
-    }
-}
-
 pub const Debug = if (Environment.isDebug) struct {
     is_inside_tick_queue: bool = false,
     js_call_count_outside_tick_queue: usize = 0,

@@ -63,12 +63,15 @@ The primary event loop for JavaScript contexts, orchestrating the execution of a
 pub const EventLoop = struct {
     tasks: Queue,                                    // Main execution queue
     immediate_tasks: ArrayListUnmanaged,             // setImmediate() current tick
+    immediate_cpp_tasks: ArrayListUnmanaged,         // C++ immediate tasks current tick
     next_immediate_tasks: ArrayListUnmanaged,        // setImmediate() next tick
+    next_immediate_cpp_tasks: ArrayListUnmanaged,    // C++ immediate tasks next tick
     concurrent_tasks: ConcurrentTask.Queue,          // Thread-safe cross-thread queue
     global: *JSC.JSGlobalObject,                    // JavaScript global context
     virtual_machine: *VirtualMachine,               // VM reference
     gc_controller: GarbageCollectionController,     // Memory management
     signal_handler: ?*PosixSignalHandle,            // Unix signal handling
+    is_inside_spawn_sync: bool,                      // Prevents microtask drainage during spawnSync
     darwin_select_fd_map: ?*DarwinSelectFallbackThread.Map, // macOS file polling
     // ... other fields
 };

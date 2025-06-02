@@ -99,7 +99,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), identifierValue.toWTFString(globalObject), contextValue, WTFMove(sourceCode), moduleWrapper);
     ptr->finishCreation(vm);
 
-    if (initializeImportMeta && !initializeImportMeta.isUndefined()) {
+    if (!initializeImportMeta.isUndefined()) {
         ptr->m_initializeImportMeta.set(vm, ptr, initializeImportMeta);
     }
 

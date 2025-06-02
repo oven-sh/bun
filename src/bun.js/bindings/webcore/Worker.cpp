@@ -553,15 +553,7 @@ void Worker::pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> b
 {
     Vector<uint8_t, 64> vec { bytes };
 
-    ScriptExecutionContext* ctx
-        = fd == PushStdioFd::Stdin
-        ? ScriptExecutionContext::getScriptExecutionContext(child.clientIdentifier())
-        : child.scriptExecutionContext();
-
-    // TODO ctx can be null if worker hasn't gotten far enough in startup
-    if (!ctx) return;
-
-    ctx->postTaskConcurrently([worker = Ref { child }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
+    auto task = [worker = Ref { child }, fd, vec = WTFMove(vec)](ScriptExecutionContext& ctx) {
         auto& vm = ctx.vm();
         auto* destGlobalObject = defaultGlobalObject(ctx.globalObject());
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -592,7 +584,13 @@ void Worker::pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> b
             destGlobalObject->processObject()->emitWorkerStdioInParent(jsWorker, fd, buffer);
             RETURN_IF_EXCEPTION(scope, reportUncaught());
         }
-    });
+    };
+
+    if (fd == PushStdioFd::Stdin) {
+        child.postTaskToWorkerGlobalScope(WTFMove(task));
+    } else {
+        child.scriptExecutionContext()->postTaskConcurrently(WTFMove(task));
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPushStdioToParent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

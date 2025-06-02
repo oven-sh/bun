@@ -1,4 +1,4 @@
-//! This is AnyTask except i gives you two pointers instead of one.
+//! This is AnyTask except it gives you two pointers instead of one.
 //! Generally, prefer JSC.Task instead of this.
 const AnyTaskWithExtraContext = @This();
 ctx: ?*anyopaque = undefined,

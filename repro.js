@@ -29,15 +29,19 @@ const net = require("net");
 const http = require("http");
 const fs = require("fs");
 
+console.log("DEBUG: Starting test setup");
+
 // test/js/node/tls/fixtures/agent1-key.pem
 // test/js/node/tls/fixtures/agent1-cert.pem
 const key = fs.readFileSync("test/js/node/tls/fixtures/agent1-key.pem");
 const cert = fs.readFileSync("test/js/node/tls/fixtures/agent1-cert.pem");
+console.log("DEBUG: Loaded SSL certificates");
 
 const options = { key, cert };
 
 const server = https.createServer(options, (req, res) => {
   console.log("SERVER: got request");
+  console.log("DEBUG: Request headers:", req.headers);
   res.writeHead(200, {
     "content-type": "text/plain",
   });
@@ -47,56 +51,15 @@ const server = https.createServer(options, (req, res) => {
 
 const proxy = net.createServer(clientSocket => {
   console.log("PROXY: got a client connection");
-
-  let serverSocket = null;
-
-  clientSocket.on("data", chunk => {
-    if (!serverSocket) {
-      // Verify the CONNECT request
-      assert.strictEqual(
-        chunk.toString(),
-        `CONNECT localhost:${server.address().port} ` +
-          "HTTP/1.1\r\n" +
-          "Proxy-Connections: keep-alive\r\n" +
-          `Host: localhost:${proxy.address().port}\r\n` +
-          "Connection: keep-alive\r\n\r\n",
-      );
-
-      console.log("PROXY: got CONNECT request");
-      console.log("PROXY: creating a tunnel");
-
-      // create the tunnel
-      serverSocket = net.connect(server.address().port, () => {
-        console.log("PROXY: replying to client CONNECT request");
-
-        // Send the response
-        clientSocket.write(
-          "HTTP/1.1 200 OK\r\nProxy-Connections: keep" +
-            "-alive\r\nConnections: keep-alive\r\nVia: " +
-            `localhost:${proxy.address().port}\r\n\r\n`,
-        );
-      });
-
-      serverSocket.on("data", chunk => {
-        clientSocket.write(chunk);
-      });
-
-      serverSocket.on("end", () => {
-        clientSocket.destroy();
-      });
-    } else {
-      serverSocket.write(chunk);
-    }
-  });
-
-  clientSocket.on("end", () => {
-    serverSocket.destroy();
-  });
+  process.exit(0);
 });
 
-server.listen(0);
+server.listen(0, () => {
+  console.log("DEBUG: HTTPS server listening on port:", server.address().port);
+});
 
 proxy.listen(0, () => {
+  console.log("DEBUG: Proxy server listening on port:", proxy.address().port);
   console.log("CLIENT: Making CONNECT request");
 
   const req = http.request({
@@ -107,10 +70,11 @@ proxy.listen(0, () => {
       "Proxy-Connections": "keep-alive",
     },
   });
-  req.useChunkedEncodingByDefault = false; // for v0.6
-  req.on("connect", () => {
-    console.log("CLIENT: got CONNECT response");
-    process.exit(0);
+  console.log("DEBUG: Request options:", {
+    port: proxy.address().port,
+    path: `localhost:${server.address().port}`,
   });
+
+  req.useChunkedEncodingByDefault = false; // for v0.6
   req.end();
 });

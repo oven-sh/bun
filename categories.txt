@@ -26,9 +26,10 @@ connect() callback never called when invalid pfx provided:
 - overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
 
 createSecurePair not implemented:
-These tests are removed in new node versions:
+These tests are removed in new node versions: (createSecurePair is deprecated)
 - test-tls-securepair-fiftharg.js
 - test-tls-securepair-leak.js
+- test-tls-legacy-deprecated.js
 
 http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
 that to `localhost:${port}localhost:${port}` which is an invalid url

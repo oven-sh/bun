@@ -1427,7 +1427,7 @@ pub const InternalDNS = struct {
         pub fn loop(this: DNSRequestOwner) *bun.uws.Loop {
             return switch (this) {
                 .prefetch => this.prefetch,
-                .socket => bun.uws.us_connecting_socket_get_loop(this.socket),
+                .socket => this.socket.loop(),
             };
         }
     };

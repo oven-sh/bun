@@ -6043,7 +6043,7 @@ pub fn onWebSocketUpgrade(
     dev: *DevServer,
     res: anytype,
     req: *Request,
-    upgrade_ctx: *uws.uws_socket_context_t,
+    upgrade_ctx: *uws.SocketContext,
     id: usize,
 ) void {
     assert(id == 0);

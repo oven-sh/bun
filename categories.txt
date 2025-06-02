@@ -1,6 +1,8 @@
 # Try First
 
-path: "localhost:3000" fetches "localhost:3000localhost:3000" which fails
+http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
+that to `localhost:${port}localhost:${port}` which is an invalid url
+  - test-tls-over-http-tunnel.js
 
 missing socket.on('data') event when data received after socket.end():
 - test-tls-net-socket-keepalive.js
@@ -11,27 +13,6 @@ connect() callback never called when invalid pfx provided:
 getTLSPeerFinishedMessage not working right? and same for getFinished
 - test-tls-finished.js
 
-# More
-
-- bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
-- different cipher list, support --tls-cipher-list: test-tls-cipher-list
-- after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
-- socket never closes? test-tls-js-stream.js
-- no cipher match: test-tls-multi-pfx, test-tls-psk-errors
-- missing addCACert: test-tls-addca
-- node never trips `ret !== false` branch: test-tlsp-ause.js
-- cluster stuff: test-tls-ticket-cluster
-- ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
-- takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
-- client.on("session") never called?: test-tls-secure-session.js
-- overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
-- no cipher match: test-tls-connect-stream-writes.js
-- errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
-- errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
-- missing '_tlsError' event: test-tls-delayed-attach-error.js
-- tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
-- getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
-
 SNICallback not supported:
 - test-tls-starttls-server.js
 - test-tls-socket-snicallback-without-server.js
@@ -41,15 +22,38 @@ SNICallback not supported:
 - test-tls-empty-sni-context.js
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
 
+No cipher match: (look at electron? openssl.c)
+- no cipher match: test-tls-multi-pfx, test-tls-psk-errors
+- no cipher match: test-tls-connect-stream-writes.js
+- errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
+- errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
+
+SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext.
+
+# More
+
+- bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
+- different cipher list, support --tls-cipher-list: test-tls-cipher-list
+- after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
+- socket never closes? test-tls-js-stream.js
+- node never trips `ret !== false` branch: test-tlsp-ause.js
+- cluster stuff: test-tls-ticket-cluster
+- ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
+- takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
+- client.on("session") never called?: test-tls-secure-session.js
+- overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
+- missing '_tlsError' event: test-tls-delayed-attach-error.js
+- tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
+- getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
+
+addCACert
+- missing addCACert: test-tls-addca
+
 createSecurePair not implemented:
 These tests are removed in new node versions: (createSecurePair is deprecated)
 - test-tls-securepair-fiftharg.js
 - test-tls-securepair-leak.js
 - test-tls-legacy-deprecated.js
-
-http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
-that to `localhost:${port}localhost:${port}` which is an invalid url
-  - test-tls-over-http-tunnel.js
 
 passes on mac:
 - test-tls-junk-closes-server

@@ -46,8 +46,10 @@ pub fn enqueue(this: *PosixSignalHandle, signal: u8) bool {
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal‐safe calls.
 export fn Bun__onPosixSignal(number: i32) void {
-    const vm = VirtualMachine.getMainThreadVM().?;
-    _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
+    if (comptime Environment.isPosix) {
+        const vm = VirtualMachine.getMainThreadVM().?;
+        _ = vm.eventLoop().signal_handler.?.enqueue(@intCast(number));
+    }
 }
 
 /// Called by the main thread (single consumer).
@@ -94,8 +96,8 @@ pub const PosixSignalTask = struct {
     }
 };
 
-pub export fn Bun__ensureSignalHandler() void {
-    if (bun.Environment.isPosix) {
+export fn Bun__ensureSignalHandler() void {
+    if (comptime Environment.isPosix) {
         if (VirtualMachine.getMainThreadVM()) |vm| {
             const this = vm.eventLoop();
             if (this.signal_handler == null) {
@@ -107,11 +109,17 @@ pub export fn Bun__ensureSignalHandler() void {
 }
 
 comptime {
-    _ = Bun__ensureSignalHandler;
-    _ = Bun__onPosixSignal;
+    if (Environment.isPosix) {
+        _ = Bun__ensureSignalHandler;
+        _ = Bun__onPosixSignal;
+    }
 }
 
 const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
+const JSPromise = JSC.JSPromise;
+const WorkPoolTask = JSC.WorkPoolTask;
+const ConcurrentTask = JSC.ConcurrentTask;
+const Environment = bun.Environment;

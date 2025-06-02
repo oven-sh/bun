@@ -27,6 +27,7 @@ getTLSPeerFinishedMessage not working right? and same for getFinished
 - client.on("session") never called?: test-tls-secure-session.js
 - SNICallback not supported: test-tls-starttls-server.js
 - overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
+no cipher match: test-tls-connect-stream-writes.js
 
 createSecurePair not implemented:
 These tests are removed in new node versions: (createSecurePair is deprecated)

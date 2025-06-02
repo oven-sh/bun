@@ -1,10 +1,8 @@
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
 
 const ContainerName = css.css_rules.container.ContainerName;
-
 
 const ContainerIdent = ContainerName;
 

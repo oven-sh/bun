@@ -182,7 +182,10 @@
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
+#include "ProcessBindingHTTPParser.h"
 #include "node/NodeTimers.h"
+#include "JSConnectionsList.h"
+#include "JSHTTPParser.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -747,6 +750,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace);
 }
@@ -2780,6 +2784,16 @@ void GlobalObject::finishCreation(VM& vm)
             WebCore::setupJSMIMETypeClassStructure(init);
         });
 
+    m_JSConnectionsListClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupConnectionsListClassStructure(init);
+        });
+
+    m_JSHTTPParserClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupHTTPParserClassStructure(init);
+        });
+
     m_JSNodePerformanceHooksHistogramClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
@@ -3231,6 +3245,14 @@ void GlobalObject::finishCreation(VM& vm)
                 ProcessBindingFs::create(
                     init.vm,
                     ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingHTTPParser.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingHTTPParser::create(
+                    init.vm,
+                    ProcessBindingHTTPParser::createStructure(init.vm, init.owner)));
         });
 
     m_importMetaObjectStructure.initLater(

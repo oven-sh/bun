@@ -945,5 +945,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;
 };
 } // namespace WebCore

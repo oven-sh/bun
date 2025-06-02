@@ -949,6 +949,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSSecretKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPublicKeyObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSPrivateKeyObject;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForJSConnectionsList;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSHTTPParser;
 };
 } // namespace WebCore
 

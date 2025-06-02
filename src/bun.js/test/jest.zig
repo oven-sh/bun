@@ -7,7 +7,6 @@ const expect = @import("./expect.zig");
 const Counter = expect.Counter;
 const Expect = expect.Expect;
 
-
 const JSC = bun.JSC;
 
 const logger = bun.logger;

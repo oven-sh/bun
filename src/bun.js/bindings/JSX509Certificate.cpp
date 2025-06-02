@@ -1084,6 +1084,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
             array->push(globalObject, jsString(vm, value));
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, 0, jsString(vm, value));
             object->putDirect(vm, identifier, array);
         }

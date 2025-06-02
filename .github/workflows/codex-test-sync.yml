@@ -1,0 +1,58 @@
+name: Codex Test Sync
+
+on:
+  pull_request:
+    types: [labeled, opened]
+
+env:
+  BUN_VERSION: "1.2.15"
+
+jobs:
+  sync-node-tests:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.action == 'labeled' && github.event.label.name == 'codex') ||
+      (github.event.action == 'opened' && contains(github.event.pull_request.labels.*.name, 'codex')) ||
+      contains(github.head_ref, 'codex')
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            test/js/node/test/parallel/**/*.{js,mjs,ts}
+            test/js/node/test/sequential/**/*.{js,mjs,ts}
+
+      - name: Sync tests
+        if: steps.changed-files.outputs.any_changed == 'true'
+        shell: bash
+        run: |
+          echo "Changed test files:"
+          echo "${{ steps.changed-files.outputs.all_changed_files }}"
+
+          # Process each changed test file
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Extract test name from file path
+            test_name=$(basename "$file" | sed 's/\.[^.]*$//')
+            echo "Syncing test: $test_name"
+            bun node:test:cp "$test_name"
+          done
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Sync Node.js tests with upstream"

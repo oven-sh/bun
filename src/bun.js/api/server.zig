@@ -348,6 +348,13 @@ pub const ServerConfig = struct {
     development: DevelopmentOption = .development,
     broadcast_console_log_from_browser_to_server_for_bake: bool = false,
 
+    /// Enable automatic workspace folders for Chrome DevTools
+    /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+    /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
+    ///
+    /// If HMR is not enabled, then this field is ignored.
+    enable_chrome_devtools_automatic_workspace_folders: bool = true,
+
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
     onNodeHTTPRequest: JSC.JSValue = JSC.JSValue.zero,
@@ -664,8 +671,8 @@ pub const ServerConfig = struct {
 
         const log = Output.scoped(.SSLConfig, false);
 
-        pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
-            var ctx_opts: uws.us_bun_socket_context_options_t = .{};
+        pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
+            var ctx_opts: uws.SocketContext.BunSocketContextOptions = .{};
 
             if (this.key_file_name != null)
                 ctx_opts.key_file_name = this.key_file_name;
@@ -1325,6 +1332,10 @@ pub const ServerConfig = struct {
 
                     if (try dev.getBooleanStrict(global, "console")) |console| {
                         args.broadcast_console_log_from_browser_to_server_for_bake = console;
+                    }
+
+                    if (try dev.getBooleanStrict(global, "chromeDevToolsAutomaticWorkspaceFolders")) |enable_chrome_devtools_automatic_workspace_folders| {
+                        args.enable_chrome_devtools_automatic_workspace_folders = enable_chrome_devtools_automatic_workspace_folders;
                     }
                 } else {
                     args.development = if (dev.toBoolean()) .development else .production;
@@ -2281,7 +2292,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         flags: NewFlags(debug_mode) = .{},
 
-        upgrade_context: ?*uws.uws_socket_context_t = null,
+        upgrade_context: ?*uws.SocketContext = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
@@ -4657,10 +4668,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-            @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
-            @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
-            @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
-            @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+            if (bun.Environment.export_cpp_apis) {
+                @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
+                @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
+                @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
+                @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+            }
         }
     };
 }
@@ -5032,10 +5045,10 @@ const ServePlugins = struct {
         bun.destroy(this);
     }
 
-    pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.OOM!GetOrStartLoadResult {
+    pub fn getOrStartLoad(this: *ServePlugins, global: *JSC.JSGlobalObject, cb: Callback) bun.JSError!GetOrStartLoadResult {
         sw: switch (this.state) {
             .unqueued => {
-                this.loadAndResolvePlugins(global);
+                try this.loadAndResolvePlugins(global);
                 continue :sw this.state; // could jump to any branch if synchronously resolved
             },
             .pending => |*pending| {
@@ -5062,7 +5075,7 @@ const ServePlugins = struct {
         bunfig_folder: JSC.JSValue,
     ) JSValue;
 
-    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) void {
+    fn loadAndResolvePlugins(this: *ServePlugins, global: *JSC.JSGlobalObject) bun.JSError!void {
         bun.assert(this.state == .unqueued);
         const plugin_list = this.state.unqueued;
         const bunfig_folder = bun.path.dirname(global.bunVM().transpiler.options.bunfig_path, .auto);
@@ -5078,7 +5091,7 @@ const ServePlugins = struct {
         for (plugin_list, bunstring_array) |raw_plugin, *out| {
             out.* = bun.String.init(raw_plugin);
         }
-        const plugin_js_array = bun.String.toJSArray(global, bunstring_array);
+        const plugin_js_array = try bun.String.toJSArray(global, bunstring_array);
         const bunfig_folder_bunstr = bun.String.createUTF8ForJS(global, bunfig_folder);
 
         this.state = .{ .pending = .{
@@ -5672,7 +5685,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
             const signal = upgrader.signal;
 
             upgrader.signal = null;
@@ -6557,7 +6570,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.uws_socket_context_t) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -6990,7 +7003,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.uws_socket_context_t, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -7011,7 +7024,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this: *ThisServer,
             resp: *App.Response,
             req: *uws.Request,
-            upgrade_ctx: *uws.uws_socket_context_t,
+            upgrade_ctx: *uws.SocketContext,
             id: usize,
         ) void {
             JSC.markBinding(@src());
@@ -7088,11 +7101,89 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.toAsync(req, request_object);
         }
 
+        // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+        fn onChromeDevToolsJSONRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime Environment.enable_logs)
+                httplog("{s} - {s}", .{ req.method(), req.url() });
+
+            const authorized = brk: {
+                if (this.dev_server == null)
+                    break :brk false;
+
+                if (resp.getRemoteSocketInfo()) |*address| {
+                    // IPv4 loopback addresses
+                    if (strings.startsWith(address.ip, "127.")) {
+                        break :brk true;
+                    }
+
+                    // IPv6 loopback addresses
+                    if (strings.startsWith(address.ip, "::ffff:127.") or
+                        strings.startsWith(address.ip, "::1") or
+                        strings.eqlComptime(address.ip, "0:0:0:0:0:0:0:1"))
+                    {
+                        break :brk true;
+                    }
+                }
+
+                break :brk false;
+            };
+
+            if (!authorized) {
+                req.setYield(true);
+                return;
+            }
+
+            // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
+
+            // So we first use a hash of the main field:
+            const first_hash_segment: [8]u8 = brk: {
+                const buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const main = JSC.VirtualMachine.get().main;
+                const len = @min(main.len, buffer.len);
+                break :brk @bitCast(bun.hash(bun.strings.copyLowercase(main[0..len], buffer[0..len])));
+            };
+
+            // And then we use a hash of their project root directory:
+            const second_hash_segment: [8]u8 = brk: {
+                const buffer = bun.PathBufferPool.get();
+                defer bun.PathBufferPool.put(buffer);
+                const root = this.dev_server.?.root;
+                const len = @min(root.len, buffer.len);
+                break :brk @bitCast(bun.hash(bun.strings.copyLowercase(root[0..len], buffer[0..len])));
+            };
+
+            // We combine it together to get a 16 byte uuid.
+            const hash_bytes: [16]u8 = first_hash_segment ++ second_hash_segment;
+            const uuid = bun.UUID.initWith(&hash_bytes);
+
+            // interface DevToolsJSON {
+            //   workspace?: {
+            //     root: string,
+            //     uuid: string,
+            //   }
+            // }
+            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}", .{
+                bun.fmt.formatJSONStringUTF8(this.dev_server.?.root, .{}),
+                uuid,
+            }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(json_string);
+
+            resp.writeStatus("200 OK");
+            resp.writeHeader("Content-Type", "application/json");
+            resp.end(json_string, resp.shouldCloseConnection());
+        }
+
         fn setRoutes(this: *ThisServer) JSC.JSValue {
             var route_list_value = JSC.JSValue.zero;
             const app = this.app.?;
             const any_server = AnyServer.from(this);
             const dev_server = this.dev_server;
+
+            // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
+            // Only enable this when we're using the dev server.
+            var should_add_chrome_devtools_json_route = debug_mode and this.config.allow_hot and dev_server != null and this.config.enable_chrome_devtools_automatic_workspace_folders;
+            const chrome_devtools_route = "/.well-known/appspecific/com.chrome.devtools.json";
 
             // --- 1. Handle user_routes_to_build (dynamic JS routes) ---
             // (This part remains conceptually the same: populate this.user_routes and route_list_value
@@ -7141,6 +7232,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 const is_star_path = strings.eqlComptime(user_route.route.path, "/*");
                 if (is_star_path) {
                     has_any_user_route_for_star_path = true;
+                }
+
+                if (should_add_chrome_devtools_json_route) {
+                    if (strings.eqlComptime(user_route.route.path, chrome_devtools_route) or strings.hasPrefix(user_route.route.path, "/.well-known/")) {
+                        should_add_chrome_devtools_json_route = false;
+                    }
                 }
 
                 // Register HTTP routes
@@ -7206,6 +7303,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             .method => |method| {
                                 star_methods_covered_by_user.setUnion(method);
                             },
+                        }
+                    }
+
+                    if (should_add_chrome_devtools_json_route) {
+                        if (strings.eqlComptime(entry.path, chrome_devtools_route) or strings.hasPrefix(entry.path, "/.well-known/")) {
+                            should_add_chrome_devtools_json_route = false;
                         }
                     }
 
@@ -7293,6 +7396,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     },
                     else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
                 }
+            }
+
+            if (should_add_chrome_devtools_json_route) {
+                app.get(chrome_devtools_route, *ThisServer, this, onChromeDevToolsJSONRequest);
             }
 
             // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
@@ -7954,7 +8061,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.uws_socket_context_t,
+    upgrade_ctx: ?*uws.SocketContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
@@ -7966,7 +8073,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.uws_socket_context_t,
+    upgrade_ctx: ?*uws.SocketContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 

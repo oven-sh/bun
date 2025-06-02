@@ -9,8 +9,8 @@ const gen = bun.gen.node_os;
 const sys = bun.sys;
 const c = bun.c;
 
-pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSObject.create(.{
+pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return (try JSC.JSObject.create(.{
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),
@@ -24,7 +24,7 @@ pub fn createNodeOsBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
         .userInfo = gen.createUserInfoCallback(global),
         .version = gen.createVersionCallback(global),
         .setPriority = gen.createSetPriorityCallback(global),
-    }, global).toJS();
+    }, global)).toJS();
 }
 
 const CPUTimes = struct {
@@ -63,7 +63,7 @@ pub fn cpus(global: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
 
 fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     // Create the return array
-    const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+    const values = try JSC.JSValue.createEmptyArray(globalThis, 0);
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
@@ -235,7 +235,7 @@ fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     const multiplier = 1000 / @as(u64, @intCast(ticks));
 
     // Set up each CPU value in the return
-    const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
     var cpu_index: u32 = 0;
     while (cpu_index < num_cpus) : (cpu_index += 1) {
         const times = CPUTimes{
@@ -265,7 +265,7 @@ pub fn cpusImplWindows(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
     }
     defer libuv.uv_free_cpu_info(cpu_infos, count);
 
-    const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
+    const values = try JSC.JSValue.createEmptyArray(globalThis, @intCast(count));
 
     for (cpu_infos[0..@intCast(count)], 0..@intCast(count)) |cpu_info, i| {
         const times = CPUTimes{
@@ -639,7 +639,7 @@ fn networkInterfacesPosix(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSVal
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
             array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }
@@ -753,7 +753,7 @@ fn networkInterfacesWindows(globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSV
         } else {
             // Add it as an array with this interface as an element
             const member_name = JSC.ZigString.init(interface_name);
-            var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            var array = try JSC.JSValue.createEmptyArray(globalThis, 1);
             array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
         }

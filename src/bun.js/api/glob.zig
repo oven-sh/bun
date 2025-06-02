@@ -199,7 +199,7 @@ pub const WalkTask = struct {
             return;
         }
 
-        const jsStrings = globWalkResultToJS(this.walker, this.global);
+        const jsStrings = globWalkResultToJS(this.walker, this.global) catch return promise.reject(this.global, error.JSError);
         promise.resolve(this.global, jsStrings);
     }
 
@@ -209,7 +209,7 @@ pub const WalkTask = struct {
     }
 };
 
-fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
+fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }

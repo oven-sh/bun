@@ -902,7 +902,7 @@ pub const Package = extern struct {
                                 const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 var resolver: void = {};
-                                try workspace.parseWithJSON(
+                                try workspace.fromJson(
                                     to_lockfile,
                                     pm,
                                     allocator,
@@ -1003,7 +1003,7 @@ pub const Package = extern struct {
             Global.crash();
         };
 
-        try package.parseWithJSON(
+        try package.fromJson(
             lockfile,
             pm,
             allocator,
@@ -1304,7 +1304,7 @@ pub const Package = extern struct {
         return this_dep;
     }
 
-    pub fn parseWithJSON(
+    pub fn fromJson(
         package: *Package,
         lockfile: *Lockfile,
         pm: *PackageManager,

@@ -322,11 +322,11 @@ pub fn Builder(comptime method: BuilderMethod) type {
 
 const SubtreeKind = enum(u8) {
     root,
+    root_direct_dependency,
+    root_transitive,
     workspace,
-    // direct dependencies for both workspaces
-    // and the root package
-    direct_dependency,
-    transitive,
+    workspace_direct_dependency,
+    workspace_transitive,
 };
 
 pub fn processSubtree(
@@ -535,15 +535,16 @@ pub fn processSubtree(
                 .none => false,
                 .workspaces => subtree_kind == .root or subtree_kind == .workspace,
 
-                // hoist root for the workspace and for each direct dependency. this will keep
-                // the direct dependencies in their own workspace
-                .dependencies => subtree_kind == .workspace or subtree_kind == .direct_dependency,
+                // not only does this keep transitive dependencies within direct dependencies,
+                // it also keeps workspace dependencies within the workspace.
+                .dependencies => subtree_kind != .root_transitive and subtree_kind != .workspace_transitive,
             };
 
             for (builder.lockfile.nohoist_patterns.items) |pattern| {
                 if (bun.glob.match(pattern.slice(builder.buf()), dep_subpath.items).matches()) {
                     // prevent hoisting this package. it's dependencies
-                    // are allowed to hoist beyond it.
+                    // are allowed to hoist beyond it unless "hoistingLimits"
+                    // sets this tree as a new hoist root.
                     break :hoisted .{ .placement = .{ .id = next.id, .is_new_hoist_root = is_new_hoist_root } };
                 }
             }
@@ -567,33 +568,45 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
-                if (builder.hasNohoistPatterns()) {
-                    // Look for cycles. Only done when nohoist patterns are used because
-                    // they can cause cyclic dependencies to not deduplicate, resulting
-                    // in infinite loops (e.g. can happen easily if all hoisting is
-                    // disabled with '**')
-                    var parent_id = this.id;
-                    while (parent_id != invalid_id) {
-                        for (dependency_lists[parent_id].items) |placed_parent_dep_id| {
+                if (builder.hasNohoistPatterns() or builder.lockfile.hoisting_limits != .none) {
+                    // Look for cycles. Only done when nohoist patterns or hoisting limits
+                    // are used because they can cause cyclic dependencies to not
+                    // deduplicate, resulting in infinite loops (e.g. can happen easily
+                    // if all hoisting is disabled with '**')
+
+                    const skip_root_pkgs = switch (subtree_kind) {
+                        .root, .root_direct_dependency, .root_transitive => false,
+                        .workspace, .workspace_direct_dependency, .workspace_transitive => true,
+                    };
+
+                    // TODO: this isn't totally correct. this handles cycles, but it's
+                    // only looking for the same package higher in the tree
+                    var curr = this.id;
+                    while (curr != invalid_id and (!skip_root_pkgs or curr != 0)) {
+                        for (dependency_lists[curr].items) |placed_parent_dep_id| {
                             const placed_parent_pkg_id = builder.resolutions[placed_parent_dep_id];
                             if (placed_parent_pkg_id == pkg_id) {
                                 continue :next_dep;
                             }
                         }
-                        parent_id = trees[parent_id].parent;
+
+                        curr = trees[curr].parent;
                     }
                 }
                 dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {
+                    const next_subtree_kind: SubtreeKind = switch (subtree_kind) {
+                        .root => if (dependency.behavior.isWorkspaceOnly()) .workspace else .root_direct_dependency,
+                        .root_direct_dependency => .root_transitive,
+                        .root_transitive => .root_transitive,
+                        .workspace => .workspace_direct_dependency,
+                        .workspace_direct_dependency => .workspace_transitive,
+                        .workspace_transitive => .workspace_transitive,
+                    };
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
-                        .subtree_kind = switch (subtree_kind) {
-                            .root => if (dependency.behavior.isWorkspaceOnly()) .workspace else .direct_dependency,
-                            .workspace => .direct_dependency,
-                            .direct_dependency => .transitive,
-                            .transitive => .transitive,
-                        },
+                        .subtree_kind = next_subtree_kind,
                         .dependency_id = dep_id,
                         .subpath = dep_subpath,
                         .hoist_root_id = if (dest.is_new_hoist_root) dest.id else hoist_root_id,

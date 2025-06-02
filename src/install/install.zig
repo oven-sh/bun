@@ -9390,7 +9390,7 @@ pub const PackageManager = struct {
 
                 var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
+                try package.fromJson(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -9801,7 +9801,7 @@ pub const PackageManager = struct {
 
                 var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
+                try package.fromJson(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {

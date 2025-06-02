@@ -30,6 +30,7 @@ getTLSPeerFinishedMessage not working right? and same for getFinished
 - errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
 - missing '_tlsError' event: test-tls-delayed-attach-error.js
 - tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
+- getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
 
 SNICallback not supported:
 - test-tls-starttls-server.js

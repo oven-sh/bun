@@ -640,5 +640,3 @@ const SocketContext = uws.SocketContext;
 const Environment = bun.Environment;
 
 const SocketAddress = uws.SocketAddress;
-const WebSocketBehavior = uws.WebSocketBehavior;
-const Opcode = uws.Opcode;

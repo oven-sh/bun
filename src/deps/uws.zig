@@ -145,6 +145,5 @@ pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
 };
 
 const bun = @import("bun");
-const std = @import("std");
 const Environment = bun.Environment;
 const JSC = bun.JSC;

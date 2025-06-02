@@ -479,6 +479,7 @@ pub fn tick(this: *EventLoop) void {
     while (true) {
         while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
             this.tickConcurrent();
+            this.tickImmediateTasks(ctx);
         } else {
             this.drainMicrotasksWithGlobal(global, global_vm) catch return;
             if (scope.hasException()) return;

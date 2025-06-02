@@ -291,6 +291,11 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
         // remaining messages should happen on da next tick
         context.postImmediateCppTask(
             [protectedThis = Ref { *this }, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
+                RefPtr<ScriptExecutionContext> contextPtr = protectedThis->scriptExecutionContext();
+                if (!contextPtr || contextPtr->activeDOMObjectsAreSuspended() || !protectedThis->isEntangled()) {
+                    completionCallback();
+                    return;
+                }
                 protectedThis->processMessages(ctx, WTFMove(deferred), WTFMove(completionCallback));
             });
     } else {

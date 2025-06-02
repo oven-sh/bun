@@ -119,7 +119,4 @@ const std = @import("std");
 const bun = @import("bun");
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const JSPromise = JSC.JSPromise;
-const WorkPoolTask = JSC.WorkPoolTask;
-const ConcurrentTask = JSC.ConcurrentTask;
 const Environment = bun.Environment;

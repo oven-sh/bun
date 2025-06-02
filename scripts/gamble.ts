@@ -1,4 +1,4 @@
-// usage: bun scripts/gamble.ts [-a number of attempts] [-t timeout in seconds] <command>
+// usage: bun scripts/gamble.ts <number of attempts> <timeout in seconds> <command>
 
 import assert from "node:assert";
 
@@ -37,7 +37,7 @@ for (let i = 0; i < attempts; i++) {
   } else {
     numOk += 1;
   }
-  process.stdout.write(".");
+  process.stdout.write(exitCode === 0 ? "." : "!");
 }
 process.stdout.write("\n");
 

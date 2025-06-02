@@ -29,6 +29,10 @@ imminent_gc_timer: std.atomic.Value(?*Timer.WTFTimer) = .{ .raw = null },
 
 signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
 
+// Permalink comment why this flag:
+// https://github.com/oven-sh/bun/blob/6cbd25820128bf9ac75ace6eb1d160a9ae531226/src/bun.js/event_loop.zig#L939-L943
+is_inside_spawn_sync: bool = false,
+
 pub const Debug = if (Environment.isDebug) struct {
     is_inside_tick_queue: bool = false,
     js_call_count_outside_tick_queue: usize = 0,

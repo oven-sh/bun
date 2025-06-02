@@ -476,6 +476,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             )) {
         if (parent.paths) {
             auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
@@ -490,6 +491,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             RELEASE_AND_RETURN(scope, paths);
         } else {
             auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, array);
         }
     }
@@ -510,6 +512,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue values[] = { dirname };
     auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, values, 1);
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, array);
 }
 

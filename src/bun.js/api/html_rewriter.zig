@@ -1632,7 +1632,7 @@ pub const AttributeIterator = struct {
         const value = attribute.value();
         const name = attribute.name();
 
-        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), bun.String.toJSArray(
+        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), try bun.String.toJSArray(
             globalObject,
             &[_]bun.String{
                 name.toString(),

@@ -3387,7 +3387,7 @@ pub const IPCInstance = struct {
         Process__emitDisconnectEvent(vm.global);
         event_loop.exit();
         if (Environment.isPosix) {
-            uws.us_socket_context_free(0, this.context);
+            this.context.deinit(false);
         }
         vm.channel_ref.disable();
     }
@@ -3417,7 +3417,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
     const instance = switch (Environment.os) {
         else => instance: {
-            const context = uws.us_create_bun_nossl_socket_context(this.event_loop_handle.?, @sizeOf(usize)).?;
+            const context = uws.SocketContext.createNoSSLContext(this.event_loop_handle.?, @sizeOf(usize)).?;
             IPC.Socket.configure(context, true, *IPC.SendQueue, IPC.IPCHandlers.PosixSocket);
 
             var instance = IPCInstance.new(.{

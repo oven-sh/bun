@@ -66,10 +66,10 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
-const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = $zig(
-  "h2_frame_parser.zig",
-  "createNodeHttp2Binding",
-);
+const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
+const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
+const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
+const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");

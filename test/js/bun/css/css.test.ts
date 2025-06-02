@@ -6943,6 +6943,10 @@ describe("css tests", () => {
     minify_test(".foo { transform: rotateX(20rad)", ".foo{transform:rotateX(20rad)}");
     minify_test(".foo { transform: rotateY(20rad)", ".foo{transform:rotateY(20rad)}");
     minify_test(".foo { transform: rotateZ(20rad)", ".foo{transform:rotate(20rad)}");
+    minify_test(".foo { transform: rotateX(0.017453293rad)", ".foo{transform:rotateX(1deg)}");
+    minify_test(".foo { transform: rotateY(0.017453293rad)", ".foo{transform:rotateY(1deg)}");
+    minify_test(".foo { transform: rotateZ(0.017453293rad)", ".foo{transform:rotate(1deg)}");
+    minify_test(".foo { transform: rotate(0.017453293rad)", ".foo{transform:rotate(1deg)}");
     minify_test(".foo { transform: rotate(20deg)", ".foo{transform:rotate(20deg)}");
     minify_test(".foo { transform: rotateX(20deg)", ".foo{transform:rotateX(20deg)}");
     minify_test(".foo { transform: rotateY(20deg)", ".foo{transform:rotateY(20deg)}");

@@ -45,7 +45,7 @@ bunx cowsay 'Hello, world!'   # execute a package
 
 Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 
-On x64, Bun's standard build uses SIMD optimizations which require the AVX2 extension (AMD Excavator or newer, Intel Haswell or newer except certain low-end models). For older CPUs, we provide `x64-baseline` builds which require SSE4.2 or newer (AMD Bulldozer or newer, Intel Nehalem or newer). CPUs without SSE4.2 are not supported. The install script will detect and use the baseline build if it is necessary.
+On x64, Bun's standard build uses SIMD optimizations which require the AVX2 extension (AMD Excavator or newer, Intel Haswell or newer except certain low-end models). For older CPUs, we provide `x64-baseline` builds which require SSE4.2 or newer (AMD Bulldozer or newer, Intel Nehalem or newer). CPUs without SSE4.2 are not supported at this time. The install script will detect and use the baseline build if it is necessary.
 
 > **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 

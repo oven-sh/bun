@@ -641,7 +641,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn deinit(this: *@This()) void {
             this.us_socket_context.deinit(ssl);
-            uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
             bun.default_allocator.destroy(this);
         }
 
@@ -655,13 +654,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             try this.initWithOpts(&opts);
         }
 
-        fn initWithOpts(this: *@This(), opts: *const uws.us_bun_socket_context_options_t) InitError!void {
+        fn initWithOpts(this: *@This(), opts: *const uws.SocketContext.BunSocketContextOptions) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
 
             var err: uws.create_bun_socket_error_t = .none;
-            const socket = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
+            const socket = uws.SocketContext.createSSLContext(http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
             if (socket == null) {
                 return switch (err) {
                     .load_ca_file => error.LoadCAFile,
@@ -685,7 +684,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            var opts: uws.us_bun_socket_context_options_t = .{
+            var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
@@ -697,19 +696,18 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) void {
             if (comptime ssl) {
-                const opts: uws.us_bun_socket_context_options_t = .{
+                const opts: uws.SocketContext.BunSocketContextOptions = .{
                     // we request the cert so we load root certs and can verify it
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
                 };
                 var err: uws.create_bun_socket_error_t = .none;
-                this.us_socket_context = uws.us_create_bun_ssl_socket_context(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
+                this.us_socket_context = uws.SocketContext.createSSLContext(http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
 
                 this.sslCtx().setup();
             } else {
-                const opts: uws.us_socket_context_options_t = .{};
-                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
+                this.us_socket_context = uws.SocketContext.createNoSSLContext(http_thread.loop.loop, @sizeOf(usize)).?;
             }
 
             HTTPSocket.configure(

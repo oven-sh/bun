@@ -105,7 +105,7 @@ coverageIncludeNodeModules = true
   // Should include both the test file and node_modules/pi/index.js in the report
   const stderr = result.stderr.toString();
   expect(stderr).toContain("demo.test.ts");
-  expect(stderr).toContain("node_modules/pi/index.js");
+  expect(stderr).toContain(path.join("node_modules", "pi", "index.js"));
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
 });

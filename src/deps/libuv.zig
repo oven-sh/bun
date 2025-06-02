@@ -2929,7 +2929,7 @@ pub const ReturnCodeI64 = enum(i64) {
         return null;
     }
 
-    pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.sys.E.ACCES)) {
+    pub inline fn errno(this: ReturnCodeI64) ?u16 {
         return if (@intFromEnum(this) < 0)
             @as(u16, @intCast(-@intFromEnum(this)))
         else

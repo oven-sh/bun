@@ -66,10 +66,10 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
-const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = $zig(
-  "h2_frame_parser.zig",
-  "createNodeHttp2Binding",
-);
+const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
+const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
+const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
+const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -3153,7 +3153,7 @@ class ClientHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     const nativeSocket = socket._handle;
-    if (nativeSocket) {
+    if (nativeSocket && nativeSocket.readyState > 0) {
       this.#parser.setNativeSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
@@ -3340,6 +3340,14 @@ class ClientHttp2Session extends Http2Session {
     }
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
+    let host = "localhost";
+    if (url.hostname) {
+      host = url.hostname;
+      if (host[0] === "[") host = host.slice(1, -1);
+    } else if (url.host) {
+      host = url.host;
+    }
+
     function onConnect() {
       this.#onConnect(arguments);
       listener?.$call(this, this);
@@ -3362,13 +3370,13 @@ class ClientHttp2Session extends Http2Session {
         protocol,
         options
           ? {
-              host: url.hostname,
+              host,
               port: String(port),
               ALPNProtocols: ["h2"],
               ...options,
             }
           : {
-              host: url.hostname,
+              host,
               port: String(port),
               ALPNProtocols: ["h2"],
             },
@@ -3378,6 +3386,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket._handle;
+
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,

@@ -1520,7 +1520,7 @@ pub const E = struct {
 
         pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
-            var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
+            var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
@@ -9126,6 +9126,7 @@ const ToJSError = error{
     @"Cannot convert identifier to JS. Try a statically-known value",
     MacroError,
     OutOfMemory,
+    JSError,
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;

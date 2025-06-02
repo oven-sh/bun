@@ -23,5 +23,6 @@ function getTimerDuration(msecs, name) {
 }
 
 export default {
+  kTimeout: Symbol("timeout"), // For hiding Timeouts on other internals.
   getTimerDuration,
 };

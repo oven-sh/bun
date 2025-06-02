@@ -30,7 +30,7 @@ pub const JSObject = opaque {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn create(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
     }
     /// Marshall a struct into a JSObject, copying its properties. It's
@@ -41,7 +41,7 @@ pub const JSObject = opaque {
     ///
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
-    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) bun.JSError!*JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
     }
 
@@ -57,7 +57,7 @@ pub const JSObject = opaque {
     /// depending on whether `null_prototype` is set. Prefer using the object
     /// prototype (`null_prototype = false`) unless you have a good reason not
     /// to.
-    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) bun.JSError!*JSObject {
         const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
 
         const obj = obj: {
@@ -76,7 +76,7 @@ pub const JSObject = opaque {
             cell.put(
                 global,
                 field.name,
-                JSC.toJS(global, @TypeOf(property), property, .temporary),
+                try JSC.toJS(global, @TypeOf(property), property),
             );
         }
 

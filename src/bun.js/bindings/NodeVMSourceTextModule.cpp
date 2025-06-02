@@ -188,6 +188,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     JSArray* requestsArray = constructEmptyArray(globalObject, nullptr, requests.size());
+    RETURN_IF_EXCEPTION(scope, {});
 
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();

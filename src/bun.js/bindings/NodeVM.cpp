@@ -230,8 +230,6 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     args.append(owner ? owner : jsUndefined());
     args.append(parameters);
 
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -253,7 +251,7 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
         if (JSObject* object = argument.getObject()) {
             JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            if (result && !result.isUndefinedOrNull()) {
+            if (!result.isUndefinedOrNull()) {
                 return JSValue::encode(result);
             }
         }
@@ -1132,7 +1130,7 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(JSC::jsBoolean(!!jsDynamicCast<JSModuleNamespaceObject*>(callFrame->argument(0))));
+    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

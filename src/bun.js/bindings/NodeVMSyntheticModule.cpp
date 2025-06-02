@@ -66,7 +66,7 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
 
     WTF::HashSet<String> exportNames;
     for (unsigned i = 0; i < exportNamesArray->getArrayLength(); i++) {
-        JSValue exportNameValue = exportNamesArray->getDirectIndex(globalObject, i);
+        JSValue exportNameValue = exportNamesArray->getIndex(globalObject, i);
         if (!exportNameValue.isString()) {
             throwArgumentTypeError(*globalObject, scope, 2, "exportNames"_s, "Module"_s, "Module"_s, "string[]"_s);
         }
@@ -88,7 +88,6 @@ void NodeVMSyntheticModule::destroy(JSCell* cell)
 void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()));
 

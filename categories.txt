@@ -30,6 +30,7 @@ getTLSPeerFinishedMessage not working right? and same for getFinished
 - no cipher match: test-tls-connect-stream-writes.js
 - errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
 - errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
+- missing '_tlsError' event: test-tls-delayed-attach-error.js
 
 createSecurePair not implemented:
 These tests are removed in new node versions: (createSecurePair is deprecated)

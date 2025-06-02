@@ -28,6 +28,8 @@ connect() callback never called when invalid pfx provided: test-tls-invalid-pfx.
 
 SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext.
 
+Is nrypt used in node tls, do we need to update it?
+
 # More
 
 - bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server

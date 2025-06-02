@@ -1,0 +1,22 @@
+{
+  "web": {
+    "provider": "perplexity",
+    "model": "sonar-pro"
+  },
+  "plan": {
+    "fileProvider": "gemini",
+    "thinkingProvider": "anthropic",
+    "fileModel": "gemini-2.5-flash-preview-05-20",
+    "thinkingModel": "claude-opus-4-20250514",
+    "thinkingMaxTokens": 16000
+  },
+  "repo": {
+    "provider": "gemini",
+    "model": "gemini-2.5-flash-preview-05-20"
+  },
+  "doc": {
+    "provider": "gemini",
+    "model": "gemini-2.5-flash-preview-05-20"
+  },
+  "ide": "cursor"
+}

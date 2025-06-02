@@ -50,7 +50,7 @@ test("MessagePort postMessage uses immediate C++ tasks correctly", async () => {
   port2.close();
 });
 
-test("immediate C++ tasks execute before next tick", async () => {
+test("MessagePort messages execute after process.nextTick (Node.js compatibility)", async () => {
   const { port1, port2 } = new MessageChannel();
 
   const executionOrder: string[] = [];
@@ -81,7 +81,9 @@ test("immediate C++ tasks execute before next tick", async () => {
   await new Promise(resolve => setImmediate(resolve));
 
   expect(messageReceived).toBe(true);
-  expect(executionOrder[0]).toBe("message received");
+  expect(executionOrder[0]).toBe("nextTick 1");
+  expect(executionOrder[1]).toBe("nextTick 2");
+  expect(executionOrder[2]).toBe("message received");
 
   port1.close();
   port2.close();

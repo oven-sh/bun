@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { test } from "node:test";
+import assert from "node:assert";
 import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("MessagePort postMessage uses immediate C++ tasks correctly", async () => {
@@ -37,7 +38,7 @@ test("MessagePort postMessage uses immediate C++ tasks correctly", async () => {
 
   await promise;
 
-  expect(messages).toEqual([
+  assert.deepStrictEqual(messages, [
     "setImmediate 1",
     "setImmediate 2",
     "setImmediate 3",
@@ -80,10 +81,10 @@ test("MessagePort messages execute after process.nextTick (Node.js compatibility
 
   await new Promise(resolve => setImmediate(resolve));
 
-  expect(messageReceived).toBe(true);
-  expect(executionOrder[0]).toBe("nextTick 1");
-  expect(executionOrder[1]).toBe("nextTick 2");
-  expect(executionOrder[2]).toBe("message received");
+  assert.strictEqual(messageReceived, true);
+  assert.strictEqual(executionOrder[0], "nextTick 1");
+  assert.strictEqual(executionOrder[1], "nextTick 2");
+  assert.strictEqual(executionOrder[2], "message received");
 
   port1.close();
   port2.close();
@@ -140,16 +141,14 @@ test("MessagePort immediate C++ tasks work with workers", async () => {
     messages.push(msg);
   });
 
-  port1.start();
-
   worker.postMessage({ port: port2 }, [port2]);
 
   await promise;
 
-  expect(readyReceived).toBe(true);
-  expect(doneReceived).toBe(true);
-  expect(messages).toHaveLength(3);
-  expect(messages).toEqual(["echo-1: hello1", "echo-2: hello2", "echo-3: hello3"]);
+  assert.strictEqual(readyReceived, true);
+  assert.strictEqual(doneReceived, true);
+  assert.strictEqual(messages.length, 3);
+  assert.deepStrictEqual(messages, ["echo-1: hello1", "echo-2: hello2", "echo-3: hello3"]);
 
   port1.close();
   worker.terminate();
@@ -194,12 +193,12 @@ test("immediate C++ tasks don't starve microtasks", async () => {
 
   await promise;
 
-  expect(executionOrder).toContain("microtask-1");
-  expect(executionOrder).toContain("microtask-2");
-  expect(executionOrder).toContain("microtask-3");
-  expect(executionOrder).toContain("message-1");
-  expect(executionOrder).toContain("message-2");
-  expect(executionOrder).toContain("message-3");
+  assert(executionOrder.includes("microtask-1"));
+  assert(executionOrder.includes("microtask-2"));
+  assert(executionOrder.includes("microtask-3"));
+  assert(executionOrder.includes("message-1"));
+  assert(executionOrder.includes("message-2"));
+  assert(executionOrder.includes("message-3"));
 
   port1.close();
   port2.close();
@@ -229,9 +228,9 @@ test("high volume MessagePort operations maintain order", async () => {
 
   await promise;
 
-  expect(receivedMessages).toHaveLength(TOTAL_MESSAGES);
+  assert.strictEqual(receivedMessages.length, TOTAL_MESSAGES);
   for (let i = 0; i < TOTAL_MESSAGES; i++) {
-    expect(receivedMessages[i]).toBe(i);
+    assert.strictEqual(receivedMessages[i], i);
   }
 
   port1.close();
@@ -265,9 +264,9 @@ test("MessagePort close behavior with immediate C++ tasks", async () => {
 
   await promise;
 
-  expect(messageReceived).toBe(true);
+  assert.strictEqual(messageReceived, true);
 
-  expect(errorThrown).toBe(false);
+  assert.strictEqual(errorThrown, false);
 
   port1.close();
 });
@@ -284,10 +283,10 @@ test("receiveMessageOnPort works with immediate C++ tasks", () => {
   const result3 = receiveMessageOnPort(port2);
   const result4 = receiveMessageOnPort(port2);
 
-  expect(result1?.message).toBe("msg1");
-  expect(result2?.message).toBe("msg2");
-  expect(result3?.message).toBe("msg3");
-  expect(result4).toBeUndefined();
+  assert.strictEqual(result1?.message, "msg1");
+  assert.strictEqual(result2?.message, "msg2");
+  assert.strictEqual(result3?.message, "msg3");
+  assert.strictEqual(result4, undefined);
 
   port1.close();
   port2.close();

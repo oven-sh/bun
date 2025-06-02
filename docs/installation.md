@@ -232,7 +232,7 @@ Bun's `x64` binaries target the Haswell CPU architecture, which means they requi
 | x64          | Haswell (4th generation Core) or newer, except some low-end models | Excavator or newer |
 | x64-baseline | Nehalem (1st generation Core) or newer                             | Bulldozer or newer |
 
-Bun does not currently support any CPUs older than the `baseline` target.
+Bun does not currently support any CPUs older than the `baseline` target, which mandates the SSE4.2 extension.
 
 Bun also publishes `darwin-x64-baseline` binaries, but these are just a copy of the `darwin-x64` ones so they still have the same CPU requirement. We only maintain these since some tools expect them to exist. Bun requires macOS 13.0 or later, which does not support any CPUs that don't meet our requirement.
 

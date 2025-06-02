@@ -671,8 +671,8 @@ pub const ServerConfig = struct {
 
         const log = Output.scoped(.SSLConfig, false);
 
-        pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
-            var ctx_opts: uws.us_bun_socket_context_options_t = .{};
+        pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
+            var ctx_opts: uws.SocketContext.BunSocketContextOptions = .{};
 
             if (this.key_file_name != null)
                 ctx_opts.key_file_name = this.key_file_name;
@@ -2292,7 +2292,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         flags: NewFlags(debug_mode) = .{},
 
-        upgrade_context: ?*uws.uws_socket_context_t = null,
+        upgrade_context: ?*uws.SocketContext = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
@@ -4668,10 +4668,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-            @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
-            @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
-            @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
-            @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+            if (bun.Environment.export_cpp_apis) {
+                @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
+                @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
+                @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
+                @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+            }
         }
     };
 }
@@ -5683,7 +5685,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
+            upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
             const signal = upgrader.signal;
 
             upgrader.signal = null;
@@ -6568,7 +6570,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.pending_requests += 1;
         }
 
-        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.uws_socket_context_t) void {
+        pub fn onNodeHTTPRequestWithUpgradeCtx(this: *ThisServer, req: *uws.Request, resp: *App.Response, upgrade_ctx: ?*uws.SocketContext) void {
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
@@ -7001,7 +7003,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             };
         }
 
-        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.uws_socket_context_t, method: ?bun.http.Method) void {
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, method: ?bun.http.Method) void {
             const server = this.server;
             const index = this.id;
 
@@ -7022,7 +7024,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this: *ThisServer,
             resp: *App.Response,
             req: *uws.Request,
-            upgrade_ctx: *uws.uws_socket_context_t,
+            upgrade_ctx: *uws.SocketContext,
             id: usize,
         ) void {
             JSC.markBinding(@src());
@@ -8059,7 +8061,7 @@ extern fn NodeHTTPServer__onRequest_http(
     methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(false).Response,
-    upgrade_ctx: ?*uws.uws_socket_context_t,
+    upgrade_ctx: ?*uws.SocketContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
@@ -8071,7 +8073,7 @@ extern fn NodeHTTPServer__onRequest_https(
     methodString: JSC.JSValue,
     request: *uws.Request,
     response: *uws.NewApp(true).Response,
-    upgrade_ctx: ?*uws.uws_socket_context_t,
+    upgrade_ctx: ?*uws.SocketContext,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 

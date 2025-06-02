@@ -8,6 +8,9 @@ missing socket.on('data') event when data received after socket.end():
 connect() callback never called when invalid pfx provided:
 - test-tls-invalid-pfx.js
 
+getTLSPeerFinishedMessage not working right? and same for getFinished
+- test-tls-finished.js
+
 # More
 
 - bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server

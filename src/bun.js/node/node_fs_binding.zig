@@ -35,7 +35,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
             var result = function(&this.node_fs, args, .sync);
             return switch (result) {
                 .err => |err| globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject))),
-                .result => |*res| globalObject.toJS(res, .temporary),
+                .result => |*res| globalObject.toJS(res),
             };
         }
 

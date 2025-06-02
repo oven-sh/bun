@@ -282,6 +282,7 @@ public:
     JSObject* processBindingBuffer() const { return m_processBindingBuffer.getInitializedOnMainThread(this); }
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
     JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
+    JSObject* processBindingHTTPParser() const { return m_processBindingHTTPParser.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
     Bun::JSCommonJSExtensions* lazyRequireExtensionsObject() const { return m_lazyRequireExtensionsObject.getInitializedOnMainThread(this); }
@@ -547,6 +548,9 @@ public:
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
     V(public, LazyClassStructure, m_JSNodePerformanceHooksHistogramClassStructure)                           \
                                                                                                              \
+    V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
+    V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
+                                                                                                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -583,6 +587,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingBuffer)                                 \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingConstants)                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingFs)                                     \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_processBindingHTTPParser)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \

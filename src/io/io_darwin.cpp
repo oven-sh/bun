@@ -196,17 +196,17 @@ extern "C" bool darwin_select_thread_is_needed_for_fd(int fd)
     if (test_kqueue == -1) {
         return true; // If kqueue fails, definitely need select fallback
     }
-    
+
     struct kevent64_s event = {};
     event.ident = fd;
     event.filter = EVFILT_READ;
     event.flags = EV_ADD | EV_ENABLE;
-    
+
     // Try to register fd with kqueue
     int result = kevent64(test_kqueue, &event, 1, NULL, 0, 0, NULL);
     bool needs_fallback = (result == -1);
     close(test_kqueue);
-    
+
     // If kevent fails for stdin, we need the select fallback
     return needs_fallback;
 }

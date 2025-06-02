@@ -26,7 +26,7 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
-std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey);
+std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
@@ -60,12 +60,11 @@ public:
     WTF::Vector<uint8_t> cachedData;
     JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions {};
-    JSValue importer {};
     bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
 
-    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer);
 };
 
 class NodeVMContextOptions final {
@@ -110,7 +109,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options);
+    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options, JSValue importer);
     static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
@@ -122,12 +121,13 @@ public:
     void finishCreation(JSC::VM&);
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
-    JSC::JSObject* contextifiedObject() const { return m_sandbox.get(); }
+    JSObject* contextifiedObject() const { return m_sandbox.get(); }
     void clearContextifiedObject();
     void sigintReceived();
     bool isNotContextified() const { return m_contextOptions.notContextified; }
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
     void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
+    JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
@@ -139,12 +139,13 @@ public:
 
 private:
     // The contextified object that acts as the global proxy
-    JSC::WriteBarrier<JSC::JSObject> m_sandbox;
+    WriteBarrier<JSObject> m_sandbox;
     // A special object used when the context is not contextified.
-    JSC::WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
+    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
+    WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 
-    NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions);
+    NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
 };
 
 // Helper functions to create vm contexts and run code

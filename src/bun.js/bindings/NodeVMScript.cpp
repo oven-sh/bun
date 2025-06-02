@@ -17,8 +17,12 @@
 namespace Bun {
 using namespace NodeVM;
 
-bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg)
+bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
 {
+    if (importer) {
+        *importer = jsUndefined();
+    }
+
     bool any = BaseVMOptions::fromJS(globalObject, vm, scope, optionsArg);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -65,7 +69,9 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
 
         if (importModuleDynamicallyValue) {
             if ((importModuleDynamicallyValue.isCallable() || isUseMainContextDefaultLoaderConstant(importModuleDynamicallyValue))) {
-                this->importer = importModuleDynamicallyValue;
+                if (importer) {
+                    *importer = importModuleDynamicallyValue;
+                }
                 any = true;
             } else if (!importModuleDynamicallyValue.isUndefined()) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.importModuleDynamically"_s, "function"_s, importModuleDynamicallyValue);
@@ -89,10 +95,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     JSValue optionsArg = args.at(1);
     ScriptOptions options(""_s);
+    JSValue importer;
+
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
+    } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
@@ -112,7 +120,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         scope.release();
     }
 
-    RefPtr fetcher(NodeVMScriptFetcher::create(vm, options.importer, jsUndefined()));
+    RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
@@ -553,8 +561,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     JSValue contextOptionsArg = callFrame->argument(1);
     NodeVMContextOptions contextOptions {};
+    JSValue importer;
 
-    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration")) {
+    if (auto encodedException = getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer)) {
         return *encodedException;
     }
 
@@ -564,7 +573,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(vm,
         zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions);
+        contextOptions, importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {

@@ -1,4 +1,5 @@
 .repomix-output.txt
+repomix.config.json
 .DS_Store
 .env
 .envrc

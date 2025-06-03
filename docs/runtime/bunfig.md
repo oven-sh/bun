@@ -180,6 +180,24 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coverageReporter`
+
+By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
+
+```toml
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
+```
+
+### `test.coverageDir`
+
+Set path where coverage reports will be saved. Please notice, that it works only for persistent `coverageReporter` like `lcov`.
+
+```toml
+[test]
+coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -240,13 +258,13 @@ exact = false
 
 ### `install.saveTextLockfile`
 
-Generate `bun.lock`, a human-readable text-based lockfile. Once generated, Bun will use this file instead of `bun.lockb`, choosing it over the binary lockfile if both are present.
+If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
 
-Default `false`. In Bun v1.2.0 the default lockfile format will change to `bun.lock`.
+Default `true` (since Bun v1.2).
 
 ```toml
 [install]
-saveTextLockfile = true
+saveTextLockfile = false
 ```
 
 <!--
@@ -315,7 +333,7 @@ Valid values are:
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lockb`. Default `false`. If `package.json` and the existing `bun.lockb` are not in agreement, this will error.
+When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
 
 ```toml
 [install]
@@ -423,7 +441,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lockb`. (A `bun.lockb` will always be created.) Currently `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will always be created.) Currently `"yarn"` is the only supported value.
 
 ```toml
 [install.lockfile]

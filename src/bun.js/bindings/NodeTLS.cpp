@@ -30,7 +30,7 @@ JSC::JSValue createNodeTLSBinding(Zig::GlobalObject* globalObject)
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
     }
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), JSC::objectConstructorFreeze(globalObject, rootCertificates), 0);
 
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);

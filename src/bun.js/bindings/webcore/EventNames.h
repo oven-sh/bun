@@ -81,7 +81,7 @@ private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
     // friend class ThreadGlobalData; // Allow ThreadGlobalData to create the per-thread EventNames object.
 
-    int dummy; // Needed to make initialization macro work.
+    [[maybe_unused]] int dummy; // Needed to make initialization macro work.
 };
 
 const EventNames& eventNames();

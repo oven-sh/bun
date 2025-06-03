@@ -73,15 +73,15 @@ enum class CrossOriginResourcePolicy : uint8_t {
 enum class RangeAllowWhitespace : bool { No,
     Yes };
 
-bool isValidReasonPhrase(const String&);
-bool isValidHTTPHeaderValue(const String&);
-bool isValidAcceptHeaderValue(const String&);
-bool isValidLanguageHeaderValue(const String&);
+bool isValidReasonPhrase(const StringView&);
+bool isValidHTTPHeaderValue(const StringView&);
+bool isValidAcceptHeaderValue(const StringView&);
+bool isValidLanguageHeaderValue(const StringView&);
 #if USE(GLIB)
-WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const String&);
+WEBCORE_EXPORT bool isValidUserAgentHeaderValue(const StringView&);
 #endif
-bool isValidHTTPToken(const StringView);
-std::optional<WallTime> parseHTTPDate(const String&);
+bool isValidHTTPToken(const StringView&);
+std::optional<WallTime> parseHTTPDate(const StringView&);
 StringView filenameFromHTTPContentDisposition(StringView);
 WEBCORE_EXPORT String extractMIMETypeFromMediaType(const String&);
 StringView extractCharsetFromMediaType(const String&);

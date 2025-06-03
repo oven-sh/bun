@@ -1,0 +1,41 @@
+{
+	"name": "debug-1",
+	"versions": {
+		"4.4.0": {
+			"name": "debug-1",
+			"version": "4.4.0",
+			"dependencies": {
+				"ms-1": "^2.1.3"
+			},
+			"_id": "debug-1@4.4.0",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-uf9R1p7HgIOLOuRhqTZpFwZzkkxcZgS2eldnhsH3MWVrstXCPsjCw76rQUMHrTx0DSqfWI8fCrXpHEDBSFiHug==",
+				"shasum": "e3c41fed21d99b9133778cd9bd5a747f4345f824",
+				"tarball": "http://localhost:4873/debug-1/-/debug-1-4.4.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-02-01T02:30:43.460Z",
+		"created": "2025-02-01T02:30:43.460Z",
+		"4.4.0": "2025-02-01T02:30:43.460Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "4.4.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"debug-1-4.4.0.tgz": {
+			"shasum": "e3c41fed21d99b9133778cd9bd5a747f4345f824",
+			"version": "4.4.0"
+		}
+	},
+	"_rev": "",
+	"_id": "debug-1",
+	"readme": "ERROR: No README data found!"
+}

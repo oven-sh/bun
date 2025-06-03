@@ -1,27 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.Length;
-const Percentage = css.css_values.percentage.Percentage;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Angle = css.css_values.angle.Angle;
-const Time = css.css_values.time.Time;
-const Resolution = css.css_values.resolution.Resolution;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const Ident = css.css_values.ident.Ident;
 const UrlDependency = css.dependencies.UrlDependency;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
@@ -40,7 +23,7 @@ pub const Url = struct {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        const import_record_idx = switch (input.addImportRecordForUrl(url, start_pos)) {
+        const import_record_idx = switch (input.addImportRecord(url, start_pos, .url)) {
             .result => |idx| idx,
             .err => |e| return .{ .err = e },
         };
@@ -111,14 +94,12 @@ pub const Url = struct {
         }
 
         const import_record = try dest.importRecord(this.import_record_idx);
-        const url = import_record.path.text;
+        const url = try dest.getImportRecordUrl(this.import_record_idx);
 
         if (dest.minify and !import_record.is_internal) {
             var buf = ArrayList(u8){};
             // PERF(alloc) we could use stack fallback here?
             var bufw = buf.writer(dest.allocator);
-            const BufW = @TypeOf(bufw);
-            _ = BufW; // autofix
             defer buf.deinit(dest.allocator);
             css.Token.toCssGeneric(&css.Token{ .unquoted_url = url }, &bufw) catch return dest.addFmtError();
 
@@ -140,7 +121,7 @@ pub const Url = struct {
             try dest.writeStr(buf.items);
         } else {
             try dest.writeStr("url(");
-            css.serializer.serializeString(import_record.path.text, dest) catch return dest.addFmtError();
+            css.serializer.serializeString(url, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
     }

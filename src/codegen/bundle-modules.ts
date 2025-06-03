@@ -1,18 +1,18 @@
 // This script is run when you change anything in src/js/*
 //
+// Documentation is in src/js/README.md
+//
 // Originally, the builtin bundler only supported function files, but then the module files were
 // added to this, which has made this entire setup extremely convoluted and a mess.
 //
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
-//
-// For explanation on this, please nag @paperdave to write documentation on how everything works.
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import ErrorCode from "../bun.js/bindings/ErrorCode";
+import jsclasses from "./../bun.js/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
@@ -51,7 +51,7 @@ function markVerbose(log: string) {
 
 const mark = silent ? (log: string) => {} : markVerbose;
 
-const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer } =
+const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer, nativeStartIndex } =
   createInternalModuleRegistry(BASE);
 globalThis.requireTransformer = requireTransformer;
 
@@ -77,20 +77,22 @@ async function retry(n, fn) {
 
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
-for (let i = 0; i < moduleList.length; i++) {
+for (let i = 0; i < nativeStartIndex; i++) {
   try {
     let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
 
-    // NOTE: internal modules are parsed as functions. They must use ESM to export and require to import.
-    // TODO: Bother @paperdave and have him check for module.exports, and create/return a module object if detected.
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
-        throw new Error("Cannot use CommonJS module.exports in ESM modules. Use `export default { ... }` instead.");
+        throw new Error(
+          "Do not use CommonJS module.exports in ESM modules. Use `export default { ... }` instead. See src/js/README.md",
+        );
       } else {
-        throw new Error("Internal modules must have an `export default` statement.");
+        throw new Error("Internal modules must have at least one ESM export statement. See src/js/README.md");
       }
     }
 
+    // TODO: there is no reason this cannot be converted automatically.
+    // import { ... } from '...' -> `const { ... } = require('...')`
     const scannedImports = t.scanImports(input);
     for (const imp of scannedImports) {
       if (imp.kind === "import-statement") {
@@ -103,7 +105,12 @@ for (let i = 0; i < moduleList.length; i++) {
           isBuiltin = false;
         }
         if (isBuiltin) {
-          throw new Error(`Cannot use ESM import on builtin modules. Use require("${imp.path}") instead.`);
+          const err = new Error(
+            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
+          );
+          err.name = "BunError";
+          err.fileName = moduleList[i];
+          throw err;
         }
       }
     }
@@ -268,6 +275,7 @@ function idToEnumName(id: string) {
 }
 
 function idToPublicSpecifierOrEnumName(id: string) {
+  if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
   id = id.replace(/\.[mc]?[tj]s$/, "");
   if (id.startsWith("node/")) {
     return "node:" + id.slice(5).replaceAll(".", "/");
@@ -290,7 +298,9 @@ mark("Bundle Functions");
 // This is a file with a single macro that is used in defining InternalModuleRegistry.h
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
-  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}\n`,
+  `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
+#define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
+`,
 );
 
 // This code slice is used in InternalModuleRegistry.h for inlining the enum. I dont think we
@@ -317,12 +327,16 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
+        const inner =
+          n >= nativeStartIndex
+            ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
+                id.replace(/\.[mc]?[tj]s$/, ".js"),
+              )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+                .replace(/\.[mc]?[tj]s$/, "")
+                .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`;
         return `case Field::${idToEnumName(id)}: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-        id.replace(/\.[mc]?[tj]s$/, ".js"),
-      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-        .replace(/\.[mc]?[tj]s$/, "")
-        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+      ${inner}
     }`;
       })
       .join("\n    ")}
@@ -330,6 +344,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       __builtin_unreachable();
     }
   }
+  __builtin_unreachable();
 }
 `,
 );
@@ -348,6 +363,7 @@ if (!debug) {
 namespace Bun {
 namespace InternalModuleRegistryConstants {
   ${moduleList
+    .slice(0, nativeStartIndex)
     .map((id, n) => {
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
       if (!out) {
@@ -368,7 +384,10 @@ namespace InternalModuleRegistryConstants {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`)
+    .join("\n")}
 }
 }`,
   );
@@ -379,22 +398,30 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
   `// zig fmt: off
 pub const ResolvedSourceTag = enum(u32) {
-    // Predefined
     javascript = 0,
     package_json_type_module = 1,
-    wasm = 2,
-    object = 3,
-    file = 4,
-    esm = 5,
-    json_for_object_loader = 6,
-    exports_object = 7,
+    package_json_type_commonjs = 2,
+    wasm = 3,
+    object = 4,
+    file = 5,
+    esm = 6,
+    json_for_object_loader = 7,
+    /// Generate an object with "default" set to all the exports, including a "default" property
+    exports_object = 8,
+    /// Generate a module that only exports default the input JSValue
+    export_default_object = 9,
+    /// Signal upwards that the matching value in 'require.extensions' should be used.
+    common_js_custom_extension = 10,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
-    // Native modules run through a different system using ESM registry.
-${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+${moduleList
+  .slice(0, nativeStartIndex)
+  .map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`)
+  .join("\n")}
+    // Native modules come after the JS modules
+${Object.entries(nativeModuleEnumToId)
+  .map(([id, n], i) => `    @"${moduleList[nativeStartIndex + i]}" = ${(1 << 9) | (n + nativeStartIndex)},`)
   .join("\n")}
 };
 `,
@@ -406,22 +433,25 @@ writeIfNotChanged(
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
-    Wasm = 2,
-    ObjectModule = 3,
-    File = 4,
-    ESM = 5,
-    JSONForObjectLoader = 6,
-    ExportsObject = 7,
+    PackageJSONTypeCommonJS = 2,
+    Wasm = 3,
+    ObjectModule = 4,
+    File = 5,
+    ESM = 6,
+    JSONForObjectLoader = 7,
+    ExportsObject = 8,
+    ExportDefaultObject = 9,
+    CommonJSCustomExtension = 10,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,
-${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
-
-    // Native modules run through the same system, but with different underlying initializers.
-    // They also have bit 10 set to differentiate them from JS builtins.
-    NativeModuleFlag = (1 << 10) | (1 << 9),
+${moduleList
+  .slice(0, nativeStartIndex)
+  .map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`)
+  .join("\n")}
+    // Native modules come after the JS modules
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+  .map(([id, n], i) => `    ${id} = ${(1 << 9) | (i + nativeStartIndex)},`)
   .join("\n")}
 };
 
@@ -448,19 +478,49 @@ writeIfNotChanged(
   (() => {
     let dts = `
 // GENERATED TEMP FILE - DO NOT EDIT
+// generated by ${import.meta.path}
+
+declare module "module" {
+  global {
+    interface PropertyDescriptor {
+      __proto__?: any;
+    }
+
+    interface Function {
+      readonly $call: Function.prototype["call"];
+      readonly $apply: Function.prototype["apply"];
+    }
+
+    namespace NodeJS {
+      interface Require {
+
 `;
 
-    for (let i = 0; i < ErrorCode.length; i++) {
-      const [code, _, name] = ErrorCode[i];
-      dts += `
-/**
- * Generate a ${name} error with the \`code\` property set to ${code}.
- *
- * @param msg The error message
- * @param args Additional arguments
- */
-declare function $${code}(msg: string, ...args: any[]): ${name};
+    dts += `        (id: "bun"): typeof import("bun");\n`;
+    dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
+    dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
+
+    for (let i = 0; i < nativeStartIndex; i++) {
+      const id = moduleList[i];
+      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+      if (!out) {
+        throw new Error(`Missing output for ${id}`);
+      }
+      let internalName = idToPublicSpecifierOrEnumName(id);
+      if (internalName.startsWith("internal:")) internalName = internalName.replace(":", "/");
+
+      dts += `        (id: "${internalName}"): typeof import("${path.join(BASE, id)}").default;\n`;
+    }
+
+    dts += `
+      }
+    }
+  }
+}
 `;
+
+    for (const [name] of jsclasses) {
+      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
     }
 
     return dts;
@@ -475,12 +535,15 @@ if (!silent) {
   console.log(
     `  %s kb`,
     Math.floor(
-      (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
+      (moduleList
+        .slice(0, nativeStartIndex)
+        .reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
         globalThis.internalFunctionJSSize) /
         1000,
     ),
   );
-  console.log(`  %s internal modules`, moduleList.length);
+  console.log(`  %s internal modules`, nativeStartIndex);
+  console.log(`  %s native modules`, Object.keys(nativeModuleIds).length);
   console.log(
     `  %s internal functions across %s files`,
     globalThis.internalFunctionCount,

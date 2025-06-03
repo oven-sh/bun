@@ -161,7 +161,7 @@ symbolToStringify(out, "machine");
 
 function symbolToStringify(obj, key) {
   $assert(obj[key] !== undefined, `Missing ${key}`);
-  obj[key][Symbol.toPrimitive] = function (hint: string) {
+  obj[key][Symbol.toPrimitive] = function (_hint: string) {
     return obj[key]();
   };
 }

@@ -31,13 +31,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     ZigString name = toZigString(propertyName.publicName());
     ZigString value = { nullptr, 0 };
 
-    if (UNLIKELY(name.len == 0))
+    if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     if (!Bun__getEnvValue(globalObject, &name, &value)) {
@@ -57,7 +57,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
         return false;
 
     auto string = JSValue::decode(value).toString(globalObject);
-    if (UNLIKELY(!string))
+    if (!string) [[unlikely]]
         return false;
 
     object->putDirect(vm, propertyName, string, 0);
@@ -70,7 +70,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     auto* clientData = WebCore::clientData(vm);
@@ -152,12 +152,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
     JSValue result = thisObject->getDirect(vm, privateName);
-    if (UNLIKELY(result)) {
+    if (result) [[unlikely]] {
         return JSValue::encode(result);
     }
 
@@ -206,12 +206,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject))
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
     JSValue result = thisObject->getDirect(vm, privateName);
-    if (UNLIKELY(result)) {
+    if (result) [[unlikely]] {
         return JSValue::encode(result);
     }
 
@@ -254,6 +254,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
+#if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
 
 JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
@@ -274,6 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
+#endif
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
@@ -291,6 +293,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, {});
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -329,12 +332,13 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
         // CustomGetterSetter doesn't support indexed properties yet.
         // This causes strange issues when the environment variable name is an integer.
-        if (UNLIKELY(chars[0] >= '0' && chars[0] <= '9')) {
+        if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
                 ZigString valueString = { nullptr, 0 };
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                 }
                 continue;

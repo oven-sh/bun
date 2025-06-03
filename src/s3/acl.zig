@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const ACL = enum {
     /// Owner gets FULL_CONTROL. No one else has access rights (default).

@@ -4,6 +4,12 @@ The Bun bundler implements a set of default loaders out of the box. As a rule of
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.sh/docs/bundler/plugins) that extend Bun with custom loaders.
 
+You can explicitly specify which loader to use using the 'loader' import attribute.
+
+```ts
+import my_toml from "./my_file" with { loader: "toml" };
+```
+
 ## Built-in loaders
 
 ### `js`
@@ -152,19 +158,6 @@ export default "Hello, world!";
 
 {% /codetabs %}
 
-### `wasm`
-
-**WebAssembly loader**. Default for `.wasm`.
-
-In the runtime, WebAssembly files can be directly imported. The file is read and returned as a `WebAssembly.Module`.
-
-```ts
-import wasm from "./module.wasm";
-console.log(wasm); // => WebAssembly.Module
-```
-
-In the bundler, `.wasm` files are handled using the [`file`](#file) loader.
-
 ### `napi`
 
 **Native addon loader**. Default for `.node`.
@@ -204,15 +197,6 @@ When using a [standalone executable](https://bun.sh/docs/bundler/executables), t
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 
 ### `html`
-
-**HTML loader**. Default for `.html` after Bun v1.2.0.
-
-To enable the html loader:
-
-- For `Bun.build`: set `html: true`
-- For `bun build`: `--experimental-html` CLI flag
-
-You most likely want to use the `html` loader in conjunction with `experimentalCss: true` or `--experimental-css`.
 
 The html loader processes HTML files and bundles any referenced assets. It will:
 

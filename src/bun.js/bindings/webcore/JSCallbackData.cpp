@@ -65,7 +65,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 
         ASSERT(!functionName.isNull());
         function = callback->get(lexicalGlobalObject, functionName);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) [[unlikely]] {
             returnedException = scope.exception();
             scope.clearException();
             return JSValue();
@@ -109,7 +109,7 @@ template void JSCallbackDataWeak::visitJSFunction(JSC::SlotVisitor&);
 
 bool JSCallbackDataWeak::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    if (UNLIKELY(reason))
+    if (reason) [[unlikely]]
         *reason = "Context is opaque root"_s; // FIXME: what is the context.
     return visitor.containsOpaqueRoot(context);
 }

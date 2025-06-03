@@ -1,4 +1,4 @@
-import type { Expect, test, describe, beforeAll, beforeEach, afterAll, afterEach } from "bun:test";
+import type { afterAll, afterEach, beforeAll, beforeEach, describe, Expect, test } from "bun:test";
 
 export type BunExpect = (value: unknown) => Expect;
 export type BunDescribe = typeof describe;

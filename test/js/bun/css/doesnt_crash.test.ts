@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
 import "harness";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { tmpdirSync } from "harness";
 import path from "path";
 describe("doesnt_crash", async () => {
   let files: string[] = [];
@@ -32,10 +32,8 @@ describe("doesnt_crash", async () => {
         console.time(timeLog);
         const { logs, outputs } = await Bun.build({
           entrypoints: [absolute],
-          experimentalCss: true,
           minify: minify,
           target,
-          throw: true,
         });
         console.timeEnd(timeLog);
 
@@ -54,10 +52,8 @@ describe("doesnt_crash", async () => {
           console.log("  Transpiled file path:", outfile1);
           const { logs, outputs } = await Bun.build({
             entrypoints: [outfile1],
-            experimentalCss: true,
             target,
             minify: minify,
-            throw: true,
           });
 
           if (logs?.length) {

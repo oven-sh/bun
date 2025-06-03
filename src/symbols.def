@@ -544,7 +544,6 @@ EXPORTS
   napi_reference_ref
   napi_reference_unref
   napi_get_reference_value
-  napi_get_reference_value_internal
   napi_throw
   napi_throw_error
   napi_throw_type_error
@@ -567,6 +566,13 @@ EXPORTS
   napi_is_detached_arraybuffer
   napi_create_external_buffer
   napi_fatal_exception
+  node_api_create_buffer_from_arraybuffer
+  node_api_get_module_file_name
+  node_api_post_finalizer
+  node_api_create_property_key_latin1
+  node_api_create_property_key_utf16
+  node_api_create_property_key_utf8
+  dumpBtjsTrace
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ

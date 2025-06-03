@@ -1,9 +1,9 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
+import { familySync } from "detect-libc";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
-import path, { basename, join, resolve } from "path";
-import { familySync } from "detect-libc";
+import { basename, join, resolve } from "path";
 
 expect.extend({
   toRunInlineFixture(input) {
@@ -237,7 +237,7 @@ it("process.uptime()", () => {
 
 it("process.umask()", () => {
   expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
-  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received 'string'`); // prettier-ignore
   expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
   expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
   expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');
@@ -308,6 +308,7 @@ it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
       enable_lto: false,
+      node_module_version: expect.any(Number),
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
@@ -319,7 +320,48 @@ it("process.execArgv", () => {
 });
 
 it("process.binding", () => {
-  expect(() => process.binding("buffer")).toThrow();
+  expect(() => process.binding("async_wrap")).toThrow();
+  expect(() => process.binding("buffer")).not.toThrow();
+  expect(() => process.binding("cares_wrap")).toThrow();
+  expect(() => process.binding("config")).not.toThrow();
+  expect(() => process.binding("constants")).not.toThrow();
+  expect(() => process.binding("contextify")).toThrow();
+  expect(() => process.binding("crypto")).toThrow();
+  expect(() => process.binding("crypto/x509")).not.toThrow();
+  expect(() => process.binding("fs")).not.toThrow();
+  expect(() => process.binding("fs_event_wrap")).toThrow();
+  expect(() => process.binding("http_parser")).not.toThrow();
+  expect(() => process.binding("icu")).toThrow();
+  expect(() => process.binding("inspector")).toThrow();
+  expect(() => process.binding("js_stream")).toThrow();
+  expect(() => process.binding("natives")).not.toThrow();
+  expect(() => process.binding("os")).toThrow();
+  expect(() => process.binding("pipe_wrap")).toThrow();
+  expect(() => process.binding("process_wrap")).toThrow();
+  expect(() => process.binding("signal_wrap")).toThrow();
+  expect(() => process.binding("spawn_sync")).toThrow();
+  expect(() => process.binding("stream_wrap")).toThrow();
+  expect(() => process.binding("tcp_wrap")).toThrow();
+  expect(() => process.binding("tls_wrap")).toThrow();
+  expect(() => process.binding("tty_wrap")).not.toThrow();
+  expect(() => process.binding("udp_wrap")).toThrow();
+  expect(() => process.binding("url")).toThrow();
+  expect(() => process.binding("util")).not.toThrow();
+  expect(() => process.binding("uv")).not.toThrow();
+  expect(() => process.binding("v8")).toThrow();
+  expect(() => process.binding("zlib")).toThrow();
+
+  expect(() => process.binding()).toThrow();
+  expect(() => process.binding(10)).toThrow();
+  expect(() => process.binding(10n)).toThrow();
+  expect(() => process.binding(null)).toThrow();
+  expect(() => process.binding(true)).toThrow();
+  expect(() => process.binding("")).toThrow();
+  expect(() => process.binding(function () {})).toThrow();
+  expect(() => process.binding(() => {})).toThrow();
+  expect(() => process.binding(Symbol("ab"))).toThrow();
+  expect(() => process.binding({})).toThrow();
+  expect(() => process.binding(Object.freeze({ __proto__: null }))).toThrow();
 });
 
 it("process.argv in testing", () => {
@@ -333,7 +375,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ("potato")`,
+      `The "code" argument must be of type number. Received type string ('potato')`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,
@@ -1056,4 +1098,36 @@ it("process.memoryUsage.arrayBuffers", () => {
   const array = new ArrayBuffer(1024 * 1024 * 16);
   array.buffer;
   expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+});
+
+it("should handle user assigned `default` properties", async () => {
+  process.default = 1;
+  process.hello = 2;
+  const { promise, resolve } = Promise.withResolvers();
+  import("node:process").then(processModule => {
+    expect(processModule.default).toBe(process);
+    expect(processModule.default.default).toBe(1);
+    expect(processModule.hello).toBe(2);
+    expect(processModule.default.hello).toBe(2);
+    resolve();
+  });
+
+  await promise;
+});
+
+it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle exceptions without crashing", stream => {
+  expect([
+    /* js */ `
+      const old = process;
+      process = null;
+      try {
+        old.${stream};
+      } catch {}
+      if (typeof old.${stream} !== "undefined") {
+        console.log("wrong");
+      }
+    `,
+    "",
+    1,
+  ]).toRunInlineFixture();
 });

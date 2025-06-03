@@ -17,7 +17,7 @@
 namespace Bake {
 
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = "bake://server-runtime.js"_s;
@@ -75,7 +75,7 @@ extern "C" JSC::EncodedJSValue BakeGetModuleNamespace(
   JSC::JSValue keyValue
 ) {
   JSC::JSString* key = JSC::jsCast<JSC::JSString*>(keyValue);
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   JSC::JSMap* map = JSC::jsCast<JSC::JSMap*>(
     global->moduleLoader()->getDirect(
       vm, JSC::Identifier::fromString(global->vm(), "registry"_s)
@@ -93,7 +93,7 @@ extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   JSC::JSGlobalObject* global,
   JSC::JSValue keyValue
 ) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   return JSC::JSValue::encode(jsCast<JSC::JSModuleNamespaceObject*>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
 }
 
@@ -104,7 +104,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   const unsigned char* key,
   size_t keyLength
 ) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
   const auto identifier = JSC::Identifier::fromString(vm, propertyString);
   const auto property = JSC::PropertyName(identifier);
@@ -112,7 +112,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
 }
 
 extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* global, BunString virtualPathName, BunString source) {
-  JSC::VM& vm = global->vm();
+  auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = virtualPathName.toWTFString();

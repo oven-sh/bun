@@ -1,46 +1,26 @@
 const std = @import("std");
 const logger = bun.logger;
 const js_lexer = bun.js_lexer;
-const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
-const options = @import("options.zig");
 const BabyList = @import("./baby_list.zig").BabyList;
-const fs = @import("fs.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
-const expect = std.testing.expect;
-const ImportKind = importRecord.ImportKind;
-const BindingNodeIndex = js_ast.BindingNodeIndex;
 
-const StmtNodeIndex = js_ast.StmtNodeIndex;
-const ExprNodeIndex = js_ast.ExprNodeIndex;
+const expect = std.testing.expect;
+
 const ExprNodeList = js_ast.ExprNodeList;
-const StmtNodeList = js_ast.StmtNodeList;
-const BindingNodeList = js_ast.BindingNodeList;
 const assert = bun.assert;
 
-const LocRef = js_ast.LocRef;
-const S = js_ast.S;
-const B = js_ast.B;
 const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
 pub const Expr = js_ast.Expr;
-const Binding = js_ast.Binding;
-const Symbol = js_ast.Symbol;
-const Level = js_ast.Op.Level;
-const Op = js_ast.Op;
-const Scope = js_ast.Scope;
-const locModuleScope = logger.Loc.Empty;
 const Indentation = js_printer.Options.Indentation;
 
 const LEXER_DEBUGGER_WORKAROUND = false;
@@ -87,7 +67,7 @@ const HashMapPool = struct {
 
 fn newExpr(t: anytype, loc: logger.Loc) Expr {
     const Type = @TypeOf(t);
-    if (comptime @typeInfo(Type) == .Pointer) {
+    if (comptime @typeInfo(Type) == .pointer) {
         @compileError("Unexpected pointer");
     }
 
@@ -250,13 +230,9 @@ fn JSONLikeParser_(
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
-                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
-                        HashMapPool.get(p.allocator)
-                    else {};
+                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys) HashMapPool.get(p.allocator);
 
-                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
-                        duplicates_node.data
-                    else {};
+                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys) duplicates_node.data;
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -537,7 +513,7 @@ pub fn toAST(
     const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
-        .Bool => {
+        .bool => {
             return Expr{
                 .data = .{ .e_boolean = .{
                     .value = value,
@@ -545,7 +521,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Int => {
+        .int => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -555,7 +531,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Float => {
+        .float => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -565,9 +541,9 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
+                .array => {
                     const Slice = []const std.meta.Elem(ptr_info.child);
                     return try toAST(allocator, Slice, value.*);
                 },
@@ -575,7 +551,7 @@ pub fn toAST(
                     return try toAST(allocator, @TypeOf(value.*), value.*);
                 },
             },
-            .Slice => {
+            .slice => {
                 if (ptr_info.child == u8) {
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
@@ -587,7 +563,7 @@ pub fn toAST(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Array => |Array| {
+        .array => |Array| {
             if (Array.child == u8) {
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
@@ -597,7 +573,7 @@ pub fn toAST(
 
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
-        .Struct => |Struct| {
+        .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
@@ -618,25 +594,25 @@ pub fn toAST(
                 logger.Loc.Empty,
             );
         },
-        .Null => {
+        .null => {
             return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
         },
-        .Optional => {
+        .optional => {
             if (value) |_value| {
                 return try toAST(allocator, @TypeOf(_value), _value);
             } else {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             }
         },
-        .Enum => {
+        .@"enum" => {
             _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
-        .Union => |Union| {
+        .error_set => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
+        .@"union" => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
@@ -654,7 +630,7 @@ pub fn toAST(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,
-                                            .default_value = undefined,
+                                            .default_value_ptr = undefined,
                                             .alignment = @alignOf(
                                                 @TypeOf(
                                                     @field(value, u_field.name),
@@ -1012,11 +988,7 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
 const js_printer = bun.js_printer;
-const renamer = @import("renamer.zig");
-const SymbolList = [][]Symbol;
 
-const Transpiler = bun.Transpiler;
-const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);
@@ -1040,9 +1012,11 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
-    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{});
+    const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source, .{
+        .mangled_props = null,
+    });
     var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];
 
     if (js.len > 1) {

@@ -1,14 +1,8 @@
 const std = @import("std");
-const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Percentage = css.css_values.percentage.Percentage;
 
@@ -284,6 +278,10 @@ pub fn PositionComponent(comptime S: type) type {
             pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
                 return css.implementDeepClone(@This(), this, allocator);
             }
+
+            pub fn eql(this: *const @This(), other: *const @This()) bool {
+                return css.implementEql(@This(), this, other);
+            }
         },
 
         const This = @This();
@@ -298,20 +296,7 @@ pub fn PositionComponent(comptime S: type) type {
         }
 
         pub fn eql(this: *const This, other: *const This) bool {
-            return switch (this.*) {
-                .center => switch (other.*) {
-                    .center => true,
-                    else => false,
-                },
-                .length => |*a| switch (other.*) {
-                    .length => a.eql(&other.length),
-                    else => false,
-                },
-                .side => |*a| switch (other.*) {
-                    .side => a.side.eql(&other.side.side) and css.generic.eql(?LengthPercentage, &a.offset, &other.side.offset),
-                    else => false,
-                },
-            };
+            return css.implementEql(@This(), this, other);
         }
 
         pub fn parse(input: *css.Parser) Result(This) {

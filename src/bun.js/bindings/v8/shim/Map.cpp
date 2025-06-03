@@ -23,11 +23,33 @@ namespace v8 {
 namespace shim {
 
 // TODO give these more appropriate instance types
-const Map Map::map_map(InstanceType::Object);
-const Map Map::object_map(InstanceType::Object);
-const Map Map::oddball_map(InstanceType::Oddball);
-const Map Map::string_map(InstanceType::String);
-const Map Map::heap_number_map(InstanceType::HeapNumber);
+
+// Prevent static initialization on startup
+const Map& Map::map_map()
+{
+    static const Map map = Map(MapMapTag::MapMap);
+    return map;
+}
+const Map& Map::object_map()
+{
+    static const Map map = Map(InstanceType::Object);
+    return map;
+}
+const Map& Map::oddball_map()
+{
+    static const Map map = Map(InstanceType::Oddball);
+    return map;
+}
+const Map& Map::string_map()
+{
+    static const Map map = Map(InstanceType::String);
+    return map;
+}
+const Map& Map::heap_number_map()
+{
+    static const Map map = Map(InstanceType::HeapNumber);
+    return map;
+}
 
 } // namespace shim
 } // namespace v8

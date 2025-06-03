@@ -17,7 +17,7 @@ async function tempDirToBuildIn() {
   console.log("Temp dir: " + dir);
   const copy = [
     ".eslintrc.json",
-    "bun.lockb",
+    "bun.lock",
     "next.config.js",
     "package.json",
     "postcss.config.js",
@@ -47,7 +47,14 @@ async function tempDirToBuildIn() {
 
 async function hashFile(file: string, path: string, hashes: Record<string, string>) {
   try {
-    const contents = await fs.readFile(path);
+    let contents = (await fs.readFile(path)).toString();
+
+    const nums = contents.match(/,e.ids=\[(\d+)\,(\d+)\,(\d+)\],/);
+    if (nums) {
+      nums.sort((a, b) => parseInt(a) - parseInt(b));
+      contents.replace(/,e.ids=\[(\d+)\,(\d+)\,(\d+)\],/, `,e.ids=[${nums}],`);
+    }
+
     hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
   } catch (error) {
     console.error("error", error, "in", path);
@@ -174,7 +181,6 @@ test(
       "required-server-files.json",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
-      "prerender-manifest.js",
       // these are similar but i feel like there might be something we can fix to make them the same
       "next-minimal-server.js.nft.json",
       "next-server.js.nft.json",

@@ -1,10 +1,8 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const Blob = JSC.WebCore.Blob;
 const PathOrBlob = JSC.Node.PathOrBlob;
-const ZigString = JSC.ZigString;
-const Method = bun.http.Method;
 const S3File = @import("./S3File.zig");
 const S3Credentials = bun.S3.S3Credentials;
 
@@ -17,7 +15,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         formatter.indent += 1;
         defer formatter.indent -|= 1;
 
-        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
+        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else (if (credentials.virtual_hosted_style) "https://<bucket>.s3.<region>.amazonaws.com" else "https://s3.<region>.amazonaws.com");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
@@ -88,37 +86,44 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
 
 pub const S3Client = struct {
     const log = bun.Output.scoped(.S3Client, false);
-    pub usingnamespace JSC.Codegen.JSS3Client;
+    pub const js = JSC.Codegen.JSS3Client;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
     credentials: *S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
+    storage_class: ?bun.S3.StorageClass = null,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.arguments_old(1).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, globalThis);
+        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, globalThis);
         defer aws_options.deinit();
         return S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
             .options = aws_options.options,
             .acl = aws_options.acl,
+            .storage_class = aws_options.storage_class,
         });
     }
 
     pub fn writeFormat(this: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Client<r>", enable_ansi_colors));
-        if (this.credentials.bucket.len > 0) {
+        // detect virtual host style bucket name
+        const bucket_name = if (this.credentials.virtual_hosted_style and this.credentials.endpoint.len > 0) S3Credentials.guessBucket(this.credentials.endpoint) orelse this.credentials.bucket else this.credentials.bucket;
+        if (bucket_name.len > 0) {
             try writer.print(
                 comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
                 .{
-                    this.credentials.bucket,
+                    bucket_name,
                 },
             );
         } else {
-            try writer.writeAll(comptime bun.Output.prettyFmt(" {{", enable_ansi_colors));
+            try writer.writeAll(" {");
         }
 
         try writeFormatCredentials(this.credentials, this.options, this.acl, Formatter, formatter, writer, enable_ansi_colors);
@@ -128,104 +133,104 @@ pub const S3Client = struct {
     }
     pub fn file(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
-                return globalThis.ERR_MISSING_ARGS("Expected a path ", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "Expected a path ", .{}).throw();
             }
             return globalThis.throwInvalidArguments("Expected a path", .{});
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl));
+        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class));
         blob.allocator = bun.default_allocator;
         return blob.toJS(globalThis);
     }
 
     pub fn presign(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
-                return globalThis.ERR_MISSING_ARGS("Expected a path to presign", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "Expected a path to presign", .{}).throw();
             }
             return globalThis.throwInvalidArguments("Expected a path to presign", .{});
         };
         errdefer path.deinit();
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.getPresignUrlFrom(&blob, globalThis, options);
     }
 
     pub fn exists(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
-                return globalThis.ERR_MISSING_ARGS("Expected a path to check if it exists", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "Expected a path to check if it exists", .{}).throw();
             }
             return globalThis.throwInvalidArguments("Expected a path to check if it exists", .{});
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.exists(globalThis, &blob);
     }
 
     pub fn size(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
-                return globalThis.ERR_MISSING_ARGS("Expected a path to check the size of", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "Expected a path to check the size of", .{}).throw();
             }
             return globalThis.throwInvalidArguments("Expected a path to check the size of", .{});
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.size(globalThis, &blob);
     }
 
     pub fn stat(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
             if (args.len() == 0) {
-                return globalThis.ERR_MISSING_ARGS("Expected a path to check the stat of", .{}).throw();
+                return globalThis.ERR(.MISSING_ARGS, "Expected a path to check the stat of", .{}).throw();
             }
             return globalThis.throwInvalidArguments("Expected a path to check the stat of", .{});
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.stat(globalThis, &blob);
     }
 
     pub fn write(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(3).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to write to", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "Expected a path to write to", .{}).throw();
         };
         errdefer path.deinit();
         const data = args.nextEat() orelse {
-            return globalThis.ERR_MISSING_ARGS("Expected a Blob-y thing to write", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "Expected a Blob-y thing to write", .{}).throw();
         };
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
@@ -234,23 +239,35 @@ pub const S3Client = struct {
         });
     }
 
+    pub fn listObjects(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.argumentsAsArray(2);
+
+        const object_keys = args[0];
+        const options = args[1];
+
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null);
+
+        defer blob.detach();
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
+    }
+
     pub fn unlink(ptr: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
         const path: JSC.Node.PathLike = try JSC.Node.PathLike.fromJS(globalThis, &args) orelse {
-            return globalThis.ERR_MISSING_ARGS("Expected a path to unlink", .{}).throw();
+            return globalThis.ERR(.MISSING_ARGS, "Expected a path to unlink", .{}).throw();
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
     }
 
     pub fn deinit(this: *@This()) void {
         this.credentials.deref();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn finalize(
@@ -283,7 +300,7 @@ pub const S3Client = struct {
 
     pub fn staticFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(2).slice();
-        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+        var args = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
 
         const path = (try JSC.Node.PathLike.fromJS(globalThis, &args)) orelse {
@@ -294,5 +311,19 @@ pub const S3Client = struct {
     }
     pub fn staticStat(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         return S3File.stat(globalThis, callframe);
+    }
+
+    pub fn staticListObjects(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.argumentsAsArray(2);
+        const object_keys = args[0];
+        const options = args[1];
+
+        // get credentials from env
+        const existing_credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
+
+        var blob = try S3File.constructS3FileWithS3Credentials(globalThis, .{ .string = bun.PathString.empty }, options, existing_credentials);
+
+        defer blob.detach();
+        return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
     }
 };

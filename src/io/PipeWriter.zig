@@ -1,12 +1,13 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Async = bun.Async;
 const JSC = bun.JSC;
 const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
-
 const log = bun.Output.scoped(.PipeWriter, true);
 const FileType = @import("./pipes.zig").FileType;
+const OOM = bun.OOM;
+const Environment = bun.Environment;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -30,46 +31,45 @@ pub fn PosixPipeWriter(
     comptime onWrite: fn (*This, written: usize, status: WriteStatus) void,
     comptime registerPoll: ?fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
-    comptime onWritable: fn (*This) void,
+    comptime _: fn (*This) void,
     comptime getFileType: *const fn (*This) FileType,
 ) type {
-    _ = onWritable; // autofix
     return struct {
-        pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
-            return switch (getFileType(this)) {
-                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
+        fn tryWrite(this: *This, force_sync: bool, buf_: []const u8) WriteResult {
+            return switch (if (!force_sync) getFileType(this) else .file) {
+                inline else => |ft| return tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
             };
         }
 
-        fn _tryWriteWithWriteFn(this: *This, buf_: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
+        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
-            var buf = buf_;
 
-            while (buf.len > 0) {
-                switch (write_fn(fd, buf)) {
+            var offset: usize = 0;
+
+            while (offset < buf.len) {
+                switch (write_fn(fd, buf[offset..])) {
                     .err => |err| {
                         if (err.isRetry()) {
-                            return .{ .pending = buf_.len - buf.len };
+                            return .{ .pending = offset };
                         }
 
                         if (err.getErrno() == .PIPE) {
-                            return .{ .done = buf_.len - buf.len };
+                            return .{ .done = offset };
                         }
 
                         return .{ .err = err };
                     },
 
                     .result => |wrote| {
+                        offset += wrote;
                         if (wrote == 0) {
-                            return .{ .done = buf_.len - buf.len };
+                            return .{ .done = offset };
                         }
-
-                        buf = buf[wrote..];
                     },
                 }
             }
 
-            return .{ .wrote = buf_.len - buf.len };
+            return .{ .wrote = offset };
         }
 
         fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) {
@@ -82,7 +82,7 @@ pub fn PosixPipeWriter(
 
         fn writeToBlockingPipe(fd: bun.FileDescriptor, buf: []const u8) JSC.Maybe(usize) {
             if (comptime bun.Environment.isLinux) {
-                if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+                if (bun.linux.RWFFlagSupport.isMaybeSupported()) {
                     return bun.sys.writeNonblocking(fd, buf);
                 }
             }
@@ -138,60 +138,57 @@ pub fn PosixPipeWriter(
             }
         }
 
-        pub fn drainBufferedData(parent: *This, input_buffer: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
+        pub fn drainBufferedData(parent: *This, buf: []const u8, max_write_size: usize, received_hup: bool) WriteResult {
             _ = received_hup; // autofix
-            var buf = input_buffer;
-            buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
-            const original_buf = buf;
 
-            while (buf.len > 0) {
-                const attempt = _tryWrite(parent, buf);
+            const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
+
+            var drained: usize = 0;
+
+            while (drained < trimmed.len) {
+                const attempt = tryWrite(parent, parent.getForceSync(), trimmed[drained..]);
                 switch (attempt) {
                     .pending => |pending| {
-                        return .{ .pending = pending + (original_buf.len - buf.len) };
+                        drained += pending;
+                        return .{ .pending = drained };
                     },
                     .wrote => |amt| {
-                        buf = buf[amt..];
+                        drained += amt;
                     },
                     .err => |err| {
-                        const wrote = original_buf.len - buf.len;
-                        if (err.isRetry()) {
-                            return .{ .pending = wrote };
-                        }
-
-                        if (wrote > 0) {
+                        if (drained > 0) {
                             onError(parent, err);
-                            return .{ .wrote = wrote };
+                            return .{ .wrote = drained };
                         } else {
                             return .{ .err = err };
                         }
                     },
                     .done => |amt| {
-                        buf = buf[amt..];
-                        const wrote = original_buf.len - buf.len;
-
-                        return .{ .done = wrote };
+                        drained += amt;
+                        return .{ .done = drained };
                     },
                 }
             }
 
-            const wrote = original_buf.len - buf.len;
-            return .{ .wrote = wrote };
+            return .{ .wrote = drained };
         }
     };
 }
 
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
-pub fn PosixBufferedWriter(
-    comptime Parent: type,
-    comptime onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: *const fn (*Parent, bun.sys.Error) void,
-    comptime onClose: ?*const fn (*Parent) void,
-    comptime getBuffer: *const fn (*Parent) []const u8,
-    comptime onWritable: ?*const fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
+        const PosixWriter = @This();
+        const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: *const fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onClose: ?*const fn (*Parent) void = function_table.onClose;
+        const getBuffer: *const fn (*Parent) []const u8 = function_table.getBuffer;
+        const onWritable: ?*const fn (*Parent) void = function_table.onWritable;
+
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
         is_done: bool = false,
@@ -199,11 +196,13 @@ pub fn PosixBufferedWriter(
         closed_without_reporting: bool = false,
         close_fd: bool = true,
 
+        const internals = PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub const onPoll = internals.onPoll;
+        pub const drainBufferedData = internals.drainBufferedData;
+
         pub fn memoryCost(_: *const @This()) usize {
             return @sizeOf(@This());
         }
-
-        const PosixWriter = @This();
 
         pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
 
@@ -234,6 +233,10 @@ pub fn PosixBufferedWriter(
             onError(this.parent, err);
 
             this.close();
+        }
+
+        pub fn getForceSync(_: *const @This()) bool {
+            return false;
         }
 
         fn _onWrite(
@@ -274,8 +277,6 @@ pub fn PosixBufferedWriter(
             }
         }
 
-        pub const tryWrite = @This()._tryWrite;
-
         pub fn hasRef(this: *PosixWriter) bool {
             if (this.is_done) {
                 return false;
@@ -296,8 +297,6 @@ pub fn PosixBufferedWriter(
         fn getBufferInternal(this: *PosixWriter) []const u8 {
             return getBuffer(this.parent);
         }
-
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
 
         pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
@@ -378,27 +377,36 @@ pub fn PosixBufferedWriter(
     };
 }
 
-pub fn PosixStreamingWriter(
-    comptime Parent: type,
-    comptime onWrite: fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: fn (*Parent, bun.sys.Error) void,
-    comptime onReady: ?fn (*Parent) void,
-    comptime onClose: fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anytype) type {
     return struct {
-        // TODO: replace buffer + head for StreamBuffer
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onReady: ?fn (*Parent) void = function_table.onReady;
+        const onClose: fn (*Parent) void = function_table.onClose;
+
+        outgoing: StreamBuffer = .{},
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
-        head: usize = 0,
         is_done: bool = false,
         closed_without_reporting: bool = false,
+        force_sync: bool = false,
 
-        // TODO:
-        chunk_size: usize = 0,
+        const internals = PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub const onPoll = internals.onPoll;
+        pub const drainBufferedData = internals.drainBufferedData;
+
+        pub fn getForceSync(this: *const @This()) bool {
+            return this.force_sync;
+        }
+
+        // TODO: configurable?
+        const chunk_size: usize = std.heap.page_size_min;
 
         pub fn memoryCost(this: *const @This()) usize {
-            return @sizeOf(@This()) + this.buffer.capacity;
+            return @sizeOf(@This()) + this.outgoing.memoryCost();
         }
 
         pub fn getPoll(this: *@This()) ?*Async.FilePoll {
@@ -415,10 +423,18 @@ pub fn PosixStreamingWriter(
             return poll.fileType();
         }
 
+        pub fn hasPendingData(this: *const PosixWriter) bool {
+            return this.outgoing.isNotEmpty();
+        }
+
+        pub fn shouldBuffer(this: *const PosixWriter, addition: usize) bool {
+            return !this.force_sync and this.outgoing.size() + addition < chunk_size;
+        }
+
         const PosixWriter = @This();
 
-        pub fn getBuffer(this: *PosixWriter) []const u8 {
-            return this.buffer.items[this.head..];
+        pub fn getBuffer(this: *const PosixWriter) []const u8 {
+            return this.outgoing.slice();
         }
 
         fn _onError(
@@ -429,6 +445,7 @@ pub fn PosixStreamingWriter(
 
             this.closeWithoutReporting();
             this.is_done = true;
+            this.outgoing.reset();
 
             onError(@alignCast(@ptrCast(this.parent)), err);
             this.close();
@@ -439,22 +456,21 @@ pub fn PosixStreamingWriter(
             written: usize,
             status: WriteStatus,
         ) void {
-            this.head += written;
+            this.outgoing.wrote(written);
 
             if (status == .end_of_file and !this.is_done) {
                 this.closeWithoutReporting();
             }
 
-            if (this.buffer.items.len == this.head) {
-                if (this.buffer.capacity > 1024 * 1024 and status != .end_of_file) {
-                    this.buffer.clearAndFree();
-                } else {
-                    this.buffer.clearRetainingCapacity();
+            if (this.outgoing.isEmpty()) {
+                this.outgoing.cursor = 0;
+                if (status != .end_of_file) {
+                    this.outgoing.maybeShrink();
                 }
-                this.head = 0;
+                this.outgoing.list.clearRetainingCapacity();
             }
 
-            onWrite(@ptrCast(this.parent), written, status);
+            onWrite(this.parent, written, status);
         }
 
         pub fn setParent(this: *PosixWriter, parent: *Parent) void {
@@ -467,14 +483,11 @@ pub fn PosixStreamingWriter(
                 return;
             }
 
-            this.head = 0;
+            this.outgoing.reset();
+
             if (onReady) |cb| {
                 cb(@ptrCast(this.parent));
             }
-        }
-
-        pub fn hasPendingData(this: *const PosixWriter) bool {
-            return this.buffer.items.len > 0;
         }
 
         fn closeWithoutReporting(this: *PosixWriter) void {
@@ -487,7 +500,7 @@ pub fn PosixStreamingWriter(
 
         fn registerPoll(this: *PosixWriter) void {
             const poll = this.getPoll() orelse return;
-            switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, .dispatch, poll.fd)) {
+            switch (poll.registerWithFd(this.parent.loop(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                     this.close();
@@ -496,42 +509,20 @@ pub fn PosixStreamingWriter(
             }
         }
 
-        pub fn tryWrite(this: *PosixWriter, buf: []const u8) WriteResult {
-            if (this.is_done or this.closed_without_reporting) {
-                return .{ .done = 0 };
-            }
-
-            if (this.buffer.items.len > 0) {
-                this.buffer.appendSlice(buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-
-                return .{ .pending = 0 };
-            }
-
-            return @This()._tryWrite(this, buf);
-        }
-
         pub fn writeUTF16(this: *PosixWriter, buf: []const u16) WriteResult {
             if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+            const before_len = this.outgoing.size();
 
-                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
+            this.outgoing.writeUTF16(buf) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
 
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
+            const buf_len = this.outgoing.size() - before_len;
 
-            return this._tryWriteNewlyBufferedData();
+            return this.maybeWriteNewlyBufferedData(buf_len);
         }
 
         pub fn writeLatin1(this: *PosixWriter, buf: []const u8) WriteResult {
@@ -543,42 +534,62 @@ pub fn PosixStreamingWriter(
                 return this.write(buf);
             }
 
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+            const before_len = this.outgoing.size();
 
-                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
+            const check_ascii = false;
+            this.outgoing.writeLatin1(buf, check_ascii) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
 
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
+            const buf_len = this.outgoing.size() - before_len;
 
-            return this._tryWriteNewlyBufferedData();
+            return this.maybeWriteNewlyBufferedData(buf_len);
         }
 
-        fn _tryWriteNewlyBufferedData(this: *PosixWriter) WriteResult {
+        fn maybeWriteNewlyBufferedData(this: *PosixWriter, buf_len: usize) WriteResult {
             bun.assert(!this.is_done);
 
-            switch (@This()._tryWrite(this, this.buffer.items)) {
+            if (this.shouldBuffer(0)) {
+                onWrite(this.parent, buf_len, .drained);
+                registerPoll(this);
+
+                return .{ .wrote = buf_len };
+            }
+
+            return this.tryWriteNewlyBufferedData(this.outgoing.slice());
+        }
+
+        fn tryWriteNewlyBufferedData(this: *PosixWriter, buf: []const u8) WriteResult {
+            bun.assert(!this.is_done);
+
+            const rc = internals.tryWrite(this, this.force_sync, buf);
+
+            switch (rc) {
                 .wrote => |amt| {
-                    if (amt == this.buffer.items.len) {
-                        this.buffer.clearRetainingCapacity();
+                    if (amt == this.outgoing.size()) {
+                        this.outgoing.reset();
+                        onWrite(this.parent, amt, .drained);
                     } else {
-                        this.head = amt;
+                        this.outgoing.wrote(amt);
+                        onWrite(this.parent, amt, .pending);
+                        registerPoll(this);
+                        return .{ .pending = amt };
                     }
-                    return .{ .wrote = amt };
                 },
                 .done => |amt| {
-                    this.buffer.clearRetainingCapacity();
-
-                    return .{ .done = amt };
+                    this.outgoing.reset();
+                    onWrite(this.parent, amt, .end_of_file);
                 },
+                .pending => |amt| {
+                    this.outgoing.wrote(amt);
+                    onWrite(this.parent, amt, .pending);
+                    registerPoll(this);
+                },
+
                 else => |r| return r,
             }
+
+            return rc;
         }
 
         pub fn write(this: *PosixWriter, buf: []const u8) WriteResult {
@@ -586,39 +597,57 @@ pub fn PosixStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (this.buffer.items.len + buf.len < this.chunk_size) {
-                this.buffer.appendSlice(buf) catch {
+            if (this.shouldBuffer(buf.len)) {
+
+                // this is streaming, but we buffer the data below `chunk_size` to
+                // reduce the number of writes
+                this.outgoing.write(buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
 
-                return .{ .pending = 0 };
+                // noop, but need this to have a chance
+                // to register deferred tasks (onAutoFlush)
+                onWrite(this.parent, buf.len, .drained);
+                registerPoll(this);
+
+                // it's buffered, but should be reported as written to
+                // callers
+                return .{ .wrote = buf.len };
             }
 
-            const rc = @This()._tryWrite(this, buf);
-            this.head = 0;
+            if (this.outgoing.size() > 0) {
+                // make sure write is in-order
+                this.outgoing.write(buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+
+                return this.tryWriteNewlyBufferedData(this.outgoing.slice());
+            }
+
+            const rc = internals.tryWrite(this, this.force_sync, buf);
+
             switch (rc) {
                 .pending => |amt| {
-                    this.buffer.appendSlice(buf[amt..]) catch {
+                    this.outgoing.write(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
-
                     onWrite(this.parent, amt, .pending);
-
                     registerPoll(this);
                 },
                 .wrote => |amt| {
                     if (amt < buf.len) {
-                        this.buffer.appendSlice(buf[amt..]) catch {
+                        this.outgoing.write(buf[amt..]) catch {
                             return .{ .err = bun.sys.Error.oom };
                         };
                         onWrite(this.parent, amt, .pending);
+                        registerPoll(this);
                     } else {
-                        this.buffer.clearRetainingCapacity();
+                        this.outgoing.reset();
                         onWrite(this.parent, amt, .drained);
                     }
                 },
                 .done => |amt| {
-                    this.buffer.clearRetainingCapacity();
+                    this.outgoing.reset();
                     onWrite(this.parent, amt, .end_of_file);
                     return .{ .done = amt };
                 },
@@ -628,15 +657,14 @@ pub fn PosixStreamingWriter(
             return rc;
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
-
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {
                 return .{ .done = 0 };
             }
 
-            const buffer = this.buffer.items;
+            const buffer = this.getBuffer();
             if (buffer.len == 0) {
+                this.outgoing.reset();
                 return .{ .wrote = 0 };
             }
 
@@ -650,21 +678,26 @@ pub fn PosixStreamingWriter(
             // update head
             switch (rc) {
                 .pending => |written| {
-                    this.head += written;
+                    this.outgoing.wrote(written);
+                    if (this.outgoing.isEmpty()) {
+                        this.outgoing.reset();
+                    }
                 },
                 .wrote => |written| {
-                    this.head += written;
+                    this.outgoing.wrote(written);
+                    if (this.outgoing.isEmpty()) {
+                        this.outgoing.reset();
+                    }
                 },
-                .done => |written| {
-                    this.head += written;
+                else => {
+                    this.outgoing.reset();
                 },
-                else => {},
             }
             return rc;
         }
 
         pub fn deinit(this: *PosixWriter) void {
-            this.buffer.clearAndFree();
+            this.outgoing.deinit();
             this.closeWithoutReporting();
         }
 
@@ -706,11 +739,11 @@ pub fn PosixStreamingWriter(
             if (this.closed_without_reporting) {
                 this.closed_without_reporting = false;
                 bun.assert(this.getFd() == bun.invalid_fd);
-                onClose(@ptrCast(this.parent));
+                onClose(this.parent);
                 return;
             }
 
-            this.handle.close(@ptrCast(this.parent), onClose);
+            this.handle.close(this.parent, onClose);
         }
 
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, is_pollable: bool) JSC.Maybe(void) {
@@ -720,7 +753,7 @@ pub fn PosixStreamingWriter(
                 return JSC.Maybe(void){ .result = {} };
             }
 
-            const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop();
+            const loop = this.parent.eventLoop();
             var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;
@@ -796,9 +829,11 @@ fn BaseWindowsPipeWriter(
                     .sync_file, .file => |file| {
                         // always cancel the current one
                         file.fs.cancel();
-                        // always use close_fs here because we can have a operation in progress
-                        file.close_fs.data = file;
-                        _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        if (this.owns_fd) {
+                            // always use close_fs here because we can have a operation in progress
+                            file.close_fs.data = file;
+                            _ = uv.uv_fs_close(uv.Loop.get(), &file.close_fs, file.file, onFileClose);
+                        }
                     },
                     .pipe => |pipe| {
                         pipe.data = pipe;
@@ -889,14 +924,10 @@ fn BaseWindowsPipeWriter(
     };
 }
 
-pub fn WindowsBufferedWriter(
-    comptime Parent: type,
-    comptime onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: *const fn (*Parent, bun.sys.Error) void,
-    comptime onClose: ?*const fn (*Parent) void,
-    comptime getBuffer: *const fn (*Parent) []const u8,
-    comptime onWritable: ?*const fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
         source: ?Source = null,
         owns_fd: bool = true,
@@ -907,9 +938,29 @@ pub fn WindowsBufferedWriter(
         write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
         pending_payload_size: usize = 0,
 
+        const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: *const fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onClose: ?*const fn (*Parent) void = function_table.onClose;
+        const getBuffer: *const fn (*Parent) []const u8 = function_table.getBuffer;
+        const onWritable: ?*const fn (*Parent) void = function_table.onWritable;
+
         const WindowsWriter = @This();
 
-        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+        const internals = BaseWindowsPipeWriter(WindowsWriter, Parent);
+        pub const getFd = internals.getFd;
+        pub const hasRef = internals.hasRef;
+        pub const enableKeepingProcessAlive = internals.enableKeepingProcessAlive;
+        pub const disableKeepingProcessAlive = internals.disableKeepingProcessAlive;
+        pub const close = internals.close;
+        pub const updateRef = internals.updateRef;
+        pub const setParent = internals.setParent;
+        pub const watch = internals.watch;
+        pub const startWithPipe = internals.startWithPipe;
+        pub const startSync = internals.startSync;
+        pub const startWithFile = internals.startWithFile;
+        pub const start = internals.start;
+        pub const setPipe = internals.setPipe;
+        pub const getStream = internals.getStream;
 
         fn onCloseSource(this: *WindowsWriter) void {
             if (onClose) |onCloseFn| {
@@ -1016,25 +1067,29 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
-                if (!this.owns_fd) return;
                 this.close();
             }
         }
     };
 }
 
-/// Basic std.ArrayList(u8) + u32 cursor wrapper
+/// Basic std.ArrayList(u8) + usize cursor wrapper
 pub const StreamBuffer = struct {
     list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    // should cursor be usize?
-    cursor: u32 = 0,
+    cursor: usize = 0,
 
     pub fn reset(this: *StreamBuffer) void {
         this.cursor = 0;
-        if (this.list.capacity > 32 * 1024) {
-            this.list.shrinkAndFree(std.mem.page_size);
-        }
+        this.maybeShrink();
         this.list.clearRetainingCapacity();
+    }
+
+    pub fn maybeShrink(this: *StreamBuffer) void {
+        if (this.list.capacity > std.heap.pageSize()) {
+            // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
+            this.list.expandToCapacity();
+            this.list.shrinkAndFree(std.heap.pageSize());
+        }
     }
 
     pub fn memoryCost(this: *const StreamBuffer) usize {
@@ -1053,8 +1108,12 @@ pub const StreamBuffer = struct {
         return this.size() > 0;
     }
 
-    pub fn write(this: *StreamBuffer, buffer: []const u8) !void {
+    pub fn write(this: *StreamBuffer, buffer: []const u8) OOM!void {
         _ = try this.list.appendSlice(buffer);
+    }
+
+    pub fn wrote(this: *StreamBuffer, amount: usize) void {
+        this.cursor += amount;
     }
 
     pub fn writeAssumeCapacity(this: *StreamBuffer, buffer: []const u8) void {
@@ -1063,14 +1122,14 @@ pub const StreamBuffer = struct {
         byte_list.appendSliceAssumeCapacity(buffer);
     }
 
-    pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) !void {
+    pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) OOM!void {
         var byte_list = bun.ByteList.fromList(this.list);
         defer this.list = byte_list.listManaged(this.list.allocator);
 
         _ = try byte_list.ensureUnusedCapacity(this.list.allocator, capacity);
     }
 
-    pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) !void {
+    pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) OOM!void {
         _ = try this.write(std.mem.asBytes(data));
     }
 
@@ -1080,7 +1139,7 @@ pub const StreamBuffer = struct {
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
-    pub fn writeOrFallback(this: *StreamBuffer, buffer: anytype, comptime writeFn: anytype) ![]const u8 {
+    pub fn writeOrFallback(this: *StreamBuffer, buffer: anytype, comptime writeFn: anytype) OOM![]const u8 {
         if (comptime @TypeOf(writeFn) == @TypeOf(&writeLatin1) and writeFn == &writeLatin1) {
             if (bun.strings.isAllASCII(buffer)) {
                 return buffer;
@@ -1109,9 +1168,11 @@ pub const StreamBuffer = struct {
         }
     }
 
-    pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8) !void {
-        if (bun.strings.isAllASCII(buffer)) {
-            return this.write(buffer);
+    pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8, comptime check_ascii: bool) OOM!void {
+        if (comptime check_ascii) {
+            if (bun.strings.isAllASCII(buffer)) {
+                return this.write(buffer);
+            }
         }
 
         var byte_list = bun.ByteList.fromList(this.list);
@@ -1120,14 +1181,14 @@ pub const StreamBuffer = struct {
         _ = try byte_list.writeLatin1(this.list.allocator, buffer);
     }
 
-    pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) !void {
+    pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) OOM!void {
         var byte_list = bun.ByteList.fromList(this.list);
         defer this.list = byte_list.listManaged(this.list.allocator);
 
         _ = try byte_list.writeUTF16(this.list.allocator, buffer);
     }
 
-    pub fn slice(this: *StreamBuffer) []const u8 {
+    pub fn slice(this: *const StreamBuffer) []const u8 {
         return this.list.items[this.cursor..];
     }
 
@@ -1139,15 +1200,18 @@ pub const StreamBuffer = struct {
     }
 };
 
-pub fn WindowsStreamingWriter(
-    comptime Parent: type,
-    /// reports the amount written and done means that we dont have any other pending data to send (but we may send more data)
-    comptime onWrite: fn (*Parent, amount: usize, status: WriteStatus) void,
-    comptime onError: fn (*Parent, bun.sys.Error) void,
-    comptime onWritable: ?fn (*Parent) void,
-    comptime onClose: fn (*Parent) void,
-) type {
+/// See below for the expected signature of `function_table`. In many cases, the
+/// function table can be the same as `Parent`. `anytype` is used because of a
+/// dependency loop in Zig.
+pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) type {
     return struct {
+        /// reports the amount written and done means that we dont have any
+        /// other pending data to send (but we may send more data)
+        const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
+        const onError: fn (*Parent, bun.sys.Error) void = function_table.onError;
+        const onWritable: ?fn (*Parent) void = function_table.onWritable;
+        const onClose: fn (*Parent) void = function_table.onClose;
+
         source: ?Source = null,
         /// if the source of this writer is a file descriptor, calling end() will not close it.
         /// if it is a path, then we claim ownership and the backing fd will be closed by end().
@@ -1167,7 +1231,21 @@ pub fn WindowsStreamingWriter(
         // some error happed? we will not report onClose only onError
         closed_without_reporting: bool = false,
 
-        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+        const internals = BaseWindowsPipeWriter(WindowsWriter, Parent);
+        pub const getFd = internals.getFd;
+        pub const hasRef = internals.hasRef;
+        pub const enableKeepingProcessAlive = internals.enableKeepingProcessAlive;
+        pub const disableKeepingProcessAlive = internals.disableKeepingProcessAlive;
+        pub const close = internals.close;
+        pub const updateRef = internals.updateRef;
+        pub const setParent = internals.setParent;
+        pub const watch = internals.watch;
+        pub const startWithPipe = internals.startWithPipe;
+        pub const startSync = internals.startSync;
+        pub const startWithFile = internals.startWithFile;
+        pub const start = internals.start;
+        pub const setPipe = internals.setPipe;
+        pub const getStream = internals.getStream;
 
         pub fn memoryCost(this: *const WindowsWriter) usize {
             return @sizeOf(@This()) + this.current_payload.memoryCost() + this.outgoing.memoryCost();
@@ -1273,7 +1351,7 @@ pub fn WindowsStreamingWriter(
             }
 
             var pipe = this.source orelse {
-                const err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe);
+                const err = bun.sys.Error.fromCode(bun.sys.E.PIPE, .pipe);
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
                 this.closeWithoutReporting();
@@ -1342,10 +1420,10 @@ pub fn WindowsStreamingWriter(
                     return .{ .err = bun.sys.Error.oom };
                 };
                 const initial_len = remain.len;
-                const fd = bun.toFD(this.source.?.sync_file.file);
+                const fd: bun.FD = .fromUV(this.source.?.sync_file.file);
 
                 while (remain.len > 0) {
-                    switch (bun.sys.write(fd, remain)) {
+                    switch (fd.write(remain)) {
                         .err => |err| {
                             return .{ .err = err };
                         },
@@ -1366,7 +1444,10 @@ pub fn WindowsStreamingWriter(
             }
 
             const had_buffered_data = this.outgoing.isNotEmpty();
-            writeFn(&this.outgoing, buffer) catch {
+            (if (comptime @TypeOf(writeFn) == @TypeOf(&StreamBuffer.writeLatin1) and writeFn == &StreamBuffer.writeLatin1)
+                writeFn(&this.outgoing, buffer, true)
+            else
+                writeFn(&this.outgoing, buffer)) catch {
                 return .{ .err = bun.sys.Error.oom };
             };
             if (had_buffered_data) {

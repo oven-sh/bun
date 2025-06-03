@@ -1,13 +1,12 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const postgres = bun.JSC.Postgres;
+const bun = @import("bun");
+const postgres = bun.api.Postgres;
 const Data = postgres.Data;
 const protocol = @This();
 const PostgresInt32 = postgres.PostgresInt32;
 const PostgresShort = postgres.PostgresShort;
 const String = bun.String;
 const debug = postgres.debug;
-const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const short = postgres.short;
@@ -799,19 +798,19 @@ pub const ErrorResponse = struct {
             .{ "column", column, void },
             .{ "constraint", constraint, void },
             .{ "datatype", datatype, void },
-            .{ "errno", code, i32 },
+            // in the past this was set to i32 but postgres returns a strings lets keep it compatible
+            .{ "errno", code, void },
             .{ "position", position, i32 },
             .{ "schema", schema, void },
             .{ "table", table, void },
             .{ "where", where, void },
         };
-
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-            if (code.toInt32() orelse 0 == 42601)
-            JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
-        else
-            JSC.Error.ERR_POSTGRES_SERVER_ERROR;
+            if (code.eqlComptime("42601"))
+                .POSTGRES_SYNTAX_ERROR
+            else
+                .POSTGRES_SERVER_ERROR;
         const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
 
         inline for (possible_fields) |field| {
@@ -923,19 +922,6 @@ pub const ReadyForQuery = struct {
     pub const decode = decoderWrap(ReadyForQuery, decodeInternal).decode;
 };
 
-pub const FormatCode = enum {
-    text,
-    binary,
-
-    pub fn from(value: short) !FormatCode {
-        return switch (value) {
-            0 => .text,
-            1 => .binary,
-            else => error.UnknownFormatCode,
-        };
-    }
-};
-
 pub const null_int4 = 4294967295;
 
 pub const DataRow = struct {
@@ -948,7 +934,10 @@ pub const DataRow = struct {
         for (0..remaining_fields) |index| {
             const byte_length = try reader.int4();
             switch (byte_length) {
-                0 => break,
+                0 => {
+                    var empty = Data.Empty;
+                    if (!try forEach(context, @intCast(index), &empty)) break;
+                },
                 null_int4 => {
                     if (!try forEach(context, @intCast(index), null)) break;
                 },
@@ -1007,7 +996,7 @@ pub const FieldDescription = struct {
     table_oid: int4 = 0,
     column_index: short = 0,
     type_oid: int4 = 0,
-
+    binary: bool = false,
     pub fn typeTag(this: @This()) types.Tag {
         return @enumFromInt(@as(short, @truncate(this.type_oid)));
     }
@@ -1021,25 +1010,39 @@ pub const FieldDescription = struct {
         errdefer {
             name.deinit();
         }
-        // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
-        // Int16
-        // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
-        // Int32
-        // The object ID of the field's data type.
-        // Int16
-        // The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
-        // Int32
-        // The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
-        // Int16
-        // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
-        this.* = .{
-            .table_oid = try reader.int4(),
-            .column_index = try reader.short(),
-            .type_oid = try reader.int4(),
-            .name_or_index = try ColumnIdentifier.init(name),
-        };
 
-        try reader.skip(2 + 4 + 2);
+        // Field name (null-terminated string)
+        const field_name = try ColumnIdentifier.init(name);
+        // Table OID (4 bytes)
+        // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
+        const table_oid = try reader.int4();
+
+        // Column attribute number (2 bytes)
+        // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
+        const column_index = try reader.short();
+
+        // Data type OID (4 bytes)
+        // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
+        const type_oid = try reader.int4();
+
+        // Data type size (2 bytes) The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+        // Type modifier (4 bytes) The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
+        try reader.skip(6);
+
+        // Format code (2 bytes)
+        // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
+        const binary = switch (try reader.short()) {
+            0 => false,
+            1 => true,
+            else => return error.UnknownFormatCode,
+        };
+        this.* = .{
+            .table_oid = table_oid,
+            .column_index = column_index,
+            .type_oid = type_oid,
+            .binary = binary,
+            .name_or_index = field_name,
+        };
     }
 
     pub const decode = decoderWrap(FieldDescription, decodeInternal).decode;
@@ -1252,6 +1255,14 @@ pub const Flush = [_]u8{'H'} ++ toBytes(Int32(4));
 pub const SSLRequest = toBytes(Int32(8)) ++ toBytes(Int32(80877103));
 pub const NoData = [_]u8{'n'} ++ toBytes(Int32(4));
 
+pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(Context)) !void {
+    const count: u32 = @sizeOf((u32)) + @as(u32, @intCast(query.len)) + 1;
+    const header = [_]u8{
+        'Q',
+    } ++ toBytes(Int32(count));
+    try writer.write(&header);
+    try writer.string(query);
+}
 pub const SASLInitialResponse = struct {
     mechanism: Data = .{ .empty = {} },
     data: Data = .{ .empty = {} },
@@ -1318,8 +1329,7 @@ pub const StartupMessage = struct {
         const user = this.user.slice();
         const database = this.database.slice();
         const options = this.options.slice();
-
-        const count: usize = @sizeOf((int4)) + @sizeOf((int4)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + zFieldCount("", options) + 1;
+        const count: usize = @sizeOf((int4)) + @sizeOf((int4)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + options.len + 1;
 
         const header = toBytes(Int32(@as(u32, @truncate(count))));
         try writer.write(&header);
@@ -1337,13 +1347,11 @@ pub const StartupMessage = struct {
         } else {
             try writer.string(database);
         }
-
         try writer.string("client_encoding");
         try writer.string("UTF8");
-
-        if (options.len > 0)
-            try writer.string(options);
-
+        if (options.len > 0) {
+            try writer.write(options);
+        }
         try writer.write(&[_]u8{0});
     }
 
@@ -1402,30 +1410,6 @@ pub const Describe = struct {
         });
         try writer.string(message);
         try length.write();
-    }
-
-    pub const write = writeWrap(@This(), writeInternal).write;
-};
-
-pub const Query = struct {
-    message: Data = .{ .empty = {} },
-
-    pub fn deinit(this: *@This()) void {
-        this.message.deinit();
-    }
-
-    pub fn writeInternal(
-        this: *const @This(),
-        comptime Context: type,
-        writer: NewWriter(Context),
-    ) !void {
-        const message = this.message.slice();
-        const count: u32 = @sizeOf((u32)) + message.len + 1;
-        const header = [_]u8{
-            'Q',
-        } ++ toBytes(Int32(count));
-        try writer.write(&header);
-        try writer.string(message);
     }
 
     pub const write = writeWrap(@This(), writeInternal).write;

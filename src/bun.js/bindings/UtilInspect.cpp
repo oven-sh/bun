@@ -37,8 +37,8 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
-    JSC__JSValue encodedFunctionValue,
-    JSC__JSValue encodedThisValue,
+    JSC::EncodedJSValue encodedFunctionValue,
+    JSC::EncodedJSValue encodedThisValue,
     unsigned depth,
     unsigned max_depth,
     bool colors,
@@ -46,7 +46,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
 {
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);
@@ -59,7 +59,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     arguments.append(inspectFn);
 
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
-    if (auto exe = scope.exception()) {
+    if (scope.exception()) {
         *is_exception = true;
         return {};
     }

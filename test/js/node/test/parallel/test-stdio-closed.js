@@ -20,6 +20,7 @@ if (common.isWindows) {
   proc.on('exit', common.mustCall(function(exitCode) {
     assert.strictEqual(exitCode, 0);
   }));
+  proc.stderr.pipe(process.stderr);
   return;
 }
 

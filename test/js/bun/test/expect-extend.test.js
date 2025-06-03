@@ -354,3 +354,27 @@ it("should support asymmetric matchers", () => {
   expect({ a: "test" }).not._toCustomEqual({ a: expect.any(Number) });
   expect(() => expect(1).not._toCustomEqual(expect.any(Number))).toThrow();
 });
+
+it("works on prototypes", () => {
+  const Bar = {
+    _toBeBar() {
+      return { pass: true };
+    },
+  };
+  const Foo = Object.create(Bar);
+
+  expect.extend(Foo);
+  expect(123)._toBeBar();
+});
+
+it("works on classes", () => {
+  class Bar {
+    _toBeBar() {
+      return { pass: true };
+    }
+  }
+  class Foo extends Bar {}
+
+  expect.extend(new Foo());
+  expect(123)._toBeBar();
+});

@@ -29,7 +29,7 @@ public:
     using Base = JSDOMObject;
     static JSTextDecoderStream* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSTextDecoderStream* ptr = new (NotNull, JSC::allocateCell<JSTextDecoderStream>(vm)) JSTextDecoderStream(structure, *globalObject);
         ptr->finishCreation(vm);
         return ptr;

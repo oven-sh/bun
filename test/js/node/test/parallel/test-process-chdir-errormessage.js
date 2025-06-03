@@ -12,7 +12,7 @@ assert.throws(
   {
     name: 'Error',
     code: 'ENOENT',
-    // message: /ENOENT: No such file or directory, chdir .+ -> 'does-not-exist'/,
+    message: /ENOENT: no such file or directory, chdir .+ -> 'does-not-exist'/,
     path: process.cwd(),
     syscall: 'chdir',
     dest: 'does-not-exist'

@@ -22,7 +22,7 @@ namespace uWS {
             //webSocketContext = WebSocketContext<0, false, int>::create();
         }
 
-        ClientApp &&connect(std::string url, std::string protocol = "") {
+        ClientApp &&connect(std::string_view url, std::string_view protocol = "") {
 
             return std::move(*this);
         }

@@ -38,15 +38,22 @@ public:
 
 extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
+    ASSERT(object);
+    ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
+    if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
+        object->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
 #if OS(WINDOWS)
-    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
+    if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
         auto* zigGlobal = defaultGlobalObject(globalObject);
         if (zigGlobal->m_processEnvObject.isInitialized()) {
@@ -75,7 +82,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
         if (only_non_index_properties) {
             object->getOwnNonIndexPropertyNames(globalObject, array, DontEnumPropertiesMode::Exclude);
         } else {
-            object->getOwnPropertyNames(object, globalObject, array, DontEnumPropertiesMode::Exclude);
+            object->methodTable()->getOwnPropertyNames(object, globalObject, array, DontEnumPropertiesMode::Exclude);
         }
     } else {
         object->getPropertyNames(globalObject, array, DontEnumPropertiesMode::Exclude);
@@ -88,36 +95,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     }
 
     return JSPropertyIterator::create(vm, array.releaseData());
-}
-
-// The only non-own property that we sometimes want to get is the code property.
-extern "C" EncodedJSValue Bun__JSPropertyIterator__getCodeProperty(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
-{
-    if (UNLIKELY(!iter)) {
-        return {};
-    }
-
-    auto& vm = iter->vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
-        return {};
-    }
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    if (!object->getNonIndexPropertySlot(globalObject, builtinNames.codePublicName(), slot)) {
-        return {};
-    }
-
-    if (slot.isAccessor() || slot.isCustom()) {
-        return {};
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(slot.getPureResult());
 }
 
 extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
@@ -154,14 +131,16 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
     const auto& prop = iter->properties->propertyNameVector()[i];
-    if (UNLIKELY(iter->isSpecialProxy)) {
+    if (iter->isSpecialProxy) [[unlikely]] {
         return getOwnProxyObject(iter, object, prop, propertyName);
     }
 
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (!object->getOwnPropertySlot(object, globalObject, prop, slot)) {
+    // This has to be get because we may need to call on prototypes
+    // If we meant for this to only run for own keys, the property name would not be included in the array.
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    if (!object->getPropertySlot(globalObject, prop, slot)) {
         return {};
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -176,7 +155,7 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
     const auto& prop = iter->properties->propertyNameVector()[i];
-    if (UNLIKELY(iter->isSpecialProxy)) {
+    if (iter->isSpecialProxy) [[unlikely]] {
         return getOwnProxyObject(iter, object, prop, propertyName);
     }
     auto& vm = iter->vm;

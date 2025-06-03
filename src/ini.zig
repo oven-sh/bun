@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const E = bun.JSAst.E;
 const Expr = bun.JSAst.Expr;
@@ -509,12 +509,9 @@ pub const Parser = struct {
 pub const IniTestingAPIs = struct {
     const JSC = bun.JSC;
 
-    pub fn loadNpmrcFromJS(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn loadNpmrcFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arg = callframe.argument(0);
-        const npmrc_contents = arg.toBunString(globalThis);
+        const npmrc_contents = try arg.toBunString(globalThis);
         defer npmrc_contents.deref();
         const npmrc_utf8 = npmrc_contents.toUTF8(bun.default_allocator);
         defer npmrc_utf8.deinit();
@@ -530,10 +527,11 @@ pub const IniTestingAPIs = struct {
         const envjs = callframe.argument(1);
         const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().transpiler.env else brk: {
             var envmap = bun.DotEnv.Map.HashTable.init(allocator);
+            const envobj = envjs.getObject() orelse return globalThis.throwTypeError("env must be an object", .{});
             var object_iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
-            }).init(globalThis, envjs);
+            }).init(globalThis, envobj);
             defer object_iter.deinit();
 
             try envmap.ensureTotalCapacity(object_iter.len);
@@ -543,7 +541,7 @@ pub const IniTestingAPIs = struct {
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
-                const value_str = value.getZigString(globalThis);
+                const value_str = try value.getZigString(globalThis);
                 const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{
@@ -593,12 +591,12 @@ pub const IniTestingAPIs = struct {
             default_registry_password.deref();
         }
 
-        return JSC.JSObject.create(.{
+        return (try JSC.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
-        }, globalThis).toJS();
+        }, globalThis)).toJS();
     }
 
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -606,7 +604,7 @@ pub const IniTestingAPIs = struct {
         const arguments = arguments_.slice();
 
         const jsstr = arguments[0];
-        const bunstr = jsstr.toBunString(globalThis);
+        const bunstr = try jsstr.toBunString(globalThis);
         defer bunstr.deref();
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();
@@ -877,7 +875,7 @@ pub fn loadNpmrcConfig(
     }
 
     for (npmrc_paths) |npmrc_path| {
-        const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        const source = bun.sys.File.toSource(npmrc_path, allocator, .{ .convert_bom = true }).unwrap() catch |err| {
             if (auto_loaded) continue;
             Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
             Global.crash();
@@ -1033,6 +1031,12 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("ignore-scripts")) |ignore_scripts| {
+        if (ignore_scripts.isBoolean()) {
+            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes
@@ -1168,6 +1172,7 @@ pub fn loadNpmrc(
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                // Apply config to default registry
                 const v: *bun.Schema.Api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
                     install.default_registry = bun.Schema.Api.NpmRegistry{
@@ -1194,7 +1199,6 @@ pub fn loadNpmrc(
                     },
                     .email, .certfile, .keyfile => unreachable,
                 }
-                continue;
             }
 
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
@@ -1206,6 +1210,7 @@ pub fn loadNpmrc(
                             continue;
                         }
                     }
+                    // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
                             if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;

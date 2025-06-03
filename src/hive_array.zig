@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const mem = std.mem;
 const testing = std.testing;
@@ -10,17 +10,31 @@ const testing = std.testing;
 pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
     return struct {
         const Self = @This();
-        buffer: [capacity]T = undefined,
-        available: bun.bit_set.IntegerBitSet(capacity) = bun.bit_set.IntegerBitSet(capacity).initFull(),
+
+        buffer: [capacity]T,
+        used: bun.bit_set.IntegerBitSet(capacity),
+
         pub const size = capacity;
 
+        /// This is deliberately a `var` instead of a `const`.
+        ///
+        /// https://github.com/ziglang/zig/issues/22462
+        /// https://github.com/ziglang/zig/issues/21988
+        pub var empty: Self = .{
+            .buffer = undefined,
+            .used = .initEmpty(),
+        };
+
         pub fn init() Self {
-            return .{};
+            return .{
+                .buffer = undefined,
+                .used = .initEmpty(),
+            };
         }
 
         pub fn get(self: *Self) ?*T {
-            const index = self.available.findFirstSet() orelse return null;
-            self.available.unset(index);
+            const index = self.used.findFirstUnset() orelse return null;
+            self.used.set(index);
             return &self.buffer[index];
         }
 
@@ -31,8 +45,8 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
         pub fn claim(self: *Self, index: u16) void {
             assert(index < capacity);
-            assert(self.available.isSet(index));
-            self.available.unset(index);
+            assert(!self.used.isSet(index));
+            self.used.set(index);
         }
 
         pub fn indexOf(self: *const Self, value: *const T) ?u32 {
@@ -57,17 +71,17 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
         pub fn put(self: *Self, value: *T) bool {
             const index = self.indexOf(value) orelse return false;
 
-            assert(!self.available.isSet(index));
+            assert(self.used.isSet(index));
             assert(&self.buffer[index] == value);
 
             value.* = undefined;
 
-            self.available.set(index);
+            self.used.unset(index);
             return true;
         }
 
         pub const Fallback = struct {
-            hive: if (capacity > 0) HiveArray(T, capacity) else void,
+            hive: if (capacity > 0) Self else void,
             allocator: std.mem.Allocator,
 
             pub const This = @This();
@@ -75,7 +89,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             pub fn init(allocator: std.mem.Allocator) This {
                 return .{
                     .allocator = allocator,
-                    .hive = if (capacity > 0) HiveArray(T, capacity).init() else {},
+                    .hive = if (comptime capacity > 0) Self.empty,
                 };
             }
 
@@ -86,7 +100,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch unreachable;
+                return self.allocator.create(T) catch bun.outOfMemory();
             }
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
@@ -97,7 +111,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     }
                 }
 
-                return self.allocator.create(T) catch unreachable;
+                return self.allocator.create(T) catch bun.outOfMemory();
             }
 
             pub fn tryGet(self: *This) !*T {
@@ -150,7 +164,7 @@ test "HiveArray" {
         try testing.expect(a.in(&d) == false);
     }
 
-    a.available = @TypeOf(a.available).initFull();
+    a.used = @TypeOf(a.used).initEmpty();
     {
         for (0..size) |i| {
             const b = a.get().?;

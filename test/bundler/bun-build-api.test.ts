@@ -1,12 +1,13 @@
+import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
-import assert from "assert";
+import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
-  test("experimentalCss = true works", async () => {
-    const dir = tempDirWithFiles("bun-build-api-experimental-css", {
+  test("css works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-css", {
       "a.css": `
         @import "./b.css";
 
@@ -23,40 +24,12 @@ describe("Bun.build", () => {
 
     const build = await Bun.build({
       entrypoints: [join(dir, "a.css")],
-      experimentalCss: true,
       minify: true,
     });
 
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
-  });
-
-  test("experimentalCss = false works", async () => {
-    const dir = tempDirWithFiles("bun-build-api-experimental-css", {
-      "a.css": `
-        @import "./b.css";
-
-        .hi {
-          color: red;
-        }
-      `,
-      "b.css": `
-        .hello {
-          color: blue;
-        }
-      `,
-    });
-
-    const build = await Bun.build({
-      entrypoints: [join(dir, "a.css")],
-      outdir: join(dir, "out"),
-      minify: true,
-    });
-
-    expect(build.outputs).toHaveLength(2);
-    expect(build.outputs[0].kind).toBe("entry-point");
-    expect(await build.outputs[0].text()).not.toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
   test("bytecode works", async () => {
@@ -126,7 +99,7 @@ describe("Bun.build", () => {
         }
       `,
     });
-    const y = await Bun.build({
+    const y = await buildNoThrow({
       entrypoints: [join(dir, "src/file1.ts")],
       outdir: join(dir, "out"),
       sourcemap: "external",
@@ -163,7 +136,7 @@ describe("Bun.build", () => {
 
   test("returns errors properly", async () => {
     Bun.gc(true);
-    const build = await Bun.build({
+    const build = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
     });
     expect(build.outputs).toHaveLength(0);
@@ -176,12 +149,11 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("`throw: true` works", async () => {
+  test("errors are thrown", async () => {
     Bun.gc(true);
     try {
       await Bun.build({
         entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
-        throw: true,
       });
       expect.unreachable();
     } catch (e) {
@@ -260,6 +232,7 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
       outdir,
     });
+    console.log(await x.outputs[0].text());
     const [blob] = x.outputs;
     expect(blob).toBeTruthy();
     expect(blob.type).toBe("text/javascript;charset=utf-8");
@@ -404,7 +377,7 @@ describe("Bun.build", () => {
   // });
 
   test("errors are returned as an array", async () => {
-    const x = await Bun.build({
+    const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       outdir: tempDirWithFiles("errors-are-returned-as-an-array", {}),
     });
@@ -590,8 +563,6 @@ describe("Bun.build", () => {
 
     const build = await Bun.build({
       entrypoints: [join(fixture, "index.html")],
-      html: true,
-      experimentalCss: true,
       minify: {
         syntax: true,
       },
@@ -641,4 +612,23 @@ describe("Bun.build", () => {
     const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
     expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
   });
+});
+
+test("onEnd Plugin does not crash", async () => {
+  expect(
+    (async () => {
+      await Bun.build({
+        entrypoints: ["./build.js"],
+        plugins: [
+          {
+            name: "plugin",
+            setup(build) {
+              // @ts-expect-error
+              build.onEnd();
+            },
+          },
+        ],
+      });
+    })(),
+  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
 });

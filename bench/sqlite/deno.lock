@@ -1,0 +1,82 @@
+{
+  "version": "4",
+  "specifiers": {
+    "jsr:@denosaurs/plug@1": "1.0.6",
+    "jsr:@std/assert@0.217": "0.217.0",
+    "jsr:@std/assert@0.221": "0.221.0",
+    "jsr:@std/encoding@0.221": "0.221.0",
+    "jsr:@std/fmt@0.221": "0.221.0",
+    "jsr:@std/fs@0.221": "0.221.0",
+    "jsr:@std/path@0.217": "0.217.0",
+    "jsr:@std/path@0.221": "0.221.0"
+  },
+  "jsr": {
+    "@denosaurs/plug@1.0.6": {
+      "integrity": "6cf5b9daba7799837b9ffbe89f3450510f588fafef8115ddab1ff0be9cb7c1a7",
+      "dependencies": [
+        "jsr:@std/encoding",
+        "jsr:@std/fmt",
+        "jsr:@std/fs",
+        "jsr:@std/path@0.221"
+      ]
+    },
+    "@std/assert@0.217.0": {
+      "integrity": "c98e279362ca6982d5285c3b89517b757c1e3477ee9f14eb2fdf80a45aaa9642"
+    },
+    "@std/assert@0.221.0": {
+      "integrity": "a5f1aa6e7909dbea271754fd4ab3f4e687aeff4873b4cef9a320af813adb489a"
+    },
+    "@std/encoding@0.221.0": {
+      "integrity": "d1dd76ef0dc5d14088411e6dc1dede53bf8308c95d1537df1214c97137208e45"
+    },
+    "@std/fmt@0.221.0": {
+      "integrity": "379fed69bdd9731110f26b9085aeb740606b20428ce6af31ef6bd45ef8efa62a"
+    },
+    "@std/fs@0.221.0": {
+      "integrity": "028044450299de8ed5a716ade4e6d524399f035513b85913794f4e81f07da286",
+      "dependencies": [
+        "jsr:@std/assert@0.221",
+        "jsr:@std/path@0.221"
+      ]
+    },
+    "@std/path@0.217.0": {
+      "integrity": "1217cc25534bca9a2f672d7fe7c6f356e4027df400c0e85c0ef3e4343bc67d11",
+      "dependencies": [
+        "jsr:@std/assert@0.217"
+      ]
+    },
+    "@std/path@0.221.0": {
+      "integrity": "0a36f6b17314ef653a3a1649740cc8db51b25a133ecfe838f20b79a56ebe0095",
+      "dependencies": [
+        "jsr:@std/assert@0.221"
+      ]
+    }
+  },
+  "remote": {
+    "https://deno.land/x/sqlite3@0.11.1/deno.json": "77126f50d0efce1375173fae94d4df7f732cd25f05d8aa74f8ff801ef4d85caf",
+    "https://deno.land/x/sqlite3@0.11.1/deps.ts": "d2f23a4489d27ed7ba1f601b86a85ff488a87603e4be7a15f3ea15154fc288ec",
+    "https://deno.land/x/sqlite3@0.11.1/mod.ts": "3169f246c0eddd6ed82862758f4109f167b7ba5538236240fbb26a129f1bc16c",
+    "https://deno.land/x/sqlite3@0.11.1/src/blob.ts": "3681353b3c97bc43f9b02f8d1c3269c0dc4eb9cb5d3af16c7ce4d1e1ec7507c4",
+    "https://deno.land/x/sqlite3@0.11.1/src/constants.ts": "85fd27aa6e199093f25f5f437052e16fd0e0870b96ca9b24a98e04ddc8b7d006",
+    "https://deno.land/x/sqlite3@0.11.1/src/database.ts": "063281b9b4340c781ba611cb5fef7ab0fc885cb87ed4c8ec123fd772e0da5f8b",
+    "https://deno.land/x/sqlite3@0.11.1/src/ffi.ts": "6648dc15f10312df9d2fc8e6e2be230d82a552f28b8f77d03f32bbfba9198888",
+    "https://deno.land/x/sqlite3@0.11.1/src/statement.ts": "5fe86e1a0136a259c055a03988e74490d9d131c058b4c1a18385a6770cd47e2a",
+    "https://deno.land/x/sqlite3@0.11.1/src/util.ts": "c6604183d2ec5fb17fa0a018572ed5f2317b319dbd7bf48d88a5d06ff25b2cc3",
+    "https://deno.land/x/sqlite3@0.12.0/deno.json": "b03d6de05f953886662ea987212539af8456a91352684c84af2188520449d42a",
+    "https://deno.land/x/sqlite3@0.12.0/deps.ts": "d2f23a4489d27ed7ba1f601b86a85ff488a87603e4be7a15f3ea15154fc288ec",
+    "https://deno.land/x/sqlite3@0.12.0/mod.ts": "3169f246c0eddd6ed82862758f4109f167b7ba5538236240fbb26a129f1bc16c",
+    "https://deno.land/x/sqlite3@0.12.0/src/blob.ts": "330886fae9714e4a612786f44d8117d65f91e778cf3f40de59b34879fc7ca9ab",
+    "https://deno.land/x/sqlite3@0.12.0/src/constants.ts": "85fd27aa6e199093f25f5f437052e16fd0e0870b96ca9b24a98e04ddc8b7d006",
+    "https://deno.land/x/sqlite3@0.12.0/src/database.ts": "4d380d7f0e5a2cf74635a9fcd2b4e27373533f2816cde5357067e51fd22ad8d0",
+    "https://deno.land/x/sqlite3@0.12.0/src/ffi.ts": "795b598eeae4d12f182e7bcdab524b74b0f01d6deae7f4d8ce63f25c06a46154",
+    "https://deno.land/x/sqlite3@0.12.0/src/statement.ts": "e8ccde898aef47c7a2514953aca5359a44a285bc3dc0de5819d66f891f477be1",
+    "https://deno.land/x/sqlite3@0.12.0/src/util.ts": "c6604183d2ec5fb17fa0a018572ed5f2317b319dbd7bf48d88a5d06ff25b2cc3"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:better-sqlite3@8.5.0"
+      ]
+    }
+  }
+}

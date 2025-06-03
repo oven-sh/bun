@@ -1,6 +1,6 @@
 // most of this file is copy pasted from other files in misctools
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -35,7 +35,7 @@ fn spamMe(count: usize) void {
     while (i < count) : (i += 1) {
         waker.wake() catch unreachable;
     }
-    Output.prettyErrorln("[EVFILT_MACHPORT] Sent {any}", .{bun.fmt.fmtDuration(timer.read())});
+    Output.prettyErrorln("[EVFILT_MACHPORT] Sent {any}", .{std.fmt.fmtDuration(timer.read())});
 }
 const thread_count = 1;
 pub fn machMain(runs: usize) anyerror!void {
@@ -67,7 +67,7 @@ pub fn machMain(runs: usize) anyerror!void {
         elapsed += timer.read();
     }
 
-    Output.prettyErrorln("[EVFILT_MACHPORT] Recv {any}", .{bun.fmt.fmtDuration(elapsed)});
+    Output.prettyErrorln("[EVFILT_MACHPORT] Recv {any}", .{std.fmt.fmtDuration(elapsed)});
 }
 var user_waker: bun.Async.UserFilterWaker = undefined;
 
@@ -80,7 +80,7 @@ fn spamMeUserFilter(count: usize) void {
         user_waker.wake() catch unreachable;
     }
 
-    Output.prettyErrorln("[EVFILT_USER]     Sent {any}", .{bun.fmt.fmtDuration(timer.read())});
+    Output.prettyErrorln("[EVFILT_USER]     Sent {any}", .{std.fmt.fmtDuration(timer.read())});
 }
 pub fn userMain(runs: usize) anyerror!void {
     defer Output.flush();
@@ -111,7 +111,7 @@ pub fn userMain(runs: usize) anyerror!void {
         elapsed += timer.read();
     }
 
-    Output.prettyErrorln("[EVFILT_USER]     Recv {any}", .{bun.fmt.fmtDuration(elapsed)});
+    Output.prettyErrorln("[EVFILT_USER]     Recv {any}", .{std.fmt.fmtDuration(elapsed)});
     Output.flush();
 }
 

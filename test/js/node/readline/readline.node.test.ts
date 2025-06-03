@@ -306,15 +306,15 @@ describe("readline.cursorTo()", () => {
     // Verify that cursorTo() throws if x or y is NaN.
     assert.throws(() => {
       readline.cursorTo(writable, NaN);
-    }, "ERR_INVALID_ARG_VALUE");
+    }, /ERR_INVALID_ARG_VALUE/);
 
     assert.throws(() => {
       readline.cursorTo(writable, 1, NaN);
-    }, "ERR_INVALID_ARG_VALUE");
+    }, /ERR_INVALID_ARG_VALUE/);
 
     assert.throws(() => {
       readline.cursorTo(writable, NaN, NaN);
-    }, "ERR_INVALID_ARG_VALUE");
+    }, /ERR_INVALID_ARG_VALUE/);
   });
 });
 
@@ -483,7 +483,7 @@ describe("readline.Interface", () => {
   });
 
   it("should throw if historySize is not a positive number", () => {
-    ["not a number", -1, NaN, {}, true, Symbol(), null].forEach(historySize => {
+    ["not a number", {}, true, Symbol(), null].forEach(historySize => {
       assert.throws(
         () => {
           readline.createInterface({
@@ -492,10 +492,22 @@ describe("readline.Interface", () => {
           });
         },
         {
-          // TODO: Revert to Range error when properly implemented errors with multiple bases
-          // name: "RangeError",
           name: "TypeError",
-          code: "ERR_INVALID_ARG_VALUE",
+          code: "ERR_INVALID_ARG_TYPE",
+        },
+      );
+    });
+    [-1, NaN].forEach(historySize => {
+      assert.throws(
+        () => {
+          readline.createInterface({
+            input,
+            historySize,
+          });
+        },
+        {
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
         },
       );
     });

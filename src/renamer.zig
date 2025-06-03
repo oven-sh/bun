@@ -1,14 +1,11 @@
 const js_ast = bun.JSAst;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
 const RefCtx = @import("./ast/base.zig").RefCtx;
@@ -454,7 +451,7 @@ pub const StableSymbolCount = struct {
     }
 };
 
-const SlotAndCount = packed struct {
+const SlotAndCount = packed struct(u64) {
     slot: u32,
     count: u32,
 
@@ -547,7 +544,7 @@ pub const NumberRenamer = struct {
             .fixed_buffer_allocator = undefined,
         };
         renamer.name_temp_allocator = renamer.name_stack_fallback.get();
-        renamer.number_scope_pool = bun.HiveArray(NumberScope, 128).Fallback.init(renamer.arena.allocator());
+        renamer.number_scope_pool = .init(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
         if (comptime Environment.allow_assert and !Environment.isWindows) {
             if (std.posix.getenv("BUN_DUMP_SYMBOLS") != null)
@@ -597,7 +594,7 @@ pub const NumberRenamer = struct {
             std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
-                r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
+                r.assignName(s, Ref.init(@intCast(inner_index), source_index, false));
             }
         }
 

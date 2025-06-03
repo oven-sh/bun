@@ -36,7 +36,7 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 
 JSC::JSObject* createNoOpForTesting(JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, String("function"_s)), 0, functionNoop, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, String("callback"_s)), 0, functionCallback, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);

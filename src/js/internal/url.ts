@@ -1,5 +1,6 @@
 function urlToHttpOptions(url) {
   const options = {
+    ...url,
     protocol: url.protocol,
     hostname:
       typeof url.hostname === "string" && url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname,

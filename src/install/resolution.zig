@@ -1,16 +1,11 @@
-const PackageManager = @import("./install.zig").PackageManager;
-const Semver = @import("./semver.zig");
-const ExternalString = Semver.ExternalString;
+const Semver = bun.Semver;
 const String = Semver.String;
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
-const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
-const bun = @import("root").bun;
-const Path = bun.path;
-const JSON = bun.JSON;
+const bun = @import("bun");
 const OOM = bun.OOM;
 const Dependency = bun.install.Dependency;
 
@@ -20,9 +15,9 @@ pub const Resolution = extern struct {
     value: Value = .{ .uninitialized = {} },
 
     /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
-    pub inline fn init(value: anytype) Resolution {
+    pub inline fn init(value: bun.meta.Tagged(Value, Tag)) Resolution {
         return Resolution{
-            .tag = @field(Tag, @typeInfo(@TypeOf(value)).Struct.fields[0].name),
+            .tag = std.meta.activeTag(value),
             .value = Value.init(value),
         };
     }
@@ -96,6 +91,13 @@ pub const Resolution = extern struct {
             .workspace => error.UnexpectedResolution,
             .symlink => error.UnexpectedResolution,
             .folder => error.UnexpectedResolution,
+
+            // even though it's a dependency type, it's not
+            // possible for 'catalog:' to be written to the
+            // lockfile for any resolution because the install
+            // will fail it it's not successfully replaced by
+            // a version
+            .catalog => error.UnexpectedResolution,
 
             // should not happen
             .dist_tag => error.UnexpectedResolution,
@@ -330,27 +332,30 @@ pub const Resolution = extern struct {
 
         npm: VersionedURL,
 
+        folder: String,
+
         /// File path to a tarball relative to the package root
         local_tarball: String,
 
-        folder: String,
-
-        /// URL to a tarball.
-        remote_tarball: String,
-
-        git: Repository,
         github: Repository,
 
-        workspace: String,
+        git: Repository,
 
         /// global link
         symlink: String,
 
+        workspace: String,
+
+        /// URL to a tarball.
+        remote_tarball: String,
+
         single_file_module: String,
 
         /// To avoid undefined memory between union values, we must zero initialize the union first.
-        pub fn init(field: anytype) Value {
-            return bun.serializableInto(Value, field);
+        pub fn init(field: bun.meta.Tagged(Value, Tag)) Value {
+            return switch (field) {
+                inline else => |v, t| @unionInit(Value, @tagName(t), v),
+            };
         }
     };
 

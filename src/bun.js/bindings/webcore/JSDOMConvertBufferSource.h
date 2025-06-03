@@ -90,7 +90,7 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalOb
         return result;
 
     // The JSArrayBuffer::create function will register the wrapper in finishCreation.
-    return JSC::JSArrayBuffer::create(JSC::getVM(lexicalGlobalObject), globalObject->arrayBufferStructure(buffer.sharingMode()), &buffer);
+    return JSC::JSArrayBuffer::create(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject->arrayBufferStructure(buffer.sharingMode()), &buffer);
 }
 
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobalObject* globalObject, JSC::ArrayBufferView& view)
@@ -147,7 +147,7 @@ struct BufferSourceConverter {
             object = WrapperType::toWrappedAllowShared(vm, value);
         else
             object = WrapperType::toWrapped(vm, value);
-        if (UNLIKELY(!object))
+        if (!object) [[unlikely]]
             exceptionThrower(lexicalGlobalObject, scope);
         return object;
     }

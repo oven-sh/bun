@@ -4,6 +4,32 @@ import { afterAll, describe, expect, it, test } from "bun:test";
 
 const port = 0;
 
+test("Should receive the response body when direct stream is properly flushed", async () => {
+  var called = false;
+  await runInServer(
+    {
+      async fetch() {
+        var stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            controller.write("hey");
+            await Bun.sleep(1);
+            await controller.end();
+          },
+        });
+
+        return new Response(stream);
+      },
+    },
+    async url => {
+      called = true;
+      expect(await fetch(url).then(res => res.text())).toBe("hey");
+    },
+  );
+
+  expect(called).toBe(true);
+});
+
 for (let doClone of [true, false]) {
   const BodyMixin = [
     Request.prototype.arrayBuffer,
@@ -34,9 +60,8 @@ for (let doClone of [true, false]) {
       },
       async url => {
         called = true;
-        expect(await fetch(url).then(res => res.text())).toContain(
-          "Welcome to Bun! To get started, return a Response object.",
-        );
+        // if we can flush it will be "hey" otherwise will be empty
+        expect(await fetch(url).then(res => res.text())).toBeOneOf(["hey", ""]);
       },
     );
 

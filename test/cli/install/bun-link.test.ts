@@ -4,12 +4,12 @@ import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  readdirSorted,
   runBunInstall,
+  stderrForInstall,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
-  stderrForInstall,
-  readdirSorted,
 } from "harness";
 import { basename, join } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
@@ -449,7 +449,7 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err4 = stderrForInstall(await new Response(stderr4).text());
-  expect(err4).toContain(`error: FileNotFound installing ${link_name}`);
+  expect(err4).toContain(`FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`);
   const out4 = await new Response(stdout4).text();
   expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),

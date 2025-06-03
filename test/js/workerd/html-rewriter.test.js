@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { gcTick, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
+import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -15,6 +16,74 @@ var setTimeoutAsync = (fn, delay) => {
 };
 
 describe("HTMLRewriter", () => {
+  it("error handling", () => {
+    expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
+  });
+
+  it("error inside element handler", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>")),
+    ).toThrow("test");
+  });
+
+  it("error inside element handler (string)", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(element) {
+            throw new Error("test");
+          },
+        })
+        .transform("<div>hello</div>"),
+    ).toThrow("test");
+  });
+
+  it("fast async error inside element handler", () => {
+    let caught = false;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await setImmediatePromise();
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect.unreachable();
+    } catch (e) {
+      caught = true;
+      expect(e.message).toBe("test");
+    } finally {
+      expect(caught).toBeTrue();
+    }
+  });
+
+  it("slow async error inside element handler", () => {
+    let caught = false;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          async element(element) {
+            await Bun.sleep(1);
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>"));
+      expect.unreachable();
+    } catch (e) {
+      caught = true;
+      expect(e.message).toBe("test");
+    } finally {
+      expect(caught).toBeTrue();
+    }
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()

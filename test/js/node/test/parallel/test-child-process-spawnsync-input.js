@@ -48,7 +48,9 @@ function checkSpawnSyncRet(ret) {
 
 function verifyBufOutput(ret) {
   checkSpawnSyncRet(ret);
+  assert.deepStrictEqual(ret.stdout.toString('utf8'), msgOutBuf.toString('utf8'));
   assert.deepStrictEqual(ret.stdout, msgOutBuf);
+  assert.deepStrictEqual(ret.stderr.toString('utf8'), msgErrBuf.toString('utf8'));
   assert.deepStrictEqual(ret.stderr, msgErrBuf);
 }
 

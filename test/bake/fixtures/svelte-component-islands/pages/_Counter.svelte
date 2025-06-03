@@ -8,7 +8,7 @@
 </script>
 
 <div>
-    <p>This is a client component (interactive island)</p>
+    <p id="counter_text">This is a client component (interactive island)</p>
     <button onclick={increment}>
         Clicked {count} {count === 1 ? 'time' : 'times'}
     </button>

@@ -4,7 +4,6 @@ import { itBundled } from "../../expectBundled";
 const runTest = (property: string, input: string, expected: string) => {
   const testTitle = `${property}: ${input}`;
   itBundled(testTitle, {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
 h1 {

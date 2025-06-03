@@ -19,8 +19,8 @@ ExceptionOr<String> atob(const String& encodedString)
         const auto span = encodedString.span16();
         size_t expected_length = simdutf::latin1_length_from_utf16(span.size());
         std::span<LChar> ptr;
-        WTF::String convertedString = WTF::String::createUninitialized(expected_length, ptr);
-        if (UNLIKELY(convertedString.isNull())) {
+        WTF::String convertedString = WTF::String::tryCreateUninitialized(expected_length, ptr);
+        if (convertedString.isNull()) [[unlikely]] {
             return WebCore::Exception { OutOfMemoryError };
         }
 
@@ -35,8 +35,8 @@ ExceptionOr<String> atob(const String& encodedString)
     const auto span = encodedString.span8();
     size_t result_length = simdutf::maximal_binary_length_from_base64(reinterpret_cast<const char*>(span.data()), encodedString.length());
     std::span<LChar> ptr;
-    WTF::String outString = WTF::String::createUninitialized(result_length, ptr);
-    if (UNLIKELY(outString.isNull())) {
+    WTF::String outString = WTF::String::tryCreateUninitialized(result_length, ptr);
+    if (outString.isNull()) [[unlikely]] {
         return WebCore::Exception { OutOfMemoryError };
     }
     auto result = simdutf::base64_to_binary(reinterpret_cast<const char*>(span.data()), span.size(), reinterpret_cast<char*>(ptr.data()), simdutf::base64_default);

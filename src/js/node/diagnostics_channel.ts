@@ -12,8 +12,8 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const PromiseResolve = Promise.resolve;
-const PromiseReject = Promise.reject;
+const PromiseResolve = Promise.resolve.bind(Promise);
+const PromiseReject = Promise.reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
 // TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
@@ -92,6 +92,10 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
 }
 
 class ActiveChannel {
+  _subscribers;
+  name;
+  _stores;
+
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
@@ -162,6 +166,10 @@ class ActiveChannel {
 }
 
 class Channel {
+  _subscribers;
+  _stores;
+  name;
+
   constructor(name) {
     this._subscribers = undefined;
     this._stores = undefined;
@@ -241,6 +249,12 @@ function assertChannel(value, name) {
 }
 
 class TracingChannel {
+  start;
+  end;
+  asyncStart;
+  asyncEnd;
+  error;
+
   constructor(nameOrChannels) {
     if (typeof nameOrChannels === "string") {
       this.start = channel(`tracing:${nameOrChannels}:start`);

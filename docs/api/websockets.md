@@ -117,14 +117,14 @@ type WebSocketData = {
 // TypeScript: specify the type of `data`
 Bun.serve<WebSocketData>({
   fetch(req, server) {
-    // use a library to parse cookies
-    const cookies = parseCookies(req.headers.get("Cookie"));
+    const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
+
     server.upgrade(req, {
       // this object must conform to WebSocketData
       data: {
         createdAt: Date.now(),
         channelId: new URL(req.url).searchParams.get("channelId"),
-        authToken: cookies["X-Token"],
+        authToken: cookies.get("X-Token"),
       },
     });
 

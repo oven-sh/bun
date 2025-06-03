@@ -8,6 +8,9 @@ on:
         description: What is the release tag? (e.g. "1.0.2", "canary")
         required: true
 
+env:
+  BUN_VERSION: "1.2.0"
+
 jobs:
   bump:
     name: "Bump version"
@@ -21,7 +24,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.12"
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Bump version
         uses: ./.github/actions/bump
         with:

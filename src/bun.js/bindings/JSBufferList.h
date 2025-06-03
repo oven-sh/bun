@@ -72,7 +72,7 @@ public:
     }
     JSC::JSValue shift()
     {
-        if (UNLIKELY(length() == 0))
+        if (length() == 0) [[unlikely]]
             return JSC::jsUndefined();
         auto v = m_deque.first().get();
 
@@ -90,7 +90,7 @@ public:
     }
     JSC::JSValue first()
     {
-        if (UNLIKELY(length() == 0))
+        if (length() == 0) [[unlikely]]
             return JSC::jsUndefined();
         return JSC::JSValue(m_deque.first().get());
     }
@@ -146,7 +146,7 @@ public:
     static JSBufferListConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBufferListPrototype* prototype);
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

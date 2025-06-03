@@ -8,16 +8,23 @@ namespace Bun {
 
 using namespace JSC;
 
+// this function does prototype lookups but stops at the object prototype,
+// preventing a class of vulnerabilities where a badly written parser
+// mutates `globalThis.Object.prototype`.
+//
+// TODO: this function sometimes returns false positives.
+// see test cases in test-fs-rm.js where the `force` argument needs to throw
+// when it is `undefined`, but implementing that code makes cases where `force`
+// is omitted will make it think it is defined.
 static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
     ASSERT(!parseIndex(propertyName));
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* objectPrototype = nullptr;
     while (true) {
         Structure* structure = object->structureID().decode();
-        if (LIKELY(!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()))) {
+        if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
         } else {
@@ -25,13 +32,13 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
             RETURN_IF_EXCEPTION(scope, false);
             if (hasSlot)
                 return true;
-            if (UNLIKELY(slot.isVMInquiry() && slot.isTaintedByOpaqueObject()))
+            if (slot.isVMInquiry() && slot.isTaintedByOpaqueObject()) [[unlikely]]
                 return false;
             if (object->type() == ProxyObjectType && slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty)
                 return false;
         }
         JSValue prototype;
-        if (LIKELY(!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry))
+        if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
         else {
             prototype = object->getPrototype(vm, globalObject);

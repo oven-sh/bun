@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import fs from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
-import fs from "fs";
 
 test("JSXElement with mismatched closing tags produces a syntax error", async () => {
   const files = await fs.promises.readdir(import.meta.dir);

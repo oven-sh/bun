@@ -1,8 +1,6 @@
 const std = @import("std");
 const PackageID = @import("../install.zig").PackageID;
 const Lockfile = @import("../install.zig").Lockfile;
-const initializeStore = @import("../install.zig").initializeStore;
-const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
 const logger = bun.logger;
@@ -14,9 +12,9 @@ const Features = @import("../install.zig").Features;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const strings = bun.strings;
 const Resolution = @import("../resolution.zig").Resolution;
-const String = @import("../semver.zig").String;
-const Semver = @import("../semver.zig");
-const bun = @import("root").bun;
+const String = bun.Semver.String;
+const Semver = bun.Semver;
+const bun = @import("bun");
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
     package_id: PackageID,
@@ -181,6 +179,9 @@ pub const FolderResolution = union(Tag) {
         var package = Lockfile.Package{};
 
         if (comptime ResolverType == WorkspaceResolver) {
+            const tracer = bun.perf.trace("FolderResolver.readPackageJSONFromDisk.workspace");
+            defer tracer.end();
+
             const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
 
             try package.parseWithJSON(
@@ -195,6 +196,9 @@ pub const FolderResolution = union(Tag) {
                 features,
             );
         } else {
+            const tracer = bun.perf.trace("FolderResolver.readPackageJSONFromDisk.folder");
+            defer tracer.end();
+
             const source = brk: {
                 var file = bun.sys.File.from(try bun.sys.openatA(
                     bun.FD.cwd(),

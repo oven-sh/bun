@@ -201,7 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
 #else
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() != 2) {
@@ -229,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.setRawMode expects a TTYWrapObject as this"_s);
         return {};
     }
@@ -266,7 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
@@ -275,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     }
 
     TTYWrapObject* ttyWrap = jsDynamicCast<TTYWrapObject*>(callFrame->thisValue());
-    if (UNLIKELY(!ttyWrap)) {
+    if (!ttyWrap) [[unlikely]] {
         JSC::throwTypeError(globalObject, throwScope, "TTY.getWindowSize expects a TTYWrapObject as this"_s);
         return {};
     }
@@ -301,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
 JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (argCount == 0) {
@@ -387,7 +387,7 @@ public:
     }
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -403,7 +403,7 @@ public:
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         throwTypeError(globalObject, scope, "TTYWrapConstructor cannot be called as a function"_s);
@@ -413,7 +413,7 @@ public:
     // new TTY()
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         auto* constructor = jsDynamicCast<TTYWrapConstructor*>(callframe->jsCallee());
@@ -491,7 +491,7 @@ const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, 
 
 JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
@@ -505,7 +505,7 @@ JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 
 JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);

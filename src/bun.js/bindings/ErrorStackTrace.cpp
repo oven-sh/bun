@@ -5,7 +5,11 @@
 
 #include "config.h"
 #include "ErrorStackTrace.h"
+#include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/CodeType.h"
 #include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/ExecutableBase.h"
+#include "JavaScriptCore/JSType.h"
 #include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/CatchScope.h>
@@ -118,11 +122,10 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     WTF::String callerName {};
     if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
         callerName = callerFunction->name(vm);
-        if (callerName.isEmpty() && callerFunction->jsExecutable()) {
+        if (callerName.isEmpty() && !callerFunction->isHostFunction() && callerFunction->jsExecutable()) {
             callerName = callerFunction->jsExecutable()->name().string();
         }
-    }
-    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
+    } else if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
         callerName = callerFunctionInternal->name();
     }
 
@@ -251,116 +254,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     });
 }
 
-JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller)
-{
-    JSC::VM& vm = globalObject->vm();
-    if (!callFrame) {
-        return JSCStackTrace();
-    }
-
-    WTF::Vector<JSCStackFrame> stackFrames;
-    size_t framesCount = 0;
-
-    bool belowCaller = false;
-    int32_t skipFrames = 0;
-
-    WTF::String callerName {};
-    if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
-        callerName = callerFunction->name(vm);
-        if (!callerFunction->name(vm).isEmpty() || callerFunction->isHostOrBuiltinFunction()) {
-            callerName = callerFunction->name(vm);
-        } else {
-            callerName = callerFunction->jsExecutable()->name().string();
-        }
-    }
-    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
-        callerName = callerFunctionInternal->name();
-    }
-
-    if (!callerName.isEmpty()) {
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                skipFrames += 1;
-
-                if (visitor->functionName() == callerName) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    } else if (caller && caller.isCell()) {
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                auto callee = visitor->callee();
-                skipFrames += 1;
-                if (callee.isCell() && callee.asCell() == caller) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    } else if (caller.isEmpty() || caller.isUndefined()) {
-        // Skip the first frame.
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            if (!belowCaller) {
-                skipFrames += 1;
-                belowCaller = true;
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
-    }
-
-    framesCount = std::min(frameLimit, framesCount);
-
-    // Create the actual stack frames
-    size_t i = 0;
-    stackFrames.reserveInitialCapacity(framesCount);
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // Skip native frames
-        if (isImplementationVisibilityPrivate(visitor)) {
-            return WTF::IterationStatus::Continue;
-        }
-
-        // Skip frames if needed
-        if (skipFrames > 0) {
-            skipFrames--;
-            return WTF::IterationStatus::Continue;
-        }
-
-        stackFrames.constructAndAppend(vm, visitor);
-        i++;
-
-        return (i == framesCount) ? WTF::IterationStatus::Done : WTF::IterationStatus::Continue;
-    });
-
-    return JSCStackTrace(stackFrames);
-}
-
 JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
 {
     const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
@@ -403,6 +296,13 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
 {
     m_callee = visitor->callee().asCell();
     m_callFrame = visitor->callFrame();
+
+    if (auto* codeBlock = visitor->codeBlock()) {
+        auto codeType = codeBlock->codeType();
+        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
+            m_isFunctionOrEval = true;
+        }
+    }
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
     if (visitor->isNativeCalleeFrame()) {
@@ -454,12 +354,21 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_codeBlock = codeBlock;
             m_bytecodeIndex = frame.bytecodeIndex();
         }
+
+        auto codeType = codeBlock->codeType();
+        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
+            m_isFunctionOrEval = true;
+        }
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
         auto lineColumn = frame.computeLineAndColumn();
         m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
         m_sourcePositionsState = SourcePositionsState::Calculated;
+        auto codeType = frame.codeBlock()->codeType();
+        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
+            m_isFunctionOrEval = true;
+        }
     }
 }
 
@@ -531,45 +440,22 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 
 ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
-    static const auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
-    static const auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 
     if (m_isWasmFrame) {
         return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
     }
 
-    if (m_codeBlock) {
-        switch (m_codeBlock->codeType()) {
-        case JSC::EvalCode:
-            // Node returns null here.
-            return String();
-        case JSC::ModuleCode:
-            return String(functionNameModuleCodeString);
-        case JSC::FunctionCode:
-            break;
-        case JSC::GlobalCode:
-            return String(functionNameGlobalCodeString);
-        default:
-            ASSERT_NOT_REACHED();
+    if (m_callee) {
+        auto* calleeObject = m_callee->getObject();
+        if (calleeObject) {
+            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
         }
     }
 
-    if (m_callee) {
-        if (auto* callee = m_callee->getObject()) {
-            // Does the code block have a user-defined name property?
-            JSC::JSValue name = callee->getDirect(m_vm, m_vm.propertyNames->name);
-            if (name && name.isString()) {
-                auto scope = DECLARE_CATCH_SCOPE(m_vm);
-                auto nameString = name.toWTFString(callee->globalObject());
-                if (scope.exception()) {
-                    scope.clearException();
-                }
-                if (!nameString.isEmpty()) {
-                    return nameString;
-                }
-            }
-
-            return JSC::getCalculatedDisplayName(m_vm, callee);
+    if (m_codeBlock) {
+        auto functionName = Zig::functionName(m_vm, m_codeBlock);
+        if (!functionName.isEmpty()) {
+            return functionName;
         }
     }
 
@@ -579,7 +465,6 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
 {
     JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(m_callee);
-    // return JSC::jsTypeStringForValue(m_globalObjectcalleeObject->toThis()
     return calleeObject->className();
 }
 
@@ -611,7 +496,7 @@ String sourceURL(const JSC::SourceOrigin& origin)
 
 String sourceURL(JSC::SourceProvider* sourceProvider)
 {
-    if (UNLIKELY(!sourceProvider)) {
+    if (!sourceProvider) [[unlikely]] {
         return String();
     }
 
@@ -634,27 +519,32 @@ String sourceURL(const JSC::SourceCode& sourceCode)
     return sourceURL(sourceCode.provider());
 }
 
-String sourceURL(JSC::CodeBlock* codeBlock)
+String sourceURL(JSC::CodeBlock& codeBlock)
 {
-    if (UNLIKELY(!codeBlock)) {
+    if (!codeBlock.ownerExecutable()) {
         return String();
     }
 
-    if (!codeBlock->ownerExecutable()) {
-        return String();
-    }
-
-    const auto& source = codeBlock->source();
+    const auto& source = codeBlock.source();
     return sourceURL(source);
 }
 
-String sourceURL(JSC::VM& vm, JSC::StackFrame& frame)
+String sourceURL(JSC::CodeBlock* codeBlock)
+{
+    if (!codeBlock) [[unlikely]] {
+        return String();
+    }
+
+    return Zig::sourceURL(*codeBlock);
+}
+
+String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     if (frame.isWasmFrame()) {
         return "[wasm code]"_s;
     }
 
-    if (UNLIKELY(!frame.codeBlock())) {
+    if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
         return "[native code]"_s;
     }
 
@@ -694,4 +584,226 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(jsExecutable->source());
 }
 
+String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
+{
+    auto codeType = codeBlock->codeType();
+
+    auto* executable = codeBlock->ownerExecutable();
+    if (!executable) {
+        return String();
+    }
+
+    if (codeType == JSC::FunctionCode) {
+        auto* jsExecutable = jsCast<JSC::FunctionExecutable*>(executable);
+        if (!jsExecutable) {
+            return String();
+        }
+
+        return jsExecutable->ecmaName().string();
+    }
+
+    return String();
+}
+
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object)
+{
+    WTF::String functionName;
+    auto jstype = object->type();
+    if (jstype == JSC::ProxyObjectType) return {};
+
+    // First try the "name" property.
+    {
+        WTF::String name;
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
+            if (!slot.isAccessor()) {
+                JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
+                if (functionNameValue && functionNameValue.isString()) {
+                    name = functionNameValue.toWTFString(lexicalGlobalObject);
+                    if (!name.isEmpty()) {
+                        return name;
+                    }
+                }
+            }
+        }
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+        }
+    }
+
+    {
+        // Then try the "displayName" property (what this does internally)
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        functionName = JSC::getCalculatedDisplayName(vm, object);
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+        }
+    }
+
+    {
+        if (functionName.isEmpty()) {
+            if (jstype == JSC::JSFunctionType) {
+                auto* function = jsCast<JSC::JSFunction*>(object);
+                if (function) {
+                    functionName = function->nameWithoutGC(vm);
+                    if (functionName.isEmpty() && !function->isHostFunction()) {
+                        functionName = function->jsExecutable()->ecmaName().string();
+                    }
+                }
+            } else if (jstype == JSC::InternalFunctionType) {
+                auto* function = jsCast<JSC::InternalFunction*>(object);
+                if (function) {
+                    functionName = function->name();
+                }
+            }
+        }
+    }
+
+    return functionName;
+}
+
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags)
+{
+    WTF::String functionName;
+    bool isConstructor = false;
+    if (isInFinalizer) {
+
+        if (auto* callee = frame.callee()) {
+            if (auto* object = callee->getObject()) {
+                auto jstype = object->type();
+                Structure* structure = object->structure();
+
+                auto setTypeFlagsIfNecessary = [&]() {
+                    if (flags) {
+                        if (jstype == JSC::JSFunctionType || jstype == JSC::InternalFunctionType) {
+                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
+                        }
+                    }
+                };
+
+                const auto getName = [&]() -> String {
+                    // First try the "name" property.
+                    {
+                        unsigned attributes;
+                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
+                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                            JSValue name = object->getDirect(offset);
+                            if (name && name.isString()) {
+                                auto str = asString(name)->tryGetValueWithoutGC();
+                                if (!str->isEmpty()) {
+                                    setTypeFlagsIfNecessary();
+
+                                    return str.data;
+                                }
+                            }
+                        }
+                    }
+
+                    // Then try the "displayName" property.
+                    {
+                        unsigned attributes;
+                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
+                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                            JSValue name = object->getDirect(offset);
+                            if (name && name.isString()) {
+                                auto str = asString(name)->tryGetValueWithoutGC();
+                                if (!str->isEmpty()) {
+                                    functionName = str.data;
+                                    if (!functionName.isEmpty()) {
+                                        setTypeFlagsIfNecessary();
+                                        return functionName;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Lastly, try type-specific properties.
+                    if (jstype == JSC::JSFunctionType) {
+                        auto* function = jsCast<JSC::JSFunction*>(object);
+                        if (function) {
+                            functionName = function->nameWithoutGC(vm);
+                            if (functionName.isEmpty() && !function->isHostFunction()) {
+                                functionName = function->jsExecutable()->ecmaName().string();
+                            }
+                            setTypeFlagsIfNecessary();
+                            return functionName;
+                        }
+                    } else if (jstype == JSC::InternalFunctionType) {
+                        auto* function = jsCast<JSC::InternalFunction*>(object);
+                        if (function) {
+                            functionName = function->name();
+                            setTypeFlagsIfNecessary();
+                            return functionName;
+                        }
+                    }
+
+                    return functionName;
+                };
+
+                functionName = getName();
+            }
+        }
+
+        return functionName;
+    }
+
+    if (frame.hasLineAndColumnInfo()) {
+        auto* codeblock = frame.codeBlock();
+        if (codeblock->isConstructor()) {
+            isConstructor = true;
+        }
+
+        // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
+        if (!isInFinalizer) {
+            auto codeType = codeblock->codeType();
+            switch (codeType) {
+            case JSC::CodeType::FunctionCode:
+            case JSC::CodeType::EvalCode: {
+                if (flags) {
+                    if (codeType == JSC::CodeType::EvalCode) {
+                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
+                    } else if (codeType == JSC::CodeType::FunctionCode) {
+                        *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
+                    }
+                }
+                if (auto* callee = frame.callee()) {
+                    if (auto* object = callee->getObject()) {
+                        functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+
+                        if (flags) {
+                            if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
+                                if (unlinkedCodeBlock->isBuiltinFunction()) {
+                                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            default: {
+                break;
+            }
+            }
+
+            if (functionName.isEmpty()) {
+                functionName = Zig::functionName(vm, codeblock);
+            }
+        }
+    } else {
+        if (auto* callee = frame.callee()) {
+            if (auto* object = callee->getObject()) {
+                functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+            }
+        }
+    }
+
+    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
+        return makeString("new "_s, functionName);
+    }
+
+    return functionName;
+}
 }

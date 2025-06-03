@@ -24,6 +24,7 @@
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "NodeVM.h"
 #include "../../bake/BakeGlobalObject.h"
+#include "napi_handle_scope.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -34,6 +35,7 @@ JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
+    , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
@@ -70,6 +72,8 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
     return singleton;
 }
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
+
 JSVMClientData::~JSVMClientData()
 {
     ASSERT(m_normalWorld->hasOneRef());
@@ -96,6 +100,13 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
+}
+
+WebCore::HTTPHeaderIdentifiers& JSVMClientData::httpHeaderIdentifiers()
+{
+    if (!m_httpHeaderIdentifiers)
+        m_httpHeaderIdentifiers.emplace();
+    return *m_httpHeaderIdentifiers;
 }
 
 } // namespace WebCore

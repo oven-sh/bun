@@ -1,24 +1,16 @@
 const default_allocator = bun.default_allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const NetworkThread = bun.http.NetworkThread;
-const Global = bun.Global;
 const strings = bun.strings;
-const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const Which = @import("../which.zig");
-const Async = bun.Async;
 // const IPC = @import("../bun.js/ipc.zig");
 const uws = bun.uws;
 const sh = bun.shell;
-
-const PosixSpawn = bun.spawn;
 
 const util = @import("./util.zig");
 
@@ -261,7 +253,7 @@ pub const ShellSubprocess = struct {
                         subprocess.weak_file_sink_stdin_ptr = pipe;
                         return pipe.toJSWithDestructor(
                             globalThis,
-                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                            JSC.WebCore.sink_destructor.Ptr.init(subprocess),
                         );
                     }
                 },
@@ -287,7 +279,7 @@ pub const ShellSubprocess = struct {
                     this.buffer.deref();
                 },
                 .memfd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .ignore => {},
@@ -301,7 +293,7 @@ pub const ShellSubprocess = struct {
                     _ = pipe.end(null);
                 },
                 inline .memfd, .fd => |fd| {
-                    _ = bun.sys.close(fd);
+                    fd.close();
                     this.* = .{ .ignore = {} };
                 },
                 .buffer => {
@@ -419,7 +411,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => {
                     this.pipe.close();
@@ -432,7 +424,7 @@ pub const ShellSubprocess = struct {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
                     this.* = .{ .closed = {} };
-                    _ = bun.sys.close(fd);
+                    fd.close();
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -443,10 +435,11 @@ pub const ShellSubprocess = struct {
         }
     };
 
-    pub const Flags = packed struct(u3) {
+    pub const Flags = packed struct(u8) {
         is_sync: bool = false,
         killed: bool = false,
         waiting_for_onexit: bool = false,
+        _: u5 = 0,
     };
     pub const SignalCode = bun.SignalCode;
 
@@ -511,7 +504,7 @@ pub const ShellSubprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
     //     return this.observable_getters.contains(getter);
     // }
 
@@ -528,7 +521,7 @@ pub const ShellSubprocess = struct {
         // this.ipc_mode = .none;
     }
 
-    pub fn closeIO(this: *@This(), comptime io: @Type(.EnumLiteral)) void {
+    pub fn closeIO(this: *@This(), comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         log("close IO {s}", .{@tagName(io)});
         this.closed.insert(io);
@@ -746,6 +739,7 @@ pub const ShellSubprocess = struct {
         shellio: *ShellIO,
         spawn_args_: SpawnArgs,
         out: **@This(),
+        notify_caller_process_already_exited: *bool,
     ) bun.shell.Result(void) {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -761,6 +755,7 @@ pub const ShellSubprocess = struct {
             &spawn_args,
             shellio,
             out,
+            notify_caller_process_already_exited,
         )) {
             .result => |subproc| subproc,
             .err => |err| return .{ .err = err },
@@ -778,6 +773,7 @@ pub const ShellSubprocess = struct {
         spawn_args: *SpawnArgs,
         shellio: *ShellIO,
         out_subproc: **@This(),
+        notify_caller_process_already_exited: *bool,
     ) bun.shell.Result(*@This()) {
         const is_sync = config.is_sync;
 
@@ -793,7 +789,7 @@ pub const ShellSubprocess = struct {
             if (should_close_memfd) {
                 inline for (0..spawn_args.stdio.len) |fd_index| {
                     if (spawn_args.stdio[fd_index] == .memfd) {
-                        _ = bun.sys.close(spawn_args.stdio[fd_index].memfd);
+                        spawn_args.stdio[fd_index].memfd.close();
                         spawn_args.stdio[fd_index] = .ignore;
                     }
                 }
@@ -830,7 +826,7 @@ pub const ShellSubprocess = struct {
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
-            } else {},
+            },
         };
 
         spawn_args.argv.append(allocator, null) catch {
@@ -848,7 +844,7 @@ pub const ShellSubprocess = struct {
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
         };
 
@@ -873,26 +869,16 @@ pub const ShellSubprocess = struct {
         subprocess.process.setExitHandler(subprocess);
 
         if (subprocess.stdin == .pipe) {
-            subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+            subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
-
-        var send_exit_notification = false;
 
         if (comptime !is_sync) {
             switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
-                    send_exit_notification = true;
+                    notify_caller_process_already_exited.* = true;
                     spawn_args.lazy = false;
                 },
-            }
-        }
-
-        defer {
-            if (send_exit_notification) {
-                // process has already exited
-                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.wait(subprocess.flags.is_sync);
             }
         }
 
@@ -956,9 +942,11 @@ pub const ShellSubprocess = struct {
     }
 };
 
-const WaiterThread = bun.spawn.WaiterThread;
-
 pub const PipeReader = struct {
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     reader: IOReader = undefined,
     process: ?*ShellSubprocess = null,
     event_loop: JSC.EventLoopHandle = undefined,
@@ -971,7 +959,7 @@ pub const PipeReader = struct {
     out_type: bun.shell.subproc.ShellSubprocess.OutKind,
     captured_writer: CapturedWriter = .{},
     buffered_output: BufferedOutput = .{ .bytelist = .{} },
-    ref_count: u32 = 1,
+    ref_count: RefCount,
 
     const BufferedOutput = union(enum) {
         bytelist: bun.ByteList,
@@ -1019,8 +1007,6 @@ pub const PipeReader = struct {
             }
         }
     };
-
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
 
     pub const CapturedWriter = struct {
         dead: bool = true,
@@ -1111,7 +1097,8 @@ pub const PipeReader = struct {
     }
 
     pub fn create(event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, capture: ?*sh.IOWriter, out_type: bun.shell.Subprocess.OutKind) *PipeReader {
-        var this: *PipeReader = PipeReader.new(.{
+        var this: *PipeReader = bun.new(PipeReader, .{
+            .ref_count = .init(),
             .process = process,
             .reader = IOReader.init(@This()),
             .event_loop = event_loop,
@@ -1128,10 +1115,10 @@ pub const PipeReader = struct {
         if (Environment.isWindows) {
             this.reader.source =
                 switch (result) {
-                .buffer => .{ .pipe = this.stdio_result.buffer },
-                .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
-                .unavailable => @panic("Shouldn't happen."),
-            };
+                    .buffer => .{ .pipe = this.stdio_result.buffer },
+                    .buffer_fd => .{ .file = bun.io.Source.openFile(this.stdio_result.buffer_fd) },
+                    .unavailable => @panic("Shouldn't happen."),
+                };
         }
         this.reader.setParent(this);
 
@@ -1262,6 +1249,11 @@ pub const PipeReader = struct {
         const out = this.reader._buffer;
         this.reader._buffer.items = &.{};
         this.reader._buffer.capacity = 0;
+
+        if (out.capacity > 0 and out.items.len == 0) {
+            out.deinit();
+            return &.{};
+        }
         return out.items;
     }
 
@@ -1284,9 +1276,8 @@ pub const PipeReader = struct {
                 return stream;
             },
             .done => |bytes| {
-                const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
                 this.state = .{ .done = &.{} };
-                return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
+                return JSC.WebCore.ReadableStream.fromOwnedSlice(globalObject, bytes, 0);
             },
             .err => |err| {
                 _ = err; // autofix
@@ -1344,7 +1335,7 @@ pub const PipeReader = struct {
         return this.event_loop.loop();
     }
 
-    pub fn deinit(this: *PipeReader) void {
+    fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
             assert(this.reader.isDone() or this.state == .err);
@@ -1372,7 +1363,7 @@ pub const PipeReader = struct {
         this.buffered_output.deinit();
 
         this.reader.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 };
 

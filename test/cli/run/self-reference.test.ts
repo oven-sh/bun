@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
+import { writeFile } from "fs/promises";
 import { bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { writeFile } from "fs/promises";
 
 const testWord = "bunny";
 const testString = `${testWord} ${testWord}`;

@@ -50,9 +50,14 @@ jobs:
             exit 1
           fi
 
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/ebiggers/libdeflate/git/ref/tags/$LATEST_TAG" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/ebiggers/libdeflate/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
+          if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+            exit 1
+          fi
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/ebiggers/libdeflate/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
             exit 1
           fi
 
@@ -88,5 +93,7 @@ jobs:
             ## What does this PR do?
 
             Updates libdeflate to version ${{ steps.check-version.outputs.tag }}
+
+            Compare: https://github.com/ebiggers/libdeflate/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
 
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-libdeflate.yml)

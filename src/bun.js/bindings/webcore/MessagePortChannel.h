@@ -32,12 +32,13 @@
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCounted<MessagePortChannel> {
+class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
@@ -75,7 +76,7 @@ private:
     std::optional<ProcessIdentifier> m_processes[2];
     RefPtr<MessagePortChannel> m_entangledToProcessProtectors[2];
     Vector<MessageWithMessagePorts> m_pendingMessages[2];
-    HashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
+    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
     RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
     uint64_t m_messageBatchesInFlight { 0 };
 

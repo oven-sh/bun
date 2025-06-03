@@ -1,8 +1,7 @@
 const std = @import("std");
 const uws = @import("../../../deps/uws.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
-const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const Output = bun.Output;
 const Async = bun.Async;
@@ -10,6 +9,7 @@ const JSC = bun.JSC;
 const CallFrame = JSC.CallFrame;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
+const SocketAddress = JSC.API.SocketAddress;
 
 const log = Output.scoped(.UdpSocket, false);
 
@@ -20,7 +20,6 @@ extern fn htonl(hlong: u32) u32;
 extern fn htons(hshort: u16) u16;
 extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int) ?[*:0]const u8;
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
-extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, port: i32, v6: bool) JSValue;
 
 fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
     JSC.markBinding(@src());
@@ -43,7 +42,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     event_loop.enter();
     defer event_loop.exit();
     _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
-        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException(err)});
+        this.callErrorHandler(.zero, this.globalThis.takeException(err));
     };
 }
 
@@ -63,6 +62,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         var addr_buf: [INET6_ADDRSTRLEN + 1:0]u8 = undefined;
         var hostname: ?[*:0]const u8 = null;
         var port: u16 = 0;
+        var scope_id: ?u32 = null;
 
         switch (peer.family) {
             std.posix.AF.INET => {
@@ -74,6 +74,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
                 const peer6: *std.posix.sockaddr.in6 = @ptrCast(peer);
                 hostname = inet_ntop(peer.family, &peer6.addr, &addr_buf, addr_buf.len);
                 port = ntohs(peer6.port);
+                if (peer6.scope_id != 0)
+                    scope_id = peer6.scope_id;
             },
             else => continue,
         }
@@ -90,13 +92,25 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = udpSocket.js_refcount.fetchAdd(1, .monotonic);
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
+        const span = std.mem.span(hostname.?);
+        var hostname_string = if (scope_id) |id| blk: {
+            if (comptime !bun.Environment.isWindows) {
+                var buffer = std.mem.zeroes([bun.c.IF_NAMESIZE:0]u8);
+                if (bun.c.if_indextoname(id, &buffer) != null) {
+                    break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch bun.outOfMemory();
+                }
+            }
+
+            break :blk bun.String.createFormat("{s}%{d}", .{ span, id }) catch bun.outOfMemory();
+        } else bun.String.init(span);
+
         _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
-            JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
+            hostname_string.transferToJS(globalThis),
         }) catch |err| {
-            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
+            udpSocket.callErrorHandler(.zero, udpSocket.globalThis.takeException(err));
         };
     }
 }
@@ -117,7 +131,8 @@ pub const UDPSocketConfig = struct {
     hostname: [:0]u8,
     connect: ?ConnectConfig = null,
     port: u16,
-    binary_type: JSC.BinaryType = .Buffer,
+    flags: i32,
+    binary_type: JSC.ArrayBuffer.BinaryType = .Buffer,
     on_data: JSValue = .zero,
     on_drain: JSValue = .zero,
     on_error: JSValue = .zero,
@@ -132,7 +147,7 @@ pub const UDPSocketConfig = struct {
                 if (!value.isString()) {
                     return globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
                 }
-                const str = value.toBunString(globalThis);
+                const str = value.toBunString(globalThis) catch @panic("unreachable");
                 defer str.deref();
                 break :brk str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
             } else {
@@ -153,9 +168,15 @@ pub const UDPSocketConfig = struct {
             }
         };
 
+        const flags: i32 = if (try options.getTruthy(globalThis, "flags")) |value|
+            try bun.validators.validateInt32(globalThis, value, "flags", .{}, null, null)
+        else
+            0;
+
         var config = This{
             .hostname = hostname,
             .port = port,
+            .flags = flags,
         };
 
         if (try options.getTruthy(globalThis, "socket")) |socket| {
@@ -168,14 +189,14 @@ pub const UDPSocketConfig = struct {
                     return globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be a string", .{});
                 }
 
-                config.binary_type = try JSC.BinaryType.fromJSValue(globalThis, value) orelse {
+                config.binary_type = try JSC.ArrayBuffer.BinaryType.fromJSValue(globalThis, value) orelse {
                     return globalThis.throwInvalidArguments("Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'", .{});
                 };
             }
 
             inline for (handlers) |handler| {
                 if (try socket.getTruthyComptime(globalThis, handler.@"0")) |value| {
-                    if (!value.isCell() or !value.isCallable(globalThis.vm())) {
+                    if (!value.isCell() or !value.isCallable()) {
                         return globalThis.throwInvalidArguments("Expected \"socket.{s}\" to be a function", .{handler.@"0"});
                     }
                     @field(config, handler.@"1") = value;
@@ -209,7 +230,7 @@ pub const UDPSocketConfig = struct {
             };
             const connect_port = connect_port_js.coerceToInt32(globalThis);
 
-            const str = connect_host_js.toBunString(globalThis);
+            const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
             const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
 
@@ -256,7 +277,7 @@ pub const UDPSocket = struct {
     globalThis: *JSGlobalObject,
     thisValue: JSValue = .zero,
 
-    ref: JSC.Ref = JSC.Ref.init(),
+    jsc_ref: JSC.Ref = JSC.Ref.init(),
     poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
     // if marked as closed the socket pointer may be stale
     closed: bool = false,
@@ -268,13 +289,16 @@ pub const UDPSocket = struct {
         port: u16,
     };
 
-    pub usingnamespace JSC.Codegen.JSUDPSocket;
+    pub const js = JSC.Codegen.JSUDPSocket;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     pub fn hasPendingActivity(this: *This) callconv(.C) bool {
         return this.js_refcount.load(.monotonic) > 0;
     }
 
-    pub usingnamespace bun.New(@This());
+    pub const new = bun.TrivialNew(@This());
 
     pub fn udpSocket(globalThis: *JSGlobalObject, options: JSValue) bun.JSError!JSValue {
         log("udpSocket", .{});
@@ -290,6 +314,8 @@ pub const UDPSocket = struct {
             .vm = vm,
         });
 
+        var err: i32 = 0;
+
         if (uws.udp.Socket.create(
             this.loop,
             onData,
@@ -297,12 +323,25 @@ pub const UDPSocket = struct {
             onClose,
             config.hostname,
             config.port,
+            config.flags,
+            &err,
             this,
         )) |socket| {
             this.socket = socket;
         } else {
             this.closed = true;
-            this.deinit();
+            defer this.deinit();
+            if (err != 0) {
+                const code = @tagName(bun.sys.SystemErrno.init(@as(c_int, @intCast(err))).?);
+                const sys_err = JSC.SystemError{
+                    .errno = err,
+                    .code = bun.String.static(code),
+                    .message = bun.String.createFormat("bind {s} {s}", .{ code, config.hostname }) catch bun.outOfMemory(),
+                };
+                const error_value = sys_err.toErrorInstance(globalThis);
+                error_value.put(globalThis, "address", bun.String.createUTF8ForJS(globalThis, config.hostname));
+                return globalThis.throwValue(error_value);
+            }
             return globalThis.throw("Failed to bind socket", .{});
         }
 
@@ -314,12 +353,12 @@ pub const UDPSocket = struct {
         if (config.connect) |connect| {
             const ret = this.socket.connect(connect.address, connect.port);
             if (ret != 0) {
-                if (JSC.Maybe(void).errnoSys(ret, .connect)) |err| {
-                    return globalThis.throwValue(err.toJS(globalThis));
+                if (JSC.Maybe(void).errnoSys(ret, .connect)) |sys_err| {
+                    return globalThis.throwValue(sys_err.toJS(globalThis));
                 }
 
-                if (bun.c_ares.Error.initEAI(ret)) |err| {
-                    return globalThis.throwValue(err.toJS(globalThis));
+                if (bun.c_ares.Error.initEAI(ret)) |eai_err| {
+                    return globalThis.throwValue(eai_err.toJS(globalThis));
                 }
             }
             this.connect_info = .{ .port = connect.port };
@@ -335,22 +374,224 @@ pub const UDPSocket = struct {
     pub fn callErrorHandler(
         this: *This,
         thisValue: JSValue,
-        err: []const JSValue,
-    ) bool {
+        err: JSValue,
+    ) void {
         const callback = this.config.on_error;
         const globalThis = this.globalThis;
         const vm = globalThis.bunVM();
 
+        if (err.isTerminationException(vm.jsc)) {
+            return;
+        }
         if (callback == .zero) {
-            if (err.len > 0)
-                _ = vm.uncaughtException(globalThis, err[0], false);
-
-            return false;
+            _ = vm.uncaughtException(globalThis, err, false);
+            return;
         }
 
-        _ = callback.call(globalThis, thisValue, err) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
+        _ = callback.call(globalThis, thisValue, &.{err}) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
+    }
 
-        return true;
+    pub fn setBroadcast(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const enabled = arguments[0].toBoolean();
+        const res = this.socket.setBroadcast(enabled);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return arguments[0];
+    }
+
+    pub fn setMulticastLoopback(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const enabled = arguments[0].toBoolean();
+        const res = this.socket.setMulticastLoopback(enabled);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return arguments[0];
+    }
+
+    fn setMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, drop: bool) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        var addr = std.mem.zeroes(std.posix.sockaddr.storage);
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        var interface = std.mem.zeroes(std.posix.sockaddr.storage);
+
+        const res = if (arguments.len > 1 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &interface)) blk: {
+            if (addr.family != interface.family) {
+                return globalThis.throwInvalidArguments("Family mismatch between address and interface", .{});
+            }
+            break :blk this.socket.setMembership(&addr, &interface, drop);
+        } else this.socket.setMembership(&addr, null, drop);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
+    pub fn addMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setMembership(globalThis, callframe, false);
+    }
+
+    pub fn dropMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setMembership(globalThis, callframe, true);
+    }
+
+    fn setSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, drop: bool) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 2) {
+            return globalThis.throwInvalidArguments("Expected 2 arguments, got {}", .{arguments.len});
+        }
+
+        var source_addr: std.posix.sockaddr.storage = undefined;
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &source_addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        var group_addr: std.posix.sockaddr.storage = undefined;
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &group_addr)) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
+        }
+
+        if (source_addr.family != group_addr.family) {
+            return globalThis.throwInvalidArguments("Family mismatch between source and group addresses", .{});
+        }
+
+        var interface: std.posix.sockaddr.storage = undefined;
+
+        const res = if (arguments.len > 2 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[2], &interface)) blk: {
+            if (source_addr.family != interface.family) {
+                return globalThis.throwInvalidArguments("Family mismatch among source, group and interface addresses", .{});
+            }
+            break :blk this.socket.setSourceSpecificMembership(&source_addr, &group_addr, &interface, drop);
+        } else this.socket.setSourceSpecificMembership(&source_addr, &group_addr, null, drop);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
+    pub fn addSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setSourceSpecificMembership(globalThis, callframe, false);
+    }
+
+    pub fn dropSourceSpecificMembership(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return this.setSourceSpecificMembership(globalThis, callframe, true);
+    }
+
+    pub fn setMulticastInterface(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        var addr: std.posix.sockaddr.storage = undefined;
+
+        if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
+            return .false;
+        }
+
+        const res = this.socket.setMulticastInterface(&addr);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return .true;
+    }
+
+    pub fn setTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setUnicastTTL);
+    }
+
+    pub fn setMulticastTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+        return setAnyTTL(this, globalThis, callframe, uws.udp.Socket.setMulticastTTL);
+    }
+
+    fn getUSError(res: c_int, tag: bun.sys.Tag, comptime use_wsa: bool) ?bun.JSC.Maybe(void) {
+        if (comptime bun.Environment.isWindows) {
+            // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
+            // This applies to some other usockets functions too.
+            if (res >= 0) {
+                return null;
+            }
+
+            if (comptime use_wsa) {
+                if (bun.windows.WSAGetLastError()) |wsa| {
+                    if (wsa != .SUCCESS) {
+                        std.os.windows.ws2_32.WSASetLastError(0);
+                        return bun.JSC.Maybe(void).errno(wsa.toE(), tag);
+                    }
+                }
+            }
+
+            return bun.JSC.Maybe(void).errno(@as(bun.sys.E, @enumFromInt(std.c._errno().*)), tag);
+        } else {
+            return bun.JSC.Maybe(void).errnoSys(res, tag);
+        }
+    }
+
+    fn setAnyTTL(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame, comptime function: fn (*uws.udp.Socket, i32) c_int) bun.JSError!JSValue {
+        if (this.closed) {
+            return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.BADF))), .setsockopt).?.toJS(globalThis));
+        }
+
+        const arguments = callframe.arguments();
+        if (arguments.len < 1) {
+            return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
+        }
+
+        const ttl = arguments[0].coerceToInt32(globalThis);
+        const res = function(this.socket, ttl);
+
+        if (getUSError(res, .setsockopt, true)) |err| {
+            return globalThis.throwValue(err.toJS(globalThis));
+        }
+
+        return JSValue.jsNumber(ttl);
     }
 
     pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
@@ -424,7 +665,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Mismatch between array length property and number of items", .{});
         }
         const res = this.socket.send(payloads, lens, addr_ptrs);
-        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+        if (getUSError(res, .send, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsNumber(res);
@@ -482,7 +723,7 @@ pub const UDPSocket = struct {
         };
 
         const res = this.socket.send(&.{payload.ptr}, &.{payload.len}, &.{addr_ptr});
-        if (bun.JSC.Maybe(void).errnoSys(res, .send)) |err| {
+        if (getUSError(res, .send, true)) |err| {
             return globalThis.throwValue(err.toJS(globalThis));
         }
         return JSValue.jsBoolean(res > 0);
@@ -499,7 +740,7 @@ pub const UDPSocket = struct {
         const number = port_val.coerceToInt32(globalThis);
         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
-        const str = address_val.toBunString(globalThis);
+        const str = address_val.toBunString(globalThis) catch @panic("unexpected exception");
         defer str.deref();
         const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(address_slice);
@@ -510,6 +751,35 @@ pub const UDPSocket = struct {
             addr4.family = std.posix.AF.INET;
         } else {
             var addr6: *std.posix.sockaddr.in6 = @ptrCast(storage);
+            addr6.scope_id = 0;
+
+            if (str.indexOfAsciiChar('%')) |percent| {
+                if (percent + 1 < str.length()) {
+                    const iface_id: u32 = blk: {
+                        if (comptime bun.Environment.isWindows) {
+                            if (str.substring(percent + 1).toInt32()) |signed| {
+                                if (std.math.cast(u32, signed)) |id| {
+                                    break :blk id;
+                                }
+                            }
+                        } else {
+                            const index = std.c.if_nametoindex(address_slice[percent + 1 .. :0]);
+                            if (index > 0) {
+                                if (std.math.cast(u32, index)) |id| {
+                                    break :blk id;
+                                }
+                            }
+                        }
+                        // "an invalid Scope gets turned into #0 (default selection)"
+                        // (test-dgram-multicast-set-interface.js)
+                        break :blk 0;
+                    };
+
+                    address_slice[percent] = '\x00';
+                    addr6.scope_id = iface_id;
+                }
+            }
+
             if (inet_pton(std.posix.AF.INET6, address_slice.ptr, &addr6.addr) == 1) {
                 addr6.port = htons(@truncate(port));
                 addr6.family = std.posix.AF.INET6;
@@ -582,17 +852,9 @@ pub const UDPSocket = struct {
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
-    fn addressToString(globalThis: *JSGlobalObject, address_bytes: []const u8) JSValue {
-        var text_buf: [512]u8 = undefined;
-        const address: std.net.Address = switch (address_bytes.len) {
-            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
-            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
-            else => return .undefined,
-        };
-
-        const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        var str = bun.String.createLatin1(slice);
-        return str.transferToJS(globalThis);
+    fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
+        var sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
+        return sockaddr.intoDTO(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -603,12 +865,7 @@ pub const UDPSocket = struct {
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
         const port = this.socket.boundPort();
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            @intCast(port),
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, @intCast(port));
     }
 
     pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -619,12 +876,7 @@ pub const UDPSocket = struct {
         this.socket.remoteIp(&buf, &length);
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            connect_info.port,
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, connect_info.port);
     }
 
     pub fn getBinaryType(
@@ -639,7 +891,7 @@ pub const UDPSocket = struct {
         };
     }
 
-    pub fn finalize(this: *This) callconv(.C) void {
+    pub fn finalize(this: *This) void {
         log("Finalize {*}", .{this});
         this.deinit();
     }
@@ -650,7 +902,7 @@ pub const UDPSocket = struct {
         bun.assert(this.closed);
         this.poll_ref.disable();
         this.config.deinit();
-        this.destroy();
+        bun.destroy(this);
     }
 
     pub fn jsConnect(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -672,7 +924,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 2 arguments", .{});
         }
 
-        const str = args.ptr[0].toBunString(globalThis);
+        const str = try args.ptr[0].toBunString(globalThis);
         defer str.deref();
         const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(connect_host);
@@ -692,7 +944,9 @@ pub const UDPSocket = struct {
         this.connect_info = .{
             .port = port,
         };
-        // TODO reset cached remoteAddress property
+
+        js.addressSetCached(callFrame.this(), globalThis, .zero);
+        js.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
         return .undefined;
     }

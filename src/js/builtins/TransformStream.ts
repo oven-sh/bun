@@ -95,13 +95,13 @@ export function initializeTransformStream(this) {
 
 $getter;
 export function readable() {
-  if (!$isTransformStream(this)) throw $makeThisTypeError("TransformStream", "readable");
+  if (!$isTransformStream(this)) throw $ERR_INVALID_THIS("TransformStream");
 
   return $getByIdDirectPrivate(this, "readable");
 }
 
 export function writable() {
-  if (!$isTransformStream(this)) throw $makeThisTypeError("TransformStream", "writable");
+  if (!$isTransformStream(this)) throw $ERR_INVALID_THIS("TransformStream");
 
   return $getByIdDirectPrivate(this, "writable");
 }

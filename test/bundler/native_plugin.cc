@@ -1,8 +1,8 @@
 /*
-  Dummy plugin which counts the occurences of the word "foo" in the source code,
+  Dummy plugin which counts the occurrences of the word "foo" in the source code,
   replacing it with "boo".
 
-  It stores the number of occurences in the External struct.
+  It stores the number of occurrences in the External struct.
 */
 #include <atomic>
 #include <bun-native-bundler-plugin-api/bundler_plugin.h>
@@ -79,11 +79,12 @@ void log_error(const OnBeforeParseArguments *args,
 extern "C" BUN_PLUGIN_EXPORT void
 plugin_impl_with_needle(const OnBeforeParseArguments *args,
                         OnBeforeParseResult *result, const char *needle) {
-  // if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
-  //     log_error(args, result, BUN_LOG_LEVEL_ERROR, "Invalid
-  //     OnBeforeParseArguments struct size", sizeof("Invalid
-  //     OnBeforeParseArguments struct size") - 1); return;
-  // }
+  if (args->__struct_size < sizeof(OnBeforeParseArguments)) {
+    const char *msg = "This plugin is built for a newer version of Bun than "
+                      "the one currently running.";
+    log_error(args, result, BUN_LOG_LEVEL_ERROR, msg, strlen(msg));
+    return;
+  }
 
   if (args->external) {
     External *external = (External *)args->external;
@@ -100,7 +101,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
 
   int fetch_result = result->fetchSourceCode(args, result);
   if (fetch_result != 0) {
-    printf("FUCK\n");
     exit(1);
   }
 
@@ -123,7 +123,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
   if (needle_count > 0) {
     char *new_source = (char *)malloc(result->source_len);
     if (new_source == nullptr) {
-      printf("FUCK\n");
       exit(1);
     }
     memcpy(new_source, result->source_ptr, result->source_len);
@@ -147,7 +146,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
       } else if (strcmp(needle, "baz") == 0) {
         needle_atomic_value = &external->baz_count;
       }
-      printf("FUCK: %d %s\n", needle_count, needle);
       needle_atomic_value->fetch_add(needle_count);
       free_counter = &external->compilation_ctx_freed_count;
     }
@@ -217,8 +215,8 @@ napi_value set_will_crash(napi_env env, napi_callback_info info) {
   napi_status status;
   External *external;
 
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   status = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to parse arguments");
@@ -237,7 +235,7 @@ napi_value set_will_crash(napi_env env, napi_callback_info info) {
   }
 
   bool throws;
-  status = napi_get_value_bool(env, args[0], &throws);
+  status = napi_get_value_bool(env, args[1], &throws);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to get boolean value");
     return nullptr;
@@ -252,8 +250,8 @@ napi_value set_throws_errors(napi_env env, napi_callback_info info) {
   napi_status status;
   External *external;
 
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   status = napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to parse arguments");
@@ -272,7 +270,7 @@ napi_value set_throws_errors(napi_env env, napi_callback_info info) {
   }
 
   bool throws;
-  status = napi_get_value_bool(env, args[0], &throws);
+  status = napi_get_value_bool(env, args[1], &throws);
   if (status != napi_ok) {
     napi_throw_error(env, nullptr, "Failed to get boolean value");
     return nullptr;
@@ -561,8 +559,9 @@ napi_value Init(napi_env env, napi_value exports) {
                      "Failed to add create_external function to exports");
     return nullptr;
   }
-
-  return exports;
+  // this should be the same as returning `exports`, but it would crash in
+  // previous versions of Bun
+  return nullptr;
 }
 
 struct NewOnBeforeParseArguments {

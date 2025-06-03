@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,23 +7,14 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const std = @import("std");
 const Progress = bun.Progress;
 
-const lex = bun.js_lexer;
 const logger = bun.logger;
 
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
-const allocators = @import("../allocators.zig");
-const sync = @import("../sync.zig");
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 
 const fs = @import("../fs.zig");
@@ -31,14 +22,9 @@ const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Lock = @import("../lock.zig").Lock;
 const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 
 pub var initialized_store = false;
 pub fn initializeStore() void {
@@ -113,57 +99,15 @@ pub const Version = struct {
         return strings.eqlComptime(this.tag, current_version);
     }
 
-    comptime {
-        _ = Bun__githubURL;
-    }
-};
-
-pub const UpgradeCheckerThread = struct {
-    pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
-            env_loader.map.get("CI") != null or
-            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
-            return;
-        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        update_checker_thread.detach();
-    }
-
-    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
-        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
-        std.time.sleep(std.time.ns_per_ms * delay);
-
-        Output.Source.configureThread();
-        HTTP.HTTPThread.init(&.{});
-
-        defer {
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
-        }
-
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
-
-        if (!version.isCurrent()) {
-            if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
-                Output.flush();
-            }
-        }
-
-        version.buf.deinit();
-    }
-
-    fn run(env_loader: *DotEnv.Loader) void {
-        _run(env_loader) catch |err| {
-            if (Environment.isDebug) {
-                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
-                Output.flush();
-            }
-        };
+    pub fn @"export"() void {
+        _ = &Bun__githubURL;
+        _ = &Bun__githubBaselineURL;
     }
 };
 
 pub const UpgradeCommand = struct {
+    pub const Bun__githubBaselineURL = Version.Bun__githubBaselineURL;
+
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -186,10 +130,10 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var header_entries: Headers.Entries = .{};
-        const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
-            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
+        var header_entries: Headers.Entry.List = .empty;
+        const accept = Headers.Entry{
+            .name = .{ .offset = 0, .length = @intCast("Accept".len) },
+            .value = .{ .offset = @intCast("Accept".len), .length = @intCast("application/vnd.github.v3+json".len) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -217,14 +161,14 @@ pub const UpgradeCommand = struct {
                 headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
-                    Headers.Kv{
-                        .name = Api.StringPointer{
+                    .{
+                        .name = .{
                             .offset = accept.value.offset + accept.value.length,
-                            .length = @as(u32, @intCast("Authorization".len)),
+                            .length = @intCast("Authorization".len),
                         },
-                        .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
-                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
+                        .value = .{
+                            .offset = @intCast(accept.value.offset + accept.value.length + "Authorization".len),
+                            .length = @intCast("Bearer ".len + access_token.len),
                         },
                     },
                 );
@@ -400,7 +344,7 @@ pub const UpgradeCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         const args = bun.argv;
         if (args.len > 2) {
@@ -456,7 +400,7 @@ pub const UpgradeCommand = struct {
 
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
-        const version: Version = if (!use_canary) v: {
+        var version: Version = if (!use_canary) v: {
             var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
@@ -574,7 +518,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+            const tmpdir_path = bun.FD.fromStdDir(save_dir).getFdPath(&tmpdir_path_buf) catch |err| {
                 Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
@@ -656,14 +600,14 @@ pub const UpgradeCommand = struct {
                     const powershell_path =
                         bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
-                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
-                        if (bun.sys.exists(hardcoded_system_powershell)) {
-                            break :hardcoded_system_powershell hardcoded_system_powershell;
-                        }
-                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
-                        Global.exit(1);
-                    };
+                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                            if (bun.sys.exists(hardcoded_system_powershell)) {
+                                break :hardcoded_system_powershell hardcoded_system_powershell;
+                            }
+                            Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                            Global.exit(1);
+                        };
 
                     var unzip_argv = [_]string{
                         powershell_path,
@@ -686,7 +630,7 @@ pub const UpgradeCommand = struct {
 
                         .windows = if (Environment.isWindows) .{
                             .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-                        } else {},
+                        },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
@@ -699,7 +643,7 @@ pub const UpgradeCommand = struct {
             {
                 var verify_argv = [_]string{
                     exe,
-                    "--version",
+                    if (use_canary) "--revision" else "--version",
                 };
 
                 const result = std.process.Child.run(.{
@@ -745,7 +689,12 @@ pub const UpgradeCommand = struct {
 
                 // It should run successfully
                 // but we don't care about the version number if we're doing a canary build
-                if (!use_canary) {
+                if (use_canary) {
+                    var version_string = result.stdout;
+                    if (strings.indexOfChar(version_string, '+')) |i| {
+                        version.tag = version_string[i + 1 .. version_string.len];
+                    }
+                } else {
                     var version_string = result.stdout;
                     if (strings.indexOfChar(version_string, ' ')) |i| {
                         version_string = version_string[0..i];
@@ -848,7 +797,7 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                bun.sys.moveFileZ(.fromStdDir(save_dir), exe, .fromStdDir(target_dir), target_filename) catch |err| {
                     defer save_dir_.deleteTree(version_name) catch {};
 
                     if (comptime Environment.isWindows) {
@@ -925,10 +874,10 @@ pub const UpgradeCommand = struct {
                     \\
                     \\Changelog:
                     \\
-                    \\    https://github.com/oven-sh/bun/compare/{s}...main
+                    \\    https://github.com/oven-sh/bun/compare/{s}...{s}
                     \\
                 ,
-                    .{Environment.git_sha},
+                    .{ Environment.git_sha_short, version.tag },
                 );
             } else {
                 const bun_v = "bun-v" ++ Global.package_json_version;
@@ -995,7 +944,7 @@ pub const upgrade_js_bindings = struct {
 
         var buf: bun.WPathBuffer = undefined;
         const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
-        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
             .err => return .undefined,
             .result => |norm| norm,
         };
@@ -1036,7 +985,7 @@ pub const upgrade_js_bindings = struct {
         );
 
         switch (bun.windows.Win32Error.fromNTStatus(rc)) {
-            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            .SUCCESS => tempdir_fd = .fromNative(fd),
             else => {},
         }
 
@@ -1047,9 +996,14 @@ pub const upgrade_js_bindings = struct {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {
-            _ = bun.sys.close(fd);
+            fd.close();
         }
 
         return .undefined;
     }
 };
+
+pub fn @"export"() void {
+    _ = &upgrade_js_bindings;
+    Version.@"export"();
+}

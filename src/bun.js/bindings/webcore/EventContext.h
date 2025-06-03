@@ -98,9 +98,9 @@ private:
     RefPtr<TouchList> m_targetTouches;
     RefPtr<TouchList> m_changedTouches;
 #endif
-    int m_closedShadowDepth { 0 };
-    bool m_currentTargetIsInShadowTree { false };
-    bool m_contextNodeIsFormElement { false };
+    [[maybe_unused]] int m_closedShadowDepth { 0 };
+    [[maybe_unused]] bool m_currentTargetIsInShadowTree { false };
+    [[maybe_unused]] bool m_contextNodeIsFormElement { false };
     Type m_type { Type::Normal };
 };
 

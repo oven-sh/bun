@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
-const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
-const Printer = css.Printer;
-const PrintErr = css.PrintErr;
 
 pub const css_modules = struct {
     /// Defines where the class names referenced in the `composes` property are located.

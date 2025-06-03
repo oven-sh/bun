@@ -1,12 +1,10 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = @import("../install/semver.zig").String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;
@@ -67,7 +65,7 @@ pub const ProcessHandle = struct {
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
 
         this.start_time = std.time.Instant.now() catch null;
-        var spawned: bun.spawn.SpawnProcessResult = brk: {
+        var spawned: bun.spawn.process.SpawnProcessResult = brk: {
 
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a std.ArrayList shared
@@ -409,14 +407,9 @@ const AbortHandler = struct {
                 .mask = std.posix.empty_sigset,
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
-            // if we can't set the handler, we just ignore it
-            std.posix.sigaction(std.posix.SIG.INT, &action, null) catch |err| {
-                if (Environment.isDebug) {
-                    Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
-                }
-            };
+            std.posix.sigaction(std.posix.SIG.INT, &action, null);
         } else {
-            const res = bun.windows.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
+            const res = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {
                 if (Environment.isDebug) {
                     Output.warn("Failed to set abort handler\n", .{});
@@ -429,13 +422,13 @@ const AbortHandler = struct {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         if (Environment.isWindows) {
             // restores default Ctrl+C behavior
-            _ = bun.windows.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
+            _ = bun.c.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
         }
     }
 };
 
 fn windowsIsTerminal() bool {
-    const res = bun.windows.GetFileType(bun.STDOUT_FD.cast());
+    const res = bun.windows.GetFileType(bun.FD.stdout().native());
     return res == bun.windows.FILE_TYPE_CHAR;
 }
 
@@ -475,7 +468,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
+        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
         };
@@ -535,7 +528,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
+        .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
     };
@@ -557,7 +550,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
+                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) },
                 .stream = true,
             },
         };

@@ -211,7 +211,6 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
 
         socket.flush();
       },
-      drain(socket) {},
     },
   });
   await 1;

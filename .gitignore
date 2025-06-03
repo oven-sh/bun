@@ -16,6 +16,7 @@
 .vscode/clang*
 .vscode/cpp*
 .zig-cache
+.bake-debug
 *.a
 *.bc
 *.big
@@ -151,6 +152,8 @@ src/bake/generated.ts
 test/cli/install/registry/packages/publish-pkg-*
 test/cli/install/registry/packages/@secret/publish-pkg-8
 test/js/third_party/prisma/prisma/sqlite/dev.db-journal
+tmp
+codegen-for-zig-team.tar.gz
 
 # Dependencies
 /vendor
@@ -179,3 +182,5 @@ test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
+
+*.bun-build

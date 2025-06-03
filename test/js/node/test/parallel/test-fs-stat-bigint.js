@@ -18,6 +18,7 @@ function getFilename() {
   return filename;
 }
 
+
 function verifyStats(bigintStats, numStats, allowableDelta) {
   // allowableDelta: It's possible that the file stats are updated between the
   // two stat() calls so allow for a small difference.

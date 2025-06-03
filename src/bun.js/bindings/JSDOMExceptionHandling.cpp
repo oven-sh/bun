@@ -42,7 +42,7 @@ using namespace JSC;
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     if (vm.isTerminationException(exception))
         return;
@@ -86,7 +86,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
 
 void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue, CachedScript* cachedScript, bool fromModule)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
     auto* exception = jsDynamicCast<JSC::Exception*>(exceptionValue);
     if (!exception) {
@@ -136,7 +136,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 
 void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* exception = scope.exception();
     scope.clearException();
@@ -145,8 +145,8 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    if (UNLIKELY(vm.hasPendingTerminationException()))
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    if (vm.hasPendingTerminationException()) [[unlikely]]
         return jsUndefined();
 
     switch (ec) {
@@ -181,6 +181,12 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
 
     case ExceptionCode::InvalidURLError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_URL, message.isEmpty() ? "Invalid URL"_s : message);
+
+    case ExceptionCode::CryptoOperationFailedError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);
+
+    case ExceptionCode::EVENT_RECURSION:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
 
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
@@ -275,9 +281,13 @@ JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::
     return throwVMError(&lexicalGlobalObject, scope, createReferenceError(&lexicalGlobalObject, makeString(interfaceName, " constructor associated execution context is unavailable"_s)));
 }
 
-void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
+void throwSequenceTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral functionName, ASCIILiteral argumentName)
 {
-    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    if (functionName && argumentName) {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, makeString(functionName, ": "_s, argumentName, " is not iterable."_s));
+    } else {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Value is not a sequence"_s);
+    }
 }
 
 void throwNonFiniteTypeError(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope)
@@ -290,10 +300,9 @@ JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexica
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
 }
 
-String makeThisTypeErrorMessage(const char* interfaceName, const char* functionName)
+String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName)
 {
-    auto interfaceNameSpan = span(interfaceName);
-    return makeString("Can only call "_s, interfaceNameSpan, '.', span(functionName), " on instances of "_s, interfaceNameSpan);
+    return makeString("Can only call "_s, interfaceName, '.', functionName, " on instances of "_s, interfaceName);
 }
 
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
@@ -301,18 +310,19 @@ String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
     return makeString("Failed to set an indexed property on "_s, interfaceName, ": Indexed property setter is not supported."_s);
 }
 
-EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const char* interfaceName, const char* functionName)
+EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName, ASCIILiteral attributeName)
 {
-    return JSValue::encode(scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, functionName))));
+    scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, attributeName)));
+    return {};
 }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
     promise.reject(ExceptionCode::InvalidThisError, makeThisTypeErrorMessage(interfaceName, methodName));
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
 }

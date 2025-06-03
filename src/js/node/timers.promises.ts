@@ -1,16 +1,12 @@
 // Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 
-const { validateBoolean, validateAbortSignal, validateObject } = require("internal/validators");
+const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
-
-class AbortError extends Error {
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
-  }
-}
+const setImmediateGlobal = globalThis.setImmediate;
+const setTimeoutGlobal = globalThis.setTimeout;
+const setIntervalGlobal = globalThis.setInterval;
 
 function asyncIterator({ next: nextFunction, return: returnFunction }) {
   const result = {};
@@ -27,8 +23,18 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
   return result;
 }
 
-function setTimeoutPromise(after = 1, value, options = {}) {
+function setTimeout(after = 1, value, options = {}) {
   const arguments_ = [].concat(value ?? []);
+  try {
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
+  } catch (error) {
+    return Promise.reject(error);
+  }
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -46,18 +52,18 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => resolve(value), after, ...arguments_);
+    const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
     if (!reference) {
       timeout?.unref?.();
     }
     if (signal) {
       onCancel = () => {
         clearTimeout(timeout);
-        reject(new AbortError());
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -67,7 +73,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     : returnValue;
 }
 
-function setImmediatePromise(value, options = {}) {
+function setImmediate(value, options = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -85,18 +91,18 @@ function setImmediatePromise(value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
-    const immediate = setImmediate(() => resolve(value));
+    const immediate = setImmediateGlobal(() => resolve(value));
     if (!reference) {
       immediate?.unref?.();
     }
     if (signal) {
       onCancel = () => {
         clearImmediate(immediate);
-        reject(new AbortError());
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -106,8 +112,22 @@ function setImmediatePromise(value, options = {}) {
     : returnValue;
 }
 
-function setIntervalPromise(after = 1, value, options = {}) {
+function setInterval(after = 1, value, options = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
+  try {
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
+  } catch (error) {
+    return asyncIterator({
+      next: function () {
+        return Promise.reject(error);
+      },
+    });
+  }
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -139,7 +159,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   if (signal?.aborted) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(new AbortError());
+        return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
       },
     });
   }
@@ -149,7 +169,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   try {
     let notYielded = 0;
     let callback;
-    interval = setInterval(() => {
+    interval = setIntervalGlobal(() => {
       notYielded++;
       if (callback) {
         callback();
@@ -180,7 +200,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
               resolve();
             }
           } else if (notYielded === 0) {
-            reject(new AbortError());
+            reject($makeAbortError(undefined, { cause: signal.reason }));
           } else {
             resolve();
           }
@@ -188,6 +208,8 @@ function setIntervalPromise(after = 1, value, options = {}) {
           if (notYielded > 0) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
+          } else if (signal?.aborted) {
+            throw $makeAbortError(undefined, { cause: signal.reason });
           }
           return { done: true };
         });
@@ -198,7 +220,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
         return Promise.resolve({});
       },
     });
-  } catch (error) {
+  } catch {
     return asyncIterator({
       next: function () {
         clearInterval(interval);
@@ -209,11 +231,11 @@ function setIntervalPromise(after = 1, value, options = {}) {
 }
 
 export default {
-  setTimeout: setTimeoutPromise,
-  setImmediate: setImmediatePromise,
-  setInterval: setIntervalPromise,
+  setTimeout,
+  setImmediate,
+  setInterval,
   scheduler: {
-    wait: (delay, options) => setTimeoutPromise(delay, undefined, options),
-    yield: setImmediatePromise,
+    wait: (delay, options) => setTimeout(delay, undefined, options),
+    yield: setImmediate,
   },
 };

@@ -62,7 +62,7 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 // #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
@@ -77,7 +77,7 @@
 // #endif
 
 namespace WebCore {
-WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
 static size_t getFramingOverhead(size_t payloadSize)
@@ -419,7 +419,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     Vector<ZigString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTFMove(headersInit));
-    if (UNLIKELY(headersOrException.hasException())) {
+    if (headersOrException.hasException()) [[unlikely]] {
         m_state = CLOSED;
         updateHasPendingActivity();
         return headersOrException.releaseException();
@@ -1041,7 +1041,7 @@ void WebSocket::didReceiveMessage(String&& message)
     if (m_state != OPEN)
         return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
     //         auto utf8Message = message.utf8();
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(utf8Message.dataAsUInt8Ptr(), utf8Message.length(), WebSocketFrame::OpCode::OpCodeText));
@@ -1075,7 +1075,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     if (m_state != OPEN)
         return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector())
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
@@ -1113,7 +1113,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             auto scope = DECLARE_CATCH_SCOPE(scriptExecutionContext()->vm());
             JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
-            if (UNLIKELY(!buffer || scope.exception())) {
+            if (!buffer || scope.exception()) [[unlikely]] {
                 scope.clearExceptionExceptTermination();
 
                 ErrorEvent::Init errorInit;
@@ -1141,12 +1141,8 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
-                JSUint8Array* uint8array = JSUint8Array::create(
-                    globalObject,
-                    reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure(),
-                    buffer.copyRef(),
-                    0,
-                    length);
+                auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
+                JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
                 init.data = uint8array;
@@ -1173,7 +1169,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
-    if (auto* context = scriptExecutionContext()) {
+    if (scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
             ErrorEvent::Init eventInit = {};
@@ -1220,7 +1216,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // if (!m_channel)
     //     return;
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
     //         WebSocketFrame closingFrame(WebSocketFrame::OpCodeClose, true, false, false);
     //         inspector->didReceiveWebSocketFrame(closingFrame);
@@ -1464,9 +1460,9 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
-    WTF::String wtf_reason = reason->toWTFString(BunString::ZeroCopy);
+    WTF::String wtf_reason = reason->transferToWTFString();
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 

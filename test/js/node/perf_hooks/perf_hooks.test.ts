@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import perf from "perf_hooks";
 
 test("stubs", () => {
+  expect(!!perf.monitorEventLoopDelay).toBeFalse();
   expect(() => perf.monitorEventLoopDelay()).toThrow();
-  expect(() => perf.createHistogram()).toThrow();
   expect(perf.performance.nodeTiming).toBeObject();
 
   expect(perf.performance.now()).toBeNumber();

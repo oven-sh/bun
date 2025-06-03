@@ -9,10 +9,10 @@ type TLSOptions = {
   passphrase?: string;
 };
 
-import { tls as cert1, expiredTls as cert2 } from "harness";
+import { expiredTls, invalidTls, tls as validTls } from "harness";
 
-const CERT_LOCALHOST_IP = { ...cert1 };
-const CERT_EXPIRED = { ...cert2 };
+const CERT_LOCALHOST_IP = { ...validTls };
+const CERT_EXPIRED = { ...expiredTls };
 
 // Note: Do not use bun.sh as the example domain
 // Cloudflare sometimes blocks automated requests to it.
@@ -228,7 +228,7 @@ it("fetch should respect rejectUnauthorized env", async () => {
 
 it("fetch timeout works on tls", async () => {
   using server = Bun.serve({
-    tls: cert1,
+    tls: validTls,
     hostname: "localhost",
     port: 0,
     rejectUnauthorized: false,
@@ -248,7 +248,7 @@ it("fetch timeout works on tls", async () => {
   try {
     await fetch(server.url, {
       signal: AbortSignal.timeout(TIMEOUT),
-      tls: { ca: cert1.cert },
+      tls: { ca: validTls.cert },
     }).then(res => res.text());
     expect.unreachable();
   } catch (e) {
@@ -292,13 +292,13 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
 it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
   using server = Bun.serve({
     port: 0,
-    tls: cert1,
+    tls: validTls,
     fetch() {
       return new Response("OK");
     },
   });
   const cert_path = join(tmpdirSync(), "cert.pem");
-  await Bun.write(cert_path, cert1.cert);
+  await Bun.write(cert_path, validTls.cert);
 
   const proc = Bun.spawn({
     env: {
@@ -315,15 +315,44 @@ it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
   expect(await proc.exited).toBe(0);
 });
 
-it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
+it("fetch should use NODE_EXTRA_CA_CERTS even if the used CA is not first in bundle", async () => {
   using server = Bun.serve({
     port: 0,
-    tls: cert1,
+    tls: validTls,
     fetch() {
       return new Response("OK");
     },
   });
-  for (const invalid of ["invalid.pem", "", " "]) {
+
+  const bundlePath = join(tmpdirSync(), "bundle.pem");
+  const bundleContent = `${expiredTls.cert}\n${validTls.cert}`;
+  await Bun.write(bundlePath, bundleContent);
+
+  const proc = Bun.spawn({
+    env: {
+      ...bunEnv,
+      SERVER: server.url,
+      NODE_EXTRA_CA_CERTS: bundlePath,
+    },
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+    cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
+it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls: validTls,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+
+  for (const invalid of ["not-exist.pem", "", " "]) {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
@@ -338,5 +367,40 @@ it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
 
     expect(await proc.exited).toBe(1);
     expect(await Bun.readableStreamToText(proc.stderr)).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+  }
+});
+
+it("fetch should ignore NODE_EXTRA_CA_CERTS if it's contains invalid cert", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls: validTls,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+
+  const mixedValidAndInvalidCertsBundlePath = join(tmpdirSync(), "mixed-valid-and-invalid-certs-bundle.pem");
+  await Bun.write(mixedValidAndInvalidCertsBundlePath, `${invalidTls.cert}\n${validTls.cert}`);
+
+  const mixedInvalidAndValidCertsBundlePath = join(tmpdirSync(), "mixed-invalid-and-valid-certs-bundle.pem");
+  await Bun.write(mixedInvalidAndValidCertsBundlePath, `${validTls.cert}\n${invalidTls.cert}`);
+
+  for (const invalid of [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath]) {
+    const proc = Bun.spawn({
+      env: {
+        ...bunEnv,
+        SERVER: server.url,
+        NODE_EXTRA_CA_CERTS: invalid,
+      },
+      stderr: "pipe",
+      stdout: "inherit",
+      stdin: "inherit",
+      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+    });
+
+    expect(await proc.exited).toBe(1);
+    const stderr = await Bun.readableStreamToText(proc.stderr);
+    expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(stderr).toContain("ignoring extra certs");
   }
 });

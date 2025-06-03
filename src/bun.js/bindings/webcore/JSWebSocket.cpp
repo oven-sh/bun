@@ -145,12 +145,12 @@ static_assert(WebSocket::CLOSED == 3, "CLOSED in WebSocket does not match value 
 
 static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -172,12 +172,12 @@ static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalG
 
 static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
@@ -199,11 +199,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
 
 static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, urlValue);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -262,7 +262,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     size_t argsCount = std::min<size_t>(2, callFrame->argumentCount());
@@ -374,10 +374,10 @@ JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWebSocketPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWebSocket::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
@@ -916,12 +916,12 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     auto* jsWebSocket = jsCast<JSWebSocket*>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
     if (wrapped.hasPendingActivity()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }
     if (jsWebSocket->wrapped().isFiringEventListeners()) {
-        if (UNLIKELY(reason))
+        if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
         return true;
     }

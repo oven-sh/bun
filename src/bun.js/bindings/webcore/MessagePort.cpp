@@ -256,12 +256,12 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
     Vector<MessageWithMessagePorts> deferredMessages;
 
     for (auto&& message : messages) {
-        // printf("processing message count: %d\n", context.messagesSentThisTick);
-
         if (!context.canSendMessage()) {
             deferredMessages.append(WTFMove(message));
             continue;
         }
+
+        context.incrementMessageCount();
 
         auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -280,14 +280,16 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
     }
 
     if (!deferredMessages.isEmpty()) {
-        // remaining messages should happen on da next tick
-        context.postTask(
+        // remaining messages should happen on the next on the immediate cpp task queue
+        context.queueImmediateCppTask(
             [protectedThis = Ref { *this }, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
                 RefPtr<ScriptExecutionContext> contextPtr = protectedThis->scriptExecutionContext();
                 if (!contextPtr || contextPtr->activeDOMObjectsAreSuspended() || !protectedThis->isEntangled()) {
                     completionCallback();
                     return;
                 }
+                // then reset for next tick
+                ctx.resetMessageCount();
                 protectedThis->processMessages(ctx, WTFMove(deferred), WTFMove(completionCallback));
             });
     } else {

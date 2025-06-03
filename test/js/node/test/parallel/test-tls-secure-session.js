@@ -18,9 +18,13 @@ const options = {
   secureProtocol: 'TLSv1_2_method'
 };
 
+console.log('Creating TLS server with options:', options);
+
 const server = tls.createServer(options, common.mustCall((socket) => {
+  console.log('Server received connection');
   socket.end();
 })).listen(0, common.mustCall(() => {
+  console.log('Server listening on port:', server.address().port);
   let connected = false;
   let session = null;
 
@@ -28,6 +32,7 @@ const server = tls.createServer(options, common.mustCall((socket) => {
     rejectUnauthorized: false,
     port: server.address().port,
   }, common.mustCall(() => {
+    console.log('Client connected');
     assert(!connected);
     assert(!session);
 
@@ -35,6 +40,7 @@ const server = tls.createServer(options, common.mustCall((socket) => {
   }));
 
   client.on('session', common.mustCall((newSession) => {
+    console.log('Client received session');
     assert(connected);
     assert(!session);
 

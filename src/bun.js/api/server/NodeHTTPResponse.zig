@@ -45,7 +45,7 @@ pub const Flags = packed struct(u8) {
 };
 
 pub const UpgradeCTX = struct {
-    context: ?*uws.uws_socket_context_t = null,
+    context: ?*uws.SocketContext = null,
     // request will be detached when go async
     request: ?*uws.Request = null,
 

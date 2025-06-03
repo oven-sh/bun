@@ -682,7 +682,7 @@ pub const Listener = struct {
                 }
             }
         }
-        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
+        const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl != null)
             JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
         else
             .{};
@@ -691,8 +691,8 @@ pub const Listener = struct {
 
         var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = switch (ssl_enabled) {
-            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
-            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
+            true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
         } orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
@@ -763,15 +763,7 @@ pub const Listener = struct {
                     const host = bun.default_allocator.dupeZ(u8, c.host) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
 
-                    const socket = uws.us_socket_context_listen(
-                        @intFromBool(ssl_enabled),
-                        socket_context,
-                        if (host.len == 0) null else host.ptr,
-                        c.port,
-                        socket_flags,
-                        8,
-                        &errno,
-                    );
+                    const socket = socket_context.listen(ssl_enabled, host.ptr, c.port, socket_flags, 8, &errno);
                     // should return the assigned port
                     if (socket) |s| {
                         connection.host.port = @as(u16, @intCast(s.getLocalPort(ssl_enabled)));
@@ -781,7 +773,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
+                    break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
                 },
                 .fd => |fd| {
                     _ = fd;
@@ -791,7 +783,7 @@ pub const Listener = struct {
         } orelse {
             defer {
                 hostname_or_unix.deinit();
-                uws.us_socket_context_free(@intFromBool(ssl_enabled), socket_context);
+                socket_context.free(ssl_enabled);
             }
 
             const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
@@ -827,7 +819,7 @@ pub const Listener = struct {
             if (ssl_config.server_name) |server_name| {
                 const slice = bun.asByteSlice(server_name);
                 if (slice.len > 0)
-                    uws.us_bun_socket_context_add_server_name(1, socket.socket_context, server_name, ctx_opts, null);
+                    socket.socket_context.?.addServerName(true, server_name, ctx_opts);
             }
         }
 
@@ -925,8 +917,8 @@ pub const Listener = struct {
 
         if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, tls)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
-            uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
-            uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
+            this.socket_context.?.removeServerName(true, server_name);
+            this.socket_context.?.addServerName(true, server_name, ssl_config.asUSockets());
         }
 
         return JSValue.jsUndefined();
@@ -1215,15 +1207,15 @@ pub const Listener = struct {
             }
         }
 
-        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
+        const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl != null)
             JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
         else
             .{};
 
         var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = switch (ssl_enabled) {
-            true => uws.us_create_bun_ssl_socket_context(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
-            false => uws.us_create_bun_nossl_socket_context(uws.Loop.get(), @sizeOf(usize)),
+            true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
+            false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
         } orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
@@ -2100,7 +2092,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             // this error can change if called in different stages of hanshake
             // is very usefull to have this feature depending on the user workflow
-            const ssl_error = this.socket.verifyError();
+            const ssl_error = this.socket.getVerifyError();
             if (ssl_error.error_no == 0) {
                 return JSValue.jsNull();
             }
@@ -3876,10 +3868,10 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         if (ssl_config) |ssl_options| {
             bun.BoringSSL.load();
 
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            const ctx_opts: uws.SocketContext.BunSocketContextOptions = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
+            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
             this.ctx = ctx;
         }
 

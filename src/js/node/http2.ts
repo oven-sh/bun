@@ -2747,11 +2747,7 @@ class ServerHttp2Session extends Http2Session {
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
-      for (const stream of parser.getAllStreams()) {
-        if (stream) {
-          stream.emit("timeout");
-        }
-      }
+      parser.forEachStream(emitTimeout);
     }
     this.emit("timeout");
   }
@@ -3032,7 +3028,12 @@ class ServerHttp2Session extends Http2Session {
     this.emit("close");
   }
 }
-
+function emitTimeout(session: ClientHttp2Session) {
+  session.emit("timeout");
+}
+function streamCancel(stream: Http2Stream) {
+  stream.close(NGHTTP2_CANCEL);
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
   #closed: boolean = false;
@@ -3277,11 +3278,7 @@ class ClientHttp2Session extends Http2Session {
     const parser = this.#parser;
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
-      for (const stream of parser.getAllStreams()) {
-        if (stream) {
-          stream.close(NGHTTP2_CANCEL);
-        }
-      }
+      parser.forEachStream(streamCancel);
       parser.detach();
       this.#parser = null;
     }
@@ -3299,11 +3296,7 @@ class ClientHttp2Session extends Http2Session {
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
-      for (const stream of parser.getAllStreams()) {
-        if (stream) {
-          stream.emit("timeout");
-        }
-      }
+      parser.forEachStream(emitTimeout);
     }
     this.emit("timeout");
   }

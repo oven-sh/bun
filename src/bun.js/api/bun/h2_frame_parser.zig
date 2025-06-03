@@ -3712,19 +3712,24 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
-    pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn forEachStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
-        const array = try JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
+        const args = callframe.arguments();
+        if (args.len < 1 or !args[0].isCallable()) {
+            return .undefined;
+        }
+        const callback = args[0];
+        const thisValue = if (args.len > 1) args[1] else .undefined;
         var count: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
             const value = stream.jsContext.get() orelse continue;
-            array.putIndex(globalObject, count, value);
+            this.handlers.vm.eventLoop().runCallback(callback, globalObject, thisValue, &[_]JSC.JSValue{value});
             count += 1;
         }
-        return array;
+        return .undefined;
     }
+
     pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
         var it = StreamResumableIterator.init(this);

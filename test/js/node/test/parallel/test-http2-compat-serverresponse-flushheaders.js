@@ -11,7 +11,7 @@ const h2 = require('http2');
 let serverResponse;
 
 const server = h2.createServer();
-server.listen(0, common.mustCall(function mustCallListenFn() {
+server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
   const port = server.address().port;
   server.once('request', common.mustCall(function mustCallRequestFn(request, response) {
     serverResponse = response;

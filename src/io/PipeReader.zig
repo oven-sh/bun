@@ -441,7 +441,7 @@ const PosixBufferedReader = struct {
                         if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
 
                         if (bytes_read == 0) {
-                            // EOF - cat finished and closed pipe
+                            // EOF - finished and closed pipe
                             parent.closeWithoutReporting();
                             parent.done();
                             return;

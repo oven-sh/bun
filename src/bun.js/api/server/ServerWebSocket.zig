@@ -1289,6 +1289,6 @@ const bun = @import("bun");
 const string = []const u8;
 const std = @import("std");
 const ZigString = JSC.ZigString;
-const WebSocketServer = @import("../server.zig").WebSocketServer;
+const WebSocketServer = @import("../server.zig").WebSocketServerContext;
 const uws = bun.uws;
 const Output = bun.Output;

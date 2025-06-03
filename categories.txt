@@ -81,6 +81,19 @@ test-tls-secure-session.js
 - client.on("session") never called?
 - probably because it sets secureProtocol: 'TLSv1_2_method'
 - we probably don't support setting secureProtocol
+- we don't emit a session event at all ever except in http2. node emits a session at the end of onConnectSecure and in onnewesssionclient
+- search terms: 'emit('session)'
+
+desc
+
+test-tls-secure-session is failing for two reasions:
+1. Bun doesn't implement secureProtocol, so it does not use tls v1.2
+2. Bun does not emit a session event.
+
+Tasks. Complete tasks one at a time. Once a task is completed and tested, check off the task and commit your code.
+- [ ] Create a test file called `repro.js` that tests if the session event is emitted. Make sure it passes using `node repro.js` and fails using `bun bd repro.js`
+- [ ] Search node's source code (in ../node) and find when it emits a sesssion event, then update Bun's code to emit a session event the same way. Test if this worked using `bun bd repro.js`
+- [ ] Implement secureProtocol. Test if this worked using `bun bd test/js/node/test/parallel/test-tls-secure-session.js`. It will time out if it fails.
 
 test-tls-js-stream.js:
 - connection closes earlier than expected?

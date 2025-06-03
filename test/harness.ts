@@ -1119,7 +1119,7 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 }
 
 export async function runBunInstall(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
   options?: {
     allowWarnings?: boolean;
@@ -1182,7 +1182,7 @@ export function stderrForInstall(err: string) {
 }
 
 export async function runBunUpdate(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
   args?: string[],
 ): Promise<{ out: string[]; err: string; exitCode: number }> {

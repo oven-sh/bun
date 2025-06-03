@@ -6,7 +6,7 @@ missing socket.on('data') event when data received after socket.end():
 getTLSPeerFinishedMessage not working right? and same for getFinished
 - test-tls-finished.js
 
-SNICallback not supported: (#17932, #14395, #6749, #4053)
+SNICallback not supported: (#17932, #14395, #6749, #4053) (kai)
 - test-tls-starttls-server.js
 - test-tls-socket-snicallback-without-server.js
 - test-tls-snicallback-error.js
@@ -41,6 +41,10 @@ Is nrypt used in node tls, do we need to update it?
 - missing '_tlsError' event: test-tls-delayed-attach-error.js
 - tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
 - getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
+
+test-tls-disable-renegotiation.js:
+- missing ERR_INVALID_ARG_TYPE for client.renegotiate()
+- OpenSSL function should not have been called via OPENSSL_internal SSL routines
 
 addCACert
 - missing addCACert: test-tls-addca

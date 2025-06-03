@@ -1,16 +1,16 @@
-import { file, write } from "bun";
-import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "fs/promises";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import {
   VerdaccioRegistry,
-  assertManifestsPopulated,
-  bunEnv as env,
-  runBunInstall,
   runBunUpdate,
+  assertManifestsPopulated,
+  runBunInstall,
+  bunEnv as env,
   toMatchNodeModulesAt,
 } from "harness";
+import { write, file } from "bun";
 import { join } from "path";
+import { rm } from "fs/promises";
+import { install_test_helpers } from "bun:internal-for-testing";
 
 const { parseLockfile } = install_test_helpers;
 

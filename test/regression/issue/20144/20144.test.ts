@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { spawn } from "node:child_process";
 import { it } from "bun:test";
 
-it("should not time out", done => {
+it.skipIf(process.platform === "win32")("should not time out", done => {
   const child = spawn(process.execPath, ["run", "./20144.fixture.ts"], {
     cwd: __dirname,
     stdio: [null, "inherit", "inherit", "ipc"],

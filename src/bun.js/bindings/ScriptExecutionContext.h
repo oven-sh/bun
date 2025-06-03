@@ -138,6 +138,9 @@ public:
     void postImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread immediately.
     void postImmediateCppTask(EventLoopTask* task);
+    // Queues the task to the immediate cpp queue
+    void queueImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda);
+    void queueImmediateCppTask(EventLoopTask* task);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
@@ -161,6 +164,13 @@ public:
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
+    bool canSendMessage() {
+        static constexpr size_t maxMessagesPerTick = 1000;
+        return m_messagesSentThisTick < maxMessagesPerTick;
+    }
+    void incrementMessageCount() { m_messagesSentThisTick++; }
+    void resetMessageCount() { m_messagesSentThisTick = 0; }
+
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
@@ -173,6 +183,7 @@ private:
     LazyRef<ScriptExecutionContext, BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
 
     bool m_willProcessMessageWithMessagePortsSoon { false };
+    size_t m_messagesSentThisTick { 0 };
 
     us_socket_context_t* webSocketContextSSL();
     us_socket_context_t* webSocketContextNoSSL();

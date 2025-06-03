@@ -2731,7 +2731,6 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    console.log("onClose ServerHttp2Session");
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
@@ -3275,14 +3274,18 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    console.log("onClose ClientHttp2Session");
     const parser = this.#parser;
+    const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
-      parser.emitAbortToAllStreams();
+      for (const stream of parser.getAllStreams()) {
+        if (stream) {
+          stream.close(NGHTTP2_CANCEL);
+        }
+      }
       parser.detach();
       this.#parser = null;
     }
-    this.close();
+    this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {

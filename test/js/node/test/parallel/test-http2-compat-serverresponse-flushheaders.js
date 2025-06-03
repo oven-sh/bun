@@ -32,7 +32,6 @@ server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
 
     response.on('finish', common.mustCall(function mustCallFinishFn() {
       console.error('response.finish()');
-      server.close();
       process.nextTick(() => {
         response.flushHeaders(); // Idempotent
       });
@@ -61,6 +60,7 @@ server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
     request.on('end', common.mustCall(function mustCallEndFn() {
       console.error("client.close()");
       client.close();
+      server.close();
     }));
     request.end();
     request.resume();

@@ -32,8 +32,8 @@ function __fish__get_bun_bun_js_files
 	string split ' ' (bun getcompletes j)
 end
 
-set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
-set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
+set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global ca cafile network-concurrency save-text-lockfile omit lockfile-only trust concurrent-scripts
+set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder" "Provide a Certificate Authority signing certificate" "The same as --ca, but is a file path to the certificate" "Maximum number of concurrent network requests" "Save a text-based lockfile" "Exclude dev, optional, or peer dependencies from install" "Generate a lockfile without installing dependencies" "Add to trustedDependencies in the project's package.json and install the package(s)" "Maximum number of concurrent jobs for lifecycle scripts (default 5)"
 
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x
@@ -164,7 +164,7 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls cache hash hash-print hash-string' -f
+	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls cache hash hash-print hash-string audit pack migrate untrusted trust default-trusted whoami' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
@@ -184,3 +184,41 @@ complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package manage
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
+
+# Add explicit completions for missing test flags
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'timeout' -d 'Set the per-test timeout in milliseconds, default is 5000.'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'update-snapshots' -d 'Update snapshot files'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'rerun-each' -d 'Re-run each test file <NUMBER> times, helps catch certain bugs'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'only' -d 'Only run tests that are marked with test.only()'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'todo' -d 'Include tests that are marked with test.todo()'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'coverage' -d 'Generate a coverage profile'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'coverage-reporter' -d 'Report coverage in text and/or lcov. Defaults to text.'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'coverage-dir' -d 'Directory for coverage files. Defaults to coverage.'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'bail' -d 'Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.'
+complete -c bun -n "__fish_seen_subcommand_from test" -l 'test-name-pattern' -d 'Run only tests with a name that matches the given regex.'
+
+# Add completions for bun build flags
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'production' -d 'Set NODE_ENV=production and enable minification'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'compile' -d 'Generate a standalone Bun executable containing your bundled code. Implies --production'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'bytecode' -d 'Use a bytecode cache'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'watch' -d 'Automatically restart the process on file change'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'no-clear-screen' -d 'Disable clearing the terminal screen on reload when --watch is enabled'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'target' -d 'The intended execution environment for the bundle. "browser", "bun" or "node"'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'outdir' -d 'Default to "dist" if multiple files'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'outfile' -d 'Write to a file'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'sourcemap' -d 'Build with sourcemaps - linked, inline, external, or none'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'minify' -d 'Enable all minification flags'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'minify-syntax' -d 'Minify syntax and inline data'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'minify-whitespace' -d 'Minify whitespace'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'minify-identifiers' -d 'Minify identifiers'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'format' -d 'Specifies the module format to build to. "esm", "cjs" and "iife" are supported. Defaults to "esm".'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'banner' -d 'Add a banner to the bundled output'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'footer' -d 'Add a footer to the bundled output'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'root' -d 'Root directory used for multiple entry points'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'splitting' -d 'Enable code splitting'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'public-path' -d 'A prefix to be appended to any import paths in bundled code'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'entry-naming' -d 'Customize entry point filenames'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'chunk-naming' -d 'Customize chunk filenames'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'asset-naming' -d 'Customize asset filenames'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'react-fast-refresh' -d 'Enable React Fast Refresh transform'
+complete -c bun -n "__fish_seen_subcommand_from build" -l 'no-bundle' -d 'Transpile file only, do not bundle'

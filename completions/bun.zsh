@@ -36,7 +36,17 @@ _bun_add_completion() {
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--ca[Provide a Certificate Authority signing certificate]:ca' \
+        '--cafile[The same as --ca, but is a file path to the certificate]:cafile' \
+        '--network-concurrency[Maximum number of concurrent network requests]:network-concurrency' \
+        '--save-text-lockfile[Save a text-based lockfile]' \
+        '--omit[Exclude dev, optional, or peer dependencies from install]:omit:(dev optional peer)' \
+        '--lockfile-only[Generate a lockfile without installing dependencies]' \
+        '--trust[Add to trustedDependencies in the project'"'"'s package.json and install the package(s)]' \
+        '--concurrent-scripts[Maximum number of concurrent jobs for lifecycle scripts (default 5)]:concurrent-scripts' \
+        '--analyze[Analyze & install all dependencies of files passed as arguments recursively (using Bun'"'"'s bundler)]' \
+        '--only-missing[Only add dependencies to package.json if they are not already present]' &&
         ret=0
 
     case $state in
@@ -260,8 +270,14 @@ _bun_pm_completion() {
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
-            'audit\:"run a security audit of dependencies in Bun'\''s lockfile"'
+            'audit\:"run a security audit of dependencies in Bun'"'"'s lockfile"'
             'cache\:"print the path to the cache folder" '
+            'pack\:"create a tarball of the current workspace" '
+            'migrate\:"migrate another package manager'"'"'s lockfile without installing anything" '
+            'untrusted\:"print current untrusted dependencies with scripts" '
+            'trust\:"run scripts for untrusted dependencies and add to trustedDependencies" '
+            'default-trusted\:"print the default trusted dependencies list" '
+            'whoami\:"print your npm username" '
         )
 
         _alternative "args:cmd3:(($sub_commands))"
@@ -342,7 +358,17 @@ _bun_install_completion() {
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--ca[Provide a Certificate Authority signing certificate]:ca' \
+        '--cafile[The same as --ca, but is a file path to the certificate]:cafile' \
+        '--network-concurrency[Maximum number of concurrent network requests]:network-concurrency' \
+        '--save-text-lockfile[Save a text-based lockfile]' \
+        '--omit[Exclude dev, optional, or peer dependencies from install]:omit:(dev optional peer)' \
+        '--lockfile-only[Generate a lockfile without installing dependencies]' \
+        '--trust[Add to trustedDependencies in the project'"'"'s package.json and install the package(s)]' \
+        '--concurrent-scripts[Maximum number of concurrent jobs for lifecycle scripts (default 5)]:concurrent-scripts' \
+        '--analyze[Analyze & install all dependencies of files passed as arguments recursively (using Bun'"'"'s bundler)]' \
+        '--only-missing[Only add dependencies to package.json if they are not already present]' &&
         ret=0
 
     case $state in
@@ -453,7 +479,7 @@ _bun_run_completion() {
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
         '--silent[Don'"'"'t repeat the command for bun run]' \
         '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
-        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        '--dump-limits[Dump system limits. Useful for debugging]' &&
         ret=0
 
     case $state in
@@ -494,34 +520,43 @@ _bun_build_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '*: :->file' \
-        '--outfile[Write the output to a specific file (default: stdout)]:outfile' \
-        '--outdir[Write the output to a directory (required for splitting)]:outdir' \
-        '--minify[Enable all minification flags]' \
-        '--minify-whitespace[Remove unneeded whitespace]' \
-        '--minify-syntax[Transform code to use less syntax]' \
-        '--minify-identifiers[Shorten variable names]' \
-        '--sourcemap[Generate sourcemaps]: :->sourcemap' \
+        '--production[Set NODE_ENV=production and enable minification]' \
+        '--compile[Generate a standalone Bun executable containing your bundled code. Implies --production]' \
+        '--bytecode[Use a bytecode cache]' \
+        '--watch[Automatically restart the process on file change]' \
+        '--no-clear-screen[Disable clearing the terminal screen on reload when --watch is enabled]' \
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
-        '--splitting[Whether to enable code splitting (requires --outdir)]' \
-        '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
-        '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
+        '--outdir[Default to "dist" if multiple files]:outdir' \
+        '--outfile[Write to a file]:outfile' \
+        '--sourcemap[Build with sourcemaps - linked, inline, external, or none]: :->sourcemap' \
+        '--minify[Enable all minification flags]' \
+        '--minify-syntax[Minify syntax and inline data]' \
+        '--minify-whitespace[Minify whitespace]' \
+        '--minify-identifiers[Minify identifiers]' \
+        '--format[Specifies the module format to build to. "esm", "cjs" and "iife" are supported. Defaults to "esm".]: :->format' \
+        '--banner[Add a banner to the bundled output]:banner' \
+        '--footer[Add a footer to the bundled output]:footer' \
+        '--root[Root directory used for multiple entry points]:root' \
+        '--splitting[Enable code splitting]' \
+        '--public-path[A prefix to be appended to any import paths in bundled code]:public-path' \
+        '--entry-naming[Customize entry point filenames]:entry-naming' \
+        '--chunk-naming[Customize chunk filenames]:chunk-naming' \
+        '--asset-naming[Customize asset filenames]:asset-naming' \
+        '--react-fast-refresh[Enable React Fast Refresh transform]' \
+        '--no-bundle[Transpile file only, do not bundle]' &&
         ret=0
 
     case $state in
     file)
         _files
-
         ;;
     target)
         _alternative 'args:cmd3:((browser bun node))'
-
         ;;
     sourcemap)
         _alternative 'args:cmd3:((none external inline))'
-
         ;;
     format)
-
         _alternative 'args:cmd3:((esm cjs iife))'
         ;;
     esac
@@ -629,10 +664,12 @@ _bun_test_completion() {
         '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
         '--timeout[Set the per-test timeout in milliseconds, default is 5000.]:timeout' \
         '--update-snapshots[Update snapshot files]' \
-        '--rerun-each[Re-run each test file <NUMBER> times, helps catch certain bugs]:rerun' \
+        '--rerun-each[Re-run each test file <NUMBER> times, helps catch certain bugs]:rerun-each' \
         '--only[Only run tests that are marked with "test.only()"]' \
         '--todo[Include tests that are marked with "test.todo()"]' \
         '--coverage[Generate a coverage profile]' \
+        '--coverage-reporter[Report coverage in "text" and/or "lcov". Defaults to "text".]:coverage-reporter' \
+        '--coverage-dir[Directory for coverage files. Defaults to "coverage".]:coverage-dir' \
         '--bail[Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.]:bail' \
         '--test-name-pattern[Run only tests with a name that matches the given regex]:pattern' \
         '-t[Run only tests with a name that matches the given regex]:pattern' &&

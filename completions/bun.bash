@@ -84,15 +84,15 @@ _bun_completions() {
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --minify --minify-syntax --minify-whitespace --minify-identifiers --sourcemap --target --splitting --compile --format --inspect --inspect-wait --inspect-brk --hot --watch --no-install --install --prefer-offline --prefer-latest";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --dev --analyze --only-missing --exact";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --ca --cafile --network-concurrency --save-text-lockfile --omit --lockfile-only --trust --concurrent-scripts --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
@@ -156,7 +156,14 @@ _bun_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string audit pack migrate untrusted trust default-trusted whoami" -- "${cur_word}") );
+            return;;
+        test)
+            _long_short_completion \
+                "--timeout --update-snapshots --rerun-each --only --todo --coverage --coverage-reporter --coverage-dir --bail --test-name-pattern" ""
+            return;;
+        build)
+            COMPREPLY=( $(compgen -W "--production --compile --bytecode --watch --no-clear-screen --target --outdir --outfile --sourcemap --minify --minify-syntax --minify-whitespace --minify-identifiers --format --banner --footer --root --splitting --public-path --entry-naming --chunk-naming --asset-naming --react-fast-refresh --no-bundle" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

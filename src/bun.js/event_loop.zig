@@ -12,7 +12,9 @@ tasks: Queue = undefined,
 ///
 /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
 immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
 next_immediate_tasks: std.ArrayListUnmanaged(*Timer.ImmediateObject) = .{},
+next_immediate_cpp_tasks: std.ArrayListUnmanaged(*CppTask) = .{},
 
 concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
 global: *jsc.JSGlobalObject = undefined,
@@ -203,9 +205,18 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
     var to_run_now = this.immediate_tasks;
+    var to_run_now_cpp = this.immediate_cpp_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
+
+    this.immediate_cpp_tasks = this.next_immediate_cpp_tasks;
+    this.next_immediate_cpp_tasks = .{};
+
+    for (to_run_now_cpp.items) |task| {
+        log("running immediate cpp task", .{});
+        task.run(virtual_machine.global);
+    }
 
     var exception_thrown = false;
     for (to_run_now.items) |task| {
@@ -216,6 +227,22 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     if (exception_thrown) {
         this.maybeDrainMicrotasks();
     }
+
+    if (this.next_immediate_cpp_tasks.capacity > 0) {
+        // this would only occur if we were recursively running tickImmediateTasks.
+        @branchHint(.unlikely);
+        this.immediate_cpp_tasks.appendSlice(bun.default_allocator, this.next_immediate_cpp_tasks.items) catch bun.outOfMemory();
+        this.next_immediate_cpp_tasks.deinit(bun.default_allocator);
+    }
+
+    if (to_run_now_cpp.capacity > 1024 * 128) {
+        // once in a while, deinit the array to free up memory
+        to_run_now_cpp.clearAndFree(bun.default_allocator);
+    } else {
+        to_run_now_cpp.clearRetainingCapacity();
+    }
+
+    this.next_immediate_cpp_tasks = to_run_now_cpp;
 
     if (this.next_immediate_tasks.capacity > 0) {
         // this would only occur if we were recursively running tickImmediateTasks.
@@ -530,6 +557,10 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) 
 
 pub fn enqueueTask(this: *EventLoop, task: Task) void {
     this.tasks.writeItem(task) catch unreachable;
+}
+
+pub fn enqueueImmediateCppTask(this: *EventLoop, task: *CppTask) void {
+    this.immediate_cpp_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
 }
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {

@@ -42,10 +42,6 @@ Is nrypt used in node tls, do we need to update it?
 - tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
 - getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
 
-test-tls-disable-renegotiation.js:
-- missing ERR_INVALID_ARG_TYPE for client.renegotiate()
-- OpenSSL function should not have been called via OPENSSL_internal SSL routines
-
 addCACert
 - missing addCACert: test-tls-addca
 
@@ -55,7 +51,8 @@ These tests are removed in new node versions: (createSecurePair is deprecated)
 - test-tls-securepair-leak.js
 - test-tls-legacy-deprecated.js
 
-passes on mac:
+# Pass on mac
+
 - test-tls-junk-closes-server
 - test-tls-onread-static-buffer
 - test-tls-lookup
@@ -71,3 +68,60 @@ that to `localhost:${port}localhost:${port}` which is an invalid url
   accept it. but net does.
 - http_client in bun is implemented with fetch which doesn't let you send a malformed http request
 - this might be unintentional? unclear
+
+test-tls-disable-renegotiation.js:
+- missing ERR_INVALID_ARG_TYPE for client.renegotiate()
+- OpenSSL function should not have been called via OPENSSL_internal SSL routines
+- The error is emitted at: <https://github.com/google/boringssl/blob/035e720641f385e82c72b7b0a9e1d89e58cb5ed5/ssl/ssl_lib.cc#L1629>
+- marked as 'caller-initiated renegotiation is not supported'. you can't renegotiate unless a renegotiation is already pending.
+
+# Skipped by electron
+
+these tests are disabled by electron: (https://github.com/electron/electron/blob/main/script/node-disabled-tests.json)
+  "parallel/test-tls-alpn-server-client",
+  "parallel/test-tls-cli-min-version-1.0",
+  "parallel/test-tls-cli-max-version-1.2",
+  "parallel/test-tls-cli-max-version-1.3",
+  "parallel/test-tls-cli-min-version-1.1",
+  "parallel/test-tls-cli-min-version-1.2",
+  "parallel/test-tls-cli-min-version-1.3",
+  "parallel/test-tls-client-auth",
+  "parallel/test-tls-client-getephemeralkeyinfo",
+  "parallel/test-tls-client-mindhsize",
+  "parallel/test-tls-client-reject",
+  "parallel/test-tls-client-renegotiation-13",
+  "parallel/test-tls-cnnic-whitelist",
+  "parallel/test-tls-disable-renegotiation",
+  "parallel/test-tls-empty-sni-context",
+  "parallel/test-tls-error-stack",
+  "parallel/test-tls-finished",
+  "parallel/test-tls-generic-stream",
+  "parallel/test-tls-getcipher",
+  "parallel/test-tls-getprotocol",
+  "parallel/test-tls-handshake-error",
+  "parallel/test-tls-handshake-exception",
+  "parallel/test-tls-hello-parser-failure",
+  "parallel/test-tls-honorcipherorder",
+  "parallel/test-tls-junk-closes-server",
+  "parallel/test-tls-junk-server",
+  "parallel/test-tls-key-mismatch",
+  "parallel/test-tls-max-send-fragment",
+  "parallel/test-tls-min-max-version",
+  "parallel/test-tls-multi-key",
+  "parallel/test-tls-multi-pfx",
+  "parallel/test-tls-no-cert-required",
+  "parallel/test-tls-options-boolean-check",
+  "parallel/test-tls-passphrase",
+  "parallel/test-tls-peer-certificate",
+  "parallel/test-tls-pfx-authorizationerror",
+  "parallel/test-tls-psk-circuit",
+  "parallel/test-tls-reduced-SECLEVEL-in-cipher",
+  "parallel/test-tls-root-certificates",
+  "parallel/test-tls-server-failed-handshake-emits-clienterror",
+  "parallel/test-tls-set-ciphers",
+  "parallel/test-tls-set-ciphers-error",
+  "parallel/test-tls-set-sigalgs",
+  "parallel/test-tls-socket-allow-half-open-option",
+  "parallel/test-tls-socket-failed-handshake-emits-error",
+  "parallel/test-tls-ticket",
+  "parallel/test-tls-ticket-cluster",

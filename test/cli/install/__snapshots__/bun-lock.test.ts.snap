@@ -486,3 +486,110 @@ exports[`should include unused resolutions in the lockfile 1`] = `
 }
 "
 `;
+
+exports[`workspace sorting 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/c": {
+      "name": "c",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "b": ["b@workspace:packages/b"],
+
+    "c": ["c@workspace:packages/c"],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`workspace sorting 2`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "b",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+    "packages/c": {
+      "name": "c",
+      "dependencies": {
+        "no-deps": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a": ["a@workspace:packages/a"],
+
+    "b": ["b@workspace:packages/b"],
+
+    "c": ["c@workspace:packages/c"],
+
+    "no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+  }
+}
+"
+`;
+
+exports[`--frozen-lockfile 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+        "a-dep": "^1.0.2",
+        "no-deps": "^1.0.0",
+      },
+    },
+    "packages/pkg1": {
+      "name": "package1",
+      "dependencies": {
+        "peer-deps-too": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "a-dep": ["a-dep@1.0.10", "http://localhost:1234/a-dep/-/a-dep-1.0.10.tgz", {}, "sha512-NeQ6Ql9jRW8V+VOiVb+PSQAYOvVoSimW+tXaR0CoJk4kM9RIk/XlAUGCsNtn5XqjlDO4hcH8NcyaL507InevEg=="],
+
+    "no-deps": ["no-deps@1.1.0", "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz", {}, "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w=="],
+
+    "package1": ["package1@workspace:packages/pkg1"],
+
+    "peer-deps-too": ["peer-deps-too@1.0.0", "http://localhost:1234/peer-deps-too/-/peer-deps-too-1.0.0.tgz", { "peerDependencies": { "no-deps": "*" } }, "sha512-sBx0TKrsB8FkRN2lzkDjMuctPGEKn1TmNUBv3dJOtnZM8nd255o5ZAPRpAI2XFLHZAavBlK/e73cZNwnUxlRog=="],
+  }
+}
+"
+`;

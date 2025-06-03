@@ -18,9 +18,10 @@ for (let i = 0; i < attempts; i++) {
     timeout: 1000 * timeout,
     stdin: null,
     stdout: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
   });
   await proc.exited;
+  const errors = await new Response(proc.stderr).text();
 
   const { signalCode: signal, exitCode } = proc;
 
@@ -38,6 +39,7 @@ for (let i = 0; i < attempts; i++) {
   } else {
     numOk += 1;
   }
+  if (exitCode !== 0) console.log(errors);
   process.stdout.write(exitCode === 0 ? "." : "!");
 }
 process.stdout.write("\n");

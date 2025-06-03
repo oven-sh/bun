@@ -1,0 +1,82 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`outdated normal dep, smaller than column title 1`] = `
+"┌──────────┬─────────┬────────┬────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m  │ \x1B[1m\x1B[34mCurrent\x1B[0m │ \x1B[1m\x1B[34mUpdate\x1B[0m │ \x1B[1m\x1B[34mLatest\x1B[0m │
+├──────────┼─────────┼────────┼────────┤
+│ no-deps\x1B[2m\x1B[0m  │ 1.0.0   │ \x1B[2m1.0.0\x1B[0m  │ \x1B[0m\x1B[1m\x1B[31m2.0.0\x1B[0m  │
+└──────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated normal dep, larger than column title 1`] = `
+"┌───────────────┬────────────────┬────────────────┬────────────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m       │ \x1B[1m\x1B[34mCurrent\x1B[0m        │ \x1B[1m\x1B[34mUpdate\x1B[0m         │ \x1B[1m\x1B[34mLatest\x1B[0m         │
+├───────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1\x1B[2m\x1B[0m │ 1.0.0-future.1 │ \x1B[2m1.0.0-future.1\x1B[0m │ \x1B[2m1.0.0-future.\x1B[0m\x1B[1m\x1B[31m4\x1B[0m │
+└───────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated dev dep, smaller than column title 1`] = `
+"┌───────────────┬─────────┬────────┬────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m       │ \x1B[1m\x1B[34mCurrent\x1B[0m │ \x1B[1m\x1B[34mUpdate\x1B[0m │ \x1B[1m\x1B[34mLatest\x1B[0m │
+├───────────────┼─────────┼────────┼────────┤
+│ no-deps\x1B[2m (dev)\x1B[0m │ 1.0.0   │ \x1B[2m1.0.0\x1B[0m  │ \x1B[0m\x1B[1m\x1B[31m2.0.0\x1B[0m  │
+└───────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated dev dep, larger than column title 1`] = `
+"┌─────────────────────┬────────────────┬────────────────┬────────────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m             │ \x1B[1m\x1B[34mCurrent\x1B[0m        │ \x1B[1m\x1B[34mUpdate\x1B[0m         │ \x1B[1m\x1B[34mLatest\x1B[0m         │
+├─────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1\x1B[2m (dev)\x1B[0m │ 1.0.0-future.1 │ \x1B[2m1.0.0-future.1\x1B[0m │ \x1B[2m1.0.0-future.\x1B[0m\x1B[1m\x1B[31m4\x1B[0m │
+└─────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated peer dep, smaller than column title 1`] = `
+"┌────────────────┬─────────┬────────┬────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m        │ \x1B[1m\x1B[34mCurrent\x1B[0m │ \x1B[1m\x1B[34mUpdate\x1B[0m │ \x1B[1m\x1B[34mLatest\x1B[0m │
+├────────────────┼─────────┼────────┼────────┤
+│ no-deps\x1B[2m (peer)\x1B[0m │ 1.0.0   │ \x1B[2m1.0.0\x1B[0m  │ \x1B[0m\x1B[1m\x1B[31m2.0.0\x1B[0m  │
+└────────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated peer dep, larger than column title 1`] = `
+"┌──────────────────────┬────────────────┬────────────────┬────────────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m              │ \x1B[1m\x1B[34mCurrent\x1B[0m        │ \x1B[1m\x1B[34mUpdate\x1B[0m         │ \x1B[1m\x1B[34mLatest\x1B[0m         │
+├──────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1\x1B[2m (peer)\x1B[0m │ 1.0.0-future.1 │ \x1B[2m1.0.0-future.1\x1B[0m │ \x1B[2m1.0.0-future.\x1B[0m\x1B[1m\x1B[31m4\x1B[0m │
+└──────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated optional dep, smaller than column title 1`] = `
+"┌────────────────────┬─────────┬────────┬────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m            │ \x1B[1m\x1B[34mCurrent\x1B[0m │ \x1B[1m\x1B[34mUpdate\x1B[0m │ \x1B[1m\x1B[34mLatest\x1B[0m │
+├────────────────────┼─────────┼────────┼────────┤
+│ no-deps\x1B[2m (optional)\x1B[0m │ 1.0.0   │ \x1B[2m1.0.0\x1B[0m  │ \x1B[0m\x1B[1m\x1B[31m2.0.0\x1B[0m  │
+└────────────────────┴─────────┴────────┴────────┘
+"
+`;
+
+exports[`outdated optional dep, larger than column title 1`] = `
+"┌──────────────────────────┬────────────────┬────────────────┬────────────────┐
+│ \x1B[1m\x1B[34mPackage\x1B[0m                  │ \x1B[1m\x1B[34mCurrent\x1B[0m        │ \x1B[1m\x1B[34mUpdate\x1B[0m         │ \x1B[1m\x1B[34mLatest\x1B[0m         │
+├──────────────────────────┼────────────────┼────────────────┼────────────────┤
+│ prereleases-1\x1B[2m (optional)\x1B[0m │ 1.0.0-future.1 │ \x1B[2m1.0.0-future.1\x1B[0m │ \x1B[2m1.0.0-future.\x1B[0m\x1B[1m\x1B[31m4\x1B[0m │
+└──────────────────────────┴────────────────┴────────────────┴────────────────┘
+"
+`;
+
+exports[`outdated NO_COLOR works 1`] = `
+"|--------------------------------------|
+| Package  | Current | Update | Latest |
+|----------|---------|--------|--------|
+| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 |
+|--------------------------------------|
+"
+`;

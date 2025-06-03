@@ -2068,7 +2068,7 @@ pub const BundleV2 = struct {
                     }
 
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0));
+                    root_obj.put(globalThis, JSC.ZigString.static("outputs"), JSC.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
                     root_obj.put(
                         globalThis,
                         JSC.ZigString.static("success"),
@@ -2086,7 +2086,7 @@ pub const BundleV2 = struct {
                 .value => |*build| {
                     const root_obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                     const output_files: []options.OutputFile = build.output_files.items;
-                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len);
+                    const output_files_js = JSC.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
@@ -4157,7 +4157,7 @@ pub const ParseTask = struct {
             // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
             else =>
             \\var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
-            \\var __asyncDispose =  Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
+            \\var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.asyncDispose');
             \\
             \\export var __using = (stack, value, async) => {
             \\  if (value != null) {
@@ -14199,7 +14199,7 @@ pub const LinkerContext = struct {
                                                 // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
                                                 hoist.decls.append(hoist.allocator, decl.*) catch bun.outOfMemory();
                                             } else {
-                                                // if the value cannot be moved, add every destructuring key seperately
+                                                // if the value cannot be moved, add every destructuring key separately
                                                 // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                                 const binding = decl.binding.toExpr(&hoist);
                                                 value = value.joinWithComma(

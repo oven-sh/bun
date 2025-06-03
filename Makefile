@@ -482,7 +482,7 @@ STATIC_MUSL_FLAG ?=
 WRAP_SYMBOLS_ON_LINUX =
 
 ifeq ($(OS_NAME), linux)
-WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log -Wl,--wrap=log2 \
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=exp2 -Wl,--wrap=log -Wl,--wrap=log2 \
 	-Wl,--wrap=lstat \
 	-Wl,--wrap=stat \
 	-Wl,--wrap=fstat \

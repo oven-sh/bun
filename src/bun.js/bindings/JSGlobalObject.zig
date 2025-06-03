@@ -64,8 +64,8 @@ pub const JSGlobalObject = opaque {
         return this.ERR(.INVALID_ARG_TYPE, comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }), .{}).toJS();
     }
 
-    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype, comptime lifetime: JSC.JSValue.FromAnyLifetime) JSC.JSValue {
-        return .fromAny(this, @TypeOf(value), value, lifetime);
+    pub fn toJS(this: *JSC.JSGlobalObject, value: anytype) bun.JSError!JSC.JSValue {
+        return .fromAny(this, @TypeOf(value), value);
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -373,7 +373,7 @@ pub const JSGlobalObject = opaque {
         const err = createErrorInstance(this, message, args);
         err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
         if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try JSC.toJS(this, i32, errno));
         return this.throwValue(err);
     }
 

@@ -1,27 +1,13 @@
 ---
 description: How to build Bun
-globs: 
+globs:
+alwaysApply: false
 ---
+
 # How to build Bun
 
-## CMake
+Run:
 
-Bun is built using CMake, which you can find in `CMakeLists.txt` and in the `cmake/` directory.
-
-* `CMakeLists.txt`
-* `cmake/`
-  * `Globals.cmake` - macros and functions used by all the other files
-  * `Options.cmake` - build options for configuring the build (e.g. debug/release mode)
-  * `CompilerFlags.cmake` - compiler and linker flags used by all the targets
-  * `tools/` - setup scripts for various build tools (e.g. llvm, zig, webkit, rust, etc.)
-  * `targets/` - targets for bun and its dependencies (e.g. brotli, boringssl, libuv, etc.)
-
-## How to
-
-There are `package.json` scripts that make it easy to build Bun without calling CMake directly, for example:
-
-```sh
-bun run build # builds a debug build: `build/debug/bun-debug`
-bun run build:release # builds a release build: `build/release/bun`
-bun run build:assert # builds a release build with debug assertions: `build/assert/bun`
+```bash
+bun bd
 ```

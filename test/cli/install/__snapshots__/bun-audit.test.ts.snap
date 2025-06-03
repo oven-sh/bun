@@ -1,6 +1,6 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`\`bun pm audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `
+exports[`\`bun audit\` should exit code 1 when there are vulnerabilities: bun-audit-expect-vulnerabilities-found 1`] = `
 "minimist  <0.2.4
   express › mkdirp › minimist
   critical: Prototype Pollution in minimist - https://github.com/advisories/GHSA-xvch-5gv4-984h
@@ -78,9 +78,9 @@ To update all dependencies to the latest versions (including breaking changes):
 "
 `;
 
-exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities: bun-audit-expect-valid-json-stdout-report-no-vulnerabilities 1`] = `{}`;
+exports[`\`bun audit\` should print valid JSON and exit 0 when --json is passed and there are no vulnerabilities: bun-audit-expect-valid-json-stdout-report-no-vulnerabilities 1`] = `{}`;
 
-exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is passed and there are vulnerabilities: bun-audit-expect-valid-json-stdout-report-vulnerabilities 1`] = `
+exports[`\`bun audit\` should print valid JSON and exit 1 when --json is passed and there are vulnerabilities: bun-audit-expect-valid-json-stdout-report-vulnerabilities 1`] = `
 {
   "base64-url": [
     {
@@ -410,7 +410,7 @@ exports[`\`bun pm audit\` should print valid JSON and exit 0 when --json is pass
 }
 `;
 
-exports[`\`bun pm audit\` should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified: bun-audit-expect-vulnerabilities-found 1`] = `
+exports[`\`bun audit\` should exit 1 and behave exactly the same when there are vulnerabilities when only devDependencies are specified: bun-audit-expect-vulnerabilities-found 1`] = `
 "ms  <2.0.0
   (direct dependency)
   moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f
@@ -427,7 +427,7 @@ To update all dependencies to the latest versions (including breaking changes):
 "
 `;
 
-exports[`\`bun pm audit\` when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies: bun-audit-expect-vulnerabilities-found 1`] = `
+exports[`\`bun audit\` when a project has some safe dependencies and some vulnerable dependencies, we should not print the safe dependencies: bun-audit-expect-vulnerabilities-found 1`] = `
 "ms  <2.0.0
   (direct dependency)
   moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability - https://github.com/advisories/GHSA-w9mr-4mfr-499f

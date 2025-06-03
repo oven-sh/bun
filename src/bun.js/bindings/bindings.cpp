@@ -675,7 +675,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
     auto removeFromStack = WTF::makeScopeExit([&] {
         if (addToStack) {
-            stack.remove(length);
+            stack.removeAt(length);
             while (gcBuffer.size() > originalGCBufferSize)
                 gcBuffer.removeLast();
         }
@@ -5014,8 +5014,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     }
 
     if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(obj)) {
-        auto view = WTF::StringView(function->name());
-        *arg2 = Zig::toZigString(view);
+        *arg2 = Zig::toZigString(function->name());
         return;
     }
 

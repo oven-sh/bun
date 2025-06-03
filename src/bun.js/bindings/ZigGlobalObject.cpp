@@ -176,12 +176,16 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
+#include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 #include "ProcessBindingFs.h"
+#include "ProcessBindingHTTPParser.h"
 #include "node/NodeTimers.h"
+#include "JSConnectionsList.h"
+#include "JSHTTPParser.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -746,6 +750,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace);
 }
@@ -2779,6 +2784,21 @@ void GlobalObject::finishCreation(VM& vm)
             WebCore::setupJSMIMETypeClassStructure(init);
         });
 
+    m_JSConnectionsListClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupConnectionsListClassStructure(init);
+        });
+
+    m_JSHTTPParserClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupHTTPParserClassStructure(init);
+        });
+
+    m_JSNodePerformanceHooksHistogramClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3225,6 +3245,14 @@ void GlobalObject::finishCreation(VM& vm)
                 ProcessBindingFs::create(
                     init.vm,
                     ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
+    m_processBindingHTTPParser.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingHTTPParser::create(
+                    init.vm,
+                    ProcessBindingHTTPParser::createStructure(init.vm, init.owner)));
         });
 
     m_importMetaObjectStructure.initLater(
@@ -4376,6 +4404,22 @@ bool GlobalObject::hasNapiFinalizers() const
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
+
+void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
+{
+    this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+}
+bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
+{
+    for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
+        if (this->m_ffiFunctions[i].get() == function) {
+            this->m_ffiFunctions[i].clear();
+            this->m_ffiFunctions.removeAt(i);
+            return true;
+        }
+    }
+    return false;
+}
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {

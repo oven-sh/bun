@@ -9,7 +9,6 @@ const PrintErr = css.PrintErr;
 
 const ArrayList = std.ArrayListUnmanaged;
 
-
 pub const CssModule = struct {
     config: *const Config,
     sources: *const ArrayList([]const u8),

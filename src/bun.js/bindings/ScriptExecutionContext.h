@@ -164,7 +164,8 @@ public:
 
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
-    bool canSendMessage() {
+    bool canSendMessage()
+    {
         static constexpr size_t maxMessagesPerTick = 1000;
         return m_messagesSentThisTick < maxMessagesPerTick;
     }

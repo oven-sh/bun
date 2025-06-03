@@ -119,6 +119,16 @@ const DrainMicrotasksResult = enum(u8) {
 extern fn JSC__JSGlobalObject__drainMicrotasks(*jsc.JSGlobalObject) DrainMicrotasksResult;
 pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *jsc.JSGlobalObject, jsc_vm: *jsc.VM) bun.JSExecutionTerminated!void {
     jsc.markBinding(@src());
+
+    // this exists because while we're inside a spawnSync call, some tasks can actually
+    // still complete which leads to a case where module resolution can partially complete and
+    // some modules are only partially evaluated which causes reference errors.
+    // TODO: A better fix here could be a second event loop so we can come off the main one
+    // while processing spawnSync, then resume back to here afterwards
+    if (this.is_inside_spawn_sync) {
+        return;
+    }
+
     jsc_vm.releaseWeakRefs();
 
     switch (JSC__JSGlobalObject__drainMicrotasks(globalObject)) {

@@ -50,8 +50,7 @@ const tests = [
 
   // Basic CN handling
   { host: 'a.com', cert: { subject: { CN: 'a.com' } } },
-  // TODO: should be case insensitive
-  // { host: 'a.com', cert: { subject: { CN: 'A.COM' } } },
+  { host: 'a.com', cert: { subject: { CN: 'A.COM' } } },
   {
     host: 'a.com',
     cert: { subject: { CN: 'b.com' } },
@@ -206,13 +205,12 @@ const tests = [
       subject: { CN: 'b.com' }
     }
   },
-  // TODO: case insensitive
-  // {
-  //   host: 'a.com', cert: {
-  //     subjectaltname: 'DNS:A.COM',
-  //     subject: { CN: 'b.com' }
-  //   }
-  // },
+  {
+    host: 'a.com', cert: {
+      subjectaltname: 'DNS:A.COM',
+      subject: { CN: 'b.com' }
+    }
+  },
 
   // DNS names
   {

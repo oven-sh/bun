@@ -347,9 +347,11 @@ pub fn processSubtree(
 
     if (resolution_list.len == 0) return;
 
+    const parent_tree_id = this.id;
+
     try builder.list.append(builder.allocator, .{
         .tree = .{
-            .parent = this.id,
+            .parent = parent_tree_id,
             .id = @as(Id, @truncate(builder.list.len)),
             .dependency_id = dependency_id,
         },
@@ -581,7 +583,7 @@ pub fn processSubtree(
 
                     // TODO: this isn't totally correct. this handles cycles, but it's
                     // only looking for the same package higher in the tree
-                    var curr = this.id;
+                    var curr = parent_tree_id;
                     while (curr != invalid_id and (!skip_root_pkgs or curr != 0)) {
                         for (dependency_lists[curr].items) |placed_parent_dep_id| {
                             const placed_parent_pkg_id = builder.resolutions[placed_parent_dep_id];

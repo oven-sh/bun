@@ -13,7 +13,6 @@ import {
   mergeWindowEnvs,
   readdirSorted,
   runBunInstall,
-  runBunUpdate,
   stderrForInstall,
   tempDirWithFiles,
   tls,

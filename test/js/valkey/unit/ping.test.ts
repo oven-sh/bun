@@ -26,5 +26,16 @@ describe.skipIf(!isEnabled)("Valkey: PING Command", () => {
       const result = await redis.ping(message);
       expect(result).toBe(message);
     });
+
+    test("should send PING with message as array buffer and return the message", async () => {
+      const redis = ctx.redis;
+
+      const message = new Uint8Array([98, 117, 110]);
+      const result = await redis.ping(message);
+
+      // redis ping always returns a string
+      expect(result).toBeTypeOf("string");
+      expect(result).toBe("bun");
+    });
   });
 });

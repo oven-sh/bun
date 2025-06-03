@@ -609,8 +609,6 @@ declare module "bun" {
      *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
      */
     ping(message: string | ArrayBufferView | Blob): Promise<string>;
-
-    /** */
   }
 
   /**

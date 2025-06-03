@@ -3864,7 +3864,17 @@ extern "C" void Bun__queueTaskWithTimeout(JSC::JSGlobalObject*, WebCore::EventLo
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
-    task->performTask(*globalObject->scriptExecutionContext());
+    auto scriptExecutionStatus = Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject);
+    if (scriptExecutionStatus != JSC::ScriptExecutionStatus::Running) {
+        return;
+    }
+    
+    auto* context = globalObject->scriptExecutionContext();
+    if (!context || context->isJSExecutionForbidden()) {
+        return;
+    }
+    
+    task->performTask(*context);
 }
 
 RefPtr<Performance> GlobalObject::performance()

@@ -58,3 +58,7 @@ server.listen(0, common.mustCall(function() {
     request.resume();
   }));
 }));
+
+setTimeout(() => {
+  // nop
+}, 5000);

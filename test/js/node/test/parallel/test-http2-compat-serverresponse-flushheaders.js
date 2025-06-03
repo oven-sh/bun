@@ -11,9 +11,9 @@ const h2 = require('http2');
 let serverResponse;
 
 const server = h2.createServer();
-server.listen(0, common.mustCall(function() {
+server.listen(0, common.mustCall(function mustCallListenFn() {
   const port = server.address().port;
-  server.once('request', common.mustCall(function(request, response) {
+  server.once('request', common.mustCall(function mustCallRequestFn(request, response) {
     serverResponse = response;
     assert.strictEqual(response.headersSent, false);
     assert.strictEqual(response._header, false); // Alias for headersSent
@@ -28,7 +28,7 @@ server.listen(0, common.mustCall(function() {
       code: 'ERR_HTTP2_HEADERS_SENT'
     });
 
-    response.on('finish', common.mustCall(function() {
+    response.on('finish', common.mustCall(function mustCallFinishFn() {
       server.close();
       process.nextTick(() => {
         response.flushHeaders(); // Idempotent
@@ -38,7 +38,7 @@ server.listen(0, common.mustCall(function() {
   }));
 
   const url = `http://localhost:${port}`;
-  const client = h2.connect(url, common.mustCall(function() {
+  const client = h2.connect(url, common.mustCall(function connectFn() {
     const headers = {
       ':path': '/',
       ':method': 'GET',
@@ -46,12 +46,12 @@ server.listen(0, common.mustCall(function() {
       ':authority': `localhost:${port}`
     };
     const request = client.request(headers);
-    request.on('response', common.mustCall(function(headers, flags) {
+    request.on('response', common.mustCall(function mustCallReponseFn(headers, flags) {
       assert.strictEqual(headers['foo-bar'], undefined);
       assert.strictEqual(headers[':status'], 200);
       serverResponse.end();
     }, 1));
-    request.on('end', common.mustCall(function() {
+    request.on('end', common.mustCall(function mustCallEndFn() {
       client.close();
     }));
     request.end();

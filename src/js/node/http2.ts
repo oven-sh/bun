@@ -2731,6 +2731,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
+    console.log("onClose ServerHttp2Session");
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
@@ -3274,6 +3275,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
+    console.log("onClose ClientHttp2Session");
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();

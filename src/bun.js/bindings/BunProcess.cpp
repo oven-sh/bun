@@ -1556,6 +1556,8 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
     if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, JSC::PropertyAttribute::DontEnum | 0);
 
     /*
+    // TODO: ErrorCaptureStackTrace(warning, ctor || process.emitWarning);
+    // This doesn't work, getStackTrace does not get any stack frames.
     Vector<StackFrame> stackTrace;
     const size_t framesToSkip = 1;
     JSValue caller;

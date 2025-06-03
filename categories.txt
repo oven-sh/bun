@@ -1,9 +1,5 @@
 # Try First
 
-http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
-that to `localhost:${port}localhost:${port}` which is an invalid url
-  - test-tls-over-http-tunnel.js
-
 missing socket.on('data') event when data received after socket.end():
 - test-tls-net-socket-keepalive.js
 
@@ -60,3 +56,14 @@ passes on mac:
 - test-tls-onread-static-buffer
 - test-tls-lookup
 - test-tls-wrap-econnreset-pipe
+
+# Attempted
+
+http.request errors because it passes port but no host and path as `localhost:${port}`. _http_client concatenates
+that to `localhost:${port}localhost:${port}` which is an invalid url
+- test-tls-over-http-tunnel.js
+- the problem is that sending an http request with path `abcd` will do `GET abcd HTTP/1.1`, but
+  fetch `url.com/abcd` is `GET /abcd HTTP/1.1`. skipping the slash is invalid anyway and node's http server doesn't
+  accept it. but net does.
+- http_client in bun is implemented with fetch which doesn't let you send a malformed http request
+- this might be unintentional? unclear

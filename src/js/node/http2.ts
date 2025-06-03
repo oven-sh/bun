@@ -2732,19 +2732,12 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     const parser = this.#parser;
-    const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
-      for (const stream of parser.getAllStreams()) {
-        if (stream) {
-          stream.close(NGHTTP2_CANCEL);
-        }
-      }
+      parser.emitAbortToAllStreams();
       parser.detach();
       this.#parser = null;
     }
-
     this.close();
-    this.destroy(err, NGHTTP2_NO_ERROR);
   }
 
   #onError(error: Error) {

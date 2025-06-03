@@ -24,7 +24,7 @@ if (-not ($allowedSystemTypes | Where-Object { $currentSystemType -match $_ })) 
   return 1
 }
 
-if ($currentSystemType -match "ARM64") {
+if ($currentSystemType -match "ARM64-based") {
   Write-Warning "Warning:"
   Write-Warning "ARM64-based systems are not natively supported yet.`nThe install will still continue but Bun might not work as intended.`n"
 }

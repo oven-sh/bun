@@ -25,10 +25,6 @@ const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
-const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket, getBufferedAmount] = $zig(
-  "socket.zig",
-  "createNodeTLSBinding",
-);
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
@@ -52,6 +48,11 @@ const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
 const BlockList = $zig("node_net_binding.zig", "BlockList");
 const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
 const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+
+const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -88,7 +89,6 @@ function isIP(s): 0 | 4 | 6 {
 }
 
 const bunTlsSymbol = Symbol.for("::buntls::");
-const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
@@ -339,7 +339,7 @@ const ServerHandlers: SocketHandler = {
     const data = this.data;
     if (!data) return;
 
-    data.server[bunSocketServerConnections]--;
+    data.server._connections--;
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
@@ -385,7 +385,7 @@ const ServerHandlers: SocketHandler = {
         return;
       }
     }
-    if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections) {
       const data = {
         localAddress: _socket.localAddress,
         localPort: _socket.localPort || this.localPort,
@@ -404,7 +404,7 @@ const ServerHandlers: SocketHandler = {
     const bunTLS = _socket[bunTlsSymbol];
     const isTLS = typeof bunTLS === "function";
 
-    self[bunSocketServerConnections]++;
+    self._connections++;
 
     if (pauseOnConnect) {
       _socket.pause();
@@ -2075,7 +2075,6 @@ function Server(options?, connectionListener?) {
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
   const {
-    maxConnections, //
     allowHalfOpen = false,
     keepAlive = false,
     keepAliveInitialDelay = 0,
@@ -2092,7 +2091,6 @@ function Server(options?, connectionListener?) {
   this._unref = false;
   this.listeningId = 1;
 
-  this[bunSocketServerConnections] = 0;
   this[bunSocketServerOptions] = undefined;
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = keepAlive;
@@ -2100,7 +2098,6 @@ function Server(options?, connectionListener?) {
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = noDelay;
-  this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
 
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
@@ -2163,7 +2160,7 @@ Server.prototype[Symbol.asyncDispose] = function () {
 };
 
 Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
-  if (this._handle || this[bunSocketServerConnections] > 0) {
+  if (this._handle || this._connections > 0) {
     return;
   }
   process.nextTick(() => {
@@ -2192,7 +2189,7 @@ Server.prototype.getConnections = function getConnections(callback) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this[bunSocketServerConnections] : 0);
+    callback(null, this._handle ? this._connections : 0);
   }
   return this;
 };

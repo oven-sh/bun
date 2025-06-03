@@ -5,9 +5,8 @@ pub fn mark(this: *Counters, comptime tag: Field) void {
     @field(this, @tagName(tag)) +|= 1;
 }
 
-pub fn toJS(this: *const Counters, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const obj = JSC.JSObject.create(this.*, globalObject);
-    return obj.toJS();
+pub fn toJS(this: *const Counters, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    return (try JSC.JSObject.create(this.*, globalObject)).toJS();
 }
 
 pub fn createCountersObject(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {

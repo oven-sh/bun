@@ -1,3 +1,8 @@
+//! Confusingly, this is the barely used epoll/kqueue event loop
+//! This is only used by Bun.write() and Bun.file(path).text() & friends.
+//!
+//! Most I/O happens on the main thread.
+
 const bun = @import("bun");
 const std = @import("std");
 const sys = bun.sys;

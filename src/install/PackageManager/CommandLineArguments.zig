@@ -220,11 +220,17 @@ pub fn printHelp(subcommand: Subcommand) void {
         // fall back to HelpCommand.printWithReason
         Subcommand.install => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
-                \\<b>Alias: <b><green>bun i<r>
-                \\  Install the dependencies listed in package.json
+                \\<b>Alias<r>: <b><green>bun i<r>
+                \\
+                \\  Install the dependencies listed in package.json.
+                \\
+                \\<b>Flags:<r>
             ;
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Install the dependencies for the current project<r>
                 \\  <b><green>bun install<r>
@@ -232,23 +238,26 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Skip devDependencies<r>
                 \\  <b><green>bun install<r> <cyan>--production<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/install<r>.
+                \\
             ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(install_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.update => {
             const intro_text =
-                \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
-                \\  Update all dependencies to most recent versions within the version range in package.json
                 \\
+                \\<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
+                \\
+                \\  Update dependencies to their most recent versions within the version range in package.json.
+                \\
+                \\<b>Flags:<r>
             ;
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Update all dependencies:<r>
                 \\  <b><green>bun update<r>
@@ -259,57 +268,71 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Update specific packages:<r>
                 \\  <b><green>bun update<r> <blue>zod jquery@3<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>.
+                \\
             ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(update_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.patch => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
                 \\
-                \\Prepare a package for patching.
+                \\  Prepare a package for patching, or generate and save a patch.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Prepare jquery for patching<r>
+                \\  <b><green>bun patch jquery<r>
+                \\
+                \\  <d>Generate a patch file for changes made to jquery<r>
+                \\  <b><green>bun patch --commit 'node_modules/jquery'<r>
+                \\
+                \\  <d>Generate a patch file in a custom directory for changes made to jquery<r>
+                \\  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
                 \\
             ;
 
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(patch_params);
-            // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-            Output.pretty("\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.@"patch-commit" => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
                 \\
-                \\Generate a patc out of a directory and save it.
+                \\  Generate a patch out of a directory and save it. This is equivalent to <b><green>bun patch --commit<r>.
                 \\
-                \\<b>Options:<r>
-                \\  <cyan>--patches-dir<r>               <d>The directory to save the patch file<r>
+                \\<b>Flags:<r>
+            ;
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Generate a patch in the default "./patches" directory for changes in "./node_modules/jquery"<r>
+                \\  <b><green>bun patch-commit 'node_modules/jquery'<r>
+                \\
+                \\  <d>Generate a patch in a custom directory ("./my-patches")<r>
+                \\  <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/patch<r>.
                 \\
             ;
-            // const outro_text =
-            //     \\<b>Options:<r>
-            //     \\  <d>--edit-dir<r>
-            //     \\  <b><green>bun update<r>
-            //     \\
-            //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
-            // ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(patch_params);
-            // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
-            Output.pretty("\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.pm => {
@@ -317,10 +340,17 @@ pub fn printHelp(subcommand: Subcommand) void {
         },
         Subcommand.add => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
-                \\<b>Alias: <b><green>bun a<r>
+                \\<b>Alias<r>: <b><green>bun a<r>
+                \\
+                \\  Add a new dependency to package.json and install it.
+                \\
+                \\<b>Flags:<r>
             ;
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Add a dependency from the npm registry<r>
                 \\  <b><green>bun add<r> <blue>zod<r>
@@ -332,44 +362,51 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
                 \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/add<r>.
+                \\
             ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(add_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.remove => {
             const intro_text =
-                \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
-                \\<b>Alias: <b>bun r<r>
-                \\  Remove a package from package.json and uninstall from node_modules
                 \\
+                \\<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
+                \\<b>Alias<r>: <b><green>bun r<r>
+                \\
+                \\  Remove a package from package.json and uninstall from node_modules.
+                \\
+                \\<b>Flags:<r>
             ;
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Remove a dependency<r>
                 \\  <b><green>bun remove<r> <blue>ts-node<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/remove<r>.
+                \\
             ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(remove_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.link => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
                 \\
+                \\  Register a local directory as a "linkable" package, or link a "linkable" package to the current project.
+                \\
+                \\<b>Flags:<r>
             ;
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Register the current directory as a linkable package.<r>
                 \\  <d>Directory should contain a package.json.<r>
@@ -378,43 +415,53 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
                 \\  <b><green>bun link<r> <blue>\<package\><r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/link<r>.
+                \\
             ;
-            Output.pretty("\n" ++ intro_text, .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(link_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         Subcommand.unlink => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
+                \\
+                \\  Unregister the current directory as a "linkable" package.
+                \\
+                \\<b>Flags:<r>
             ;
 
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Unregister the current directory as a linkable package.<r>
                 \\  <b><green>bun unlink<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/unlink<r>.
+                \\
             ;
 
-            Output.pretty("\n" ++ intro_text ++ "\n", .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(unlink_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         .outdated => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
+                \\
+                \\  Display outdated dependencies for each matching workspace.
+                \\
+                \\<b>Flags:<r>
             ;
 
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Display outdated dependencies in the current workspace.<r>
                 \\  <b><green>bun outdated<r>
@@ -429,39 +476,53 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun outdated<r> <blue>"is-*"<r>
                 \\  <b><green>bun outdated<r> <blue>"!is-even"<r>
                 \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/outdated<r>.
+                \\
             ;
 
-            Output.pretty("\n" ++ intro_text ++ "\n", .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(outdated_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         .pack => {
             const intro_text =
-                \\<b>Usage<r>: <b><green>bun pack<r> <cyan>[flags]<r>
+                \\
+                \\<b>Usage<r>: <b><green>bun pm pack<r> <cyan>[flags]<r>
+                \\
+                \\  Create a tarball for the current project.
+                \\
+                \\<b>Flags:<r>
             ;
 
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
-                \\  <b><green>bun pack<r>
+                \\  <b><green>bun pm pack<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/pm#pack<r>.
                 \\
             ;
 
-            Output.pretty("\n" ++ intro_text ++ "\n", .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(pack_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         .publish => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
+                \\
+                \\  Publish a package to the npm registry.
+                \\
+                \\<b>Flags:<r>
             ;
 
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
                 \\  <d>Display files that would be published, without publishing to the registry.<r>
                 \\  <b><green>bun publish<r> <cyan>--dry-run<r>
@@ -472,35 +533,42 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/publish<r>.
+                \\
             ;
 
-            Output.pretty("\n" ++ intro_text ++ "\n", .{});
-            Output.flush();
-            Output.pretty("\n<b>Flags:<r>", .{});
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(publish_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
         .audit => {
             const intro_text =
+                \\
                 \\<b>Usage<r>: <b><green>bun audit<r> <cyan>[flags]<r>
+                \\
+                \\  Check installed packages for vulnerabilities.
+                \\
+                \\<b>Flags:<r>
             ;
 
             const outro_text =
+                \\
+                \\
                 \\<b>Examples:<r>
-                \\  <d>Check installed packages for vulnerabilities.<r>
+                \\  <d>Check the current project's packages for vulnerabilities.<r>
                 \\  <b><green>bun audit<r>
                 \\
                 \\  <d>Output package vulnerabilities in JSON format.<r>
                 \\  <b><green>bun audit --json<r>
                 \\
+                \\Full documentation is available at <magenta>https://bun.sh/docs/install/audit<r>.
+                \\
             ;
 
-            Output.pretty("\n" ++ intro_text ++ "\n", .{});
-            Output.pretty("\n<b>Flags:<r>", .{});
-            Output.flush();
+            Output.pretty(intro_text, .{});
             clap.simpleHelp(audit_params);
-            Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+            Output.pretty(outro_text, .{});
             Output.flush();
         },
     }
@@ -792,7 +860,6 @@ const JSON = bun.JSON;
 const Path = bun.path;
 
 const URL = bun.URL;
-
 
 const clap = bun.clap;
 const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;

@@ -310,6 +310,19 @@ function getCppAgent(platform, options) {
 }
 
 /**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.21",
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Agent}
@@ -322,19 +335,9 @@ function getZigAgent(platform, options) {
   //   queue: "build-zig",
   // };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch: "aarch64",
-      abi: "musl",
-      distro: "alpine",
-      release: "3.21",
-    },
-    options,
-    {
-      instanceType: "r8g.large",
-    },
-  );
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
 }
 
 /**
@@ -447,7 +450,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    // We used to build the C++ dependencies and bun in seperate steps.
+    // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
     command: [`${command} --target bun`, `${command} --target dependencies`],
@@ -919,7 +922,7 @@ function getOptionsStep() {
       {
         key: "unified-builds",
         select: "Do you want to build each platform in a single step?",
-        hint: "If true, builds will not be split into seperate steps (this will likely slow down the build)",
+        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -927,7 +930,7 @@ function getOptionsStep() {
       {
         key: "unified-tests",
         select: "Do you want to run tests in a single step?",
-        hint: "If true, tests will not be split into seperate steps (this will be very slow)",
+        hint: "If true, tests will not be split into separate steps (this will be very slow)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1105,6 +1108,11 @@ async function getPipeline(options = {}) {
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
+        if (imagePlatforms.has(imageKey)) {
+          dependsOn.push(`${imageKey}-build-image`);
+        }
 
         return getStepWithDependsOn(
           {
@@ -1114,7 +1122,7 @@ async function getPipeline(options = {}) {
               ? [getBuildBunStep(target, options)]
               : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
           },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          ...dependsOn,
         );
       }),
     );

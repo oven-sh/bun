@@ -290,7 +290,13 @@ pub fn fromNative(globalThis: *JSGlobalObject, native: JSC.JSValue) JSC.JSValue 
     return ZigGlobalObject__createNativeReadableStream(globalThis, native);
 }
 
-pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
+    var blob = Blob.init(bytes, bun.default_allocator, globalThis);
+    defer blob.deinit();
+    return fromBlobCopyRef(globalThis, &blob, recommended_chunk_size);
+}
+
+pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
     JSC.markBinding(@src());
     var store = blob.store orelse {
         return ReadableStream.empty(globalThis);

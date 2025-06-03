@@ -137,7 +137,7 @@ pub const LoadResult = union(enum) {
                 return if (save_text_lockfile) .text else .binary;
             },
             .err => |err| {
-                // an error occured, but we still loaded from an existing lockfile
+                // an error occurred, but we still loaded from an existing lockfile
                 if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;

@@ -98,12 +98,4 @@
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
 #endif
 
-#ifndef LIKELY
-#define LIKELY(cond) __builtin_expect(static_cast<bool>(cond), 1)
-#endif
-
-#ifndef UNLIKELY
-#define UNLIKELY(cond) __builtin_expect(static_cast<bool>(cond), 0)
-#endif
-
 #endif

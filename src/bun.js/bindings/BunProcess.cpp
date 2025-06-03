@@ -1140,7 +1140,7 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 
-static void forwardSignal(int signalNumber)
+__attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
     // We want a function that's equivalent to Bun__onPosixSignal but whose address is different.
     // This is so that we can be sure not to uninstall signal handlers that we didn't install here.

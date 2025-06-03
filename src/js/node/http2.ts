@@ -2612,13 +2612,14 @@ class ServerHttp2Session extends Http2Session {
           if (!stream.rstCode) {
             stream.rstCode = 0;
           }
+          pushToStream(stream, null);
+
           // If the user hasn't tried to consume the stream (and this is a server
           // session) then just dump the incoming data so that the stream can
           // be destroyed.
           if (stream.readableFlowing === null) {
             stream.resume();
           }
-          pushToStream(stream, null);
         }
       }
       // 7 = closed, in this case we already send everything and received everything

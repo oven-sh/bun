@@ -132,11 +132,9 @@ export function getStdinStream(
     }
   }
 
-  const ReadStream = isNodeWorkerThread
-    ? require("internal/worker_threads").ReadableWorkerStdio
-    : isTTY
-      ? require("node:tty").ReadStream
-      : require("node:fs").ReadStream;
+  if (isNodeWorkerThread) return new (require("internal/worker_threads").ReadableWorkerStdio)();
+
+  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;

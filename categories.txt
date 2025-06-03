@@ -6,7 +6,7 @@ missing socket.on('data') event when data received after socket.end():
 getTLSPeerFinishedMessage not working right? and same for getFinished
 - test-tls-finished.js
 
-SNICallback not supported:
+SNICallback not supported: (#17932, #14395, #6749, #4053)
 - test-tls-starttls-server.js
 - test-tls-socket-snicallback-without-server.js
 - test-tls-snicallback-error.js

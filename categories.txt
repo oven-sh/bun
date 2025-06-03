@@ -44,7 +44,6 @@ Is ncrypt used in node tls, do we need to update it?
 - tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
 - [ES] getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
 - [ES] test-tls-socket-failed-handshake-emits-error.js
-- 3 failures: test-tls-check-server-identity
 
 SecureContext:
 - missing addCACert: test-tls-addca
@@ -81,6 +80,10 @@ that to `localhost:${port}localhost:${port}` which is an invalid url
 
 test-tls-js-stream.js:
 - connection closes earlier than expected?
+
+# Done
+
+- 3 failures: test-tls-check-server-identity
 
 # Skipped by electron
 

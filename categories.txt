@@ -1,3 +1,6 @@
+[ES] = skipped by electron
+[RM] = removed
+
 # Try First
 
 missing socket.on('data') event when data received after socket.end():
@@ -16,44 +19,44 @@ SNICallback not supported: (#17932, #14395, #6749, #4053) (kai)
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
 
 No cipher match: (look at electron? openssl.c)
-- no cipher match: test-tls-multi-pfx, test-tls-psk-errors
+- [ES] no cipher match: test-tls-multi-pfx, test-tls-psk-errors
 - no cipher match: test-tls-connect-stream-writes.js
-- errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
+- [ES] errors with 'no cipher match' rather than 'key too small'. '@SECLEVEL=0' does not work: test-tls-reduced-SECLEVEL-in-cipher.js
 - errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
 connect() callback never called when invalid pfx provided: test-tls-invalid-pfx.js
 
 SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext.
 
-Is nrypt used in node tls, do we need to update it?
+Is ncrypt used in node tls, do we need to update it?
 
 # More
 
-- bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
+- [ES] bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
 - different cipher list, support --tls-cipher-list: test-tls-cipher-list
 - after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
 - socket never closes? test-tls-js-stream.js
 - node never trips `ret !== false` branch: test-tlsp-ause.js
-- cluster stuff: test-tls-ticket-cluster
-- ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
+- [ES] cluster stuff: test-tls-ticket-cluster
+- [ES] ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js
 - takes 18s in bun but 300ms in node: test-gc-tls-external-memory.js
 - client.on("session") never called?: test-tls-secure-session.js
-- overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
+- [ES] overwrites duplex and emits custom connection event? test-tls-handshake-exception.js
 - missing '_tlsError' event: test-tls-delayed-attach-error.js
 - tls.setTicketKeys is 'Not implemented in Bun yet': test-tls-ticket-invalid-arg.js
-- getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
+- [ES] getCertificate() returns undefined: test-tls-pfx-authorizationerror.js
 
-addCACert
+SecureContext:
 - missing addCACert: test-tls-addca
 
 createSecurePair not implemented:
 These tests are removed in new node versions: (createSecurePair is deprecated)
-- test-tls-securepair-fiftharg.js
-- test-tls-securepair-leak.js
-- test-tls-legacy-deprecated.js
+- [RM] test-tls-securepair-fiftharg.js
+- [RM] test-tls-securepair-leak.js
+- [RM] test-tls-legacy-deprecated.js
 
 # Pass on mac
 
-- test-tls-junk-closes-server
+- [ES] test-tls-junk-closes-server
 - test-tls-onread-static-buffer
 - test-tls-lookup
 - test-tls-wrap-econnreset-pipe
@@ -69,7 +72,7 @@ that to `localhost:${port}localhost:${port}` which is an invalid url
 - http_client in bun is implemented with fetch which doesn't let you send a malformed http request
 - this might be unintentional? unclear
 
-test-tls-disable-renegotiation.js:
+[ES] test-tls-disable-renegotiation.js:
 - missing ERR_INVALID_ARG_TYPE for client.renegotiate()
 - OpenSSL function should not have been called via OPENSSL_internal SSL routines
 - The error is emitted at: <https://github.com/google/boringssl/blob/035e720641f385e82c72b7b0a9e1d89e58cb5ed5/ssl/ssl_lib.cc#L1629>

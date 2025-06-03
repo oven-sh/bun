@@ -4,12 +4,8 @@ const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.CLI.Command;
 const Install = bun.install;
-const Bin = Install.Bin;
 const PackageManager = Install.PackageManager;
 const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const Behavior = Install.Dependency.Behavior;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
@@ -24,13 +20,11 @@ const PathBuffer = bun.PathBuffer;
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const RunCommand = bun.RunCommand;
-const FileSystem = bun.fs.FileSystem;
 const OOM = bun.OOM;
 const js_printer = bun.js_printer;
 const E = bun.js_parser.E;
 const Progress = bun.Progress;
 const JSON = bun.JSON;
-const BoringSSL = bun.BoringSSL;
 const sha = bun.sha;
 const LogLevel = PackageManager.Options.LogLevel;
 const FileDescriptor = bun.FileDescriptor;
@@ -2417,7 +2411,7 @@ pub const PackCommand = struct {
         }
 
         pub fn deinit(this: *const IgnorePatterns, allocator: std.mem.Allocator) void {
-            for (this.list) |pattern_info| {
+            for (this.list) |*pattern_info| {
                 pattern_info.glob.deinit(allocator);
             }
             allocator.free(this.list);
@@ -2670,7 +2664,7 @@ pub const bindings = struct {
             else => {},
         }
 
-        const entries = JSArray.createEmpty(global, entries_info.items.len);
+        const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 4);

@@ -95,7 +95,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSValue {
-                return @call(.always_inline, getter, .{ this, object });
+                return bun.jsc.toJSHostValue(this, getter(this, object));
             }
         }.callback;
     }
@@ -1303,9 +1303,9 @@ pub fn getValkeyClientConstructor(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObj
     return JSC.API.Valkey.js.getConstructor(globalThis);
 }
 
-pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) bun.JSError!JSC.JSValue {
     const vm = globalThis.bunVM();
-    const graph = vm.standalone_module_graph orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
+    const graph = vm.standalone_module_graph orelse return try JSC.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
     var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
@@ -1320,7 +1320,7 @@ pub fn getEmbeddedFiles(globalThis: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.J
     }
 
     var i: u32 = 0;
-    var array = JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
+    var array = try JSC.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
     std.mem.sort(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
     for (sort_indices.items) |index| {
         const file = &unsorted_files[index];
@@ -2041,84 +2041,39 @@ comptime {
 const assert = bun.assert;
 
 const conv = std.builtin.CallingConvention.Unspecified;
-const S3File = @import("../webcore/S3File.zig");
 const Bun = @This();
 const default_allocator = bun.default_allocator;
 const bun = @import("bun");
-const uv = bun.windows.libuv;
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
 const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const Fs = @import("../../fs.zig");
-const Resolver = @import("../../resolver/resolver.zig");
-const ast = @import("../../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
-const logger = bun.logger;
-const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const js_printer = bun.js_printer;
-const js_parser = bun.js_parser;
-const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../../node_fallbacks.zig");
-const ImportKind = ast.ImportKind;
-const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
-const Runtime = @import("../../runtime.zig");
-const Router = @import("./filesystem_router.zig");
-const ImportRecord = ast.ImportRecord;
-const DotEnv = @import("../../env_loader.zig");
-const ParseResult = bun.transpiler.ParseResult;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
-const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const api = bun.api;
 const node = bun.api.node;
 const host_fn = bun.jsc.host_fn;
-const ZigException = bun.JSC.ZigException;
-const ZigStackTrace = bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
-const ResolvedSource = bun.JSC.ResolvedSource;
 const JSPromise = bun.JSC.JSPromise;
-const JSInternalPromise = bun.JSC.JSInternalPromise;
-const JSModuleLoader = bun.JSC.JSModuleLoader;
-const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
-const ErrorableZigString = bun.JSC.ErrorableZigString;
-const VM = bun.JSC.VM;
-const JSFunction = bun.JSC.JSFunction;
-const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = bun.JSC.API.JSTranspiler;
 const JSBundler = bun.JSC.API.JSBundler;
 const VirtualMachine = JSC.VirtualMachine;
-const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
-const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = bun.Semver.SemverObject;
 const Braces = @import("../../shell/braces.zig");
-const Shell = @import("../../shell/shell.zig");
 
-const Debugger = JSC.Debugger;
 const HashObject = bun.api.HashObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const TOMLObject = bun.api.TOMLObject;
-const Timer = bun.api.Timer;
 const FFIObject = bun.api.FFIObject;

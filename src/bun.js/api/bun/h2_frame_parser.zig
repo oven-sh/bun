@@ -36,7 +36,6 @@ const MAX_WINDOW_SIZE = std.math.maxInt(i32);
 const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const WINDOW_INCREMENT_SIZE = std.math.maxInt(u16);
-const MAX_HPACK_HEADER_SIZE = std.math.maxInt(u16);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 
 const PaddingStrategy = enum {
@@ -291,7 +290,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -324,7 +323,7 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     }
 }
 
-fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args_list = callframe.arguments_old(1);
     if (args_list.len < 1) {
         return globalObject.throw("Expected settings to be a object", .{});
@@ -411,7 +410,7 @@ fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame
     return .undefined;
 }
 
-fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments_old(1);
 
@@ -647,6 +646,8 @@ const Handlers = struct {
     }
 };
 
+pub const H2FrameParserConstructor = H2FrameParser.js.getConstructor;
+
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     const Self = @This();
@@ -658,7 +659,7 @@ pub const H2FrameParser = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
+    const ENABLE_AUTO_CORK = false; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
     const MAX_BUFFER_SIZE = 32768;
@@ -1678,6 +1679,7 @@ pub const H2FrameParser = struct {
         JSC.markBinding(@src());
         log("write {}", .{bytes.len});
         if (comptime ENABLE_AUTO_CORK) {
+            // TODO: make this use AutoFlusher
             this.cork();
             const available = CORK_BUFFER[CORK_OFFSET..];
             if (bytes.len > available.len) {
@@ -1774,14 +1776,14 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) ?*Stream {
+    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) bun.JSError!?*Stream {
         log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
         const globalObject = this.handlers.globalObject;
 
         const stream_id = stream.id;
-        const headers = JSC.JSValue.createEmptyArray(globalObject, 0);
+        const headers = try JSC.JSValue.createEmptyArray(globalObject, 0);
         headers.ensureStillAlive();
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();
@@ -1817,7 +1819,7 @@ pub const H2FrameParser = struct {
                 headers.push(globalObject, js_header_value);
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
@@ -1836,7 +1838,7 @@ pub const H2FrameParser = struct {
 
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
@@ -1960,7 +1962,7 @@ pub const H2FrameParser = struct {
         return bun.String.createUTF8ForJS(this.handlers.globalObject, payload);
     }
 
-    pub fn handleOriginFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, _: ?*Stream) usize {
+    pub fn handleOriginFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, _: ?*Stream) bun.JSError!usize {
         log("handleOriginFrame {s}", .{data});
         if (this.isServer) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ORIGIN frame on server", this.lastStreamID, true);
@@ -1995,7 +1997,7 @@ pub const H2FrameParser = struct {
                     originValue.ensureStillAlive();
                 } else if (count == 1) {
                     // need to create an array
-                    const array = JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
+                    const array = try JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
                     array.ensureStillAlive();
                     array.push(this.handlers.globalObject, originValue);
                     array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
@@ -2141,7 +2143,7 @@ pub const H2FrameParser = struct {
         }
         return data.len;
     }
-    pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+    pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID, true);
@@ -2156,7 +2158,7 @@ pub const H2FrameParser = struct {
             const payload = content.data;
             this.readBuffer.reset();
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
-            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
+            stream = (try this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags)) orelse {
                 return content.end;
             };
             if (stream.endAfterHeaders) {
@@ -2182,7 +2184,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+    pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleHeadersFrame {s}", .{if (this.isServer) "server" else "client"});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
@@ -2221,7 +2223,7 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
-            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
+            stream = (try this.decodeHeaderBlock(payload[offset..end], stream, frame.flags)) orelse {
                 return content.end;
             };
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
@@ -2330,7 +2332,7 @@ pub const H2FrameParser = struct {
         return entry.value_ptr;
     }
 
-    fn readBytes(this: *H2FrameParser, bytes: []const u8) usize {
+    fn readBytes(this: *H2FrameParser, bytes: []const u8) bun.JSError!usize {
         log("read {}", .{bytes.len});
         if (this.isServer and this.prefaceReceivedLen < 24) {
             // Handle Server Preface
@@ -2403,15 +2405,15 @@ pub const H2FrameParser = struct {
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[needed..]) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[needed..], stream) + needed,
-                @intFromEnum(FrameType.HTTP_FRAME_HEADERS) => this.handleHeadersFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_HEADERS) => (try this.handleHeadersFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_DATA) => this.handleDataFrame(header, bytes[needed..], stream) + needed,
-                @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION) => this.handleContinuationFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION) => (try this.handleContinuationFrame(header, bytes[needed..], stream)) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_PRIORITY) => this.handlePriorityFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[needed..], stream) + needed,
-                @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[needed..], stream)) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2439,15 +2441,15 @@ pub const H2FrameParser = struct {
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
-            @intFromEnum(FrameType.HTTP_FRAME_HEADERS) => this.handleHeadersFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_HEADERS) => (try this.handleHeadersFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_DATA) => this.handleDataFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
-            @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION) => this.handleContinuationFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION) => (try this.handleContinuationFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_PRIORITY) => this.handlePriorityFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
-            @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => (try this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream)) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                 return bytes.len;
@@ -3537,7 +3539,7 @@ pub const H2FrameParser = struct {
     pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
 
-        const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
+        const array = try JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
         var count: u32 = 0;
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
@@ -4018,7 +4020,7 @@ pub const H2FrameParser = struct {
             var bytes = array_buffer.byteSlice();
             // read all the bytes
             while (bytes.len > 0) {
-                const result = this.readBytes(bytes);
+                const result = try this.readBytes(bytes);
                 bytes = bytes[result..];
             }
             return .undefined;
@@ -4026,13 +4028,13 @@ pub const H2FrameParser = struct {
         return globalObject.throw("Expected data to be a Buffer or ArrayBuffer", .{});
     }
 
-    pub fn onNativeRead(this: *H2FrameParser, data: []const u8) void {
+    pub fn onNativeRead(this: *H2FrameParser, data: []const u8) bun.JSError!void {
         log("onNativeRead", .{});
         this.ref();
         defer this.deref();
         var bytes = data;
         while (bytes.len > 0) {
-            const result = this.readBytes(bytes);
+            const result = try this.readBytes(bytes);
             bytes = bytes[result..];
         }
     }
@@ -4295,12 +4297,3 @@ pub const H2FrameParser = struct {
 };
 
 extern fn Bun__wrapAbortError(globalObject: *JSC.JSGlobalObject, cause: JSC.JSValue) JSC.JSValue;
-
-pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSArray.create(global, &.{
-        H2FrameParser.js.getConstructor(global),
-        JSC.JSFunction.create(global, "assertSettings", jsAssertSettings, 1, .{}),
-        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 1, .{}),
-        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 1, .{}),
-    });
-}

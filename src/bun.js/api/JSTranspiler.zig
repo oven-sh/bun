@@ -1,21 +1,15 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const QueryStringMap = @import("../../url.zig").QueryStringMap;
-const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
-const Fs = @import("../../fs.zig");
 const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const Request = bun.webcore.Request;
-const FetchEvent = bun.webcore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
@@ -858,12 +852,12 @@ pub fn scan(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callframe: *JS
 
     const exports_label = JSC.ZigString.static("exports");
     const imports_label = JSC.ZigString.static("imports");
-    const named_imports_value = namedImportsToJS(
+    const named_imports_value = try namedImportsToJS(
         globalThis,
         parse_result.ast.import_records.slice(),
     );
 
-    const named_exports_value = namedExportsToJS(
+    const named_exports_value = try namedExportsToJS(
         globalThis,
         &parse_result.ast.named_exports,
     );
@@ -1033,7 +1027,7 @@ pub fn transformSync(
     return out.toJS(globalThis);
 }
 
-fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
+fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) bun.JSError!JSC.JSValue {
     if (named_exports.count() == 0)
         return JSValue.createEmptyArray(global, 0);
 
@@ -1058,14 +1052,11 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
 
 const ImportRecord = @import("../../import_record.zig").ImportRecord;
 
-fn namedImportsToJS(
-    global: *JSGlobalObject,
-    import_records: []const ImportRecord,
-) JSC.JSValue {
+fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord) bun.JSError!JSC.JSValue {
     const path_label = JSC.ZigString.static("path");
     const kind_label = JSC.ZigString.static("kind");
 
-    const array = JSC.JSValue.createEmptyArray(global, import_records.len);
+    const array = try JSC.JSValue.createEmptyArray(global, import_records.len);
     array.ensureStillAlive();
 
     for (import_records, 0..) |record, i| {
@@ -1163,7 +1154,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *JSC.JSGlobalObject, callfra
         return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "Failed to scan imports"));
     }
 
-    const named_imports_value = namedImportsToJS(
+    const named_imports_value = try namedImportsToJS(
         globalThis,
         this.scan_pass_result.import_records.items,
     );

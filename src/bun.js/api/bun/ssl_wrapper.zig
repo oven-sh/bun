@@ -1,7 +1,6 @@
 const bun = @import("bun");
 
 const BoringSSL = bun.BoringSSL.c;
-const X509 = @import("./x509.zig");
 const JSC = bun.JSC;
 const uws = bun.uws;
 const log = bun.Output.scoped(.SSLWrapper, true);
@@ -99,10 +98,10 @@ pub fn SSLWrapper(comptime T: type) type {
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
             bun.BoringSSL.load();
 
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            const ctx_opts: uws.SocketContext.BunSocketContextOptions = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
+            const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
             errdefer BoringSSL.SSL_CTX_free(ctx);
             return try This.initWithCTX(ctx, is_client, handlers);
         }
@@ -312,7 +311,7 @@ pub fn SSLWrapper(comptime T: type) type {
                 return .{};
             }
             const ssl = this.ssl orelse return .{};
-            return uws.us_ssl_socket_verify_error_from_ssl(ssl);
+            return ssl.getVerifyError();
         }
 
         /// Update the handshake state

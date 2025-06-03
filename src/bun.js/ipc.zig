@@ -1,13 +1,10 @@
 const uws = bun.uws;
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
 const Output = bun.Output;
-const MutableString = bun.MutableString;
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -338,7 +335,7 @@ pub const CallbackList = union(enum) {
     }
 
     /// protects the callback
-    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) void {
+    pub fn push(self: *@This(), callback: JSC.JSValue, global: *JSC.JSGlobalObject) bun.JSError!void {
         switch (self.*) {
             .ack_nack => unreachable,
             .none => {
@@ -347,7 +344,7 @@ pub const CallbackList = union(enum) {
             },
             .callback => {
                 const prev = self.callback;
-                const arr = JSC.JSValue.createEmptyArray(global, 2);
+                const arr = try JSC.JSValue.createEmptyArray(global, 2);
                 arr.protect();
                 arr.putIndex(global, 0, prev); // add the old callback to the array
                 arr.putIndex(global, 1, callback); // add the new callback to the array
@@ -584,7 +581,7 @@ pub const SendQueue = struct {
     }
 
     /// returned pointer is invalidated if the queue is modified
-    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) *SendHandle {
+    pub fn startMessage(self: *SendQueue, global: *JSC.JSGlobalObject, callback: JSC.JSValue, handle: ?Handle) bun.JSError!*SendHandle {
         log("SendQueue#startMessage", .{});
         if (Environment.allow_assert) bun.debugAssert(self.has_written_version == 1);
 
@@ -594,7 +591,7 @@ pub const SendQueue = struct {
             const last = &self.queue.items[self.queue.items.len - 1];
             if (last.handle == null and !last.isAckNack() and !(self.queue.items.len == 1 and self.write_in_progress)) {
                 if (callback.isCallable()) {
-                    last.callbacks.push(callback, global);
+                    try last.callbacks.push(callback, global);
                 }
                 // caller can append now
                 return last;
@@ -774,7 +771,7 @@ pub const SendQueue = struct {
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: JSC.JSValue, handle: ?Handle) SerializeAndSendResult {
         log("SendQueue#serializeAndSend", .{});
         const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
-        const msg = self.startMessage(global, callback, handle);
+        const msg = self.startMessage(global, callback, handle) catch return .failure;
         const start_offset = msg.data.list.items.len;
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;

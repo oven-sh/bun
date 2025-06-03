@@ -50,6 +50,7 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
+    bool m_sourceMapsEnabled = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

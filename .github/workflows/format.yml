@@ -44,7 +44,8 @@ jobs:
           version: 0.14.0
       - name: Zig Format
         run: |
-          zig fmt src/**.zig
+          bun scripts/zig-remove-unreferenced-top-level-decls.ts src/
+          zig fmt src
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

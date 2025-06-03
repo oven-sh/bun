@@ -7,7 +7,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSC = bun.JSC;
-const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
@@ -97,7 +96,7 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
-/// when a message is recieved with an 'ack' property of the same sequence number.
+/// when a message is received with an 'ack' property of the same sequence number.
 pub const InternalMsgHolder = struct {
     seq: i32 = 0,
 

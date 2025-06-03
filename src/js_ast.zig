@@ -1,11 +1,9 @@
 const std = @import("std");
 const logger = bun.logger;
-const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
-const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
@@ -15,17 +13,13 @@ const default_allocator = bun.default_allocator;
 pub const Ref = @import("ast/base.zig").Ref;
 pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
-const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
-const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
-const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
 const Loader = bun.options.Loader;
@@ -1526,7 +1520,7 @@ pub const E = struct {
 
         pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
             const items = this.items.slice();
-            var array = JSC.JSValue.createEmptyArray(globalObject, items.len);
+            var array = try JSC.JSValue.createEmptyArray(globalObject, items.len);
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
@@ -3491,7 +3485,14 @@ pub const Expr = struct {
         return null;
     }
 
-    /// Similar to `foo.bar[123]`
+    /// This supports lookups like:
+    /// - `foo`
+    /// - `foo.bar`
+    /// - `foo[123]`
+    /// - `foo[123].bar`
+    /// - `foo[123].bar[456]`
+    /// - `foo[123].bar[456].baz`
+    /// - `foo[123].bar[456].baz.qux` // etc.
     ///
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
     pub fn getPathMayBeIndex(expr: *const Expr, name: string) ?Expr {
@@ -3499,30 +3500,34 @@ pub const Expr = struct {
             return null;
         }
 
-        if (name[0] == '[') as_index: {
-            if (strings.indexOfChar(name, ']')) |idx| {
-                const index_str = name[1..idx];
-                const index = std.fmt.parseInt(u32, index_str, 10) catch break :as_index;
-                const rest = if (name.len > idx + 1) name[idx + 1 ..] else "";
-                if (expr.getByIndex(index, index_str, bun.default_allocator)) |*result| {
-                    if (rest.len > 0) {
-                        return result.getPathMayBeIndex(rest);
+        if (strings.indexOfAny(name, "[.")) |idx| {
+            switch (name[idx]) {
+                '[' => {
+                    const end_idx = strings.indexOfChar(name, ']') orelse return null;
+                    var base_expr = expr;
+                    if (idx > 0) {
+                        const key = name[0..idx];
+                        base_expr = &(base_expr.get(key) orelse return null);
                     }
 
+                    const index_str = name[idx + 1 .. end_idx];
+                    const index = std.fmt.parseInt(u32, index_str, 10) catch return null;
+                    const rest = if (name.len > end_idx) name[end_idx + 1 ..] else "";
+                    const result = &(base_expr.getByIndex(index, index_str, bun.default_allocator) orelse return null);
+                    if (rest.len > 0) return result.getPathMayBeIndex(rest);
                     return result.*;
-                }
-            }
-        }
+                },
+                '.' => {
+                    const key = name[0..idx];
+                    const sub_expr = &(expr.get(key) orelse return null);
+                    const subpath = if (name.len > idx) name[idx + 1 ..] else "";
+                    if (subpath.len > 0) {
+                        return sub_expr.getPathMayBeIndex(subpath);
+                    }
 
-        if (strings.indexOfChar(name, '.')) |idx| {
-            const key = name[0..idx];
-            if (expr.get(key)) |*sub_expr| {
-                const subpath = if (name.len > idx + 1) name[idx + 1 ..] else "";
-                if (subpath.len > 0) {
-                    return sub_expr.getPathMayBeIndex(subpath);
-                }
-
-                return sub_expr.*;
+                    return sub_expr.*;
+                },
+                else => unreachable,
             }
         }
 
@@ -9121,6 +9126,7 @@ const ToJSError = error{
     @"Cannot convert identifier to JS. Try a statically-known value",
     MacroError,
     OutOfMemory,
+    JSError,
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;

@@ -1,8 +1,8 @@
-import { spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "fs/promises";
+import { expect, test, describe, beforeAll, beforeEach, afterAll } from "bun:test";
+import { write, file, spawn } from "bun";
 import { VerdaccioRegistry, bunExe, bunEnv as env } from "harness";
 import { join } from "path";
+import { rm } from "fs/promises";
 
 let registry = new VerdaccioRegistry();
 

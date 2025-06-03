@@ -1,16 +1,16 @@
-import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cp, exists, rm, writeFile } from "fs/promises";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { rm, writeFile, exists, cp } from "fs/promises";
+import { write, file, spawn } from "bun";
+import { join } from "path";
 import {
   VerdaccioRegistry,
-  assertManifestsPopulated,
   bunExe,
   bunEnv as env,
-  isWindows,
   runBunInstall,
+  assertManifestsPopulated,
   toBeValidBin,
+  isWindows,
 } from "harness";
-import { join } from "path";
 
 expect.extend({
   toBeValidBin,

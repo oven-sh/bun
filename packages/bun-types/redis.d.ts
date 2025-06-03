@@ -599,14 +599,14 @@ declare module "bun" {
 
     /**
      *  Ping the server
-     *  @returns Promise that resolves with "PONG" if the server is reachable, or an error if the server is not reachable
+     *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
      */
-    ping(): Promise<string>;
+    ping(): Promise<"PONG">;
 
     /**
      *  Ping the server with a message
      *  @param message The message to send to the server
-     *  @returns Promise that resolves with the message if the server is reachable, or an error if the server is not reachable
+     *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
      */
     ping(message: string | ArrayBufferView | Blob): Promise<string>;
 

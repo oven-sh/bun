@@ -124,15 +124,15 @@ void ScriptExecutionContext::unrefEventLoop()
 
 bool ScriptExecutionContext::canSendMessage()
 {
-    us_loop_t* loop = (us_loop_t*)uws_get_loop();
-    long long currentTickNr = static_cast<long long>(us_loop_iteration_number(loop));
+    us_loop_t* loop = uws_get_loop();
+    auto currentTickNr = static_cast<int64_t>(us_loop_iteration_number(loop));
 
     if (lastSendTickNr != currentTickNr) {
         messagesSentThisTick = 0;
         lastSendTickNr = currentTickNr;
     }
 
-    constexpr long long MAX_MESSAGES_PER_TICK = 1000;
+    constexpr int64_t MAX_MESSAGES_PER_TICK = 1000;
     if (messagesSentThisTick >= MAX_MESSAGES_PER_TICK) {
         return false;
     }

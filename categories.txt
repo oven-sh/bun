@@ -34,7 +34,7 @@ Is ncrypt used in node tls, do we need to update it?
 - [ES] bun gets error ECONNREFUSED but node gets write EPROTO & allows process exit: test-tls-junk-server
 - different cipher list, support --tls-cipher-list: test-tls-cipher-list
 - after 'client wrote data', bufferSize was 0 when node has it '1': test-tls-buffersize
-- socket never closes? test-tls-js-stream.js
+- connection closes earlier than expected? test-tls-js-stream.js
 - node never trips `ret !== false` branch: test-tlsp-ause.js
 - [ES] cluster stuff: test-tls-ticket-cluster
 - [ES] ServerHandlers handshake() doesn't disconect for non-ECONNRESEET error? test-tls-hello-parser-failure.js

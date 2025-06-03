@@ -121,7 +121,7 @@ pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalOb
 
     // this exists because while we're inside a spawnSync call, some tasks can actually
     // still complete which leads to a case where module resolution can partially complete and
-    // some modules are only partialy evaluated which causes reference errors.
+    // some modules are only partially evaluated which causes reference errors.
     // TODO: A better fix here could be a second event loop so we can come off the main one
     // while processing spawnSync, then resume back to here afterwards
     if (this.is_inside_spawn_sync) {

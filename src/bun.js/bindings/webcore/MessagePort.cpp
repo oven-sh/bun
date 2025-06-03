@@ -313,7 +313,7 @@ void MessagePort::dispatchMessages()
     auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
         RefPtr<ScriptExecutionContext> context = scriptExecutionContext();
         if (!context || !context->globalObject()) {
-            WTFMove(completionCallback)();
+            completionCallback();
             return;
         }
 

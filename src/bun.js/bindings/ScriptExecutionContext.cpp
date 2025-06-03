@@ -122,25 +122,6 @@ void ScriptExecutionContext::unrefEventLoop()
     Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
 }
 
-bool ScriptExecutionContext::canSendMessage()
-{
-    us_loop_t* loop = uws_get_loop();
-    auto currentTickNr = static_cast<int64_t>(us_loop_iteration_number(loop));
-
-    if (lastSendTickNr != currentTickNr) {
-        messagesSentThisTick = 0;
-        lastSendTickNr = currentTickNr;
-    }
-
-    constexpr int64_t MAX_MESSAGES_PER_TICK = 1000;
-    if (messagesSentThisTick >= MAX_MESSAGES_PER_TICK) {
-        return false;
-    }
-
-    messagesSentThisTick++;
-    return true;
-}
-
 ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();

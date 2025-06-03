@@ -55,11 +55,17 @@ src/bun.js/api/html_rewriter.zig
 src/bun.js/api/JSBundler.zig
 src/bun.js/api/JSTranspiler.zig
 src/bun.js/api/server.zig
+src/bun.js/api/server/AnyRequestContext.zig
 src/bun.js/api/server/HTMLBundle.zig
+src/bun.js/api/server/HTTPStatusText.zig
 src/bun.js/api/server/InspectorBunFrontendDevServerAgent.zig
 src/bun.js/api/server/NodeHTTPResponse.zig
+src/bun.js/api/server/RequestContext.zig
+src/bun.js/api/server/ServerConfig.zig
 src/bun.js/api/server/ServerWebSocket.zig
+src/bun.js/api/server/SSLConfig.zig
 src/bun.js/api/server/StaticRoute.zig
+src/bun.js/api/server/WebSocketServerContext.zig
 src/bun.js/api/streams.classes.zig
 src/bun.js/api/Timer.zig
 src/bun.js/api/TOMLObject.zig
@@ -105,6 +111,7 @@ src/bun.js/bindings/JSPropertyIterator.zig
 src/bun.js/bindings/JSRef.zig
 src/bun.js/bindings/JSRuntimeType.zig
 src/bun.js/bindings/JSString.zig
+src/bun.js/bindings/JSType.zig
 src/bun.js/bindings/JSUint8Array.zig
 src/bun.js/bindings/JSValue.zig
 src/bun.js/bindings/NodeModuleModule.zig

@@ -242,11 +242,18 @@ describe("server.close()", () => {
       it("server is no longer listening", () => expect(server.listening).toBe(false));
       it("server will not accept new connections", async () => {
         let client = new net.Socket();
+        const { promise, resolve, reject } = Promise.withResolvers();
         const onError = jest.fn();
         const onConnect = jest.fn();
-        client.on("error", onError);
-        client.connect(address as SocketConnectOpts, onConnect);
-        await Bun.sleep(1); // next event loop cycle
+        client.on("error", e => {
+          onError(e);
+          resolve();
+        });
+        client.connect(address as SocketConnectOpts, () => {
+          onConnect();
+          resolve();
+        });
+        await promise;
         expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "ECONNREFUSED" }));
         expect(onConnect).not.toHaveBeenCalled();
         expect(handlers.connection).not.toHaveBeenCalled();

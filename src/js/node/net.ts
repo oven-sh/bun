@@ -311,7 +311,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-const SocketEmitEndNT = (self, _err?) => {
+function SocketEmitEndNT(self, _err?) {
   if (!self[kended]) {
     if (!self.allowHalfOpen) {
       self.write = writeAfterFIN;
@@ -323,7 +323,7 @@ const SocketEmitEndNT = (self, _err?) => {
   // if (err) {
   //   self.destroy(err);
   // }
-};
+}
 
 const ServerHandlers: SocketHandler = {
   data(socket, buffer) {

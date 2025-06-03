@@ -18,7 +18,6 @@ server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
     assert.strictEqual(response.headersSent, false);
     assert.strictEqual(response._header, false); // Alias for headersSent
 
-    console.error('response.flushHeaders()');
     response.flushHeaders();
     assert.strictEqual(response.headersSent, true);
     assert.strictEqual(response._header, true);
@@ -31,7 +30,7 @@ server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
     });
 
     response.on('finish', common.mustCall(function mustCallFinishFn() {
-      console.error('response.finish()');
+      server.close();
       process.nextTick(() => {
         response.flushHeaders(); // Idempotent
       });
@@ -51,16 +50,10 @@ server.listen(0, "127.0.0.1", common.mustCall(function mustCallListenFn() {
     request.on('response', common.mustCall(function mustCallReponseFn(headers, flags) {
       assert.strictEqual(headers['foo-bar'], undefined);
       assert.strictEqual(headers[':status'], 200);
-      console.error('serverResponse.end()');
       serverResponse.end();
     }, 1));
-    request.on('close', common.mustCall(function mustCallCloseFn() {
-      console.error('request closed');
-    }));
     request.on('end', common.mustCall(function mustCallEndFn() {
-      console.error("client.close()");
       client.close();
-      server.close();
     }));
     request.end();
     request.resume();

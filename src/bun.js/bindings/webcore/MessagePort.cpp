@@ -280,6 +280,14 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
     }
 
     if (!deferredMessages.isEmpty()) {
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto scriptExecutionStatus = Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject);
+        
+        if (scriptExecutionStatus != ScriptExecutionStatus::Running || context.isJSExecutionForbidden()) {
+            completionCallback();
+            return;
+        }
+        
         // remaining messages should happen on the next on the immediate cpp task queue
         auto contextIdentifier = context.identifier();
         context.queueImmediateCppTask(

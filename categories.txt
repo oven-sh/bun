@@ -15,7 +15,7 @@ SNICallback not supported: (#17932, #14395, #6749, #4053) (kai)
 - test-tls-snicallback-error.js
 - test-tls-sni-option.js
 - test-tls-sni-servername.js
-- test-tls-empty-sni-context.js
+- [ES] test-tls-empty-sni-context.js
 - checkServerIdentity called with 'undefined' for 'cert', throws: test-tls-empty-sni-context.js
 
 No cipher match: (look at electron? openssl.c)

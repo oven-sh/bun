@@ -93,7 +93,6 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
 
 const kServerSocket = Symbol("kServerSocket");
-const kServerCounted = Symbol("kServerCounted");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");

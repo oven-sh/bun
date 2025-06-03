@@ -566,7 +566,6 @@ void Worker::pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> b
 
         if (fd == PushStdioFd::Stdin) {
             auto* process = destGlobalObject->processObject();
-            vm.propertyNames->builtinNames();
             auto processStdin = process->get(destGlobalObject, Identifier::fromString(vm, "stdin"_s));
             RETURN_IF_EXCEPTION(scope, reportUncaught());
             auto push = processStdin.get(destGlobalObject, Identifier::fromString(vm, "push"_s));
@@ -579,6 +578,7 @@ void Worker::pushStdio(Worker& child, PushStdioFd fd, std::span<const uint8_t> b
             MarkedArgumentBuffer args;
             args.append(buffer);
             JSC::call(destGlobalObject, push, callData, processStdin, args);
+            RETURN_IF_EXCEPTION(scope, reportUncaught());
         } else {
             auto* jsWorker = jsCast<JSWorker*>(WebCore::toJS(destGlobalObject, destGlobalObject, worker));
             destGlobalObject->processObject()->emitWorkerStdioInParent(jsWorker, fd, buffer);

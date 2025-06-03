@@ -281,16 +281,19 @@ void MessagePort::processMessages(ScriptExecutionContext& context, Vector<Messag
 
     if (!deferredMessages.isEmpty()) {
         // remaining messages should happen on the next on the immediate cpp task queue
+        auto contextIdentifier = context.identifier();
         context.queueImmediateCppTask(
-            [protectedThis = Ref { *this }, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
-                RefPtr<ScriptExecutionContext> contextPtr = protectedThis->scriptExecutionContext();
-                if (!contextPtr || contextPtr->activeDOMObjectsAreSuspended() || !protectedThis->isEntangled()) {
-                    completionCallback();
-                    return;
+            [protectedThis = Ref { *this }, contextIdentifier, deferred = WTFMove(deferredMessages), completionCallback = WTFMove(completionCallback)](ScriptExecutionContext& ctx) mutable {
+                if (auto* validContext = ScriptExecutionContext::getScriptExecutionContext(contextIdentifier)) {
+                    if (validContext == &ctx && !validContext->activeDOMObjectsAreSuspended() && protectedThis->isEntangled()) {
+                        // then reset for next tick
+                        ctx.resetMessageCount();
+                        protectedThis->processMessages(ctx, WTFMove(deferred), WTFMove(completionCallback));
+                        return;
+                    }
                 }
-                // then reset for next tick
-                ctx.resetMessageCount();
-                protectedThis->processMessages(ctx, WTFMove(deferred), WTFMove(completionCallback));
+                // context was destroyed or conditions not met, just complete
+                completionCallback();
             });
     } else {
         completionCallback();

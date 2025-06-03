@@ -2023,6 +2023,7 @@ pub fn Bun__canonicalizeIP_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.Cal
         if (addr_str.len >= INET6_ADDRSTRLEN) {
             return .undefined;
         }
+        for (addr_str) |char| if (char == '/') return .undefined; // CIDR not allowed
 
         var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
         // we need a null terminated string as input

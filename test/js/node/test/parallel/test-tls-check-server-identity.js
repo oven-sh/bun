@@ -96,15 +96,14 @@ const tests = [
   },
 
   // But not when it's a CIDR.
-  // TODO:
-  // {
-  //   host: '8.8.8.8',
-  //   cert: {
-  //     subject: { CN: '8.8.8.8' },
-  //     subjectaltname: 'IP Address:8.8.8.0/24'
-  //   },
-  //   error: 'IP: 8.8.8.8 is not in the cert\'s list: '
-  // },
+  {
+    host: '8.8.8.8',
+    cert: {
+      subject: { CN: '8.8.8.8' },
+      subjectaltname: 'IP Address:8.8.8.0/24'
+    },
+    error: 'IP: 8.8.8.8 is not in the cert\'s list: '
+  },
 
   // Wildcards in CN
   { host: 'b.a.com', cert: { subject: { CN: '*.a.com' } } },
@@ -331,9 +330,7 @@ const tests = [
 ];
 
 tests.forEach(function(test, i) {
-  console.log('['+i+'/'+tests.length+'] Running test ', test);
   const err = tls.checkServerIdentity(test.host, test.cert);
-  if(test.error == null && err != null) throw err;
   assert.strictEqual(err?.reason,
                      test.error,
                      `Test# ${i} failed: ${util.inspect(test)} \n` +

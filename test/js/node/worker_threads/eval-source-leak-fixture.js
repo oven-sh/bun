@@ -7,7 +7,7 @@ const eachSizeMiB = 100;
 const iterations = 5;
 
 function test() {
-  const code = " ".repeat(eachSizeMiB * 1024 * 1024);
+  const code = Buffer.alloc(eachSizeMiB * 1024 * 1024, " ").toString();
   return new Promise((resolve, reject) => {
     const worker = new Worker(code, { eval: true });
     worker.on("exit", () => resolve());

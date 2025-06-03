@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 // usage: bun scripts/gamble.ts <number of attempts> <timeout in seconds> <command>
 
 import assert from "node:assert";

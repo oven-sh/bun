@@ -1912,11 +1912,8 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                var header_value = bun.String.fromUTF8(header.value);
-                const js_header_value = header_value.transferToJS(globalObject);
-                js_header_value.ensureStillAlive();
                 headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
+                headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
@@ -1925,16 +1922,8 @@ pub const H2FrameParser = struct {
                     sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
-                var header_name = bun.String.fromUTF8(header.name);
-                const js_header_name = header_name.transferToJS(globalObject);
-                js_header_name.ensureStillAlive();
-
-                var header_value = bun.String.fromUTF8(header.value);
-                const js_header_value = header_value.transferToJS(globalObject);
-                js_header_value.ensureStillAlive();
-
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
+                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
+                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
 
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
@@ -1943,6 +1932,12 @@ pub const H2FrameParser = struct {
                     }
                     sensitiveHeaders.push(globalObject, js_header_name);
                 }
+
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
+
+                js_header_name.ensureStillAlive();
+                js_header_value.ensureStillAlive();
             }
 
             if (offset >= payload.len) {

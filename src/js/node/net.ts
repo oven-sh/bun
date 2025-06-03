@@ -341,11 +341,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const data = this.data;
     if (!data) return;
 
-    // when a connection is dropped, either through a BlockList or exceeding the maxConnections count, it will be immediately closed.
-    // do not let those surplus connections affect the observable connection count.
-    if (!data[kServerCounted]) return;
-
-    data.server._connections--;
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
@@ -356,8 +351,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         socket[owner_symbol] = null;
       }
     }
-
-    data.server._emitCloseIfDrained();
   },
   end(socket) {
     SocketHandlers.end(socket);
@@ -370,7 +363,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
     const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
-    _socket.server = self;
     _socket._requestCert = requestCert;
     _socket._rejectUnauthorized = rejectUnauthorized;
 
@@ -410,8 +402,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const bunTLS = _socket[bunTlsSymbol];
     const isTLS = typeof bunTLS === "function";
 
-    _socket[kServerCounted] = true;
     self._connections++;
+    _socket.server = self;
 
     if (pauseOnConnect) {
       _socket.pause();
@@ -1170,6 +1162,14 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   } else {
     callback(err);
     process.nextTick(emitCloseNT, this, false);
+  }
+
+  if (this.server) {
+    $debug("has server");
+    this.server._connections--;
+    if (this.server._emitCloseIfDrained) {
+      this.server._emitCloseIfDrained();
+    }
   }
 };
 

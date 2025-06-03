@@ -3464,8 +3464,12 @@ class ClientHttp2Session extends Http2Session {
     }
 
     function onConnect() {
-      this.#onConnect(arguments);
-      listener?.$call(this, this);
+      try {
+        this.#onConnect(arguments);
+        listener?.$call(this, this);
+      } catch (e) {
+        this.destroy(e);
+      }
     }
 
     // h2 with ALPNProtocols
@@ -3473,10 +3477,10 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
-      if (socket.secureConnecting === true) {
-        socket.on("secureConnect", onConnect.bind(this));
-      } else if (socket.connecting === true) {
-        socket.on("connect", onConnect.bind(this));
+
+      if (socket.connecting || socket.secureConnecting) {
+        const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
+        socket.once(connectEvent, onConnect.bind(this));
       } else {
         process.nextTick(onConnect.bind(this));
       }

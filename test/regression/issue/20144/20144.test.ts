@@ -1,6 +1,6 @@
+import { it } from "bun:test";
 import assert from "node:assert";
 import { spawn } from "node:child_process";
-import { it } from "bun:test";
 
 it.skipIf(process.platform === "win32")("should not time out", done => {
   const child = spawn(process.execPath, ["run", "./20144.fixture.ts"], {

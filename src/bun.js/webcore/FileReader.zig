@@ -83,7 +83,11 @@ pub const Lazy = union(enum) {
                 };
             }
         else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
-            .result => |fd| fd,
+            .result => |fd| brk: {
+                if (Environment.isPosix) is_nonblocking = true;
+                break :brk fd;
+            },
+
             .err => |err| {
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
             },
@@ -116,6 +120,10 @@ pub const Lazy = union(enum) {
                 return .{ .err = .fromCode(.ISDIR, .fstat) };
             }
 
+            if (bun.S.ISREG(stat.mode)) {
+                is_nonblocking = false;
+            }
+
             this.pollable = bun.sys.isPollable(stat.mode) or is_nonblocking or (file.is_atty orelse false);
             this.file_type = if (bun.S.ISFIFO(stat.mode))
                 .pipe
@@ -129,7 +137,9 @@ pub const Lazy = union(enum) {
                 this.file_type = .nonblocking_pipe;
             }
 
-            this.nonblocking = is_nonblocking or (this.pollable and !(file.is_atty orelse false));
+            this.nonblocking = is_nonblocking or (this.pollable and
+                !(file.is_atty orelse false) and
+                this.file_type != .pipe);
 
             if (this.nonblocking and this.file_type == .pipe) {
                 this.file_type = .nonblocking_pipe;

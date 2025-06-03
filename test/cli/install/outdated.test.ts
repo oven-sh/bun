@@ -1,7 +1,7 @@
+import { test, describe, expect, beforeAll, afterAll } from "bun:test";
 import { spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { VerdaccioRegistry, assertManifestsPopulated, bunExe, bunEnv as env, runBunInstall } from "harness";
 import { join } from "path";
+import { VerdaccioRegistry, bunExe, bunEnv as env, assertManifestsPopulated, runBunInstall } from "harness";
 
 let registry = new VerdaccioRegistry();
 

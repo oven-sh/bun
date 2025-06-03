@@ -1881,6 +1881,9 @@ pub const H2FrameParser = struct {
 
         var offset: usize = 0;
         const globalObject = this.handlers.globalObject;
+        if (this.handlers.vm.isShuttingDown()) {
+            return null;
+        }
 
         const stream_id = stream.id;
         const headers = try JSC.JSValue.createEmptyArray(globalObject, 0);
@@ -1911,34 +1914,34 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
-            if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
-                if (header.never_index) {
-                    if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
-                        sensitiveHeaders.ensureStillAlive();
-                    }
-                    sensitiveHeaders.push(globalObject, js_header_name);
+            // if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
+            //     headers.push(globalObject, js_header_name);
+            //     headers.push(globalObject, bun.String.createUTF8ForJS(globalObject, header.value));
+            //     if (header.never_index) {
+            //         if (sensitiveHeaders.isUndefined()) {
+            //             sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
+            //             sensitiveHeaders.ensureStillAlive();
+            //         }
+            //         sensitiveHeaders.push(globalObject, js_header_name);
+            //     }
+            // } else {
+            const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
+            const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
+
+            if (header.never_index) {
+                if (sensitiveHeaders.isUndefined()) {
+                    sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
+                    sensitiveHeaders.ensureStillAlive();
                 }
-            } else {
-                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
-                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
-
-                if (header.never_index) {
-                    if (sensitiveHeaders.isUndefined()) {
-                        sensitiveHeaders = try JSC.JSValue.createEmptyArray(globalObject, 0);
-                        sensitiveHeaders.ensureStillAlive();
-                    }
-                    sensitiveHeaders.push(globalObject, js_header_name);
-                }
-
-                headers.push(globalObject, js_header_name);
-                headers.push(globalObject, js_header_value);
-
-                js_header_name.ensureStillAlive();
-                js_header_value.ensureStillAlive();
+                sensitiveHeaders.push(globalObject, js_header_name);
             }
+
+            headers.push(globalObject, js_header_name);
+            headers.push(globalObject, js_header_value);
+
+            js_header_name.ensureStillAlive();
+            js_header_value.ensureStillAlive();
+            // }
 
             if (offset >= payload.len) {
                 break;

@@ -69,7 +69,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__requestTermination(void* worker);
+extern "C" void WebWorkerLifecycleHandle__requestTermination(void* worker);
 
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
@@ -234,7 +234,7 @@ Worker::~Worker()
     if (lifecycleHandle_) {
         auto* impl = lifecycleHandle_;
         lifecycleHandle_ = nullptr;
-        WebWorker__requestTermination(impl);
+        WebWorkerLifecycleHandle__requestTermination(impl);
     }
     // m_contextProxy.workerObjectDestroyed();
 }
@@ -275,7 +275,7 @@ void Worker::terminate()
     if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
         auto* impl = lifecycleHandle_;
         lifecycleHandle_ = nullptr;
-        WebWorker__requestTermination(impl);
+        WebWorkerLifecycleHandle__requestTermination(impl);
     }
 }
 

@@ -69,6 +69,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
+extern "C" void WebWorker__derefFromCpp(void* worker);
+
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
 
@@ -228,6 +230,12 @@ Worker::~Worker()
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
     }
+
+    if (impl_) {
+        auto* impl = impl_;
+        impl_ = nullptr;
+        WebWorker__derefFromCpp(impl);
+    }
     // m_contextProxy.workerObjectDestroyed();
 }
 
@@ -259,11 +267,17 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     return {};
 }
 
+
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__notifyNeedTermination(impl_);
+    
+    if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
+        auto* impl = impl_;
+        impl_ = nullptr;
+        WebWorker__notifyNeedTermination(impl);
+    }
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -466,6 +480,7 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
+    
     // no longer referenced by Zig
     worker->deref();
 

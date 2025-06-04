@@ -23,7 +23,7 @@ parent_context_id: u32 = 0,
 parent: *jsc.VirtualMachine,
 
 ref_count: RefCount,
-lifecycle_handle: *WebWorkerLifecycleHandle = undefined,
+lifecycle_handle: ?*WebWorkerLifecycleHandle,
 
 /// To be resolved on the Worker thread at startup, in spin().
 unresolved_specifier: []const u8,
@@ -232,6 +232,7 @@ pub fn create(
     }
 
     const worker = WebWorker.new(.{
+        .lifecycle_handle = null,
         .ref_count = .init(),
         .cpp_worker = cpp_worker,
         .parent = parent,
@@ -624,7 +625,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
-    this.lifecycle_handle.onTermination();
+    this.lifecycle_handle.?.onTermination();
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;

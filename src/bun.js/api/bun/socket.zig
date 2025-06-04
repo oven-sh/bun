@@ -1353,7 +1353,7 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
 
 fn newSessionCallback(ssl: ?*BoringSSL.SSL, session: ?*BoringSSL.SSL_SESSION) callconv(.C) c_int {
     // The new_session_cb() is passed the ssl connection and the ssl session sess. If the callback returns 0, the session will be immediately removed again
-    std.log.debug("{s}/{?*}/{?*}", .{ @src().fn_name, ssl, session });
+    std.log.debug("new session callback called {?*}/{?*}", .{ ssl, session });
     return 1;
 }
 

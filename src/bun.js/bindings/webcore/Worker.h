@@ -50,6 +50,7 @@ class WorkerGlobalScopeProxy;
 
 struct StructuredSerializeOptions;
 struct WorkerOptions;
+struct WebWorkerLifecycleHandle;
 
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
@@ -119,7 +120,7 @@ private:
     // Tracks TerminateRequestedFlag and TerminatedFlag
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
-    void* lifecycleHandle_ { nullptr };
+    WebWorkerLifecycleHandle* lifecycleHandle_ { nullptr };
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);

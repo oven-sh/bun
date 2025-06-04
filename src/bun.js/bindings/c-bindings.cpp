@@ -416,6 +416,7 @@ extern "C" void bun_restore_stdio()
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
+    signal(sig, SIG_DFL);
     raise(sig);
 }
 #endif

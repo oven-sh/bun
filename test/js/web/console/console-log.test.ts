@@ -119,7 +119,7 @@ Quote"Backslash
 "Warning log
   warn: console.warn an error
       at <file>:56:14
-      at loadAndEvaluateModule (7:44)
+      at loadAndEvaluateModule (2:1)
 
   52 | console.group("Different logs");
 53 | console.log("Regular log");
@@ -130,7 +130,7 @@ Quote"Backslash
                    ^
 error: console.error an error
       at <file>:57:15
-      at loadAndEvaluateModule (7:44)
+      at loadAndEvaluateModule (2:1)
 
   41 | console.groupEnd(); // Extra
 42 | console.groupEnd(); // Extra
@@ -142,12 +142,12 @@ error: console.error an error
 NamedError: console.error a named error
       at new NamedError (<file>:46:5)
       at <file>:58:15
-      at loadAndEvaluateModule (7:44)
+      at loadAndEvaluateModule (2:1)
 
   NamedError: console.warn a named error
       at new NamedError (<file>:46:5)
       at <file>:59:14
-      at loadAndEvaluateModule (7:44)
+      at loadAndEvaluateModule (2:1)
 
   Error log"
 `);

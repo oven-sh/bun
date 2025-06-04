@@ -552,9 +552,14 @@ pub fn exit(this: *WebWorker) void {
 
 /// Request a terminate from any thread.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
-    if (this.status.load(.acquire) == .terminated) {
+    const status = this.status.load(.acquire);
+
+    Output.println("notifyNeedTermination: {s}", .{@tagName(status)});
+
+    if (status == .terminated) {
         return;
     }
+
     if (this.setRequestedTerminate()) {
         return;
     }

@@ -52,6 +52,9 @@ if (isMainThread) {
     const promises: Promise<unknown>[] = [];
 
     for (let i = 0; i < CONCURRENCY; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      promises.push(promise);
+
       const worker = new Worker(import.meta.url, {
         workerData: {
           action,
@@ -60,8 +63,6 @@ if (isMainThread) {
         env: process.env,
       });
       worker.ref();
-      const { promise, resolve, reject } = Promise.withResolvers();
-      promises.push(promise);
 
       worker.once("online", async () => {
         await Bun.sleep(1);

@@ -647,6 +647,10 @@ const WebWorkerLifecycleHandle = struct {
     mutex: bun.Mutex = .{},
     worker: ?*WebWorker = null,
     requested_terminate: std.atomic.Value(bool) = .init(false),
+    ref_count: RefCount = .{},
+
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 
     pub const new = bun.TrivialNew(WebWorkerLifecycleHandle);
 
@@ -672,6 +676,7 @@ const WebWorkerLifecycleHandle = struct {
         const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len);
         const handle = WebWorkerLifecycleHandle.new(.{
             .worker = worker,
+            .ref_count = .init(),
         });
         worker.?.lifecycle_handle = handle;
         return handle;
@@ -682,19 +687,22 @@ const WebWorkerLifecycleHandle = struct {
     }
 
     pub fn requestTermination(this: *WebWorkerLifecycleHandle) void {
+        this.ref();
         this.mutex.lock();
         this.requested_terminate.store(true, .monotonic);
 
-        const worker = this.worker orelse {
-            // the worker already terminated.
+        if (this.worker) |worker| {
+            this.worker = null;
+            worker.notifyNeedTermination();
             this.mutex.unlock();
+            worker.deref();
+        } else {
+            this.mutex.unlock();
+            this.deref();
             this.deinit();
-            return;
-        };
-        this.worker = null;
-        worker.notifyNeedTermination();
-        this.mutex.unlock();
-        worker.deref();
+        }
+
+        this.deref();
     }
 
     pub fn onTermination(this: *WebWorkerLifecycleHandle) void {

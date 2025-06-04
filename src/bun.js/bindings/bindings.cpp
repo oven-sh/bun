@@ -3949,7 +3949,6 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JS
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
-
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
 // Can handle numeric index property names safely.

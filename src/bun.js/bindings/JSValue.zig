@@ -1401,7 +1401,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
-
+    extern fn JSC__JSValue__getIfPropertyExistsSafeImpl(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue {
         return JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
@@ -1469,6 +1469,8 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
+    ///
+    /// Cannot handle property names that are numeric indexes. Use `getSafe` instead.
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
         const property_slice: []const u8 = property; // must be a slice!
@@ -1481,6 +1483,40 @@ pub const JSValue = enum(i64) {
         }
 
         return switch (JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
+            .zero => error.JSError,
+            .property_does_not_exist_on_object => null,
+
+            // TODO: see bug described in ObjectBindings.cpp
+            // since there are false positives, the better path is to make them
+            // negatives, as the number of places that desire throwing on
+            // existing undefined is extremely small, but non-zero.
+            .undefined => null,
+            else => |val| val,
+        };
+    }
+
+    /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// and JavaScript null can exist as a property and is different than zig
+    /// `null` (property does not exist).
+    ///
+    /// `property` must be either `[]const u8`. A comptime slice may defer to
+    /// calling `fastGet`, which use a more optimal code path. This function is
+    /// marked `inline` to allow Zig to determine if `fastGet` should be used
+    /// per invocation.
+    /// This can handle numeric index property names safely.
+    pub inline fn getSafe(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
+        if (bun.Environment.isDebug) bun.assert(target.isObject());
+        const property_slice: []const u8 = property; // must be a slice!
+
+        // This call requires `get` to be `inline`
+        if (bun.isComptimeKnown(property_slice)) {
+            if (comptime BuiltinName.get(property_slice)) |builtin_name| {
+                return target.fastGet(global, builtin_name);
+            }
+        }
+
+        return switch (JSC__JSValue__getIfPropertyExistsSafeImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
             .zero => error.JSError,
             .property_does_not_exist_on_object => null,
 
@@ -1569,8 +1605,18 @@ pub const JSValue = enum(i64) {
     }
 
     // TODO: replace calls to this function with `getOptional`
+    /// This Cannot handle numeric index property names safely. Please use `getTruthySafe` instead.
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
         if (try get(this, global, property)) |prop| {
+            return truthyPropertyValue(prop);
+        }
+
+        return null;
+    }
+
+    /// getTruthySafe can handle numeric index property names safely.
+    pub fn getTruthySafe(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?JSValue {
+        if (try getSafe(this, global, property)) |prop| {
             return truthyPropertyValue(prop);
         }
 

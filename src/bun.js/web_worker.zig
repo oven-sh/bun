@@ -647,10 +647,15 @@ const WebWorkerLifecycleHandle = struct {
     mutex: bun.Mutex = .{},
     worker: ?*WebWorker = null,
     requested_terminate: std.atomic.Value(bool) = .init(false),
-    ref_count: RefCount = .{},
+    ref_count: RefCount,
 
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
+    pub fn ref(self: *WebWorkerLifecycleHandle) void {
+        self.ref_count.ref();
+    }
+
+    pub fn deref(self: *WebWorkerLifecycleHandle) void {
+        self.ref_count.deref();
+    }
 
     pub const new = bun.TrivialNew(WebWorkerLifecycleHandle);
 
@@ -686,37 +691,37 @@ const WebWorkerLifecycleHandle = struct {
         bun.destroy(this);
     }
 
-    pub fn requestTermination(this: *WebWorkerLifecycleHandle) void {
-        this.ref();
-        this.mutex.lock();
-        this.requested_terminate.store(true, .monotonic);
+    pub fn requestTermination(self: *WebWorkerLifecycleHandle) void {
+        self.ref();
+        self.mutex.lock();
+        self.requested_terminate.store(true, .monotonic);
 
-        if (this.worker) |worker| {
-            this.worker = null;
+        if (self.worker) |worker| {
+            self.worker = null;
             worker.notifyNeedTermination();
-            this.mutex.unlock();
+            self.mutex.unlock();
             worker.deref();
         } else {
-            this.mutex.unlock();
-            this.deref();
-            this.deinit();
+            self.mutex.unlock();
+            self.deref();
+            self.deinit();
         }
 
-        this.deref();
+        self.deref();
     }
 
-    pub fn onTermination(this: *WebWorkerLifecycleHandle) void {
-        this.mutex.lock();
-        if (this.requested_terminate.swap(false, .acquire)) {
+    pub fn onTermination(self: *WebWorkerLifecycleHandle) void {
+        self.mutex.lock();
+        if (self.requested_terminate.swap(false, .acquire)) {
             // we already requested to terminate, therefore this handle has
             // already been consumed on the other thread and we are able to free
             // it.
-            this.mutex.unlock();
-            this.deinit();
+            self.mutex.unlock();
+            self.deinit();
             return;
         }
-        this.worker = null;
-        this.mutex.unlock();
+        self.worker = null;
+        self.mutex.unlock();
     }
 };
 

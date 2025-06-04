@@ -1351,38 +1351,45 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
     }
 }
 
-fn newSessionCallback(ssl: ?*BoringSSL.SSL, session: ?*BoringSSL.SSL_SESSION, arg: ?*anyopaque) callconv(.C) c_int {
-    if (ssl == null or session == null or arg == null) return 0;
-    
-    const this = bun.cast(*TLSSocket, arg);
-    
-    // If no session callback is provided, just return
-    if (this.handlers.onSession == .zero) return 0;
-    
-    // Convert session to a format that can be passed to JavaScript
-    const globalObject = this.handlers.globalObject;
-    const this_value = this.getThisValue(globalObject);
-    
-    // Create a buffer from the session
-    const size = BoringSSL.i2d_SSL_SESSION(session, null);
-    if (size <= 0) return 0;
-    
-    const buffer_size = @as(usize, @intCast(size));
-    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-    var buffer_ptr = buffer.asArrayBufferImpl(globalObject).?.ptr;
-    
-    const pp_buffer_ptr: [*c][*c]u8 = &bun.cast([*c]u8, buffer_ptr);
-    const result_size = BoringSSL.i2d_SSL_SESSION(session, pp_buffer_ptr);
-    if (result_size != size) return 0;
-    
-    // Call the JS callback with the session data
-    _ = this.handlers.onSession.call(globalObject, this_value, &[_]JSValue{
-        this_value,
-        buffer,
-    }) catch |_| {
-        return 0;
-    };
-    
+fn newSessionCallback(ssl: ?*BoringSSL.SSL, session: ?*BoringSSL.SSL_SESSION) callconv(.C) c_int {
+    // The new_session_cb() is passed the ssl connection and the ssl session sess. If the callback returns 0, the session will be immediately removed again
+
+    std.log.debug("{s}/{?*}/{?*}", .{ @src().fn_name, ssl, session });
+    // if (ssl == null or session == null or arg == null) return 0;
+
+    // const this = bun.cast(*TLSSocket, arg);
+
+    // // If no session callback is provided, just return
+    // if (this.handlers.onSession == .zero) return 0;
+
+    // // Convert session to a format that can be passed to JavaScript
+    // const globalObject = this.handlers.globalObject;
+    // const this_value = this.getThisValue(globalObject);
+
+    // // Create a buffer from the session
+    // const size = BoringSSL.i2d_SSL_SESSION(session, null);
+    // if (size <= 0) return 0;
+
+    // const buffer_size = @as(usize, @intCast(size));
+    // var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+    // const buffer_ptr = buffer.asArrayBufferImpl(globalObject).?.ptr;
+
+    // const pp_buffer_ptr: [*c][*c]u8 = &bun.cast([*c]u8, buffer_ptr);
+    // const result_size = BoringSSL.i2d_SSL_SESSION(session, pp_buffer_ptr);
+    // if (result_size != size) return 0;
+
+    // globalObject.bunVM().eventLoop().enter();
+    // defer globalObject.bunVM().eventLoop().exit();
+
+    // // Call the JS callback with the session data
+    // _ = this.handlers.onSession.call(globalObject, this_value, &[_]JSValue{
+    //     this_value,
+    //     buffer,
+    // }) catch |err| {
+    //     _ = this.handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
+    //     return 0;
+    // };
+
     return 1;
 }
 
@@ -1828,15 +1835,15 @@ fn NewSocket(comptime ssl: bool) type {
                         }
                         if (this.protos) |protos| {
                             if (this.handlers.is_server) {
-                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, this);
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                             }
                         }
-                        
+
                         // Add session callback if onSession is defined (for both server and client)
                         if (this.handlers.onSession != .zero) {
-                            BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), newSessionCallback, bun.cast(*anyopaque, this));
+                            BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), newSessionCallback);
                         }
                     }
                 }

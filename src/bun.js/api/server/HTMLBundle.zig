@@ -63,6 +63,7 @@ pub const Route = struct {
     dev_server_id: bun.bake.DevServer.RouteBundle.Index.Optional = .none,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: std.ArrayListUnmanaged(*PendingResponse) = .{},
+    register_static_routes: bool,
 
     method: union(enum) {
         any: void,
@@ -77,13 +78,14 @@ pub const Route = struct {
         return cost;
     }
 
-    pub fn init(html_bundle: *HTMLBundle) RefPtr(Route) {
+    pub fn init(html_bundle: *HTMLBundle, register_static_routes: bool) RefPtr(Route) {
         return .new(.{
             .bundle = .initRef(html_bundle),
             .pending_responses = .{},
             .ref_count = .init(),
             .server = null,
             .state = .pending,
+            .register_static_routes = register_static_routes,
         });
     }
 
@@ -410,16 +412,20 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    if (this.register_static_routes) {
+                        server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    }
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
                 const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
                 this.state = .{ .html = html_route_clone };
 
-                if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
-                    // Server has shutdown, so it won't receive any new requests
-                    // TODO: handle this case
+                if (this.register_static_routes) {
+                    if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
+                        // Server has shutdown, so it won't receive any new requests
+                        // TODO: handle this case
+                    }
                 }
             },
             .pending => unreachable,

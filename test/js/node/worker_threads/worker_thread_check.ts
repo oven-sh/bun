@@ -66,7 +66,7 @@ if (isMainThread) {
       promises.push(promise);
 
       worker.once("online", async () => {
-        await Bun.sleep(1);
+        await sleep(1);
         await worker.terminate();
         resolve();
       });

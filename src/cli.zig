@@ -519,6 +519,13 @@ pub const Arguments = struct {
             }
         }
 
+        ctx.args.absolute_working_dir = cwd;
+        ctx.positionals = args.positionals();
+
+        if (comptime Command.Tag.loads_config.get(cmd)) {
+            try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
+        }
+
         if (cmd == .TestCommand) {
             if (args.option("--timeout")) |timeout_ms| {
                 if (timeout_ms.len > 0) {
@@ -608,13 +615,6 @@ pub const Arguments = struct {
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             ctx.test_options.run_todo = args.flag("--todo");
             ctx.test_options.only = args.flag("--only");
-        }
-
-        ctx.args.absolute_working_dir = cwd;
-        ctx.positionals = args.positionals();
-
-        if (comptime Command.Tag.loads_config.get(cmd)) {
-            try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
         }
 
         var opts: Api.TransformOptions = ctx.args;

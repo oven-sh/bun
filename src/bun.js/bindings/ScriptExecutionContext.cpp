@@ -379,17 +379,6 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
-// Executes the task on context's thread immediately.
-void ScriptExecutionContext::postImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda)
-{
-    auto* task = new EventLoopTask(WTFMove(lambda));
-    static_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
-}
-// Executes the task on context's thread immediately.
-void ScriptExecutionContext::postImmediateCppTask(EventLoopTask* task)
-{
-    static_cast<Zig::GlobalObject*>(m_globalObject)->queueImmediateCppTask(task);
-}
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
 {

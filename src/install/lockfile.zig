@@ -25,6 +25,21 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
+nohoist_patterns: std.ArrayListUnmanaged(String) = .{},
+
+hoisting_limits: HoistingLimits = .none,
+
+pub const HoistingLimits = enum(u8) {
+    none,
+    workspaces,
+    dependencies,
+
+    const Map = bun.ComptimeEnumMap(HoistingLimits);
+
+    pub fn fromStr(input: string) ?HoistingLimits {
+        return Map.get(input);
+    }
+};
 
 pub const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -335,7 +350,9 @@ pub fn loadFromBytes(this: *Lockfile, pm: ?*PackageManager, buf: []u8, allocator
     this.workspace_versions = .{};
     this.overrides = .{};
     this.catalogs = .{};
+    this.nohoist_patterns = .{};
     this.patched_dependencies = .{};
+    this.hoisting_limits = .none;
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log, pm) catch |err| {
         return LoadResult{ .err = .{ .step = .parse_file, .value = err, .lockfile_path = "bun.lockb", .format = .binary } };
@@ -612,6 +629,10 @@ pub fn cleanWithLogger(
     new.initEmpty(
         old.allocator,
     );
+
+    // important to set this before cloner.flush()
+    new.hoisting_limits = old.hoisting_limits;
+
     try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
     try new.package_index.ensureTotalCapacity(old.package_index.capacity());
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
@@ -624,9 +645,16 @@ pub fn cleanWithLogger(
         var builder = new.stringBuilder();
         old.overrides.count(old, &builder);
         old.catalogs.count(old, &builder);
+        for (old.nohoist_patterns.items) |pattern| {
+            builder.count(pattern.slice(old.buffers.string_bytes.items));
+        }
         try builder.allocate();
         new.overrides = try old.overrides.clone(manager, old, new, &builder);
         new.catalogs = try old.catalogs.clone(manager, old, new, &builder);
+        try new.nohoist_patterns.ensureTotalCapacity(new.allocator, old.nohoist_patterns.items.len);
+        for (old.nohoist_patterns.items) |pattern| {
+            new.nohoist_patterns.appendAssumeCapacity(builder.append(String, pattern.slice(old.buffers.string_bytes.items)));
+        }
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -891,8 +919,10 @@ pub fn hoist(
     };
 
     try (Tree{}).processSubtree(
+        .root,
         Tree.root_dep_id,
         Tree.invalid_id,
+        .{},
         method,
         &builder,
         if (method == .filter) manager.options.log_level,
@@ -900,9 +930,13 @@ pub fn hoist(
 
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
+        var subpath = item.subpath;
+        defer subpath.deinit(builder.allocator);
         try builder.list.items(.tree)[item.tree_id].processSubtree(
+            item.subtree_kind,
             item.dependency_id,
             item.hoist_root_id,
+            subpath,
             method,
             &builder,
             if (method == .filter) manager.options.log_level,
@@ -1207,6 +1241,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .workspace_versions = .{},
         .overrides = .{},
         .catalogs = .{},
+        .nohoist_patterns = .{},
+        .hoisting_limits = .none,
         .meta_hash = zero_hash,
     };
 }
@@ -1606,6 +1642,7 @@ pub fn deinit(this: *Lockfile) void {
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);
     this.catalogs.deinit(this.allocator);
+    this.nohoist_patterns.deinit(this.allocator);
 }
 
 pub const EqlSorter = struct {

@@ -377,6 +377,9 @@ TLSSocket.prototype.isSessionReused = function isSessionReused() {
   return !!this[ksession];
 };
 
+// Emit the 'session' event when a new session is created
+// This is done via the onSession callback registered with SSL_CTX_sess_set_new_cb
+
 TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   if (this[krenegotiationDisabled]) {
     // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility

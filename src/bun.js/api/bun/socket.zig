@@ -120,6 +120,7 @@ pub const Handlers = struct {
     onEnd: JSC.JSValue = .zero,
     onError: JSC.JSValue = .zero,
     onHandshake: JSC.JSValue = .zero,
+    onSession: JSC.JSValue = .zero,
 
     binary_type: BinaryType = .Buffer,
 
@@ -238,6 +239,7 @@ pub const Handlers = struct {
             .{ "onEnd", "end" },
             .{ "onError", "error" },
             .{ "onHandshake", "handshake" },
+            .{ "onSession", "session" },
         };
         inline for (pairs) |pair| {
             if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
@@ -284,6 +286,7 @@ pub const Handlers = struct {
         this.onEnd.unprotect();
         this.onError.unprotect();
         this.onHandshake.unprotect();
+        this.onSession.unprotect();
     }
 
     pub fn protect(this: *Handlers) void {
@@ -299,6 +302,7 @@ pub const Handlers = struct {
         this.onEnd.protect();
         this.onError.protect();
         this.onHandshake.protect();
+        this.onSession.protect();
     }
 };
 
@@ -1347,6 +1351,41 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
     }
 }
 
+fn newSessionCallback(ssl: ?*BoringSSL.SSL, session: ?*BoringSSL.SSL_SESSION, arg: ?*anyopaque) callconv(.C) c_int {
+    if (ssl == null or session == null or arg == null) return 0;
+    
+    const this = bun.cast(*TLSSocket, arg);
+    
+    // If no session callback is provided, just return
+    if (this.handlers.onSession == .zero) return 0;
+    
+    // Convert session to a format that can be passed to JavaScript
+    const globalObject = this.handlers.globalObject;
+    const this_value = this.getThisValue(globalObject);
+    
+    // Create a buffer from the session
+    const size = BoringSSL.i2d_SSL_SESSION(session, null);
+    if (size <= 0) return 0;
+    
+    const buffer_size = @as(usize, @intCast(size));
+    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+    var buffer_ptr = buffer.asArrayBufferImpl(globalObject).?.ptr;
+    
+    const pp_buffer_ptr: [*c][*c]u8 = &bun.cast([*c]u8, buffer_ptr);
+    const result_size = BoringSSL.i2d_SSL_SESSION(session, pp_buffer_ptr);
+    if (result_size != size) return 0;
+    
+    // Call the JS callback with the session data
+    _ = this.handlers.onSession.call(globalObject, this_value, &[_]JSValue{
+        this_value,
+        buffer,
+    }) catch |_| {
+        return 0;
+    };
+    
+    return 1;
+}
+
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         const This = @This();
@@ -1793,6 +1832,11 @@ fn NewSocket(comptime ssl: bool) type {
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                             }
+                        }
+                        
+                        // Add session callback if onSession is defined (for both server and client)
+                        if (this.handlers.onSession != .zero) {
+                            BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), newSessionCallback, bun.cast(*anyopaque, this));
                         }
                     }
                 }

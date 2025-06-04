@@ -6,7 +6,6 @@ distro="$1"
 release="$2"
 arch="$3"
 shift 3
-extra="$@"
 
 if [ "$distro" = windows ]; then
   os=windows
@@ -31,4 +30,4 @@ else
 fi
 
 # TODO this should be able to use a published image instead of running bootstrap
-exec bun scripts/machine.mjs ssh --cloud=aws --os=$os --distro=$distro --release=$release --arch=$arch --instance-type=$instance_type --feature=clone $ghostty_flag
+exec bun scripts/machine.mjs ssh --cloud=aws --os=$os --distro=$distro --release=$release --arch=$arch --instance-type=$instance_type --feature=clone $ghostty_flag $@

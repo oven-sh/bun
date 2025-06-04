@@ -3706,7 +3706,7 @@ pub const PartRange = struct {
     part_index_end: u32 = 0,
 };
 
-const StableRef = packed struct(u96) {
+pub const StableRef = packed struct(u96) {
     stable_source_index: Index.Int,
     ref: Ref,
 

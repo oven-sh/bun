@@ -582,7 +582,7 @@ pub const Chunk = struct {
             source_index: Index,
         },
 
-        const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
+        pub const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
                 return self.deepClone2(allocator);
@@ -626,7 +626,7 @@ pub const Chunk = struct {
             };
         }
 
-        const CssImportOrderDebug = struct {
+        pub const CssImportOrderDebug = struct {
             inner: *const CssImportOrder,
             ctx: *LinkerContext,
 

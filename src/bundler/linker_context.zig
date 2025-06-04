@@ -152,8 +152,8 @@ pub const LinkerContext = struct {
 
     mangled_props: MangledProps = .{},
 
-    fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
-        return BundleV2.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+    pub fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
+        return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
     }
 
     pub const LinkerOptions = struct {
@@ -294,7 +294,7 @@ pub const LinkerContext = struct {
         return true;
     }
 
-    fn load(
+    pub fn load(
         this: *LinkerContext,
         bundle: *BundleV2,
         entry_points: []Index,

@@ -705,9 +705,18 @@ const WebWorkerLifecycleHandle = struct {
     }
 
     pub fn requestTermination(self: *WebWorkerLifecycleHandle) void {
+        if (self.requested_terminate.load(.acquire)) {
+            return;
+        }
+
         self.ref();
         self.mutex.lock();
-        self.requested_terminate.store(true, .monotonic);
+
+        if (self.requested_terminate.swap(true, .monotonic)) {
+            self.mutex.unlock();
+            self.deref();
+            return;
+        }
 
         if (self.worker) |worker| {
             self.worker = null;
@@ -716,6 +725,7 @@ const WebWorkerLifecycleHandle = struct {
             worker.deref();
         } else {
             self.mutex.unlock();
+            // Let the reference counting system handle deinitialization
             self.deref();
         }
 
@@ -728,9 +738,10 @@ const WebWorkerLifecycleHandle = struct {
         if (self.requested_terminate.swap(false, .acquire)) {
             // we already requested to terminate, therefore this handle has
             // already been consumed on the other thread and we are able to free
-            // it.
+            // it. Let the reference counting system handle deinitialization.
             self.mutex.unlock();
             self.deref();
+            self.deref(); // Extra deref to match the ref in requestTermination
             return;
         }
         self.worker = null;

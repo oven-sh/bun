@@ -3956,29 +3956,34 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     JSC::JSGlobalObject* globalObject,
     const unsigned char* propertyName, uint32_t propertyNameLength)
 {
+
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue value = JSC::JSValue::decode(encodedValue);
-    ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "getPropertyValue() must not be called on empty value");
 
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ propertyName, propertyNameLength }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     if (!object->getPropertySlot(globalObject, property, slot)) {
-        return {};
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue result = slot.getValue(globalObject, property);
     RETURN_IF_EXCEPTION(scope, {});
+
     return JSValue::encode(result);
 }
 

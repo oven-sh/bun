@@ -3435,6 +3435,10 @@ pub const H2FrameParser = struct {
             }
 
             var js_value = iter.value;
+            if (js_value.isUndefinedOrNull()) {
+                const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                return globalObject.throwValue(exception);
+            }
             const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                 const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name});
                 return globalObject.throwValue(exception);
@@ -3877,6 +3881,10 @@ pub const H2FrameParser = struct {
                 }
 
                 const js_value = iter.value;
+                if (js_value.isUndefinedOrNull()) {
+                    const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                    return globalObject.throwValue(exception);
+                }
 
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});

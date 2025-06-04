@@ -644,18 +644,14 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
 
 /// Manages the complex timing surrounding web worker creation and destruction
 const WebWorkerLifecycleHandle = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", WebWorkerLifecycleHandle.deinit, .{});
+    pub const ref = WebWorkerLifecycleHandle.RefCount.ref;
+    pub const deref = WebWorkerLifecycleHandle.RefCount.deref;
+
     mutex: bun.Mutex = .{},
     worker: ?*WebWorker = null,
     requested_terminate: std.atomic.Value(bool) = .init(false),
-    ref_count: RefCount,
-
-    pub fn ref(self: *WebWorkerLifecycleHandle) void {
-        self.ref_count.ref();
-    }
-
-    pub fn deref(self: *WebWorkerLifecycleHandle) void {
-        self.ref_count.deref();
-    }
+    ref_count: WebWorkerLifecycleHandle.RefCount,
 
     pub const new = bun.TrivialNew(WebWorkerLifecycleHandle);
 

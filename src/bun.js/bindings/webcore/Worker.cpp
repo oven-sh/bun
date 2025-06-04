@@ -269,7 +269,6 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
 
     if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {

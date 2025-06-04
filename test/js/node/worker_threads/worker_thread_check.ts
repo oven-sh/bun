@@ -31,8 +31,8 @@ const actions = {
     });
   },
   async ["fetch"](port: number) {
-    // const resp = await fetch("http://localhost:" + port);
-    // await resp.blob();
+    const resp = await fetch("http://localhost:" + port);
+    await resp.blob();
   },
 };
 

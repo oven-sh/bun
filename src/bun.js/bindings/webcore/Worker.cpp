@@ -267,12 +267,11 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     return {};
 }
 
-
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    
+
     if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
         auto* impl = impl_;
         impl_ = nullptr;
@@ -480,7 +479,7 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
-    
+
     // no longer referenced by Zig
     worker->deref();
 

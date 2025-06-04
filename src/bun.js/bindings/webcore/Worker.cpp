@@ -272,11 +272,11 @@ void Worker::terminate()
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
 
-    // if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
-    // auto* impl = lifecycleHandle_;
-    // lifecycleHandle_ = nullptr;
-    // WebWorkerLifecycleHandle__requestTermination(impl);
-    // }
+    if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
+    auto* impl = lifecycleHandle_;
+    lifecycleHandle_ = nullptr;
+    WebWorkerLifecycleHandle__requestTermination(impl);
+    }
 }
 
 // const char* Worker::activeDOMObjectName() const

@@ -139,6 +139,15 @@ describe("css tests", () => {
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
   });
+  describe("calc stack overflow", () => {
+    // https://github.com/oven-sh/bun/issues/20128
+    minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3
+    minify_test(`a { width: calc(100% - 2 - 1 + 5vh - 10vh) }`, `a{width:calc(100% - 2 - 1 - 5vh)}`); // ideally 100% - 3 + 5vh
+    minify_test(
+      `a { width: calc(10 - 4 - 100% - 2 - 4 - 300% - 8vh + 3ic) }`,
+      `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
+    ); // ideally -400% - 8vh + 3ic
+  });
   describe("border_spacing", () => {
     minify_test(
       `

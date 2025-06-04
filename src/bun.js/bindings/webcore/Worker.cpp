@@ -271,9 +271,7 @@ void Worker::terminate()
 
     auto* impl = lifecycleHandle_;
     lifecycleHandle_ = nullptr;
-    if (impl) {
-        WebWorkerLifecycleHandle__requestTermination(impl);
-    }
+    WebWorkerLifecycleHandle__requestTermination(impl);
 }
 
 // const char* Worker::activeDOMObjectName() const

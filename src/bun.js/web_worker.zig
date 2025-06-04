@@ -448,6 +448,8 @@ fn unhandledError(this: *WebWorker, _: anyerror) void {
 }
 
 pub export fn WebWorkerLifecycleHandle__requestTermination(handle: *WebWorkerLifecycleHandle) void {
+    if (@intFromPtr(handle) == 0) return;
+
     handle.requestTermination();
 }
 
@@ -700,24 +702,25 @@ const WebWorkerLifecycleHandle = struct {
         } else {
             self.mutex.unlock();
             self.deref();
-            self.deinit();
         }
 
         self.deref();
     }
 
     pub fn onTermination(self: *WebWorkerLifecycleHandle) void {
+        self.ref();
         self.mutex.lock();
         if (self.requested_terminate.swap(false, .acquire)) {
             // we already requested to terminate, therefore this handle has
             // already been consumed on the other thread and we are able to free
             // it.
             self.mutex.unlock();
-            self.deinit();
+            self.deref();
             return;
         }
         self.worker = null;
         self.mutex.unlock();
+        self.deref();
     }
 };
 

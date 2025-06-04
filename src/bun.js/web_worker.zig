@@ -692,7 +692,7 @@ const WebWorkerLifecycleHandle = struct {
             return;
         };
         this.worker = null;
-        worker.WebWorker__notifyNeedTermination();
+        worker.notifyNeedTermination();
         this.mutex.unlock();
         worker.deref();
     }

@@ -108,7 +108,7 @@ pub const LifecycleScriptSubprocess = struct {
             bun.assertWithLocation(flags & bun.O.NONBLOCK == 0, @src());
 
             const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
-            bun.assertWithLocation(std.posix.S.ISSOCK(stat.st_mode), @src());
+            bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());
         }
     }
 

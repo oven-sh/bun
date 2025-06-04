@@ -449,10 +449,8 @@ fn unhandledError(this: *WebWorker, _: anyerror) void {
     this.flushLogs();
 }
 
-pub export fn WebWorkerLifecycleHandle__requestTermination(handle: *WebWorkerLifecycleHandle) void {
-    if (@intFromPtr(handle) == 0) return;
-
-    handle.requestTermination();
+pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
+    handle.?.requestTermination();
 }
 
 fn spin(this: *WebWorker) void {

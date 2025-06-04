@@ -7519,10 +7519,6 @@ pub const PackageManager = struct {
             break :brk loader;
         };
 
-        if (subcommand == .pm and cli.positionals.len >= 2 and strings.eqlComptime(cli.positionals[1], "audit")) {
-            env.quiet = true;
-        }
-
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 

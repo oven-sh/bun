@@ -130,7 +130,6 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile
             \\  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile
             \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
-            \\  <b><green>bun pm<r> <blue>audit<r>                check installed packages for vulnerabilities
             \\  <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder
             \\  <b><green>bun pm<r> <blue>cache rm<r>             clear the cache
             \\  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything

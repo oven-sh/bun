@@ -111,7 +111,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 extern "C" bool WebWorker__updatePtr(void* worker, Worker* ptr);
-extern "C" void* WebWorker__create(
+extern "C" void* WebWorkerLifecycleHandle__createWebWorker(
     Worker* worker,
     void* parent,
     BunString name,
@@ -135,12 +135,12 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    WebWorker__setRef(impl_, keepAlive);
+    WebWorker__setRef(lifecycleHandle_, keepAlive);
 }
 
 bool Worker::updatePtr()
 {
-    if (!WebWorker__updatePtr(impl_, this)) {
+    if (!WebWorker__updatePtr(lifecycleHandle_, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -191,7 +191,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
                                                    return { reinterpret_cast<WTF::StringImpl**>(vec.data()), vec.size() };
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
-    void* impl = WebWorker__create(
+    void* lifecycleHandle = WebWorkerLifecycleHandle__createWebWorker(
         worker.ptr(),
         bunVM(context.jsGlobalObject()),
         nameStr,
@@ -214,11 +214,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
     preloadModuleStrings.clear();
 
-    if (!impl) {
+    if (!lifecycleHandle) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
-    worker->impl_ = impl;
+    worker->lifecycleHandle_ = lifecycleHandle;
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
@@ -231,9 +231,9 @@ Worker::~Worker()
         allWorkers().remove(m_clientIdentifier);
     }
 
-    if (impl_) {
-        auto* impl = impl_;
-        impl_ = nullptr;
+    if (lifecycleHandle_) {
+        auto* impl = lifecycleHandle_;
+        lifecycleHandle_ = nullptr;
         WebWorker__requestTermination(impl);
     }
     // m_contextProxy.workerObjectDestroyed();
@@ -273,8 +273,8 @@ void Worker::terminate()
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
 
     if (ScriptExecutionContext::getScriptExecutionContext(m_clientIdentifier)) {
-        auto* impl = impl_;
-        impl_ = nullptr;
+        auto* impl = lifecycleHandle_;
+        lifecycleHandle_ = nullptr;
         WebWorker__requestTermination(impl);
     }
 }

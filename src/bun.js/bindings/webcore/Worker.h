@@ -119,7 +119,7 @@ private:
     // Tracks TerminateRequestedFlag and TerminatedFlag
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
-    void* impl_ { nullptr };
+    void* lifecycleHandle_ { nullptr };
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);

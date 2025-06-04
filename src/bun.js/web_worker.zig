@@ -545,11 +545,12 @@ fn spin(this: *WebWorker) void {
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
 pub export fn setRef(handle: *WebWorkerLifecycleHandle, value: bool) callconv(.c) void {
-    if (handle.worker.?.hasRequestedTerminate()) {
-        return;
+    if (handle.worker) |worker| {
+        if (worker.hasRequestedTerminate()) {
+            return;
+        }
+        worker.setRefInternal(value);
     }
-
-    handle.worker.?.setRefInternal(value);
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {

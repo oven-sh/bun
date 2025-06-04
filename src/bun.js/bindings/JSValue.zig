@@ -1503,6 +1503,8 @@ pub const JSValue = enum(i64) {
     ///
     /// Can handle numeric index property names.
     ///
+    /// If you know that the property name is not an integer index, use `get` instead.
+    ///
     pub inline fn getPropertyValue(target: JSValue, global: *JSGlobalObject, property_name: []const u8) bun.JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
 

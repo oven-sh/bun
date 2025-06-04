@@ -3,6 +3,8 @@ const RUN_COUNT = 5;
 
 import { Worker, isMainThread, workerData } from "worker_threads";
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 const actions = {
   async ["Bun.connect"](port: number) {
     await Bun.connect({
@@ -40,7 +42,7 @@ if (isMainThread) {
   let action = process.argv.at(-1);
   if (actions[action!] === undefined) throw new Error("not found");
 
-  using server = Bun.serve({
+  const server = Bun.serve({
     port: 0,
     fetch() {
       return new Response();
@@ -52,9 +54,6 @@ if (isMainThread) {
     const promises: Promise<unknown>[] = [];
 
     for (let i = 0; i < CONCURRENCY; i++) {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      promises.push(promise);
-
       const worker = new Worker(import.meta.url, {
         workerData: {
           action,
@@ -63,13 +62,14 @@ if (isMainThread) {
         env: process.env,
       });
       worker.ref();
+      const { promise, resolve, reject } = Promise.withResolvers();
+      promises.push(promise);
 
       worker.once("online", async () => {
         await Bun.sleep(1);
         await worker.terminate();
         resolve();
       });
-
       worker.on("error", e => reject(e));
     }
 
@@ -77,6 +77,7 @@ if (isMainThread) {
     console.log(`Spawned ${CONCURRENCY} workers`, "RSS", (process.memoryUsage().rss / 1024 / 1024) | 0, "MB");
     Bun.gc(true);
   }
+  server.stop(true);
 } else {
   Bun.gc(true);
   const { action, port } = workerData;

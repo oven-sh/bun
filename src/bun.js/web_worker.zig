@@ -1,6 +1,10 @@
 //! Shared implementation of Web and Node `Worker`
 
 const WebWorker = @This();
+const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+pub const new = bun.TrivialNew(@This());
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 const log = Output.scoped(.Worker, .hidden);
 
@@ -12,6 +16,8 @@ requested_terminate: std.atomic.Value(bool) = .init(false),
 execution_context_id: u32 = 0,
 parent_context_id: u32 = 0,
 parent: *jsc.VirtualMachine,
+
+ref_count: RefCount,
 
 /// To be resolved on the Worker thread at startup, in spin().
 unresolved_specifier: []const u8,
@@ -230,7 +236,8 @@ pub fn create(
     }
 
     var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
-    worker.* = WebWorker{
+    worker.* = WebWorker.new(.{
+        .ref_count = .init(),
         .cpp_worker = cpp_worker,
         .parent = parent,
         .parent_context_id = parent_context_id,
@@ -250,10 +257,9 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
-    };
-
+    });
     worker.parent_poll_ref.ref(parent);
-
+    worker.ref();
     return worker;
 }
 
@@ -269,6 +275,7 @@ pub fn startWithErrorHandling(
 pub fn start(
     this: *WebWorker,
 ) anyerror!void {
+    errdefer this.deref();
     if (this.name.len > 0) {
         Output.Source.configureNamedThread(this.name);
     } else {
@@ -361,15 +368,17 @@ pub fn start(
 
 /// Deinit will clean up vm and everything.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
-fn deinit(this: *WebWorker) void {
+fn freeWithoutDeinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
-    bun.default_allocator.free(this.preloads);
-    bun.default_allocator.destroy(this);
+}
+
+fn deinit(this: *WebWorker) void {
+    bun.destroy(this);
 }
 
 fn flushLogs(this: *WebWorker) void {
@@ -445,6 +454,14 @@ fn setStatus(this: *WebWorker, status: Status) void {
     log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
     this.status.store(status, .release);
+}
+
+fn unhandledError(this: *WebWorker, _: anyerror) void {
+    this.flushLogs();
+}
+
+pub export fn WebWorker__derefFromCpp(this: *WebWorker) void {
+    this.deref();
 }
 
 fn spin(this: *WebWorker) void {
@@ -562,11 +579,7 @@ pub fn exit(this: *WebWorker) void {
 
 /// Request a terminate from any thread.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
-    const status = this.status.load(.acquire);
-
-    Output.println("notifyNeedTermination: {s}", .{@tagName(status)});
-
-    if (status == .terminated) {
+    if (this.status.load(.acquire) == .terminated) {
         return;
     }
 
@@ -626,16 +639,18 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     bun.uws.onThreadExit();
-    this.deinit();
+    this.freeWithoutDeinit();
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
+
     if (arena) |*arena_| {
         arena_.deinit();
     }
 
+    this.deref();
     bun.exitThread();
 }
 

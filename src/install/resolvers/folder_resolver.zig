@@ -184,7 +184,7 @@ pub const FolderResolution = union(Tag) {
 
             const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
 
-            try package.fromJson(
+            try package.parseWithJSON(
                 manager.lockfile,
                 manager,
                 manager.allocator,

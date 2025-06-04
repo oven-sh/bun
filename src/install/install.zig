@@ -9386,7 +9386,7 @@ pub const PackageManager = struct {
 
                 var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.fromJson(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -9797,7 +9797,7 @@ pub const PackageManager = struct {
 
                 var resolver: void = {};
                 var package = Lockfile.Package{};
-                try package.fromJson(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
+                try package.parseWithJSON(lockfile, manager, manager.allocator, manager.log, package_json_source, json, void, &resolver, Features.folder);
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
@@ -12594,12 +12594,7 @@ pub const PackageManager = struct {
 
                         lockfile.overrides.count(&lockfile, builder);
                         lockfile.catalogs.count(&lockfile, builder);
-                        for (lockfile.nohoist_patterns.items) |pattern| {
-                            builder.count(pattern.slice(lockfile.buffers.string_bytes.items));
-                        }
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
-
-                        manager.lockfile.hoisting_limits = lockfile.hoisting_limits;
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                         const len = @as(u32, @truncate(new_dependencies.len));
@@ -12632,12 +12627,6 @@ pub const PackageManager = struct {
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
                         manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
-
-                        manager.lockfile.nohoist_patterns.clearRetainingCapacity();
-                        try manager.lockfile.nohoist_patterns.ensureTotalCapacity(manager.lockfile.allocator, lockfile.nohoist_patterns.items.len);
-                        for (lockfile.nohoist_patterns.items) |pattern| {
-                            manager.lockfile.nohoist_patterns.appendAssumeCapacity(builder.append(String, pattern.slice(lockfile.buffers.string_bytes.items)));
-                        }
 
                         manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
                             try trusted_dependencies.clone(manager.lockfile.allocator)
@@ -13129,7 +13118,7 @@ pub const PackageManager = struct {
                     },
                 };
 
-                switch (bun.glob.match(pattern, path_or_name)) {
+                switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
                     .match, .negate_match => install_root_dependencies = true,
 
                     .negate_no_match => {

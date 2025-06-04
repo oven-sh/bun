@@ -30,6 +30,7 @@ const JSGlobalObject = bun.JSC.JSGlobalObject;
 const which = bun.which;
 const Braces = @import("./braces.zig");
 const Syscall = bun.sys;
+const Glob = @import("../glob.zig");
 const ResolvePath = bun.path;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 pub const WorkPoolTask = JSC.WorkPoolTask;
@@ -45,7 +46,7 @@ const ShellError = shell.ShellError;
 const ast = shell.AST;
 const SmolList = shell.SmolList;
 
-const GlobWalker = bun.glob.BunGlobWalkerZ;
+const GlobWalker = Glob.BunGlobWalkerZ;
 
 const stdin_no = 0;
 const stdout_no = 1;

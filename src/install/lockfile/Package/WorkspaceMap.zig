@@ -128,7 +128,7 @@ pub fn processNamesArray(
 
         if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-        if (glob.detectGlobSyntax(input_path)) {
+        if (Glob.detectGlobSyntax(input_path)) {
             workspace_globs.append(input_path) catch bun.outOfMemory();
             continue;
         }
@@ -373,7 +373,7 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
     }
     return false;
 }
-const GlobWalker = glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false);
+const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
 
 const WorkspaceMap = @This();
 const bun = @import("bun");
@@ -389,7 +389,7 @@ const Allocator = std.mem.Allocator;
 const install = bun.install;
 const Lockfile = install.Lockfile;
 const StringBuilder = Lockfile.StringBuilder;
-const glob = bun.glob;
+const Glob = bun.glob;
 const stringZ = [:0]const u8;
 const Path = bun.path;
 const strings = bun.strings;

@@ -335,6 +335,7 @@ class Worker extends EventEmitter {
     }
 
     const { resolve, promise } = Promise.withResolvers();
+
     this.#worker.addEventListener(
       "close",
       event => {
@@ -344,7 +345,9 @@ class Worker extends EventEmitter {
     );
     this.#worker.terminate();
 
-    return (this.#onExitPromise = promise);
+    this.#onExitPromise = promise;
+
+    return promise;
   }
 
   postMessage(...args: Parameters<Bun.Worker["postMessage"]>) {

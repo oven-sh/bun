@@ -223,6 +223,7 @@ pub const Process = struct {
         }
 
         exit_handler.call(this, status, rusage);
+        this.deref();
     }
 
     pub fn signalCode(this: *const Process) ?bun.SignalCode {
@@ -250,7 +251,6 @@ pub const Process = struct {
             this.poller = .{ .detached = {} };
         }
         this.onWaitPid(waitpid_result, rusage);
-        this.deref();
     }
 
     pub fn onWaitPidFromEventLoopTask(this: *Process) void {
@@ -258,7 +258,6 @@ pub const Process = struct {
             @compileError("not implemented on this platform");
         }
         this.wait(false);
-        this.deref();
     }
 
     fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {

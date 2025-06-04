@@ -69,10 +69,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorkerLifecycleHandle__requestTermination(void* worker);
-
-extern "C" void WebWorker__notifyNeedTermination(
-    void* worker);
+extern "C" void WebWorkerLifecycleHandle__requestTermination(WebWorkerLifecycleHandle* worker);
+extern "C" void WebWorker__notifyNeedTermination(WebWorkerLifecycleHandle* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -111,7 +109,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 extern "C" bool WebWorker__updatePtr(void* worker, Worker* ptr);
-extern "C" void* WebWorkerLifecycleHandle__createWebWorker(
+extern "C" WebWorkerLifecycleHandle* WebWorkerLifecycleHandle__createWebWorker(
     Worker* worker,
     void* parent,
     BunString name,
@@ -191,7 +189,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
                                                    return { reinterpret_cast<WTF::StringImpl**>(vec.data()), vec.size() };
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
-    void* lifecycleHandle = WebWorkerLifecycleHandle__createWebWorker(
+    WebWorkerLifecycleHandle* lifecycleHandle = WebWorkerLifecycleHandle__createWebWorker(
         worker.ptr(),
         bunVM(context.jsGlobalObject()),
         nameStr,

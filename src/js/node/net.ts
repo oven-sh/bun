@@ -308,6 +308,9 @@ const SocketHandlers: SocketHandler = {
 
     self.emit("timeout", self);
   },
+  session(socket, session) {
+    console.log("session event", socket, session);
+  },
   binaryType: "buffer",
 } as const;
 
@@ -507,6 +510,9 @@ const ServerHandlers: SocketHandler = {
   drain(socket) {
     SocketHandlers.drain(socket);
   },
+  session(socket, session) {
+    SocketHandlers.session(socket, session);
+  },
   binaryType: "buffer",
 } as const;
 
@@ -642,6 +648,9 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     socket[owner_symbol] = self;
     req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
+  },
+  session(socket, session) {
+    console.log("session event", socket, session);
   },
 };
 

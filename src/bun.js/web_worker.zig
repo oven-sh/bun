@@ -18,6 +18,7 @@ parent_context_id: u32 = 0,
 parent: *jsc.VirtualMachine,
 
 ref_count: RefCount,
+lifecycle_handle: *WebWorkerLifecycleHandle = undefined,
 
 /// To be resolved on the Worker thread at startup, in spin().
 unresolved_specifier: []const u8,
@@ -71,15 +72,15 @@ pub fn setRequestedTerminate(this: *WebWorker) bool {
     return this.requested_terminate.swap(true, .release);
 }
 
-export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
-    worker.cpp_worker = ptr;
+pub export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaque) bool {
+    handle.worker.?.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
         .{ .stack_size = bun.default_thread_stack_size },
         startWithErrorHandling,
-        .{worker},
+        .{handle.worker.?},
     ) catch {
-        worker.deinit();
+        handle.worker.?.deinit();
         return false;
     };
     thread.detach();
@@ -461,8 +462,8 @@ fn unhandledError(this: *WebWorker, _: anyerror) void {
     this.flushLogs();
 }
 
-pub export fn WebWorker__requestTermination(this: *WebWorker) void {
-    this.termination_handle.requestTermination();
+pub export fn WebWorkerLifecycleHandle__requestTermination(handle: *WebWorkerLifecycleHandle) void {
+    handle.requestTermination();
 }
 
 fn spin(this: *WebWorker) void {
@@ -556,12 +557,12 @@ fn spin(this: *WebWorker) void {
 }
 
 /// This is worker.ref()/.unref() from JS (Caller thread)
-pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+pub export fn setRef(handle: *WebWorkerLifecycleHandle, value: bool) callconv(.c) void {
+    if (handle.worker.?.hasRequestedTerminate()) {
         return;
     }
 
-    this.setRefInternal(value);
+    handle.worker.?.setRefInternal(value);
 }
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
@@ -579,7 +580,7 @@ pub fn exit(this: *WebWorker) void {
 }
 
 /// Request a terminate from any thread.
-pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
+pub export fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
     if (this.status.load(.acquire) == .terminated) {
         return;
     }
@@ -634,7 +635,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         vm_to_deinit = vm;
     }
     var arena = this.arena;
-    this.termination_handle.onTermination();
+    this.lifecycle_handle.onTermination();
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
@@ -687,7 +688,7 @@ const WebWorkerLifecycleHandle = struct {
         const handle = WebWorkerLifecycleHandle.new(.{
             .worker = worker,
         });
-        worker.termination_handle = handle;
+        worker.?.lifecycle_handle = handle;
         return handle;
     }
 
@@ -706,7 +707,7 @@ const WebWorkerLifecycleHandle = struct {
             return;
         };
         this.worker = null;
-        worker.notifyNeedTermination();
+        worker.WebWorker__notifyNeedTermination();
         this.mutex.unlock();
         worker.deref();
     }
@@ -730,7 +731,7 @@ comptime {
     @export(&WebWorkerLifecycleHandle.createWebWorker, .{ .name = "WebWorkerLifecycleHandle__createWebWorker" });
     @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
-    _ = WebWorker__updatePtr;
+    // _ = WebWorker__updatePtr;
 }
 
 const TerminationHandle = struct {

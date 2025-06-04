@@ -47,16 +47,13 @@ const string = bun.string;
 const Output = bun.Output;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
 pub const std = @import("std");
 pub const lex = @import("../js_lexer.zig");
 pub const Logger = @import("../logger.zig");
 const options = @import("../options.zig");
-const js_parser = bun.js_parser;
 pub const Part = js_ast.Part;
 pub const js_printer = @import("../js_printer.zig");
 pub const js_ast = @import("../js_ast.zig");

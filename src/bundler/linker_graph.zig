@@ -1,13 +1,11 @@
 const bun = @import("bun");
 const Environment = bun.Environment;
-const strings = bun.strings;
 const std = @import("std");
 const string = bun.string;
 const Output = bun.Output;
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const BabyList = bun.BabyList;
 
-const BundleV2 = @import("bundle_v2.zig").BundleV2;
 const Logger = @import("bundle_v2.zig").Logger;
 const TopLevelSymbolToParts = @import("bundle_v2.zig").TopLevelSymbolToParts;
 const Index = @import("bundle_v2.zig").Index;
@@ -21,7 +19,6 @@ const JSMeta = @import("bundle_v2.zig").JSMeta;
 const js_ast = @import("../js_ast.zig");
 const Symbol = @import("../js_ast.zig").Symbol;
 const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
 const ResolvedExports = @import("bundle_v2.zig").ResolvedExports;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 

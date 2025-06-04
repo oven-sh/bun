@@ -371,6 +371,7 @@ fn freeWithoutDeinit(this: *WebWorker) void {
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
+    bun.default_allocator.free(this.preloads);
 }
 
 fn deinit(this: *WebWorker) void {

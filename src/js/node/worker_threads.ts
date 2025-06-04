@@ -347,7 +347,7 @@ class Worker extends EventEmitter {
     return (this.#onExitPromise = promise);
   }
 
-  postMessage(...args: [any, any]) {
+  postMessage(...args: Parameters<Bun.Worker["postMessage"]>) {
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 

@@ -103,6 +103,7 @@ pub const LifecycleScriptSubprocess = struct {
         output.flags.memfd = false;
         output.flags.received_eof = false;
         output.flags.closed_without_reporting = false;
+
         if (comptime Environment.allow_assert) {
             const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
             bun.assertWithLocation(flags & bun.O.NONBLOCK == 0, @src());
@@ -237,6 +238,9 @@ pub const LifecycleScriptSubprocess = struct {
 
                     resetOutputFlags(&this.stdout, stdout);
                     try this.stdout.start(stdout, true).unwrap();
+                    if (this.stdout.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stdout.setParent(this);
                     this.stdout.startMemfd(stdout);
@@ -250,6 +254,9 @@ pub const LifecycleScriptSubprocess = struct {
 
                     resetOutputFlags(&this.stderr, stderr);
                     try this.stderr.start(stderr, true).unwrap();
+                    if (this.stderr.handle.getPoll()) |poll| {
+                        poll.flags.insert(.socket);
+                    }
                 } else {
                     this.stderr.setParent(this);
                     this.stderr.startMemfd(stderr);

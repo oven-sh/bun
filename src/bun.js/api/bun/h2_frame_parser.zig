@@ -980,7 +980,7 @@ pub const H2FrameParser = struct {
                             break :brk dataHeader.write(@TypeOf(writer), writer);
                         } else {
                             const frame_slice = frame.slice();
-                            const max_size = @min(@min(frame_slice.len, this.remoteWindowSize - this.remoteUsedWindowSize, client.remoteWindowSize - client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                            const max_size = @min(@min(frame_slice.len, this.remoteWindowSize -| this.remoteUsedWindowSize, client.remoteWindowSize -| client.remoteUsedWindowSize), MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                             if (max_size == 0) {
                                 is_flow_control_limited = true;
                                 log("dataFrame flow control limited {} {} {} {} {} {}", .{ frame_slice.len, this.remoteWindowSize, this.remoteUsedWindowSize, client.remoteWindowSize, client.remoteUsedWindowSize, max_size });
@@ -3251,7 +3251,7 @@ pub const H2FrameParser = struct {
 
             while (offset < payload.len) {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
-                var max_size = @min(@min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME, this.remoteWindowSize - this.remoteUsedWindowSize), stream.remoteWindowSize - stream.remoteUsedWindowSize);
+                var max_size = @min(@min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME, this.remoteWindowSize -| this.remoteUsedWindowSize), stream.remoteWindowSize -| stream.remoteUsedWindowSize);
                 var is_flow_control_limited = false;
                 if (max_size == 0) {
                     is_flow_control_limited = true;

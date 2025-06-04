@@ -106,7 +106,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (comptime Environment.allow_assert) {
             const flags = bun.sys.getFcntlFlags(fd).unwrap() catch @panic("Failed to get fcntl flags");
-            bun.assertWithLocation(flags & bun.O.NONBLOCK == 0, @src());
+            bun.assertWithLocation(flags & bun.O.NONBLOCK != 0, @src());
 
             const stat = bun.sys.fstat(fd).unwrap() catch @panic("Failed to fstat");
             bun.assertWithLocation(std.posix.S.ISSOCK(stat.mode), @src());

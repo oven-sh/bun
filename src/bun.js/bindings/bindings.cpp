@@ -3926,7 +3926,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
 
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
-// Cannot handle numeric index property names! use JSC__JSValue__getIfPropertyExistsMaybeIndexImpl instead
+// Cannot handle numeric index property names! use JSC__JSValue__getPropertyValue instead
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JSValue0,
     JSC::JSGlobalObject* globalObject,
     const unsigned char* arg1, uint32_t arg2)
@@ -3952,12 +3952,12 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JS
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
 // Can handle numeric index property names safely.
-JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsSafeImpl(JSC::EncodedJSValue JSValue0,
+JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedValue,
     JSC::JSGlobalObject* globalObject,
-    const unsigned char* arg1, uint32_t arg2)
+    const unsigned char* propertyName, uint32_t propertyNameLength)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    JSValue value = JSC::JSValue::decode(JSValue0);
+    JSValue value = JSC::JSValue::decode(encodedValue);
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
 
     auto& vm = JSC::getVM(globalObject);
@@ -3965,16 +3965,21 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsSafeImpl(JSC::EncodedJSValu
     if (!object) [[unlikely]] {
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
+    const auto propertyString = String(StringImpl::createWithoutCopying({ propertyName, propertyNameLength }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
-    if (auto index = parseIndex(property)) {
-        JSC::JSValue result = object->getIndex(globalObject, index.value());
-        return JSC::JSValue::encode(result);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    if (!object->getPropertySlot(globalObject, property, slot)) {
+        return {};
     }
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue result = slot.getValue(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)

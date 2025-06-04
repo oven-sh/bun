@@ -3434,10 +3434,7 @@ pub const H2FrameParser = struct {
                 return globalObject.throwValue(exception);
             }
 
-            var js_value = try headers_arg.getTruthySafe(globalObject, name) orelse {
-                const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
-                return globalObject.throwValue(exception);
-            };
+            var js_value = iter.value;
             const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                 const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name});
                 return globalObject.throwValue(exception);
@@ -3467,7 +3464,7 @@ pub const H2FrameParser = struct {
                         return globalObject.throwValue(exception);
                     };
 
-                    const never_index = (try sensitive_arg.getTruthySafe(globalObject, validated_name) orelse try sensitive_arg.getTruthySafe(globalObject, name)) != null;
+                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
@@ -3504,7 +3501,7 @@ pub const H2FrameParser = struct {
                     return globalObject.throwValue(exception);
                 };
 
-                const never_index = (try sensitive_arg.getTruthySafe(globalObject, validated_name) orelse try sensitive_arg.getTruthySafe(globalObject, name)) != null;
+                const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
 
                 const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                 defer value_slice.deinit();
@@ -3879,12 +3876,7 @@ pub const H2FrameParser = struct {
                     continue;
                 }
 
-                const js_value: JSC.JSValue = try headers_arg.getSafe(globalObject, name) orelse {
-                    if (!globalObject.hasException()) {
-                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
-                    }
-                    return .zero;
-                };
+                const js_value = iter.value;
 
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
@@ -3915,7 +3907,7 @@ pub const H2FrameParser = struct {
                             return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
                         };
 
-                        const never_index = (try sensitive_arg.getTruthySafe(globalObject, validated_name) orelse try sensitive_arg.getTruthySafe(globalObject, name)) != null;
+                        const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3949,7 +3941,7 @@ pub const H2FrameParser = struct {
                         return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
                     };
 
-                    const never_index = (try sensitive_arg.getTruthySafe(globalObject, validated_name) orelse try sensitive_arg.getTruthySafe(globalObject, name)) != null;
+                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

@@ -223,7 +223,6 @@ pub const Process = struct {
         }
 
         exit_handler.call(this, status, rusage);
-        this.deref();
     }
 
     pub fn signalCode(this: *const Process) ?bun.SignalCode {
@@ -297,6 +296,7 @@ pub const Process = struct {
         } orelse return;
 
         this.onExit(status, &rusage_result);
+        this.deref();
     }
 
     pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {

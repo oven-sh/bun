@@ -191,6 +191,21 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    // Write CheckImmediate trace event
+    if (virtual_machine.trace_event_writer) |writer| {
+        const pid = std.os.linux.getpid();
+        const now_us = std.time.microTimestamp();
+        writer.writeEvent(.{
+            .name = "CheckImmediate",
+            .cat = "node.environment",
+            .ph = 'X',
+            .pid = @intCast(pid),
+            .tid = 0,
+            .ts = @intCast(now_us),
+            .dur = 0,
+        }) catch {};
+    }
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;

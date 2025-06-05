@@ -735,19 +735,28 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  // execArgv = options.execArgv || process.execArgv;
-  // validateArgumentsNullCheck(execArgv, "options.execArgv");
+  let execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  // if (execArgv === process.execArgv && process._eval != null) {
-  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
-  //   if (index > 0) {
-  //     // Remove the -e switch to avoid fork bombing ourselves.
-  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
-  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
-  //   }
-  // }
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice.$call(execArgv);
+      ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+    }
+  }
 
-  args = [/*...execArgv,*/ modulePath, ...args];
+  // Instead of combining execArgv with regular args, we need to separate them
+  // execArgv contains runtime flags like --trace-event-categories
+  // These should be passed to Bun itself, not as arguments to the script
+
+  // For now, we'll need to handle execArgv by modifying how spawn is called
+  // We'll construct the command line with execArgv as Bun flags
+  const bunArgs = [...execArgv];
+
+  // Add the module path and regular arguments after the runtime flags
+  args = [...bunArgs, modulePath, ...args];
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1765,137 +1774,6 @@ function genericNodeError(message, errorProperties) {
   ObjectAssign(err, errorProperties);
   return err;
 }
-
-// const messages = new Map();
-
-// Utility function for registering the error codes. Only used here. Exported
-// *only* to allow for testing.
-// function E(sym, val, def) {
-//   messages.set(sym, val);
-//   def = makeNodeErrorWithCode(def, sym);
-//   errorCodes[sym] = def;
-// }
-
-// function makeNodeErrorWithCode(Base, key) {
-//   return function NodeError(...args) {
-//     // const limit = Error.stackTraceLimit;
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = 0;
-//     const error = new Base();
-//     // Reset the limit and setting the name property.
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = limit;
-//     const message = getMessage(key, args);
-//     error.message = message;
-//     // captureLargerStackTrace(error);
-//     error.code = key;
-//     return error;
-//   };
-// }
-
-// function getMessage(key, args) {
-//   const msgFn = messages.get(key);
-//   if (args.length !== msgFn.length)
-//     throw new Error(
-//       `Invalid number of args for error message ${key}. Got ${args.length}, expected ${msgFn.length}.`
-//     );
-//   return msgFn(...args);
-// }
-
-// E(
-//   "ERR_INVALID_ARG_TYPE",
-//   (name, expected, actual) => {
-//     assert(typeof name === "string", "'name' must be a string");
-//     if (!$isJSArray(expected)) {
-//       expected = [expected];
-//     }
-
-//     let msg = "The ";
-//     if (StringPrototypeEndsWith(name, " argument")) {
-//       // For cases like 'first argument'
-//       msg += `${name} `;
-//     } else {
-//       const type = StringPrototypeIncludes(name, ".") ? "property" : "argument";
-//       msg += `"${name}" ${type} `;
-//     }
-//     msg += "must be ";
-
-//     const types = [];
-//     const instances = [];
-//     const other = [];
-
-//     for (const value of expected) {
-//       assert(
-//         typeof value === "string",
-//         "All expected entries have to be of type string"
-//       );
-//       if (ArrayPrototypeIncludes.$call(kTypes, value)) {
-//         ArrayPrototypePush(types, StringPrototypeToLowerCase(value));
-//       } else if (RegExpPrototypeExec(classRegExp, value) !== null) {
-//         ArrayPrototypePush(instances, value);
-//       } else {
-//         assert(
-//           value !== "object",
-//           'The value "object" should be written as "Object"'
-//         );
-//         ArrayPrototypePush(other, value);
-//       }
-//     }
-
-//     // Special handle `object` in case other instances are allowed to outline
-//     // the differences between each other.
-//     if (instances.length > 0) {
-//       const pos = ArrayPrototypeIndexOf(types, "object");
-//       if (pos !== -1) {
-//         ArrayPrototypeSplice.$call(types, pos, 1);
-//         $arrayPush(instances, "Object");
-//       }
-//     }
-
-//     if (types.length > 0) {
-//       if (types.length > 2) {
-//         const last = ArrayPrototypePop(types);
-//         msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${last}`;
-//       } else if (types.length === 2) {
-//         msg += `one of type ${types[0]} or ${types[1]}`;
-//       } else {
-//         msg += `of type ${types[0]}`;
-//       }
-//       if (instances.length > 0 || other.length > 0) msg += " or ";
-//     }
-
-//     if (instances.length > 0) {
-//       if (instances.length > 2) {
-//         const last = ArrayPrototypePop(instances);
-//         msg += `an instance of ${ArrayPrototypeJoin(
-//           instances,
-//           ", "
-//         )}, or ${last}`;
-//       } else {
-//         msg += `an instance of ${instances[0]}`;
-//         if (instances.length === 2) {
-//           msg += ` or ${instances[1]}`;
-//         }
-//       }
-//       if (other.length > 0) msg += " or ";
-//     }
-
-//     if (other.length > 0) {
-//       if (other.length > 2) {
-//         const last = ArrayPrototypePop(other);
-//         msg += `one of ${ArrayPrototypeJoin.$call(other, ", ")}, or ${last}`;
-//       } else if (other.length === 2) {
-//         msg += `one of ${other[0]} or ${other[1]}`;
-//       } else {
-//         if (StringPrototypeToLowerCase(other[0]) !== other[0]) msg += "an ";
-//         msg += `${other[0]}`;
-//       }
-//     }
-
-//     msg += `. Received ${determineSpecificType(actual)}`;
-
-//     return msg;
-//   },
-//   TypeError
-// );
 
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);

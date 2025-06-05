@@ -188,6 +188,9 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
+trace_event_writer: ?*trace_events.TraceEventWriter = null,
+trace_event_categories: []const u8 = "",
+
 pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -492,6 +495,11 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
             }
         }
     }
+
+    // Initialize trace events if requested
+    std.debug.print("VM: About to call trace_events.init\n", .{});
+    trace_events.init(this);
+    std.debug.print("VM: trace_events.init returned\n", .{});
 }
 
 extern fn Bun__handleUncaughtException(*JSGlobalObject, err: JSValue, is_rejection: c_int) c_int;
@@ -638,6 +646,21 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    // Write BeforeExit trace event
+    if (this.trace_event_writer) |writer| {
+        const pid = std.os.linux.getpid();
+        const now = std.time.microTimestamp();
+        writer.writeEvent(.{
+            .name = "BeforeExit",
+            .cat = "node.environment",
+            .ph = 'X',
+            .pid = @intCast(pid),
+            .tid = 0,
+            .ts = @intCast(now),
+            .dur = 0,
+        }) catch {};
+    }
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -699,8 +722,27 @@ pub fn onExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
+    // Write trace event data before shutting down
+    trace_events.finalize(this);
+
     const rare_data = this.rare_data orelse return;
     defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    // Write RunCleanup trace event
+    if (this.trace_event_writer) |writer| {
+        const pid = std.os.linux.getpid();
+        const now = std.time.microTimestamp();
+        writer.writeEvent(.{
+            .name = "RunCleanup",
+            .cat = "node.environment",
+            .ph = 'X',
+            .pid = @intCast(pid),
+            .tid = 0,
+            .ts = @intCast(now),
+            .dur = 0,
+        }) catch {};
+    }
+
     // Make sure we run new cleanup hooks introduced by running cleanup hooks
     while (rare_data.cleanup_hooks.items.len > 0) {
         var hooks = rare_data.cleanup_hooks;
@@ -3491,6 +3533,22 @@ pub const ExitHandler = struct {
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
+
+        // Write AtExit trace event
+        if (vm.trace_event_writer) |writer| {
+            const pid = std.os.linux.getpid();
+            const now = std.time.microTimestamp();
+            writer.writeEvent(.{
+                .name = "AtExit",
+                .cat = "node.environment",
+                .ph = 'X',
+                .pid = @intCast(pid),
+                .tid = 0,
+                .ts = @intCast(now),
+                .dur = 0,
+            }) catch {};
+        }
+
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -3566,3 +3624,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const trace_events = @import("./trace_events.zig");

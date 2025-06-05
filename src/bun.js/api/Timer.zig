@@ -281,6 +281,21 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Write RunTimers trace event
+        if (vm.trace_event_writer) |writer| {
+            const pid = std.os.linux.getpid();
+            const now_us = std.time.microTimestamp();
+            writer.writeEvent(.{
+                .name = "RunTimers",
+                .cat = "node.environment",
+                .ph = 'X',
+                .pid = @intCast(pid),
+                .tid = 0,
+                .ts = @intCast(now_us),
+                .dur = 0,
+            }) catch {};
+        }
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.

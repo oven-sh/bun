@@ -42,6 +42,8 @@ export var Bun__Node__ProcessThrowDeprecation = false;
 
 pub var Bun__Node__ProcessTitle: ?string = null;
 
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
+
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
@@ -237,6 +239,7 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Enable tracing of Node.js trace events") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -850,6 +853,13 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
+            }
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
+                // Also set as environment variable so child processes can access it
+                // Categories is already null-terminated from the CLI parsing
+                const categories_z = bun.sliceTo(categories, 0);
+                _ = setenv("BUN_TRACE_EVENT_CATEGORIES", categories_z.ptr, 1);
             }
         }
 
@@ -1547,6 +1557,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        trace_event_categories: []const u8 = "",
     };
 
     var global_cli_ctx: Context = undefined;

@@ -124,7 +124,7 @@ test("no assertion failures", () => {
   );
   assert.strictEqual(
     util.inspect(Object.assign(new String("hello"), { [Symbol("foo")]: 123 }), { showHidden: true }),
-    "[String: 'hello'] { [length]: 5, [Symbol(foo)]: 123 }",
+    "[String: 'hello'] { [length]: 5, Symbol(foo): 123 }",
   );
 
   {
@@ -656,14 +656,9 @@ test("no assertion failures 2", () => {
 
   // Prevent non-enumerable error properties from being printed.
   {
-    // TODO(bun): Make originalLine and originalColumn non-enumerable
     let err = new Error();
     err.message = "foobar";
-    let out = util
-      .inspect(err)
-      .replace(/\{\s*originalLine: .+\s*originalColumn: .+\s*\}/, "")
-      .trim()
-      .split("\n");
+    let out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Error: foobar");
     assert(out.at(-1).startsWith("    at "), 'Expected "' + out.at(-1) + '" to start with "    at "');
     // Reset the error, the stack is otherwise not recreated.
@@ -671,21 +666,13 @@ test("no assertion failures 2", () => {
     err.message = "foobar";
     err.name = "Unique";
     Object.defineProperty(err, "stack", { value: err.stack, enumerable: true });
-    out = util
-      .inspect(err)
-      .replace(/\{\s*originalLine: .+\s*originalColumn: .+\s*\}/, "")
-      .trim()
-      .split("\n");
+    out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Unique: foobar");
     assert(out.at(-1).startsWith("    at "), 'Expected "' + out.at(-1) + '" to start with "    at "');
     err.name = "Baz";
-    out = util
-      .inspect(err)
-      .replace(/\n\s*originalLine: .+\s*originalColumn: .+/, "")
-      .trim()
-      .split("\n");
+    out = util.inspect(err).trim().split("\n");
     assert.strictEqual(out[0], "Unique: foobar");
-    assert.strictEqual(out.at(-2), "  name: 'Baz',");
+    assert.strictEqual(out.at(-2), "  name: 'Baz'");
     assert.strictEqual(out.at(-1), "}");
   }
 
@@ -760,8 +747,8 @@ test("no assertion failures 2", () => {
   {
     const x = { [util.inspect.custom]: util.inspect };
     assert(
-      util.inspect(x).includes("[Symbol(nodejs.util.inspect.custom)]: [Function: inspect] {\n"),
-      `Expected '${util.inspect(x)}' to include '[Symbol(nodejs.util.inspect.custom)]: [Function: inspect] {\n'`,
+      util.inspect(x).includes("Symbol(nodejs.util.inspect.custom): [Function: inspect] {\n"),
+      `Expected '${util.inspect(x)}' to include 'Symbol(nodejs.util.inspect.custom): [Function: inspect] {\n'`,
     );
   }
 
@@ -936,7 +923,7 @@ test("no assertion failures 2", () => {
       },
     };
     const UIC = "nodejs.util.inspect.custom";
-    assert.strictEqual(util.inspect(subject), `{\n  a: 123,\n  [Symbol(${UIC})]: [Function: [${UIC}]]\n}`);
+    assert.strictEqual(util.inspect(subject), `{\n  a: 123,\n  Symbol(${UIC}): [Function: [${UIC}]]\n}`);
   }
 
   //! non-standard property
@@ -1026,16 +1013,16 @@ test("no assertion failures 2", () => {
 
     subject[Symbol("sym\nbol")] = 42;
 
-    assert.strictEqual(util.inspect(subject), "{ [Symbol(sym\\nbol)]: 42 }");
-    assert.strictEqual(util.inspect(subject, options), "{ [Symbol(sym\\nbol)]: 42 }");
+    assert.strictEqual(util.inspect(subject), "{ Symbol(sym\\nbol): 42 }");
+    assert.strictEqual(util.inspect(subject, options), "{ Symbol(sym\\nbol): 42 }");
 
     Object.defineProperty(subject, Symbol(), { enumerable: false, value: "non-enum" });
-    assert.strictEqual(util.inspect(subject), "{ [Symbol(sym\\nbol)]: 42 }");
-    assert.strictEqual(util.inspect(subject, options), "{ [Symbol(sym\\nbol)]: 42, [Symbol()]: 'non-enum' }");
+    assert.strictEqual(util.inspect(subject), "{ Symbol(sym\\nbol): 42 }");
+    assert.strictEqual(util.inspect(subject, options), "{ Symbol(sym\\nbol): 42, [Symbol()]: 'non-enum' }");
 
     subject = [1, 2, 3];
     subject[Symbol("symbol")] = 42;
-    assert.strictEqual(util.inspect(subject), "[ 1, 2, 3, [Symbol(symbol)]: 42 ]");
+    assert.strictEqual(util.inspect(subject), "[ 1, 2, 3, Symbol(symbol): 42 ]");
   }
 
   // Test Set.
@@ -1433,13 +1420,13 @@ test("no assertion failures 2", () => {
   // Setting custom inspect property to a non-function should do nothing.
   {
     const obj = { [util.inspect.custom]: "fhqwhgads" };
-    assert.strictEqual(util.inspect(obj), "{ [Symbol(nodejs.util.inspect.custom)]: 'fhqwhgads' }");
+    assert.strictEqual(util.inspect(obj), "{ Symbol(nodejs.util.inspect.custom): 'fhqwhgads' }");
   }
 
   {
     // @@toStringTag
     const obj = { [Symbol.toStringTag]: "a" };
-    assert.strictEqual(util.inspect(obj), "{ [Symbol(Symbol.toStringTag)]: 'a' }");
+    assert.strictEqual(util.inspect(obj), "{ Symbol(Symbol.toStringTag): 'a' }");
     Object.defineProperty(obj, Symbol.toStringTag, {
       value: "a",
       enumerable: false,
@@ -2121,7 +2108,7 @@ test("no assertion failures 3", () => {
     value[Symbol("foo")] = "yeah";
     res = util.inspect(value);
     assert.notStrictEqual(res, expectedWithoutProto);
-    assert.match(res, /\[Symbol\(foo\)]: 'yeah'/);
+    assert.match(res, /Symbol\(foo\): 'yeah'/);
   });
 
   assert.strictEqual(inspect(1n), "1n");
@@ -2134,7 +2121,7 @@ test("no assertion failures 3", () => {
   {
     const obj = {};
     Object.defineProperty(obj, "Non\nenumerable\tkey", { value: true });
-    assert.strictEqual(util.inspect(obj, { showHidden: true }), "{ [Non\\nenumerable\\tkey]: true }");
+    assert.strictEqual(util.inspect(obj, { showHidden: true }), "{ ['Non\\nenumerable\\tkey']: true }");
   }
 
   // Check for special colors.
@@ -2212,7 +2199,7 @@ test("no assertion failures 3", () => {
     arr[Symbol("a")] = false;
     assert.strictEqual(
       inspect(arr, { sorted: true }),
-      "[ 3, 2, 1, [Symbol(a)]: false, [Symbol(b)]: true, a: 1, b: 2, c: 3 ]",
+      "[ 3, 2, 1, Symbol(a): false, Symbol(b): true, a: 1, b: 2, c: 3 ]",
     );
   }
 
@@ -3201,7 +3188,7 @@ test("no assertion failures 3", () => {
           throw new Error();
         },
       }),
-      "{ [Symbol(Symbol.iterator)]: [Getter] }",
+      "{ Symbol(Symbol.iterator): [Getter] }",
     );
   }
 });

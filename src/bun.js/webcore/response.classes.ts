@@ -5,19 +5,21 @@ export default [
     name: "Request",
     construct: true,
     finalize: true,
+    final: false,
     klass: {},
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
     overridesToJS: true,
+    memoryCost: true,
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      bytes: { fn: "getBytes" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      bytes: { fn: "getBytes", async: true },
       body: { getter: "getBody", cache: true },
-      arrayBuffer: { fn: "getArrayBuffer" },
-      formData: { fn: "getFormData" },
-      blob: { fn: "getBlob" },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
+      formData: { fn: "getFormData", async: true },
+      blob: { fn: "getBlob", async: true },
       clone: { fn: "doClone", length: 1 },
       cache: {
         getter: "getCache",
@@ -89,13 +91,14 @@ export default [
       },
       body: { getter: "getBody", cache: true },
 
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      bytes: { fn: "getBytes" },
-      arrayBuffer: { fn: "getArrayBuffer" },
-      blob: { fn: "getBlob" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      bytes: { fn: "getBytes", async: true },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
+      blob: { fn: "getBlob", async: true },
+      formData: { fn: "getFormData", async: true },
+
       clone: { fn: "doClone", length: 1 },
-      formData: { fn: "getFormData" },
 
       type: {
         getter: "getResponseType",
@@ -124,6 +127,7 @@ export default [
   }),
   define({
     name: "Blob",
+    final: false,
     construct: true,
     finalize: true,
     JSType: "0b11101110",
@@ -134,16 +138,16 @@ export default [
     values: ["stream"],
     overridesToJS: true,
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      arrayBuffer: { fn: "getArrayBuffer" },
+      text: { fn: "getText", async: true },
+      json: { fn: "getJSON", async: true },
+      arrayBuffer: { fn: "getArrayBuffer", async: true },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
-      formData: { fn: "getFormData" },
+      formData: { fn: "getFormData", async: true },
       exists: { fn: "getExists", length: 0 },
 
       // Non-standard, but consistent!
-      bytes: { fn: "getBytes" },
+      bytes: { fn: "getBytes", async: true },
 
       type: {
         getter: "getType",
@@ -164,9 +168,14 @@ export default [
         getter: "getLastModified",
       },
 
+      // Non-standard, s3 + BunFile support
+      unlink: { fn: "doUnlink", length: 0 },
+      delete: { fn: "doUnlink", length: 0 },
+      write: { fn: "doWrite", length: 2 },
       size: {
         getter: "getSize",
       },
+      stat: { fn: "getStat", length: 0 },
 
       writer: {
         fn: "getWriter",

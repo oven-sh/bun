@@ -1,5 +1,6 @@
 #include "BakeProduction.h"
 #include "BunBuiltinNames.h"
+#include "JavaScriptCore/CallData.h"
 #include "WebCoreJSBuiltins.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/Exception.h"
@@ -11,6 +12,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     BunString outBase,
     JSC::JSValue allServerFiles,
     JSC::JSValue renderStatic,
+    JSC::JSValue getParams,
     JSC::JSValue clientEntryUrl,
     JSC::JSValue pattern,
     JSC::JSValue files,
@@ -19,7 +21,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     JSC::JSValue paramInformation,
     JSC::JSValue styles)
 {
-    JSC::VM& vm = global->vm();
+    auto& vm = JSC::getVM(global);
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::bakeRenderRoutesForProdStaticCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);
 
@@ -27,6 +29,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(JSC::jsString(vm, outBase.toWTFString()));
     args.append(allServerFiles);
     args.append(renderStatic);
+    args.append(getParams);
     args.append(clientEntryUrl);
     args.append(pattern);
     args.append(files);
@@ -36,8 +39,8 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(styles);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(global, cb, callData, JSC::jsUndefined(), args, returnedException);
-    if (UNLIKELY(returnedException)) {
+    auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
+    if (returnedException) [[unlikely]] {
         // This should be impossible because it returns a promise.
         return JSC::JSPromise::rejectedPromise(global, returnedException->value());
     }

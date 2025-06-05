@@ -1,64 +1,57 @@
-const bun = @import("root").bun;
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
+const bun = @import("bun");
+
 const std = @import("std");
 
-pub const Method = enum {
-    ACL,
-    BIND,
-    CHECKOUT,
-    CONNECT,
-    COPY,
-    DELETE,
-    GET,
-    HEAD,
-    LINK,
-    LOCK,
-    @"M-SEARCH",
-    MERGE,
-    MKACTIVITY,
-    MKCALENDAR,
-    MKCOL,
-    MOVE,
-    NOTIFY,
-    OPTIONS,
-    PATCH,
-    POST,
-    PROPFIND,
-    PROPPATCH,
-    PURGE,
-    PUT,
+pub const Method = enum(u8) {
+    ACL = 0,
+    BIND = 1,
+    CHECKOUT = 2,
+    CONNECT = 3,
+    COPY = 4,
+    DELETE = 5,
+    GET = 6,
+    HEAD = 7,
+    LINK = 8,
+    LOCK = 9,
+    @"M-SEARCH" = 10,
+    MERGE = 11,
+    MKACTIVITY = 12,
+    MKCALENDAR = 13,
+    MKCOL = 14,
+    MOVE = 15,
+    NOTIFY = 16,
+    OPTIONS = 17,
+    PATCH = 18,
+    POST = 19,
+    PROPFIND = 20,
+    PROPPATCH = 21,
+    PURGE = 22,
+    PUT = 23,
     /// https://httpwg.org/http-extensions/draft-ietf-httpbis-safe-method-w-body.html
-    QUERY,
-    REBIND,
-    REPORT,
-    SEARCH,
-    SOURCE,
-    SUBSCRIBE,
-    TRACE,
-    UNBIND,
-    UNLINK,
-    UNLOCK,
-    UNSUBSCRIBE,
+    QUERY = 24,
+    REBIND = 25,
+    REPORT = 26,
+    SEARCH = 27,
+    SOURCE = 28,
+    SUBSCRIBE = 29,
+    TRACE = 30,
+    UNBIND = 31,
+    UNLINK = 32,
+    UNLOCK = 33,
+    UNSUBSCRIBE = 34,
 
     pub const fromJS = Map.fromJS;
+    pub const Set = std.enums.EnumSet(Method);
 
-    const with_body: std.enums.EnumSet(Method) = brk: {
-        var values = std.enums.EnumSet(Method).initFull();
+    const with_body: Set = brk: {
+        var values = Set.initFull();
         values.remove(.HEAD);
         values.remove(.TRACE);
         break :brk values;
     };
 
-    const with_request_body: std.enums.EnumSet(Method) = brk: {
-        var values = std.enums.EnumSet(Method).initFull();
+    const with_request_body: Set = brk: {
+        var values = Set.initFull();
         values.remove(.GET);
         values.remove(.HEAD);
         values.remove(.OPTIONS);
@@ -72,6 +65,10 @@ pub const Method = enum {
 
     pub fn hasRequestBody(this: Method) bool {
         return with_request_body.contains(this);
+    }
+
+    pub fn find(str: []const u8) ?Method {
+        return Map.get(str);
     }
 
     const Map = bun.ComptimeStringMap(Method, .{
@@ -151,4 +148,47 @@ pub const Method = enum {
     pub fn which(str: []const u8) ?Method {
         return Map.get(str);
     }
+
+    extern "c" fn Bun__HTTPMethod__toJS(method: Method, globalObject: *JSC.JSGlobalObject) JSC.JSValue;
+
+    pub const toJS = Bun__HTTPMethod__toJS;
+
+    const JSC = bun.JSC;
+
+    pub const Optional = union(enum) {
+        any: void,
+        method: Set,
+
+        pub fn contains(this: Optional, other: Optional) bool {
+            if (this == .any) {
+                return true;
+            }
+            if (other == .any) {
+                return true;
+            }
+
+            return this.method.intersectWith(other.method).count() > 0;
+        }
+
+        pub fn insert(this: *Optional, method: Method) void {
+            switch (this.*) {
+                .any => {},
+                .method => |*set| {
+                    set.insert(method);
+                    if (set.eql(Set.initFull())) {
+                        this.* = .any;
+                    }
+                },
+            }
+        }
+    };
 };
+
+export fn Bun__HTTPMethod__from(str: [*]const u8, len: usize) i16 {
+    const method: Method = Method.find(str[0..len]) orelse return -1;
+    return @intFromEnum(method);
+}
+
+comptime {
+    _ = Bun__HTTPMethod__from;
+}

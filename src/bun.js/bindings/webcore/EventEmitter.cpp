@@ -12,10 +12,11 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventEmitter);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventEmitter);
 
 Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 {
@@ -119,9 +120,9 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     return true;
 }
 
-void EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    fireEventListeners(eventType, arguments);
+    return fireEventListeners(eventType, arguments);
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
@@ -144,10 +145,10 @@ int EventEmitter::listenerCount(const Identifier& eventType)
     int result = 0;
     if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
         for (auto& registeredListener : *listenersVector) {
-            if (UNLIKELY(registeredListener->wasRemoved()))
+            if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
-            if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
+            if (registeredListener->callback().jsFunction()) {
                 result++;
             }
         }
@@ -163,7 +164,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     Vector<JSObject*> listeners;
     if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
         for (auto& registeredListener : *listenersVector) {
-            if (UNLIKELY(registeredListener->wasRemoved()))
+            if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
             if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
@@ -175,37 +176,38 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
 
     auto* data = eventTargetData();
     if (!data)
-        return;
+        return false;
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (UNLIKELY(!listenersVector)) {
+    if (!listenersVector) [[unlikely]] {
         if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
             Ref<EventEmitter> protectedThis(*this);
             auto* thisObject = protectedThis->m_thisObject.get();
             if (!thisObject)
-                return;
+                return false;
 
             Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-            return;
+            return false;
         }
-        return;
+        return false;
     }
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
     data->isFiringEventListeners = prevFiringEventListeners;
+    return fired;
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -216,11 +218,12 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
     auto* thisObject = protectedThis->m_thisObject.get();
     JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
+    auto fired = false;
 
     for (auto& registeredListener : listeners) {
         // The below code used to be in here, but it's WRONG. Even if a listener is removed,
         // if we're in the middle of firing listeners, we still need to call it.
-        // if (UNLIKELY(registeredListener->wasRemoved()))
+        // if (registeredListener->wasRemoved()) [[unlikely]]
         //     continue;
 
         auto& callback = registeredListener->callback();
@@ -236,19 +239,20 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         if (registeredListener->isOnce())
             removeListener(eventType, callback);
 
-        if (UNLIKELY(!jsFunction))
+        if (!jsFunction) [[unlikely]]
             continue;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);
-        if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        if (callData.type == JSC::CallData::Type::None) [[unlikely]]
             continue;
 
+        fired = true;
         WTF::NakedPtr<JSC::Exception> exceptionPtr;
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (UNLIKELY(exception)) {
+        if (exception) [[unlikely]] {
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -265,6 +269,8 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             }
         }
     }
+
+    return fired;
 }
 
 Vector<Identifier> EventEmitter::eventTypes()

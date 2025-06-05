@@ -87,16 +87,16 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, JSMessageChannelPrototype::Base);
 
-using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel>;
+using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel, Bun::ErrorCode::ERR_CONSTRUCT_CALL_REQUIRED>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSMessageChannelDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
-    if (UNLIKELY(!context))
+    if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel"_s);
     auto object = MessageChannel::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -179,10 +179,10 @@ void JSMessageChannel::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSMessageChannelPrototype*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!prototype))
+    if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSMessageChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }

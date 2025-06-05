@@ -1,0 +1,77 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "web-inspector-bun",
+      "dependencies": {
+        "esbuild": "^0.19.2",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+      "peerDependencies": {
+        "typescript": "^5.0.0",
+      },
+      "optionalPeers": [
+        "typescript",
+      ],
+    },
+  },
+  "packages": {
+    "@esbuild/android-arm": ["@esbuild/android-arm@0.19.2", "", { "os": "android", "cpu": "arm" }, "sha512-tM8yLeYVe7pRyAu9VMi/Q7aunpLwD139EY1S99xbQkT4/q2qa6eA4ige/WJQYdJ8GBL1K33pPFhPfPdJ/WzT8Q=="],
+
+    "@esbuild/android-arm64": ["@esbuild/android-arm64@0.19.2", "", { "os": "android", "cpu": "arm64" }, "sha512-lsB65vAbe90I/Qe10OjkmrdxSX4UJDjosDgb8sZUKcg3oefEuW2OT2Vozz8ef7wrJbMcmhvCC+hciF8jY/uAkw=="],
+
+    "@esbuild/android-x64": ["@esbuild/android-x64@0.19.2", "", { "os": "android", "cpu": "x64" }, "sha512-qK/TpmHt2M/Hg82WXHRc/W/2SGo/l1thtDHZWqFq7oi24AjZ4O/CpPSu6ZuYKFkEgmZlFoa7CooAyYmuvnaG8w=="],
+
+    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.19.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Ora8JokrvrzEPEpZO18ZYXkH4asCdc1DLdcVy8TGf5eWtPO1Ie4WroEJzwI52ZGtpODy3+m0a2yEX9l+KUn0tA=="],
+
+    "@esbuild/darwin-x64": ["@esbuild/darwin-x64@0.19.2", "", { "os": "darwin", "cpu": "x64" }, "sha512-tP+B5UuIbbFMj2hQaUr6EALlHOIOmlLM2FK7jeFBobPy2ERdohI4Ka6ZFjZ1ZYsrHE/hZimGuU90jusRE0pwDw=="],
+
+    "@esbuild/freebsd-arm64": ["@esbuild/freebsd-arm64@0.19.2", "", { "os": "freebsd", "cpu": "arm64" }, "sha512-YbPY2kc0acfzL1VPVK6EnAlig4f+l8xmq36OZkU0jzBVHcOTyQDhnKQaLzZudNJQyymd9OqQezeaBgkTGdTGeQ=="],
+
+    "@esbuild/freebsd-x64": ["@esbuild/freebsd-x64@0.19.2", "", { "os": "freebsd", "cpu": "x64" }, "sha512-nSO5uZT2clM6hosjWHAsS15hLrwCvIWx+b2e3lZ3MwbYSaXwvfO528OF+dLjas1g3bZonciivI8qKR/Hm7IWGw=="],
+
+    "@esbuild/linux-arm": ["@esbuild/linux-arm@0.19.2", "", { "os": "linux", "cpu": "arm" }, "sha512-Odalh8hICg7SOD7XCj0YLpYCEc+6mkoq63UnExDCiRA2wXEmGlK5JVrW50vZR9Qz4qkvqnHcpH+OFEggO3PgTg=="],
+
+    "@esbuild/linux-arm64": ["@esbuild/linux-arm64@0.19.2", "", { "os": "linux", "cpu": "arm64" }, "sha512-ig2P7GeG//zWlU0AggA3pV1h5gdix0MA3wgB+NsnBXViwiGgY77fuN9Wr5uoCrs2YzaYfogXgsWZbm+HGr09xg=="],
+
+    "@esbuild/linux-ia32": ["@esbuild/linux-ia32@0.19.2", "", { "os": "linux", "cpu": "ia32" }, "sha512-mLfp0ziRPOLSTek0Gd9T5B8AtzKAkoZE70fneiiyPlSnUKKI4lp+mGEnQXcQEHLJAcIYDPSyBvsUbKUG2ri/XQ=="],
+
+    "@esbuild/linux-loong64": ["@esbuild/linux-loong64@0.19.2", "", { "os": "linux", "cpu": "none" }, "sha512-hn28+JNDTxxCpnYjdDYVMNTR3SKavyLlCHHkufHV91fkewpIyQchS1d8wSbmXhs1fiYDpNww8KTFlJ1dHsxeSw=="],
+
+    "@esbuild/linux-mips64el": ["@esbuild/linux-mips64el@0.19.2", "", { "os": "linux", "cpu": "none" }, "sha512-KbXaC0Sejt7vD2fEgPoIKb6nxkfYW9OmFUK9XQE4//PvGIxNIfPk1NmlHmMg6f25x57rpmEFrn1OotASYIAaTg=="],
+
+    "@esbuild/linux-ppc64": ["@esbuild/linux-ppc64@0.19.2", "", { "os": "linux", "cpu": "ppc64" }, "sha512-dJ0kE8KTqbiHtA3Fc/zn7lCd7pqVr4JcT0JqOnbj4LLzYnp+7h8Qi4yjfq42ZlHfhOCM42rBh0EwHYLL6LEzcw=="],
+
+    "@esbuild/linux-riscv64": ["@esbuild/linux-riscv64@0.19.2", "", { "os": "linux", "cpu": "none" }, "sha512-7Z/jKNFufZ/bbu4INqqCN6DDlrmOTmdw6D0gH+6Y7auok2r02Ur661qPuXidPOJ+FSgbEeQnnAGgsVynfLuOEw=="],
+
+    "@esbuild/linux-s390x": ["@esbuild/linux-s390x@0.19.2", "", { "os": "linux", "cpu": "s390x" }, "sha512-U+RinR6aXXABFCcAY4gSlv4CL1oOVvSSCdseQmGO66H+XyuQGZIUdhG56SZaDJQcLmrSfRmx5XZOWyCJPRqS7g=="],
+
+    "@esbuild/linux-x64": ["@esbuild/linux-x64@0.19.2", "", { "os": "linux", "cpu": "x64" }, "sha512-oxzHTEv6VPm3XXNaHPyUTTte+3wGv7qVQtqaZCrgstI16gCuhNOtBXLEBkBREP57YTd68P0VgDgG73jSD8bwXQ=="],
+
+    "@esbuild/netbsd-x64": ["@esbuild/netbsd-x64@0.19.2", "", { "os": "none", "cpu": "x64" }, "sha512-WNa5zZk1XpTTwMDompZmvQLHszDDDN7lYjEHCUmAGB83Bgs20EMs7ICD+oKeT6xt4phV4NDdSi/8OfjPbSbZfQ=="],
+
+    "@esbuild/openbsd-x64": ["@esbuild/openbsd-x64@0.19.2", "", { "os": "openbsd", "cpu": "x64" }, "sha512-S6kI1aT3S++Dedb7vxIuUOb3oAxqxk2Rh5rOXOTYnzN8JzW1VzBd+IqPiSpgitu45042SYD3HCoEyhLKQcDFDw=="],
+
+    "@esbuild/sunos-x64": ["@esbuild/sunos-x64@0.19.2", "", { "os": "sunos", "cpu": "x64" }, "sha512-VXSSMsmb+Z8LbsQGcBMiM+fYObDNRm8p7tkUDMPG/g4fhFX5DEFmjxIEa3N8Zr96SjsJ1woAhF0DUnS3MF3ARw=="],
+
+    "@esbuild/win32-arm64": ["@esbuild/win32-arm64@0.19.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-5NayUlSAyb5PQYFAU9x3bHdsqB88RC3aM9lKDAz4X1mo/EchMIT1Q+pSeBXNgkfNmRecLXA0O8xP+x8V+g/LKg=="],
+
+    "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.19.2", "", { "os": "win32", "cpu": "ia32" }, "sha512-47gL/ek1v36iN0wL9L4Q2MFdujR0poLZMJwhO2/N3gA89jgHp4MR8DKCmwYtGNksbfJb9JoTtbkoe6sDhg2QTA=="],
+
+    "@esbuild/win32-x64": ["@esbuild/win32-x64@0.19.2", "", { "os": "win32", "cpu": "x64" }, "sha512-tcuhV7ncXBqbt/Ybf0IyrMcwVOAPDckMK9rXNHtF17UTK18OKLpg08glminN06pt2WCoALhXdLfSPbVvK/6fxw=="],
+
+    "@types/bun": ["@types/bun@1.0.8", "", { "dependencies": { "bun-types": "1.0.29" } }, "sha512-E6UWZuN4ymAxzUBWVIGDHJ3Zey7I8cMzDZ+cB1BqhZsmd1uPb9iAQzpWMruY1mKzsuD3R+dZPoBkZz8QL1KhSA=="],
+
+    "@types/node": ["@types/node@20.11.24", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-Kza43ewS3xoLgCEpQrsT+xRo/EJej1y0kVYGiLFE1NEODXGzTfwiC6tXTLMQskn1X4/Rjlh0MQUvx9W+L9long=="],
+
+    "@types/ws": ["@types/ws@8.5.10", "", { "dependencies": { "@types/node": "*" } }, "sha512-vmQSUcfalpIq0R9q7uTo2lXs6eGIpt9wtnLdMv9LVpIjCA/+ufZRozlVoVelIYixx1ugCBKDhn89vnsEGOCx9A=="],
+
+    "bun-types": ["bun-types@1.0.29", "", { "dependencies": { "@types/node": "~20.11.3", "@types/ws": "~8.5.10" } }, "sha512-Z+U1ORr/2UCwxelIZxE83pyPLclviYL9UewQCNEUmGeLObY8ao+3WF3D8N1+NMv2+S+hUWsdBJam+4GoPEz35g=="],
+
+    "esbuild": ["esbuild@0.19.2", "", { "optionalDependencies": { "@esbuild/android-arm": "0.19.2", "@esbuild/android-arm64": "0.19.2", "@esbuild/android-x64": "0.19.2", "@esbuild/darwin-arm64": "0.19.2", "@esbuild/darwin-x64": "0.19.2", "@esbuild/freebsd-arm64": "0.19.2", "@esbuild/freebsd-x64": "0.19.2", "@esbuild/linux-arm": "0.19.2", "@esbuild/linux-arm64": "0.19.2", "@esbuild/linux-ia32": "0.19.2", "@esbuild/linux-loong64": "0.19.2", "@esbuild/linux-mips64el": "0.19.2", "@esbuild/linux-ppc64": "0.19.2", "@esbuild/linux-riscv64": "0.19.2", "@esbuild/linux-s390x": "0.19.2", "@esbuild/linux-x64": "0.19.2", "@esbuild/netbsd-x64": "0.19.2", "@esbuild/openbsd-x64": "0.19.2", "@esbuild/sunos-x64": "0.19.2", "@esbuild/win32-arm64": "0.19.2", "@esbuild/win32-ia32": "0.19.2", "@esbuild/win32-x64": "0.19.2" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-G6hPax8UbFakEj3hWO0Vs52LQ8k3lnBhxZWomUJDxfz3rZTLqF5k/FCzuNdLx2RbpBiQQF9H9onlDDH1lZsnjg=="],
+
+    "undici-types": ["undici-types@5.26.5", "", {}, "sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA=="],
+  }
+}

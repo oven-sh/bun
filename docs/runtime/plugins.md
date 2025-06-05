@@ -25,6 +25,12 @@ Plugins have to be loaded before any other code runs! To achieve this, use the `
 preload = ["./myPlugin.ts"]
 ```
 
+Preloads can be either local files or npm packages. Anything that can be imported/required can be preloaded.
+
+```toml
+preload = ["bun-plugin-foo"]
+```
+
 To preload files before `bun test`:
 
 ```toml
@@ -32,7 +38,7 @@ To preload files before `bun test`:
 preload = ["./myPlugin.ts"]
 ```
 
-## Third-party plugins
+## Plugin conventions
 
 By convention, third-party plugins intended for consumption should export a factory function that accepts some configuration and returns a plugin object.
 
@@ -96,7 +102,7 @@ Once the plugin is registered, `.yaml` and `.yml` files can be directly imported
 {% codetabs %}
 
 ```ts#index.ts
-import data from "./data.yml"
+import * as data from "./data.yml"
 
 console.log(data);
 ```
@@ -307,7 +313,7 @@ await import("my-object-virtual-module"); // { baz: "quix" }
 Plugins can read and write to the [build config](https://bun.sh/docs/bundler#api) with `build.config`.
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -329,10 +335,10 @@ Bun.build({
 
 {% callout %}
 
-**NOTE**: Plugin lifcycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
+**NOTE**: Plugin lifecycle callbacks (`onStart()`, `onResolve()`, etc.) do not have the ability to modify the `build.config` object in the `setup()` function. If you want to mutate `build.config`, you must do so directly in the `setup()` function:
 
 ```ts
-Bun.build({
+await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   sourcemap: "external",
@@ -355,13 +361,15 @@ Bun.build({
 
 {% /callout %}
 
-## Lifecycle callbacks
+## Lifecycle hooks
 
 Plugins can register callbacks to be run at various points in the lifecycle of a bundle:
 
 - [`onStart()`](#onstart): Run once the bundler has started a bundle
 - [`onResolve()`](#onresolve): Run before a module is resolved
 - [`onLoad()`](#onload): Run before a module is loaded.
+
+### Reference
 
 A rough overview of the types (please refer to Bun's `bun.d.ts` for the full type definitions):
 
@@ -398,7 +406,7 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml" | "object";
 
 ### Namespaces
 
-`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespaace?
+`onLoad` and `onResolve` accept an optional `namespace` string. What is a namespace?
 
 Every module has a namespace. Namespaces are used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
 
@@ -551,55 +559,3 @@ plugin({
 ```
 
 This plugin will transform all imports of the form `import env from "env"` into a JavaScript module that exports the current environment variables.
-
-#### `.defer()`
-
-One of the arguments passed to the `onLoad` callback is a `defer` function. This function returns a `Promise` that is resolved when all _other_ modules have been loaded.
-
-This allows you to delay execution of the `onLoad` callback until all other modules have been loaded.
-
-This is useful for returning contens of a module that depends on other modules.
-
-##### Example: tracking and reporting unused exports
-
-```ts
-import { plugin } from "bun";
-
-plugin({
-  name: "track imports",
-  setup(build) {
-    const transpiler = new Bun.Transpiler();
-
-    let trackedImports: Record<string, number> = {};
-
-    // Each module that goes through this onLoad callback
-    // will record its imports in `trackedImports`
-    build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
-      const contents = await Bun.file(path).arrayBuffer();
-
-      const imports = transpiler.scanImports(contents);
-
-      for (const i of imports) {
-        trackedImports[i.path] = (trackedImports[i.path] || 0) + 1;
-      }
-
-      return undefined;
-    });
-
-    build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
-      // Wait for all files to be loaded, ensuring
-      // that every file goes through the above `onLoad()` function
-      // and their imports tracked
-      await defer();
-
-      // Emit JSON containing the stats of each import
-      return {
-        contents: `export default ${JSON.stringify(trackedImports)}`,
-        loader: "json",
-      };
-    });
-  },
-});
-```
-
-Note that the `.defer()` function currently has the limitation that it can only be called once per `onLoad` callback.

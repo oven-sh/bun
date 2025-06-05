@@ -21,6 +21,31 @@
         height: 100vh;
       }
 
+      .legend {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        background-color: #1e1e2e99;
+        padding: 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+      }
+
+      .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
       h1 {
         position: fixed;
         top: 1rem;
@@ -40,6 +65,36 @@
   <body>
     <h1>IncrementalGraph Visualization <span id="stat"></span></h1>
     <div id="network"></div>
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f38ba8"></div>
+        <span>Stale</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #cba6f7"></div>
+        <span>Client</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #bb56f5"></div>
+        <span>HTML</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89b4fa"></div>
+        <span>Route</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #a6e3a1"></div>
+        <span>SSR</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #89dceb"></div>
+        <span>Server</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color: #f9e2af"></div>
+        <span>SSR + Server</span>
+      </div>
+    </div>
 
     <script>
       // Connect to HMR WebSocket and enable visualization packets. This
@@ -47,6 +102,7 @@
       // over the wire. A visualization is provided by `vis.js`. Support
       //
       // Script written partially by ChatGPT
+      let isFirst = false;
 
       const c = {
         // Derived from mocha theme on https://catppuccin.com/palette
@@ -58,6 +114,7 @@
         sky: "#89dceb",
         blue: "#89b4fa",
         yellow: "#f9e2af",
+        purple: "#bb56f5",
       };
 
       // Store nodes and edges
@@ -85,7 +142,7 @@
         const ws = new WebSocket(location.origin + "/_bun/hmr");
         ws.binaryType = "arraybuffer"; // We are expecting binary data
         ws.onopen = function () {
-          ws.send(new Uint8Array([118])); // Send 'v' byte to initiate connection
+          ws.send("sv"); // Subscribe to visualizer events
         };
         ws.onmessage = function (event) {
           decodeAndUpdate(new Uint8Array(event.data));
@@ -205,7 +262,9 @@
             : file.isBoundary
               ? c.orange
               : group === "client"
-                ? c.mauve
+                ? file.isRoute
+                  ? c.purple
+                  : c.mauve
                 : file.isRoute
                   ? c.blue
                   : file.isSSR

@@ -76,7 +76,7 @@ The `define` field allows you to replace certain global identifiers with constan
 
 ### `loader`
 
-Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun. If
+Configure how Bun maps file extensions to loaders. This is useful for loading files that aren't natively supported by Bun.
 
 ```toml
 [loader]
@@ -180,6 +180,24 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 coverageSkipTestFiles = false
 ```
 
+### `test.coverageReporter`
+
+By default, coverage reports will be printed to the console. For persistent code coverage reports in CI environments and for other tools use `lcov`.
+
+```toml
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
+```
+
+### `test.coverageDir`
+
+Set path where coverage reports will be saved. Please notice, that it works only for persistent `coverageReporter` like `lcov`.
+
+```toml
+[test]
+coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -236,6 +254,17 @@ By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1
 ```toml
 [install]
 exact = false
+```
+
+### `install.saveTextLockfile`
+
+If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
+
+Default `true` (since Bun v1.2).
+
+```toml
+[install]
+saveTextLockfile = false
 ```
 
 <!--
@@ -304,7 +333,7 @@ Valid values are:
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lockb`. Default `false`. If `package.json` and the existing `bun.lockb` are not in agreement, this will error.
+When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
 
 ```toml
 [install]
@@ -412,7 +441,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lockb`. (A `bun.lockb` will always be created.) Currently `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will always be created.) Currently `"yarn"` is the only supported value.
 
 ```toml
 [install.lockfile]

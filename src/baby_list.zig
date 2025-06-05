@@ -1,14 +1,14 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
 const strings = @import("./string_immutable.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
 pub fn BabyList(comptime Type: type) type {
     return struct {
         const ListType = @This();
-        ptr: [*]Type = undefined,
+        ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
 
@@ -94,7 +94,7 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list_);
         }
 
-        pub fn popOrNull(this: *@This()) ?Type {
+        pub fn pop(this: *@This()) ?Type {
             if (this.len == 0) return null;
             this.len -= 1;
             return this.ptr[this.len];
@@ -111,8 +111,9 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         fn assertValidDeepClone(comptime T: type) void {
+            if (@hasDecl(T, "deepClone")) return;
             return switch (T) {
-                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions => {},
+                bun.JSAst.Expr, bun.JSAst.G.Property, bun.css.ImportConditions, bun.css.LayerName => {},
                 else => {
                     @compileError("Unsupported type for BabyList.deepClone(): " ++ @typeName(Type));
                 },
@@ -130,11 +131,12 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         /// Same as `deepClone` but doesn't return an error
-        pub fn deepClone2(this: @This(), allocator: std.mem.Allocator) @This() {
+        pub fn deepClone2(this: *const @This(), allocator: std.mem.Allocator) @This() {
             assertValidDeepClone(Type);
             var list_ = initCapacity(allocator, this.len) catch bun.outOfMemory();
-            for (this.slice()) |item| {
-                list_.appendAssumeCapacity(item.deepClone(allocator));
+            list_.len = this.len;
+            for (this.sliceConst(), list_.slice()) |*old, *new| {
+                new.* = old.deepClone(allocator);
             }
 
             return list_;
@@ -172,7 +174,7 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len);
         }
 
-        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
+        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
             return initWithBuffer(try allocator.alloc(Type, len));
         }
 
@@ -304,6 +306,20 @@ pub fn BabyList(comptime Type: type) type {
             var list__ = this.listManaged(allocator);
             const writer = list__.writer();
             try writer.print(fmt, args);
+
+            this.update(list__);
+        }
+
+        pub fn insert(this: *@This(), allocator: std.mem.Allocator, index: usize, val: Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insert(index, val);
+            this.update(list__);
+        }
+
+        pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insertSlice(index, vals);
+            this.update(list__);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
@@ -332,7 +348,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.len - initial;
         }
 
-        pub fn writeLatin1(this: *@This(), allocator: std.mem.Allocator, str: []const u8) !u32 {
+        pub fn writeLatin1(this: *@This(), allocator: std.mem.Allocator, str: []const u8) OOM!u32 {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
@@ -342,7 +358,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.len - initial;
         }
 
-        pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) !u32 {
+        pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) OOM!u32 {
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
 
@@ -389,6 +405,57 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len + @sizeOf(Int));
             @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
             this.len += @sizeOf(Int);
+        }
+    };
+}
+
+pub fn OffsetList(comptime Type: type) type {
+    return struct {
+        head: u32 = 0,
+        byte_list: List = .{},
+
+        const List = BabyList(Type);
+        const ThisList = @This();
+
+        pub fn init(head: u32, byte_list: List) ThisList {
+            return .{
+                .head = head,
+                .byte_list = byte_list,
+            };
+        }
+
+        pub fn write(self: *ThisList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+            _ = try self.byte_list.write(allocator, bytes);
+        }
+
+        pub fn slice(this: *ThisList) []u8 {
+            return this.byte_list.slice()[0..this.head];
+        }
+
+        pub fn remaining(this: *ThisList) []u8 {
+            return this.byte_list.slice()[this.head..];
+        }
+
+        pub fn consume(self: *ThisList, bytes: u32) void {
+            self.head +|= bytes;
+            if (self.head >= self.byte_list.len) {
+                self.head = 0;
+                self.byte_list.len = 0;
+            }
+        }
+
+        pub fn len(self: *const ThisList) u32 {
+            return self.byte_list.len - self.head;
+        }
+
+        pub fn clear(self: *ThisList) void {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+
+        pub fn deinit(self: *ThisList, allocator: std.mem.Allocator) void {
+            self.byte_list.deinitWithAllocator(allocator);
+            self.* = .{};
         }
     };
 }

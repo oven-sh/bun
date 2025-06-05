@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -6,7 +7,6 @@ import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import sync from "./require-json.json";
-import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 
 const { path, dir, dirname, filename } = import.meta;
 
@@ -248,6 +248,15 @@ it("require.resolve error code", () => {
 it("import non exist error code", async () => {
   try {
     await import("node:missing");
+    throw 1;
+  } catch (e) {
+    expect(e.code).toBe("ERR_UNKNOWN_BUILTIN_MODULE");
+  }
+});
+
+it("import non exist error code", async () => {
+  try {
+    await import("./idontexist");
     throw 1;
   } catch (e) {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");

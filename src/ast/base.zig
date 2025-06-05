@@ -1,6 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const unicode = std.unicode;
+const bun = @import("bun");
 
 const js_ast = bun.JSAst;
 
@@ -62,7 +61,7 @@ pub const Index = packed struct(u32) {
 
     pub fn init(num: anytype) Index {
         const NumType = @TypeOf(num);
-        if (comptime @typeInfo(NumType) == .Pointer) {
+        if (comptime @typeInfo(NumType) == .pointer) {
             return init(num.*);
         }
 
@@ -188,7 +187,7 @@ pub const Ref = packed struct(u64) {
         return this.tag == .source_contents_slice;
     }
 
-    pub fn init(inner_index: Int, source_index: usize, is_source_contents_slice: bool) Ref {
+    pub fn init(inner_index: Int, source_index: u32, is_source_contents_slice: bool) Ref {
         return .{
             .inner_index = inner_index,
             .source_index = @intCast(source_index),

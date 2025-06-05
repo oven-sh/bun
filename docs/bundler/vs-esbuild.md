@@ -695,7 +695,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 - In Bun, `minify` can be a boolean or an object.
 
   ```ts
-  Bun.build({
+  await Bun.build({
     entrypoints: ['./index.tsx'],
     // enable all minification
     minify: true

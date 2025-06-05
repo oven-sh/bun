@@ -260,3 +260,21 @@ it("decoding latin1, issue #3738", () => {
   output += decoder.end();
   expect(output).toStrictEqual("ÝYÞ");
 });
+
+it("invalid utf-8 at end of stream can sometimes produce more than one replacement character", () => {
+  let decoder = new RealStringDecoder("utf-8");
+  expect(decoder.write(Buffer.from("36f59c", "hex"))).toEqual("6");
+  expect(decoder.end()).toEqual("\uFFFD\uFFFD");
+  decoder = new RealStringDecoder("utf-8");
+  expect(decoder.write(Buffer.from("36f5", "hex"))).toEqual("6");
+  expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
+});
+
+it("invalid utf-8 at end of stream can sometimes produce more than one replacement character", () => {
+  let decoder = new RealStringDecoder("utf-8");
+  expect(decoder.write(Buffer.from("36f59c", "hex"))).toEqual("6");
+  expect(decoder.end()).toEqual("\uFFFD\uFFFD");
+  decoder = new RealStringDecoder("utf-8");
+  expect(decoder.write(Buffer.from("36f5", "hex"))).toEqual("6");
+  expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
+});

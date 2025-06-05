@@ -1,14 +1,12 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
 const PackageManager = Install.PackageManager;
-const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = @import("./repository.zig").Repository;
-const Semver = @import("./semver.zig");
-const ExternalString = Semver.ExternalString;
+const Semver = bun.Semver;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const std = @import("std");
@@ -51,7 +49,7 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = Behavior.uninitialized,
+behavior: Behavior = .{},
 
 /// Sorting order for dependencies is:
 /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
@@ -116,7 +114,7 @@ pub const Context = struct {
     allocator: std.mem.Allocator,
     log: *logger.Log,
     buffer: []const u8,
-    package_manager: *PackageManager,
+    package_manager: ?*PackageManager,
 };
 
 /// Get the name of the package as it should appear in a remote registry.
@@ -265,7 +263,7 @@ pub inline fn isRemoteTarball(dependency: string) bool {
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     if (strings.indexOfChar(str, '@')) |at_index| {
         if (at_index != 0) {
             return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
@@ -277,6 +275,22 @@ pub fn splitNameAndVersion(str: string) struct { string, ?string } {
     }
 
     return .{ str, null };
+}
+
+pub fn splitNameAndVersionOrLatest(str: string) struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse "latest",
+    };
+}
+
+pub fn splitNameAndVersion(str: string) error{MissingVersion}!struct { string, string } {
+    const name, const version = splitNameAndMaybeVersion(str);
+    return .{
+        name,
+        version orelse return error.MissingVersion,
+    };
 }
 
 pub fn unscopedPackageName(name: []const u8) []const u8 {
@@ -487,6 +501,8 @@ pub const Version = struct {
         /// GitHub Repository (via REST API)
         github = 8,
 
+        catalog = 9,
+
         pub const map = bun.ComptimeStringMap(Tag, .{
             .{ "npm", .npm },
             .{ "dist_tag", .dist_tag },
@@ -496,6 +512,7 @@ pub const Version = struct {
             .{ "workspace", .workspace },
             .{ "git", .git },
             .{ "github", .github },
+            .{ "catalog", .catalog },
         });
         pub const fromJS = map.fromJS;
 
@@ -565,6 +582,11 @@ pub const Version = struct {
                     if (strings.hasPrefixComptime(dependency, "file:")) {
                         if (isTarball(dependency)) return .tarball;
                         return .folder;
+                    }
+                },
+                'c' => {
+                    if (strings.hasPrefixComptime(dependency, "catalog:")) {
+                        return .catalog;
                     }
                 },
                 // git_user/repo
@@ -764,7 +786,7 @@ pub const Version = struct {
                 return .undefined;
             }
 
-            const tag = Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
+            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .undefined;
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -812,6 +834,10 @@ pub const Version = struct {
         workspace: String,
         git: Repository,
         github: Repository,
+
+        // dep version without 'catalog:' protocol
+        // empty string == default catalog
+        catalog: String,
     };
 };
 
@@ -1232,6 +1258,19 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
+        .catalog => {
+            bun.assert(strings.hasPrefixComptime(dependency, "catalog:"));
+
+            const group = dependency["catalog:".len..];
+
+            const trimmed = strings.trim(group, &strings.whitespace_chars);
+
+            return .{
+                .value = .{ .catalog = sliced.sub(trimmed).value() },
+                .tag = .catalog,
+                .literal = sliced.value(),
+            };
+        },
     }
 }
 
@@ -1250,7 +1289,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     if (!alias_value.isString()) {
         return .undefined;
     }
-    const alias_slice = alias_value.toSlice(globalThis, allocator);
+    const alias_slice = try alias_value.toSlice(globalThis, allocator);
     defer alias_slice.deinit();
 
     if (alias_slice.len == 0) {
@@ -1258,7 +1297,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     }
 
     const name_value = if (arguments.len > 1) arguments[1] else .undefined;
-    const name_slice = name_value.toSlice(globalThis, allocator);
+    const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
     var name = alias_slice.slice();
@@ -1278,14 +1317,14 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 
     const dep: Version = Dependency.parse(allocator, SlicedString.init(buf, alias).value(), null, buf, &sliced, &log, null) orelse {
         if (log.msgs.items.len > 0) {
-            return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
         }
 
         return .undefined;
     };
 
     if (log.msgs.items.len > 0) {
-        return globalThis.throwValue2(log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
+        return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependency"));
     }
     log.deinit();
 
@@ -1293,36 +1332,26 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 pub const Behavior = packed struct(u8) {
-    pub const uninitialized: Behavior = .{};
-
-    // these padding fields are to have compatibility
-    // with older versions of lockfile v2
     _unused_1: u1 = 0,
-
-    normal: bool = false,
+    prod: bool = false,
     optional: bool = false,
     dev: bool = false,
     peer: bool = false,
     workspace: bool = false,
+    /// Is not set for transitive bundled dependencies
+    bundled: bool = false,
+    _unused_2: u1 = 0,
 
-    _unused_2: u2 = 0,
-
-    pub const normal = Behavior{ .normal = true };
-    pub const optional = Behavior{ .optional = true };
-    pub const dev = Behavior{ .dev = true };
-    pub const peer = Behavior{ .peer = true };
-    pub const workspace = Behavior{ .workspace = true };
-
-    pub inline fn isNormal(this: Behavior) bool {
-        return this.normal;
+    pub inline fn isProd(this: Behavior) bool {
+        return this.prod;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return this.optional and !this.isPeer();
+        return this.optional and !this.peer;
     }
 
     pub inline fn isOptionalPeer(this: Behavior) bool {
-        return this.optional and this.isPeer();
+        return this.optional and this.peer;
     }
 
     pub inline fn isDev(this: Behavior) bool {
@@ -1337,42 +1366,32 @@ pub const Behavior = packed struct(u8) {
         return this.workspace;
     }
 
+    pub inline fn isBundled(this: Behavior) bool {
+        return this.bundled;
+    }
+
     pub inline fn isWorkspaceOnly(this: Behavior) bool {
-        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
-    }
-
-    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.normal = value;
-        return b;
-    }
-
-    pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.optional = value;
-        return b;
-    }
-
-    pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.dev = value;
-        return b;
-    }
-
-    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.peer = value;
-        return b;
-    }
-
-    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        var b = this;
-        b.workspace = value;
-        return b;
+        return this.workspace and !this.dev and !this.prod and !this.optional and !this.peer;
     }
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
         return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
+    }
+
+    pub inline fn includes(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) & @as(u8, @bitCast(rhs)) != 0;
+    }
+
+    pub inline fn add(this: Behavior, kind: @Type(.enum_literal)) Behavior {
+        var new = this;
+        @field(new, @tagName(kind)) = true;
+        return new;
+    }
+
+    pub inline fn set(this: Behavior, kind: @Type(.enum_literal), value: bool) Behavior {
+        var new = this;
+        @field(new, @tagName(kind)) = value;
+        return new;
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
@@ -1380,8 +1399,8 @@ pub const Behavior = packed struct(u8) {
             return .eq;
         }
 
-        if (lhs.isNormal() != rhs.isNormal()) {
-            return if (lhs.isNormal())
+        if (lhs.isProd() != rhs.isProd()) {
+            return if (lhs.isProd())
                 .gt
             else
                 .lt;
@@ -1423,43 +1442,18 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
-        return this.isNormal() or
+        return this.isProd() or
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
             (features.workspaces and this.isWorkspaceOnly());
     }
 
-    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const fields = .{
-            "normal",
-            "optional",
-            "dev",
-            "peer",
-            "workspace",
-        };
-
-        var first = true;
-        inline for (fields) |field| {
-            if (@field(self, field)) {
-                if (!first) {
-                    try writer.writeAll(" | ");
-                }
-                try writer.writeAll(field);
-                first = false;
-            }
-        }
-
-        if (first) {
-            try writer.writeAll("-");
-        }
-    }
-
     comptime {
-        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
-        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
-        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
-        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
-        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
+        bun.assert(@as(u8, @bitCast(Behavior{ .prod = true })) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior{ .optional = true })) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior{ .dev = true })) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior{ .peer = true })) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };

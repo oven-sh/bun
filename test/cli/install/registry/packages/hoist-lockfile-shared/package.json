@@ -1,0 +1,104 @@
+{
+	"name": "hoist-lockfile-shared",
+	"versions": {
+		"1.0.1": {
+			"name": "hoist-lockfile-shared",
+			"version": "1.0.1",
+			"_id": "hoist-lockfile-shared@1.0.1",
+			"_integrity": "sha512-wPw8pTRj2OeZ/n7NeixjaSeI7FoM9DbMHWzdLv1kuBesSXJn+17UA0N7LV7t9dREnIMLw7ycRomhDL+56NRBmQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-wPw8pTRj2OeZ/n7NeixjaSeI7FoM9DbMHWzdLv1kuBesSXJn+17UA0N7LV7t9dREnIMLw7ycRomhDL+56NRBmQ==",
+			"shasum": "fde345ca6900e410c285e0468c8baf1e97400899",
+			"dist": {
+				"integrity": "sha512-wPw8pTRj2OeZ/n7NeixjaSeI7FoM9DbMHWzdLv1kuBesSXJn+17UA0N7LV7t9dREnIMLw7ycRomhDL+56NRBmQ==",
+				"shasum": "fde345ca6900e410c285e0468c8baf1e97400899",
+				"tarball": "http://http://localhost:4873/hoist-lockfile-shared/-/hoist-lockfile-shared-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "hoist-lockfile-shared",
+			"version": "1.0.2",
+			"_id": "hoist-lockfile-shared@1.0.2",
+			"_integrity": "sha512-p7IQ/BbkTRLG/GUx6j2cDQ+vTUc/v9OW9Ss9igh/GFysbr0Qjriz/DiETnISkxYaTFitqOkUSOUkEKyeLNJsfQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-p7IQ/BbkTRLG/GUx6j2cDQ+vTUc/v9OW9Ss9igh/GFysbr0Qjriz/DiETnISkxYaTFitqOkUSOUkEKyeLNJsfQ==",
+			"shasum": "027dac365f2e611c171bbca4f3cad0d0dd17d3c1",
+			"dist": {
+				"integrity": "sha512-p7IQ/BbkTRLG/GUx6j2cDQ+vTUc/v9OW9Ss9igh/GFysbr0Qjriz/DiETnISkxYaTFitqOkUSOUkEKyeLNJsfQ==",
+				"shasum": "027dac365f2e611c171bbca4f3cad0d0dd17d3c1",
+				"tarball": "http://http://localhost:4873/hoist-lockfile-shared/-/hoist-lockfile-shared-1.0.2.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.1": {
+			"name": "hoist-lockfile-shared",
+			"version": "2.0.1",
+			"_id": "hoist-lockfile-shared@2.0.1",
+			"_integrity": "sha512-r5/0DwsWyuolaBZtsYFTP0jBhwvDGNIekb/KrgBlPSROcYEgggIFBAuMPe2uU5CrsLkSH+MTc++K/reLLXgHNQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-r5/0DwsWyuolaBZtsYFTP0jBhwvDGNIekb/KrgBlPSROcYEgggIFBAuMPe2uU5CrsLkSH+MTc++K/reLLXgHNQ==",
+			"shasum": "e125f0cb27dd6e6fd8871060dbf6fba36ad1f917",
+			"dist": {
+				"integrity": "sha512-r5/0DwsWyuolaBZtsYFTP0jBhwvDGNIekb/KrgBlPSROcYEgggIFBAuMPe2uU5CrsLkSH+MTc++K/reLLXgHNQ==",
+				"shasum": "e125f0cb27dd6e6fd8871060dbf6fba36ad1f917",
+				"tarball": "http://http://localhost:4873/hoist-lockfile-shared/-/hoist-lockfile-shared-2.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.2": {
+			"name": "hoist-lockfile-shared",
+			"version": "2.0.2",
+			"_id": "hoist-lockfile-shared@2.0.2",
+			"_integrity": "sha512-xPWoyP8lv+/JrbClRzhJx1eUsHqDflSTmWOxx82xvMIEs6mbiIuvIp3/L+Ojc6mqex6y426h7L5j0hjLZE3V9w==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-xPWoyP8lv+/JrbClRzhJx1eUsHqDflSTmWOxx82xvMIEs6mbiIuvIp3/L+Ojc6mqex6y426h7L5j0hjLZE3V9w==",
+			"shasum": "1ca0ded36e6aa42702055f61e9d65083831ae849",
+			"dist": {
+				"integrity": "sha512-xPWoyP8lv+/JrbClRzhJx1eUsHqDflSTmWOxx82xvMIEs6mbiIuvIp3/L+Ojc6mqex6y426h7L5j0hjLZE3V9w==",
+				"shasum": "1ca0ded36e6aa42702055f61e9d65083831ae849",
+				"tarball": "http://http://localhost:4873/hoist-lockfile-shared/-/hoist-lockfile-shared-2.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-15T09:57:52.172Z",
+		"created": "2024-12-15T09:57:36.725Z",
+		"1.0.1": "2024-12-15T09:57:36.725Z",
+		"1.0.2": "2024-12-15T09:57:44.209Z",
+		"2.0.1": "2024-12-15T09:57:49.265Z",
+		"2.0.2": "2024-12-15T09:57:52.172Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"hoist-lockfile-shared-1.0.1.tgz": {
+			"shasum": "fde345ca6900e410c285e0468c8baf1e97400899",
+			"version": "1.0.1"
+		},
+		"hoist-lockfile-shared-1.0.2.tgz": {
+			"shasum": "027dac365f2e611c171bbca4f3cad0d0dd17d3c1",
+			"version": "1.0.2"
+		},
+		"hoist-lockfile-shared-2.0.1.tgz": {
+			"shasum": "e125f0cb27dd6e6fd8871060dbf6fba36ad1f917",
+			"version": "2.0.1"
+		},
+		"hoist-lockfile-shared-2.0.2.tgz": {
+			"shasum": "1ca0ded36e6aa42702055f61e9d65083831ae849",
+			"version": "2.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "hoist-lockfile-shared",
+	"readme": ""
+}

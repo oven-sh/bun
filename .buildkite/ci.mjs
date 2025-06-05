@@ -5,828 +5,1201 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   getBootstrapVersion,
+  getBuildkiteEmoji,
+  getBuildMetadata,
   getBuildNumber,
   getCanaryRevision,
-  getChangedFiles,
-  getCommit,
   getCommitMessage,
+  getEmoji,
   getEnv,
   getLastSuccessfulBuild,
-  getMainBranch,
-  getTargetBranch,
   isBuildkite,
+  isBuildManual,
   isFork,
   isMainBranch,
   isMergeQueue,
-  printEnvironment,
+  parseBoolean,
   spawnSafe,
+  startGroup,
   toYaml,
   uploadArtifact,
+  writeFile,
 } from "../scripts/utils.mjs";
 
 /**
- * @typedef PipelineOptions
- * @property {string} [buildId]
- * @property {boolean} [buildImages]
- * @property {boolean} [publishImages]
- * @property {boolean} [skipTests]
+ * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"aarch64" | "x64"} Arch
+ * @typedef {"musl"} Abi
+ * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
+ * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
 /**
- * @param {PipelineOptions} options
+ * @typedef Target
+ * @property {Os} os
+ * @property {Arch} arch
+ * @property {Abi} [abi]
+ * @property {boolean} [baseline]
+ * @property {Profile} [profile]
  */
-function getPipeline(options) {
-  const { buildId, buildImages, publishImages, skipTests } = options;
 
-  /**
-   * Helpers
-   */
+/**
+ * @param {Target} target
+ * @returns {string}
+ */
+function getTargetKey(target) {
+  const { os, arch, abi, baseline, profile } = target;
+  let key = `${os}-${arch}`;
+  if (abi) {
+    key += `-${abi}`;
+  }
+  if (baseline) {
+    key += "-baseline";
+  }
+  if (profile && profile !== "release") {
+    key += `-${profile}`;
+  }
+  return key;
+}
 
-  /**
-   * @param {string} text
-   * @returns {string}
-   * @link https://github.com/buildkite/emojis#emoji-reference
-   */
-  const getEmoji = string => {
-    if (string === "amazonlinux") {
-      return ":aws:";
-    }
-    return `:${string}:`;
+/**
+ * @param {Target} target
+ * @returns {string}
+ */
+function getTargetLabel(target) {
+  const { os, arch, abi, baseline, profile } = target;
+  let label = `${getBuildkiteEmoji(os)} ${arch}`;
+  if (abi) {
+    label += `-${abi}`;
+  }
+  if (baseline) {
+    label += "-baseline";
+  }
+  if (profile && profile !== "release") {
+    label += `-${profile}`;
+  }
+  return label;
+}
+
+/**
+ * @typedef Platform
+ * @property {Os} os
+ * @property {Arch} arch
+ * @property {Abi} [abi]
+ * @property {boolean} [baseline]
+ * @property {Profile} [profile]
+ * @property {Distro} [distro]
+ * @property {string} release
+ * @property {Tier} [tier]
+ * @property {string[]} [features]
+ */
+
+/**
+ * @type {Platform[]}
+ */
+const buildPlatforms = [
+  { os: "darwin", arch: "aarch64", release: "14" },
+  { os: "darwin", arch: "x64", release: "14" },
+  { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
+  { os: "windows", arch: "x64", release: "2019" },
+  { os: "windows", arch: "x64", baseline: true, release: "2019" },
+];
+
+/**
+ * @type {Platform[]}
+ */
+const testPlatforms = [
+  { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
+  { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
+];
+
+/**
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getPlatformKey(platform) {
+  const { distro, release } = platform;
+  const target = getTargetKey(platform);
+  const version = release.replace(/\./g, "");
+  if (distro) {
+    return `${target}-${distro}-${version}`;
+  }
+  return `${target}-${version}`;
+}
+
+/**
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getPlatformLabel(platform) {
+  const { os, arch, baseline, profile, distro, release } = platform;
+  let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
+  if (baseline) {
+    label += "-baseline";
+  }
+  if (profile && profile !== "release") {
+    label += `-${profile}`;
+  }
+  return label;
+}
+
+/**
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getImageKey(platform) {
+  const { os, arch, distro, release, features, abi } = platform;
+  const version = release.replace(/\./g, "");
+  let key = `${os}-${arch}-${version}`;
+  if (distro) {
+    key += `-${distro}`;
+  }
+  if (features?.length) {
+    key += `-with-${features.join("-")}`;
+  }
+
+  if (abi) {
+    key += `-${abi}`;
+  }
+
+  return key;
+}
+
+/**
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getImageLabel(platform) {
+  const { os, arch, distro, release } = platform;
+  return `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getImageName(platform, options) {
+  const { os } = platform;
+  const { buildImages, publishImages } = options;
+
+  const name = getImageKey(platform);
+
+  if (buildImages && !publishImages) {
+    return `${name}-build-${getBuildNumber()}`;
+  }
+
+  return `${name}-v${getBootstrapVersion(os)}`;
+}
+
+/**
+ * @param {number} [limit]
+ * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
+ */
+function getRetry(limit = 0) {
+  return {
+    manual: {
+      permit_on_passed: true,
+    },
+    automatic: false,
   };
+}
 
-  /**
-   * @typedef {"linux" | "darwin" | "windows"} Os
-   * @typedef {"aarch64" | "x64"} Arch
-   * @typedef {"musl"} Abi
-   */
+/**
+ * @returns {number}
+ * @link https://buildkite.com/docs/pipelines/managing-priorities
+ */
+function getPriority() {
+  if (isFork()) {
+    return -1;
+  }
+  if (isMainBranch()) {
+    return 2;
+  }
+  if (isMergeQueue()) {
+    return 1;
+  }
+  return 0;
+}
 
-  /**
-   * @typedef Target
-   * @property {Os} os
-   * @property {Arch} arch
-   * @property {Abi} [abi]
-   * @property {boolean} [baseline]
-   */
+/**
+ * Agents
+ */
 
-  /**
-   * @param {Target} target
-   * @returns {string}
-   */
-  const getTargetKey = target => {
-    const { os, arch, abi, baseline } = target;
-    let key = `${os}-${arch}`;
-    if (abi) {
-      key += `-${abi}`;
-    }
-    if (baseline) {
-      key += "-baseline";
-    }
-    return key;
+/**
+ * @typedef {Object} Ec2Options
+ * @property {string} instanceType
+ * @property {number} cpuCount
+ * @property {number} threadsPerCore
+ * @property {boolean} dryRun
+ */
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {Ec2Options} ec2Options
+ * @returns {Agent}
+ */
+function getEc2Agent(platform, options, ec2Options) {
+  const { os, arch, abi, distro, release } = platform;
+  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  return {
+    os,
+    arch,
+    abi,
+    distro,
+    release,
+    robobun: true,
+    robobun2: true,
+    "image-name": getImageName(platform, options),
+    "instance-type": instanceType,
+    "cpu-count": cpuCount,
+    "threads-per-core": threadsPerCore,
+    "preemptible": false,
   };
+}
 
-  /**
-   * @param {Target} target
-   * @returns {string}
-   */
-  const getTargetLabel = target => {
-    const { os, arch, abi, baseline } = target;
-    let label = `${getEmoji(os)} ${arch}`;
-    if (abi) {
-      label += `-${abi}`;
-    }
-    if (baseline) {
-      label += "-baseline";
-    }
-    return label;
-  };
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getCppAgent(platform, options) {
+  const { os, arch, distro } = platform;
 
-  /**
-   * @typedef Platform
-   * @property {Os} os
-   * @property {Arch} arch
-   * @property {Abi} [abi]
-   * @property {boolean} [baseline]
-   * @property {string} [distro]
-   * @property {string} release
-   */
-
-  /**
-   * @param {Platform} platform
-   * @returns {string}
-   */
-  const getPlatformKey = platform => {
-    const { os, arch, abi, baseline, distro, release } = platform;
-    const target = getTargetKey({ os, arch, abi, baseline });
-    if (distro) {
-      return `${target}-${distro}-${release.replace(/\./g, "")}`;
-    }
-    return `${target}-${release.replace(/\./g, "")}`;
-  };
-
-  /**
-   * @param {Platform} platform
-   * @returns {string}
-   */
-  const getPlatformLabel = platform => {
-    const { os, arch, baseline, distro, release } = platform;
-    let label = `${getEmoji(distro || os)} ${release} ${arch}`;
-    if (baseline) {
-      label += "-baseline";
-    }
-    return label;
-  };
-
-  /**
-   * @param {Platform} platform
-   * @returns {string}
-   */
-  const getImageKey = platform => {
-    const { os, arch, distro, release } = platform;
-    if (distro) {
-      return `${os}-${arch}-${distro}-${release.replace(/\./g, "")}`;
-    }
-    return `${os}-${arch}-${release.replace(/\./g, "")}`;
-  };
-
-  /**
-   * @param {Platform} platform
-   * @returns {string}
-   */
-  const getImageLabel = platform => {
-    const { os, arch, distro, release } = platform;
-    return `${getEmoji(distro || os)} ${release} ${arch}`;
-  };
-
-  /**
-   * @param {number} [limit]
-   * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
-   */
-  const getRetry = (limit = 0) => {
-    return {
-      automatic: [
-        { exit_status: 1, limit },
-        { exit_status: -1, limit: 3 },
-        { exit_status: 255, limit: 3 },
-        { signal_reason: "agent_stop", limit: 3 },
-      ],
-    };
-  };
-
-  /**
-   * @returns {number}
-   * @link https://buildkite.com/docs/pipelines/managing-priorities
-   */
-  const getPriority = () => {
-    if (isFork()) {
-      return -1;
-    }
-    if (isMainBranch()) {
-      return 2;
-    }
-    if (isMergeQueue()) {
-      return 1;
-    }
-    return 0;
-  };
-
-  /**
-   * @param {Target} target
-   * @returns {Record<string, string | undefined>}
-   */
-  const getBuildEnv = target => {
-    const { baseline, abi } = target;
-    return {
-      ENABLE_BASELINE: baseline ? "ON" : "OFF",
-      ABI: abi === "musl" ? "musl" : undefined,
-    };
-  };
-
-  /**
-   * @param {Target} target
-   * @returns {string}
-   */
-  const getBuildToolchain = target => {
-    const { os, arch, abi, baseline } = target;
-    let key = `${os}-${arch}`;
-    if (abi) {
-      key += `-${abi}`;
-    }
-    if (baseline) {
-      key += "-baseline";
-    }
-    return key;
-  };
-
-  /**
-   * Agents
-   */
-
-  /**
-   * @typedef {Record<string, string | undefined>} Agent
-   */
-
-  /**
-   * @param {Platform} platform
-   * @returns {boolean}
-   */
-  const isUsingNewAgent = platform => {
-    const { os } = platform;
-    if (os === "linux") {
-      return true;
-    }
-    return false;
-  };
-
-  /**
-   * @param {"v1" | "v2"} version
-   * @param {Platform} platform
-   * @param {string} [instanceType]
-   * @returns {Agent}
-   */
-  const getEmphemeralAgent = (version, platform, instanceType) => {
-    const { os, arch, abi, distro, release } = platform;
-    if (version === "v1") {
-      return {
-        robobun: true,
-        os,
-        arch,
-        distro,
-        release,
-      };
-    }
-    let image;
-    if (distro) {
-      image = `${os}-${arch}-${distro}-${release}`;
-    } else {
-      image = `${os}-${arch}-${release}`;
-    }
-    if (buildImages && !publishImages) {
-      image += `-build-${getBuildNumber()}`;
-    } else {
-      image += `-v${getBootstrapVersion()}`;
-    }
-    return {
-      robobun: true,
-      robobun2: true,
-      os,
-      arch,
-      abi,
-      distro,
-      release,
-      "image-name": image,
-      "instance-type": instanceType,
-    };
-  };
-
-  /**
-   * @param {Target} target
-   * @returns {Agent}
-   */
-  const getBuildAgent = target => {
-    const { os, arch, abi } = target;
-    if (isUsingNewAgent(target)) {
-      const instanceType = arch === "aarch64" ? "c8g.8xlarge" : "c7i.8xlarge";
-      return getEmphemeralAgent("v2", target, instanceType);
-    }
+  if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
       arch,
-      abi,
     };
-  };
+  }
 
-  /**
-   * @param {Target} target
-   * @returns {Agent}
-   */
-  const getZigAgent = target => {
-    const { abi, arch } = target;
-    // if (abi === "musl") {
-    //   const instanceType = arch === "aarch64" ? "c8g.large" : "c7i.large";
-    //   return getEmphemeralAgent("v2", target, instanceType);
-    // }
+  return getEc2Agent(platform, options, {
+    instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
+    cpuCount: 32,
+    threadsPerCore: 1,
+  });
+}
+
+/**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.21",
+  };
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Agent}
+ */
+function getZigAgent(platform, options) {
+  const { arch } = platform;
+
+  // Uncomment to restore to using macOS on-prem for Zig.
+  // return {
+  //   queue: "build-zig",
+  // };
+
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Agent}
+ */
+function getTestAgent(platform, options) {
+  const { os, arch } = platform;
+
+  if (os === "darwin") {
     return {
-      queue: "build-zig",
+      queue: `test-${os}`,
+      os,
+      arch,
     };
+  }
+
+  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
+
+  if (arch === "aarch64") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c8g.xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
+
+  return getEc2Agent(platform, options, {
+    instanceType: "c7i.xlarge",
+    cpuCount: 2,
+    threadsPerCore: 1,
+  });
+}
+
+/**
+ * Steps
+ */
+
+/**
+ * @param {Target} target
+ * @param {PipelineOptions} options
+ * @returns {Record<string, string | undefined>}
+ */
+function getBuildEnv(target, options) {
+  const { baseline, abi } = target;
+  const { canary } = options;
+  const revision = typeof canary === "number" ? canary : 1;
+
+  return {
+    ENABLE_BASELINE: baseline ? "ON" : "OFF",
+    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
+    CANARY_REVISION: revision,
+    ABI: abi === "musl" ? "musl" : undefined,
+    CMAKE_VERBOSE_MAKEFILE: "ON",
+    CMAKE_TLS_VERIFY: "0",
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Agent}
-   */
-  const getTestAgent = platform => {
-    const { os, arch, release } = platform;
-    if (isUsingNewAgent(platform)) {
-      const instanceType = arch === "aarch64" ? "t4g.large" : "t3.large";
-      return getEmphemeralAgent("v2", platform, instanceType);
-    }
-    if (os === "darwin") {
-      return {
-        os,
-        arch,
-        release,
-        queue: "test-darwin",
-      };
-    }
-    return getEmphemeralAgent("v1", platform);
+/**
+ * @param {Target} target
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getBuildCommand(target, options) {
+  const { profile } = target;
+
+  const label = profile || "release";
+  return `bun run build:${label}`;
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildVendorStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-vendor`,
+    label: `${getTargetLabel(platform)} - build-vendor`,
+    agents: getCppAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform, options),
+    command: `${getBuildCommand(platform, options)} --target dependencies`,
   };
+}
 
-  /**
-   * Steps
-   */
-
-  /**
-   * @typedef Step
-   * @property {string} key
-   * @property {string} [label]
-   * @property {Record<string, string | undefined>} [agents]
-   * @property {Record<string, string | undefined>} [env]
-   * @property {string} command
-   * @property {string[]} [depends_on]
-   * @property {Record<string, string | undefined>} [retry]
-   * @property {boolean} [cancel_on_build_failing]
-   * @property {boolean} [soft_fail]
-   * @property {number} [parallelism]
-   * @property {number} [concurrency]
-   * @property {string} [concurrency_group]
-   * @property {number} [priority]
-   * @property {number} [timeout_in_minutes]
-   * @link https://buildkite.com/docs/pipelines/command-step
-   */
-
-  /**
-   * @param {Platform} platform
-   * @param {string} [step]
-   * @returns {string[]}
-   */
-  const getDependsOn = (platform, step) => {
-    if (imagePlatforms.has(getImageKey(platform))) {
-      const key = `${getImageKey(platform)}-build-image`;
-      if (key !== step) {
-        return [key];
-      }
-    }
-    return [];
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildCppStep(platform, options) {
+  const command = getBuildCommand(platform, options);
+  return {
+    key: `${getTargetKey(platform)}-build-cpp`,
+    label: `${getTargetLabel(platform)} - build-cpp`,
+    agents: getCppAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: {
+      BUN_CPP_ONLY: "ON",
+      ...getBuildEnv(platform, options),
+    },
+    // We used to build the C++ dependencies and bun in separate steps.
+    // However, as long as the zig build takes longer than both sequentially,
+    // it's cheaper to run them in the same step. Can be revisited in the future.
+    command: [`${command} --target bun`, `${command} --target dependencies`],
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getBuildImageStep = platform => {
-    const { os, arch, distro, release } = platform;
-    const action = publishImages ? "publish-image" : "create-image";
-    return {
-      key: `${getImageKey(platform)}-build-image`,
-      label: `${getImageLabel(platform)} - build-image`,
-      agents: {
-        queue: "build-image",
-      },
-      env: {
-        DEBUG: "1",
-      },
-      retry: getRetry(),
-      command: `node ./scripts/machine.mjs ${action} --ci --cloud=aws --os=${os} --arch=${arch} --distro=${distro} --distro-version=${release}`,
-    };
+/**
+ * @param {Target} target
+ * @returns {string}
+ */
+function getBuildToolchain(target) {
+  const { os, arch, abi, baseline } = target;
+  let key = `${os}-${arch}`;
+  if (abi) {
+    key += `-${abi}`;
+  }
+  if (baseline) {
+    key += "-baseline";
+  }
+  return key;
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildZigStep(platform, options) {
+  const toolchain = getBuildToolchain(platform);
+  return {
+    key: `${getTargetKey(platform)}-build-zig`,
+    label: `${getTargetLabel(platform)} - build-zig`,
+    agents: getZigAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform, options),
+    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
+    timeout_in_minutes: 35,
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getBuildVendorStep = platform => {
-    return {
-      key: `${getTargetKey(platform)}-build-vendor`,
-      label: `${getTargetLabel(platform)} - build-vendor`,
-      depends_on: getDependsOn(platform),
-      agents: getBuildAgent(platform),
-      retry: getRetry(),
-      cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(platform),
-      command: "bun run build:ci --target dependencies",
-    };
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getLinkBunStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-bun`,
+    label: `${getTargetLabel(platform)} - build-bun`,
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
+    agents: getCppAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: {
+      BUN_LINK_ONLY: "ON",
+      ...getBuildEnv(platform, options),
+    },
+    command: `${getBuildCommand(platform, options)} --target bun`,
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getBuildCppStep = platform => {
-    return {
-      key: `${getTargetKey(platform)}-build-cpp`,
-      label: `${getTargetLabel(platform)} - build-cpp`,
-      depends_on: getDependsOn(platform),
-      agents: getBuildAgent(platform),
-      retry: getRetry(),
-      cancel_on_build_failing: isMergeQueue(),
-      env: {
-        BUN_CPP_ONLY: "ON",
-        ...getBuildEnv(platform),
-      },
-      command: "bun run build:ci --target bun",
-    };
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildBunStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-bun`,
+    label: `${getTargetLabel(platform)} - build-bun`,
+    agents: getCppAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: getBuildEnv(platform, options),
+    command: getBuildCommand(platform, options),
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getBuildZigStep = platform => {
-    const toolchain = getBuildToolchain(platform);
-    return {
-      key: `${getTargetKey(platform)}-build-zig`,
-      label: `${getTargetLabel(platform)} - build-zig`,
-      depends_on: getDependsOn(platform),
-      agents: getZigAgent(platform),
-      retry: getRetry(1), // FIXME: Sometimes zig build hangs, so we need to retry once
-      cancel_on_build_failing: isMergeQueue(),
-      env: getBuildEnv(platform),
-      command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
-    };
+/**
+ * @typedef {Object} TestOptions
+ * @property {string} [buildId]
+ * @property {boolean} [unifiedTests]
+ * @property {string[]} [testFiles]
+ * @property {boolean} [dryRun]
+ */
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {TestOptions} [testOptions]
+ * @returns {Step}
+ */
+function getTestBunStep(platform, options, testOptions = {}) {
+  const { os, profile } = platform;
+  const { buildId, unifiedTests, testFiles } = testOptions;
+
+  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  if (buildId) {
+    args.push(`--build-id=${buildId}`);
+  }
+  if (testFiles) {
+    args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  }
+
+  const depends = [];
+  if (!buildId) {
+    depends.push(`${getTargetKey(platform)}-build-bun`);
+  }
+
+  return {
+    key: `${getPlatformKey(platform)}-test-bun`,
+    label: `${getPlatformLabel(platform)} - test-bun`,
+    depends_on: depends,
+    agents: getTestAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
+    timeout_in_minutes: profile === "asan" ? 45 : 30,
+    command:
+      os === "windows"
+        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        : `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getBuildBunStep = platform => {
-    return {
-      key: `${getTargetKey(platform)}-build-bun`,
-      label: `${getTargetLabel(platform)} - build-bun`,
-      depends_on: [
-        `${getTargetKey(platform)}-build-vendor`,
-        `${getTargetKey(platform)}-build-cpp`,
-        `${getTargetKey(platform)}-build-zig`,
-      ],
-      agents: getBuildAgent(platform),
-      retry: getRetry(),
-      cancel_on_build_failing: isMergeQueue(),
-      env: {
-        BUN_LINK_ONLY: "ON",
-        ...getBuildEnv(platform),
-      },
-      command: "bun run build:ci --target bun",
-    };
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildImageStep(platform, options) {
+  const { os, arch, distro, release, features } = platform;
+  const { publishImages } = options;
+  const action = publishImages ? "publish-image" : "create-image";
+
+  const command = [
+    "node",
+    "./scripts/machine.mjs",
+    action,
+    `--os=${os}`,
+    `--arch=${arch}`,
+    distro && `--distro=${distro}`,
+    `--release=${release}`,
+    "--cloud=aws",
+    "--ci",
+    "--authorized-org=oven-sh",
+  ];
+  for (const feature of features || []) {
+    command.push(`--feature=${feature}`);
+  }
+
+  return {
+    key: `${getImageKey(platform)}-build-image`,
+    label: `${getImageLabel(platform)} - build-image`,
+    agents: {
+      queue: "build-image",
+    },
+    env: {
+      DEBUG: "1",
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: command.filter(Boolean).join(" "),
+    timeout_in_minutes: 3 * 60,
   };
+}
 
-  /**
-   * @param {Platform} platform
-   * @returns {Step}
-   */
-  const getTestBunStep = platform => {
-    const { os } = platform;
-    let command;
-    if (os === "windows") {
-      command = `node .\\scripts\\runner.node.mjs --step ${getTargetKey(platform)}-build-bun`;
-    } else {
-      command = `./scripts/runner.node.mjs --step ${getTargetKey(platform)}-build-bun`;
-    }
-    let parallelism;
-    if (os === "darwin") {
-      parallelism = 2;
-    } else {
-      parallelism = 10;
-    }
-    let env;
-    let depends = [];
-    if (buildId) {
-      env = {
-        BUILDKITE_ARTIFACT_BUILD_ID: buildId,
-      };
-    } else {
-      depends = [`${getTargetKey(platform)}-build-bun`];
-    }
-    let retry;
-    if (os !== "windows") {
-      // When the runner fails on Windows, Buildkite only detects an exit code of 1.
-      // Because of this, we don't know if the run was fatal, or soft-failed.
-      retry = getRetry(1);
-    }
-    let soft_fail;
-    if (isMainBranch()) {
-      soft_fail = true;
-    } else {
-      soft_fail = [{ exit_status: 2 }];
-    }
-    return {
-      key: `${getPlatformKey(platform)}-test-bun`,
-      label: `${getPlatformLabel(platform)} - test-bun`,
-      depends_on: [...depends, ...getDependsOn(platform)],
-      agents: getTestAgent(platform),
-      retry,
-      cancel_on_build_failing: isMergeQueue(),
-      soft_fail,
-      parallelism,
-      command,
-      env,
-    };
+/**
+ * @param {Platform[]} buildPlatforms
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getReleaseStep(buildPlatforms, options) {
+  const { canary } = options;
+  const revision = typeof canary === "number" ? canary : 1;
+
+  return {
+    key: "release",
+    label: getBuildkiteEmoji("rocket"),
+    agents: {
+      queue: "test-darwin",
+    },
+    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    env: {
+      CANARY: revision,
+    },
+    command: ".buildkite/scripts/upload-release.sh",
   };
+}
 
-  /**
-   * Config
-   */
+/**
+ * @param {Platform[]} buildPlatforms
+ * @returns {Step}
+ */
+function getBenchmarkStep() {
+  return {
+    key: "benchmark",
+    label: "📊",
+    agents: {
+      queue: "build-image",
+    },
+    depends_on: `linux-x64-build-bun`,
+    command: "node .buildkite/scripts/upload-benchmark.mjs",
+  };
+}
 
-  /**
-   * @type {Platform[]}
-   */
-  const buildPlatforms = [
-    { os: "darwin", arch: "aarch64", release: "14" },
-    { os: "darwin", arch: "x64", release: "14" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    { os: "windows", arch: "x64", release: "2019" },
-    { os: "windows", arch: "x64", baseline: true, release: "2019" },
+/**
+ * @typedef {Object} Pipeline
+ * @property {Step[]} [steps]
+ * @property {number} [priority]
+ */
+
+/**
+ * @typedef {Record<string, string | undefined>} Agent
+ */
+
+/**
+ * @typedef {GroupStep | CommandStep | BlockStep} Step
+ */
+
+/**
+ * @typedef {Object} GroupStep
+ * @property {string} key
+ * @property {string} group
+ * @property {Step[]} steps
+ * @property {string[]} [depends_on]
+ */
+
+/**
+ * @typedef {Object} CommandStep
+ * @property {string} key
+ * @property {string} [label]
+ * @property {Record<string, string | undefined>} [agents]
+ * @property {Record<string, string | undefined>} [env]
+ * @property {string} command
+ * @property {string[]} [depends_on]
+ * @property {Record<string, string | undefined>} [retry]
+ * @property {boolean} [cancel_on_build_failing]
+ * @property {boolean} [soft_fail]
+ * @property {number} [parallelism]
+ * @property {number} [concurrency]
+ * @property {string} [concurrency_group]
+ * @property {number} [priority]
+ * @property {number} [timeout_in_minutes]
+ * @link https://buildkite.com/docs/pipelines/command-step
+ */
+
+/**
+ * @typedef {Object} BlockStep
+ * @property {string} key
+ * @property {string} block
+ * @property {string} [prompt]
+ * @property {"passed" | "failed" | "running"} [blocked_state]
+ * @property {(SelectInput | TextInput)[]} [fields]
+ */
+
+/**
+ * @typedef {Object} TextInput
+ * @property {string} key
+ * @property {string} text
+ * @property {string} [default]
+ * @property {boolean} [required]
+ * @property {string} [hint]
+ */
+
+/**
+ * @typedef {Object} SelectInput
+ * @property {string} key
+ * @property {string} select
+ * @property {string | string[]} [default]
+ * @property {boolean} [required]
+ * @property {boolean} [multiple]
+ * @property {string} [hint]
+ * @property {SelectOption[]} [options]
+ */
+
+/**
+ * @typedef {Object} SelectOption
+ * @property {string} label
+ * @property {string} value
+ */
+
+/**
+ * @typedef {Object} PipelineOptions
+ * @property {string | boolean} [skipEverything]
+ * @property {string | boolean} [skipBuilds]
+ * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [forceBuilds]
+ * @property {string | boolean} [forceTests]
+ * @property {string | boolean} [buildImages]
+ * @property {string | boolean} [publishImages]
+ * @property {number} [canary]
+ * @property {Platform[]} [buildPlatforms]
+ * @property {Platform[]} [testPlatforms]
+ * @property {string[]} [testFiles]
+ * @property {boolean} [unifiedBuilds]
+ * @property {boolean} [unifiedTests]
+ */
+
+/**
+ * @param {Step} step
+ * @param {(string | undefined)[]} dependsOn
+ * @returns {Step}
+ */
+function getStepWithDependsOn(step, ...dependsOn) {
+  const { depends_on: existingDependsOn = [] } = step;
+  return {
+    ...step,
+    depends_on: [...existingDependsOn, ...dependsOn.filter(Boolean)],
+  };
+}
+
+/**
+ * @returns {BlockStep}
+ */
+function getOptionsStep() {
+  const booleanOptions = [
+    {
+      label: `${getEmoji("true")} Yes`,
+      value: "true",
+    },
+    {
+      label: `${getEmoji("false")} No`,
+      value: "false",
+    },
   ];
 
-  /**
-   * @type {Platform[]}
-   */
-  const testPlatforms = [
-    { os: "darwin", arch: "aarch64", release: "14" },
-    { os: "darwin", arch: "aarch64", release: "13" },
-    { os: "darwin", arch: "x64", release: "14" },
-    { os: "darwin", arch: "x64", release: "13" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
-    { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", distro: "debian", release: "11" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12" },
-    { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "11" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "22.04" },
-    { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04" },
-    { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.20" },
-    { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.20" },
-    { os: "windows", arch: "x64", release: "2019" },
-    { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  ];
+  return {
+    key: "options",
+    block: getBuildkiteEmoji("clipboard"),
+    blocked_state: "running",
+    fields: [
+      {
+        key: "canary",
+        select: "If building, is this a canary build?",
+        hint: "If you are building for a release, this should be false",
+        required: false,
+        default: "true",
+        options: booleanOptions,
+      },
+      {
+        key: "skip-builds",
+        select: "Do you want to skip the build?",
+        hint: "If true, artifacts will be downloaded from the last successful build",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "skip-tests",
+        select: "Do you want to skip the tests?",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "force-builds",
+        select: "Do you want to force run the build?",
+        hint: "If true, the build will run even if no source files have changed",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "force-tests",
+        select: "Do you want to force run the tests?",
+        hint: "If true, the tests will run even if no test files have changed",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "build-profiles",
+        select: "If building, which profiles do you want to build?",
+        required: false,
+        multiple: true,
+        default: ["release"],
+        options: [
+          {
+            label: `${getEmoji("release")} Release`,
+            value: "release",
+          },
+          {
+            label: `${getEmoji("assert")} Release with Assertions`,
+            value: "assert",
+          },
+          {
+            label: `${getEmoji("asan")} Release with ASAN`,
+            value: "asan",
+          },
+          {
+            label: `${getEmoji("debug")} Debug`,
+            value: "debug",
+          },
+        ],
+      },
+      {
+        key: "build-platforms",
+        select: "If building, which platforms do you want to build?",
+        hint: "If this is left blank, all platforms are built",
+        required: false,
+        multiple: true,
+        default: [],
+        options: buildPlatforms.map(platform => {
+          const { os, arch, abi, baseline } = platform;
+          let label = `${getEmoji(os)} ${arch}`;
+          if (abi) {
+            label += `-${abi}`;
+          }
+          if (baseline) {
+            label += `-baseline`;
+          }
+          return {
+            label,
+            value: getTargetKey(platform),
+          };
+        }),
+      },
+      {
+        key: "test-platforms",
+        select: "If testing, which platforms do you want to test?",
+        hint: "If this is left blank, all platforms are tested",
+        required: false,
+        multiple: true,
+        default: [],
+        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
+          ([key, platform]) => {
+            const { os, arch, abi, distro, release } = platform;
+            let label = `${getEmoji(os)} ${arch}`;
+            if (abi) {
+              label += `-${abi}`;
+            }
+            if (distro) {
+              label += ` ${distro}`;
+            }
+            if (release) {
+              label += ` ${release}`;
+            }
+            return {
+              label,
+              value: key,
+            };
+          },
+        ),
+      },
+      {
+        key: "test-files",
+        text: "If testing, which files do you want to test?",
+        hint: "If specified, only run test paths that include the list of strings (e.g. 'test/js', 'test/cli/hot/watch.ts')",
+        required: false,
+      },
+      {
+        key: "build-images",
+        select: "Do you want to re-build the base images?",
+        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "publish-images",
+        select: "Do you want to re-build and publish the base images?",
+        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "unified-builds",
+        select: "Do you want to build each platform in a single step?",
+        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+      {
+        key: "unified-tests",
+        select: "Do you want to run tests in a single step?",
+        hint: "If true, tests will not be split into separate steps (this will be very slow)",
+        required: false,
+        default: "false",
+        options: booleanOptions,
+      },
+    ],
+  };
+}
 
+/**
+ * @returns {Step}
+ */
+function getOptionsApplyStep() {
+  const command = getEnv("BUILDKITE_COMMAND");
+  return {
+    key: "options-apply",
+    label: getBuildkiteEmoji("gear"),
+    command: `${command} --apply`,
+    depends_on: ["options"],
+    agents: {
+      queue: getEnv("BUILDKITE_AGENT_META_DATA_QUEUE", false),
+    },
+  };
+}
+
+/**
+ * @returns {Promise<PipelineOptions | undefined>}
+ */
+async function getPipelineOptions() {
+  const isManual = isBuildManual();
+  if (isManual && !process.argv.includes("--apply")) {
+    return;
+  }
+
+  let filteredBuildPlatforms = buildPlatforms;
+  if (isMainBranch()) {
+    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+  }
+
+  const canary = await getCanaryRevision();
+  const buildPlatformsMap = new Map(filteredBuildPlatforms.map(platform => [getTargetKey(platform), platform]));
+  const testPlatformsMap = new Map(testPlatforms.map(platform => [getPlatformKey(platform), platform]));
+
+  if (isManual) {
+    const { fields } = getOptionsStep();
+    const keys = fields?.map(({ key }) => key) ?? [];
+    const values = await Promise.all(keys.map(getBuildMetadata));
+    const options = Object.fromEntries(keys.map((key, index) => [key, values[index]]));
+
+    /**
+     * @param {string} value
+     * @returns {string[] | undefined}
+     */
+    const parseArray = value =>
+      value
+        ?.split("\n")
+        ?.map(item => item.trim())
+        ?.filter(Boolean);
+
+    const buildProfiles = parseArray(options["build-profiles"]);
+    const buildPlatformKeys = parseArray(options["build-platforms"]);
+    const testPlatformKeys = parseArray(options["test-platforms"]);
+    return {
+      canary: parseBoolean(options["canary"]) ? canary : 0,
+      skipBuilds: parseBoolean(options["skip-builds"]),
+      forceBuilds: parseBoolean(options["force-builds"]),
+      skipTests: parseBoolean(options["skip-tests"]),
+      buildImages: parseBoolean(options["build-images"]),
+      publishImages: parseBoolean(options["publish-images"]),
+      testFiles: parseArray(options["test-files"]),
+      unifiedBuilds: parseBoolean(options["unified-builds"]),
+      unifiedTests: parseBoolean(options["unified-tests"]),
+      buildPlatforms: buildPlatformKeys?.length
+        ? buildPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...buildPlatformsMap.get(key), profile })))
+        : Array.from(buildPlatformsMap.values()),
+      testPlatforms: testPlatformKeys?.length
+        ? testPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...testPlatformsMap.get(key), profile })))
+        : Array.from(testPlatformsMap.values()),
+      dryRun: parseBoolean(options["dry-run"]),
+    };
+  }
+
+  const commitMessage = getCommitMessage();
+
+  /**
+   * @param {RegExp} pattern
+   * @returns {string | boolean}
+   */
+  const parseOption = pattern => {
+    const match = pattern.exec(commitMessage);
+    if (match) {
+      const [, value] = match;
+      return value;
+    }
+    return false;
+  };
+
+  const isCanary =
+    !parseBoolean(getEnv("RELEASE", false) || "false") &&
+    !/\[(release|build release|release build)\]/i.test(commitMessage);
+  return {
+    canary: isCanary ? canary : 0,
+    skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
+    skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
+    forceBuilds: parseOption(/\[(force builds?)\]/i),
+    skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    buildImages: parseOption(/\[(build images?)\]/i),
+    dryRun: parseOption(/\[(dry run)\]/i),
+    publishImages: parseOption(/\[(publish images?)\]/i),
+    buildPlatforms: Array.from(buildPlatformsMap.values()),
+    testPlatforms: Array.from(testPlatformsMap.values()),
+  };
+}
+
+/**
+ * @param {PipelineOptions} [options]
+ * @returns {Promise<Pipeline | undefined>}
+ */
+async function getPipeline(options = {}) {
+  const priority = getPriority();
+
+  if (isBuildManual() && !Object.keys(options).length) {
+    return {
+      priority,
+      steps: [getOptionsStep(), getOptionsApplyStep()],
+    };
+  }
+
+  const { skipEverything } = options;
+  if (skipEverything) {
+    return;
+  }
+
+  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
-    [...buildPlatforms, ...testPlatforms]
-      .filter(platform => buildImages && isUsingNewAgent(platform))
-      .map(platform => [getImageKey(platform), platform]),
+    buildImages || publishImages
+      ? [...buildPlatforms, ...testPlatforms]
+          .filter(({ os }) => os === "linux" || os === "windows")
+          .map(platform => [getImageKey(platform), platform])
+      : [],
   );
 
-  /**
-   * @type {Step[]}
-   */
+  /** @type {Step[]} */
   const steps = [];
 
   if (imagePlatforms.size) {
     steps.push({
-      group: ":docker:",
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform)),
+      key: "build-images",
+      group: getBuildkiteEmoji("aws"),
+      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
     });
   }
 
-  for (const platform of buildPlatforms) {
-    const { os, arch, abi, baseline } = platform;
+  let { skipBuilds, forceBuilds, unifiedBuilds, dryRun } = options;
+  dryRun = dryRun || !!buildImages;
 
-    /** @type {Step[]} */
-    const platformSteps = [];
+  /** @type {string | undefined} */
+  let buildId;
+  if (skipBuilds && !forceBuilds) {
+    const lastBuild = await getLastSuccessfulBuild();
+    if (lastBuild) {
+      const { id } = lastBuild;
+      buildId = id;
+    } else {
+      console.warn("No last successful build found, must force builds...");
+    }
+  }
 
-    if (buildImages || !buildId) {
-      platformSteps.push(
-        getBuildVendorStep(platform),
-        getBuildCppStep(platform),
-        getBuildZigStep(platform),
-        getBuildBunStep(platform),
+  const includeASAN = !isMainBranch();
+
+  if (!buildId) {
+    const relevantBuildPlatforms = includeASAN
+      ? buildPlatforms
+      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
+    steps.push(
+      ...relevantBuildPlatforms.map(target => {
+        const imageKey = getImageKey(target);
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
+        if (imagePlatforms.has(imageKey)) {
+          dependsOn.push(`${imageKey}-build-image`);
+        }
+
+        return getStepWithDependsOn(
+          {
+            key: getTargetKey(target),
+            group: getTargetLabel(target),
+            steps: unifiedBuilds
+              ? [getBuildBunStep(target, options)]
+              : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
+          },
+          ...dependsOn,
+        );
+      }),
+    );
+  }
+
+  if (!isMainBranch()) {
+    const { skipTests, forceTests, unifiedTests, testFiles } = options;
+    if (!skipTests || forceTests) {
+      steps.push(
+        ...testPlatforms.map(target => ({
+          key: getTargetKey(target),
+          group: getTargetLabel(target),
+          steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+        })),
       );
     }
+  }
 
-    if (!skipTests) {
-      platformSteps.push(
-        ...testPlatforms
-          .filter(
-            testPlatform =>
-              testPlatform.os === os &&
-              testPlatform.arch === arch &&
-              testPlatform.abi === abi &&
-              testPlatform.baseline === baseline,
-          )
-          .map(testPlatform => getTestBunStep(testPlatform)),
-      );
-    }
+  if (isMainBranch()) {
+    steps.push(getReleaseStep(buildPlatforms, options));
+  }
+  steps.push(getBenchmarkStep());
 
-    if (!platformSteps.length) {
+  /** @type {Map<string, GroupStep>} */
+  const stepsByGroup = new Map();
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!("group" in step)) {
       continue;
     }
 
-    steps.push({
-      key: getTargetKey(platform),
-      group: getTargetLabel(platform),
-      steps: platformSteps,
-    });
-  }
+    const { group, steps: groupSteps } = step;
+    if (stepsByGroup.has(group)) {
+      stepsByGroup.get(group).steps.push(...groupSteps);
+    } else {
+      stepsByGroup.set(group, step);
+    }
 
-  if (isMainBranch() && !isFork()) {
-    steps.push({
-      label: ":github:",
-      agents: {
-        queue: "test-darwin",
-      },
-      depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
-      command: ".buildkite/scripts/upload-release.sh",
-    });
+    steps[i] = undefined;
   }
 
   return {
-    priority: getPriority(),
-    steps,
+    priority,
+    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
   };
 }
 
 async function main() {
-  printEnvironment();
-
-  console.log("Checking last successful build...");
-  const lastBuild = await getLastSuccessfulBuild();
-  if (lastBuild) {
-    const { id, path, commit_id: commit } = lastBuild;
-    console.log(" - Build ID:", id);
-    console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
-    console.log(" - Commit:", commit);
-  } else {
-    console.log(" - No build found");
+  startGroup("Generating options...");
+  const options = await getPipelineOptions();
+  if (options) {
+    console.log("Generated options:", options);
   }
 
-  let changedFiles;
-  // FIXME: Fix various bugs when calculating changed files
-  // false -> !isFork() && !isMainBranch()
-  if (false) {
-    console.log("Checking changed files...");
-    const baseRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
-    console.log(" - Base Ref:", baseRef);
-    const headRef = getCommit();
-    console.log(" - Head Ref:", headRef);
-
-    changedFiles = await getChangedFiles(undefined, baseRef, headRef);
-    if (changedFiles) {
-      if (changedFiles.length) {
-        changedFiles.forEach(filename => console.log(` - ${filename}`));
-      } else {
-        console.log(" - No changed files");
-      }
-    }
+  startGroup("Generating pipeline...");
+  const pipeline = await getPipeline(options);
+  if (!pipeline) {
+    console.log("Generated pipeline is empty, skipping...");
+    return;
   }
-
-  const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
-  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
-
-  console.log("Checking if CI should be forced...");
-  let forceBuild;
-  let ciFileChanged;
-  {
-    const message = getCommitMessage();
-    const match = /\[(force ci|ci force|ci force build)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      forceBuild = true;
-    }
-    for (const coref of [".buildkite/ci.mjs", "scripts/utils.mjs", "scripts/bootstrap.sh", "scripts/machine.mjs"]) {
-      if (changedFiles && changedFiles.includes(coref)) {
-        console.log(" - Yes, because the list of changed files contains:", coref);
-        forceBuild = true;
-        ciFileChanged = true;
-      }
-    }
-  }
-
-  console.log("Checking if CI should be skipped...");
-  if (!forceBuild) {
-    const message = getCommitMessage();
-    const match = /\[(skip ci|no ci|ci skip|ci no)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      return;
-    }
-    if (changedFiles && changedFiles.every(filename => isDocumentationFile(filename))) {
-      console.log(" - Yes, because all changed files are documentation");
-      return;
-    }
-  }
-
-  console.log("Checking if CI should re-build images...");
-  let buildImages;
-  {
-    const message = getCommitMessage();
-    const match = /\[(build images?|images? build)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      buildImages = true;
-    }
-    if (ciFileChanged) {
-      console.log(" - Yes, because a core CI file changed");
-      buildImages = true;
-    }
-  }
-
-  console.log("Checking if CI should publish images...");
-  let publishImages;
-  {
-    const message = getCommitMessage();
-    const match = /\[(publish images?|images? publish)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      publishImages = true;
-      buildImages = true;
-    }
-    if (ciFileChanged && isMainBranch()) {
-      console.log(" - Yes, because a core CI file changed and this is main branch");
-      publishImages = true;
-      buildImages = true;
-    }
-  }
-
-  console.log("Checking if build should be skipped...");
-  let skipBuild;
-  if (!forceBuild) {
-    const message = getCommitMessage();
-    const match = /\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      skipBuild = true;
-    }
-    if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
-      console.log(" - Yes, because all changed files are tests or documentation");
-      skipBuild = true;
-    }
-  }
-
-  console.log("Checking if tests should be skipped...");
-  let skipTests;
-  {
-    const message = getCommitMessage();
-    const match = /\[(skip tests?|tests? skip|no tests?|tests? no)\]/i.exec(message);
-    if (match) {
-      console.log(" - Yes, because commit message contains:", match[1]);
-      skipTests = true;
-    }
-    if (isMainBranch()) {
-      console.log(" - Yes, because we're on main branch");
-      skipTests = true;
-    }
-  }
-
-  console.log("Checking if build is a named release...");
-  let buildRelease;
-  if (/^(1|true|on|yes)$/i.test(getEnv("RELEASE", false))) {
-    console.log(" - Yes, because RELEASE environment variable is set");
-    buildRelease = true;
-  } else {
-    const message = getCommitMessage();
-    const match = /\[(release|release build|build release)\]/i.exec(message);
-    if (match) {
-      const [, reason] = match;
-      console.log(" - Yes, because commit message contains:", reason);
-      buildRelease = true;
-    }
-  }
-
-  console.log("Generating pipeline...");
-  const pipeline = getPipeline({
-    buildId: lastBuild && skipBuild && !forceBuild ? lastBuild.id : undefined,
-    buildImages,
-    publishImages,
-    skipTests,
-  });
 
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
-  writeFileSync(contentPath, content);
+  writeFile(contentPath, content);
 
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
-  if (isBuildkite) {
-    await uploadArtifact(contentPath);
-  }
 
   if (isBuildkite) {
-    console.log("Setting canary revision...");
-    const canaryRevision = buildRelease ? 0 : await getCanaryRevision();
-    await spawnSafe(["buildkite-agent", "meta-data", "set", "canary", `${canaryRevision}`], { stdio: "inherit" });
-
-    console.log("Uploading pipeline...");
-    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+    startGroup("Uploading pipeline...");
+    try {
+      await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+    } finally {
+      await uploadArtifact(contentPath);
+    }
   }
 }
 

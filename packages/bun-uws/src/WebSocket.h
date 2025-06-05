@@ -73,6 +73,10 @@ public:
         DROPPED
     };
 
+    size_t memoryCost() {
+        return getBufferedAmount() + sizeof(WebSocket);
+    }
+
     /* Sending fragmented messages puts a bit of effort on the user; you must not interleave regular sends
      * with fragmented sends and you must sendFirstFragment, [sendFragment], then finally sendLastFragment. */
     SendStatus sendFirstFragment(std::string_view message, OpCode opCode = OpCode::BINARY, bool compress = false) {
@@ -111,7 +115,7 @@ public:
             char header[10];
             int header_length = (int) protocol::formatMessage<isServer>(header, "", 0, opCode, message.length(), compress, fin);
             int written = us_socket_write2(0, (struct us_socket_t *)this, header, header_length, message.data(), (int) message.length());
-        
+
             if (written != header_length + (int) message.length()) {
                 /* Buffer up backpressure */
                 if (written > header_length) {
@@ -285,7 +289,7 @@ public:
         );
 
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
-        
+
         if (!webSocketData->subscriber) { return false; }
 
         /* Cannot return numSubscribers as this is only for this particular websocket context */

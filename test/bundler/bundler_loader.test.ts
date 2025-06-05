@@ -116,15 +116,14 @@ describe("bundler", async () => {
     },
   });
 
-  const loaders: Loader[] = ["wasm", "css", "json", "file" /* "napi" */, "text"];
-  const exts = ["wasm", "css", "json", ".lmao" /*  ".node" */, ".txt"];
+  const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
+  const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {
     const loader = loaders[i];
     const ext = exts[i];
     itBundled(`bun/loader-copy-file-entry-point-with-onLoad-${loader}`, {
       target: "bun",
       outdir: "/out",
-      experimentalCss: false,
       files: {
         [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
       },
@@ -157,7 +156,6 @@ describe("bundler", async () => {
       target: "bun",
       outfile: "",
       outdir: "/out",
-      experimentalCss: false,
       files: {
         [`/entry.${ext}`]: /* js */ `{ "hello": "friends" }`,
       },
@@ -176,4 +174,37 @@ describe("bundler", async () => {
       },
     });
   }
+
+  describe("handles empty files", () => {
+    for (const target of ["bun", "node", "browser"] as const) {
+      itBundled(`${target}/loader-empty-text-file`, {
+        target: target,
+        files: {
+          "/entry.ts": /* js */ `
+          import empty from './empty.txt' with {type: "text"};
+          console.write(JSON.stringify(empty));
+        `,
+          "/empty.txt": "",
+        },
+        run: { stdout: '""' },
+      });
+
+      itBundled(`${target}/loader-empty-file-loader`, {
+        target: target,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+          import empty from './empty.txt' with {type: "file"};
+          export default empty;
+        `,
+          "/empty.txt": "",
+        },
+        onAfterBundle(api) {
+          const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+          const module = require(join(api.outdir, jsFile));
+          api.assertFileExists(join("out", module.default));
+        },
+      });
+    }
+  });
 });

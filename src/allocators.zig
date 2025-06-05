@@ -1,9 +1,8 @@
 const std = @import("std");
 
-const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
+const OOM = bun.OOM;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -27,7 +26,7 @@ pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
         null;
 }
 
-pub const IndexType = packed struct {
+pub const IndexType = packed struct(u32) {
     index: u31,
     is_overflow: bool = false,
 };
@@ -266,7 +265,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     };
 }
 
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file
@@ -328,7 +327,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return @constCast(slice);
         }
 
-        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
+        pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]u8 {
             const appended = try @call(bun.callmod_inline, append, .{ self, AppendType, _value });
             return @constCast(appended);
         }
@@ -337,17 +336,17 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.appendMutable(EmptyType, EmptyType{ .len = len });
         }
 
-        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) ![]const u8 {
+        pub fn printWithType(self: *Self, comptime fmt: []const u8, comptime Args: type, args: Args) OOM![]const u8 {
             var buf = try self.appendMutable(EmptyType, EmptyType{ .len = std.fmt.count(fmt, args) + 1 });
             buf[buf.len - 1] = 0;
             return std.fmt.bufPrint(buf.ptr[0 .. buf.len - 1], fmt, args) catch unreachable;
         }
 
-        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) ![]const u8 {
+        pub fn print(self: *Self, comptime fmt: []const u8, args: anytype) OOM![]const u8 {
             return try printWithType(self, fmt, @TypeOf(args), args);
         }
 
-        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn append(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -355,7 +354,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
-        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
+        pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) OOM![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
 
@@ -374,7 +373,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             self: *Self,
             comptime AppendType: type,
             _value: AppendType,
-        ) ![]const u8 {
+        ) OOM![]const u8 {
             const value_len: usize = brk: {
                 switch (comptime AppendType) {
                     EmptyType, []const u8, []u8, [:0]const u8, [:0]u8 => {
@@ -498,7 +497,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
 
             self.mutex.lock();
@@ -526,7 +525,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
             const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -588,7 +587,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             defer self.mutex.unlock();
 
             const key = if (comptime remove_trailing_slashes)
-                std.mem.trimRight(u8, denormalized_key, "/")
+                std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str)
             else
                 denormalized_key;
 

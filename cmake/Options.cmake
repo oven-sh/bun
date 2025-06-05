@@ -10,7 +10,6 @@ optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
 
 if(BUILDKITE)
   optionx(BUILDKITE_COMMIT STRING "The commit hash")
-  optionx(BUILDKITE_MESSAGE STRING "The commit message")
 endif()
 
 optionx(CMAKE_BUILD_TYPE "Debug|Release|RelWithDebInfo|MinSizeRel" "The build type to use" REQUIRED)
@@ -21,11 +20,20 @@ else()
   setx(RELEASE OFF)
 endif()
 
-if(CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
   setx(DEBUG ON)
 else()
   setx(DEBUG OFF)
 endif()
+
+optionx(BUN_TEST BOOL "Build Bun's unit test suite instead of the normal build" DEFAULT OFF)
+
+if (BUN_TEST)
+  setx(TEST ON)
+else()
+  setx(TEST OFF)
+endif()
+
 
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
@@ -49,29 +57,33 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(LINUX)
+  if(EXISTS "/etc/alpine-release")
+    set(DEFAULT_ABI "musl")
+  else()
+    set(DEFAULT_ABI "gnu")
+  endif()
+
+  optionx(ABI "musl|gnu" "The ABI to use (e.g. musl, gnu)" DEFAULT ${DEFAULT_ABI})
+endif()
+
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
 endif()
 
-optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEBUG})
-optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
-
-if(BUILDKITE_MESSAGE AND BUILDKITE_MESSAGE MATCHES "\\[release build\\]")
-  message(STATUS "Switched to release build, since commit message contains: \"[release build]\"")
-  set(DEFAULT_CANARY OFF)
+# Disabling logs by default for tests yields faster builds
+if (DEBUG AND NOT TEST)
+  set(DEFAULT_ENABLE_LOGS ON)
 else()
-  set(DEFAULT_CANARY ON)
+  set(DEFAULT_ENABLE_LOGS OFF)
 endif()
 
-optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ${DEFAULT_CANARY})
+optionx(ENABLE_LOGS BOOL "If debug logs should be enabled" DEFAULT ${DEFAULT_ENABLE_LOGS})
+optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT ${DEBUG})
 
-if(ENABLE_CANARY AND BUILDKITE)
-  execute_process(
-    COMMAND buildkite-agent meta-data get "canary"
-    OUTPUT_VARIABLE DEFAULT_CANARY_REVISION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-elseif(ENABLE_CANARY)
+optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
+
+if(ENABLE_CANARY)
   set(DEFAULT_CANARY_REVISION "1")
 else()
   set(DEFAULT_CANARY_REVISION "0")
@@ -79,7 +91,19 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX AND CI)
+if(LINUX)
+  optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+endif()
+
+if(DEBUG AND APPLE AND ARCH STREQUAL "aarch64")
+  set(DEFAULT_ASAN ON)
+else()
+  set(DEFAULT_ASAN OFF)
+endif()
+
+optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+
+if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)
@@ -87,11 +111,10 @@ endif()
 
 optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT ${DEFAULT_LTO})
 
-if(LINUX)
-  optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+if(ENABLE_ASAN AND ENABLE_LTO)
+  message(WARNING "ASAN and LTO are not supported together, disabling LTO")
+  setx(ENABLE_LTO OFF)
 endif()
-
-optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 
 if(USE_VALGRIND AND NOT USE_BASELINE)
   message(WARNING "If valgrind is enabled, baseline must also be enabled")

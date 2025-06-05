@@ -1,13 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Url = css.css_values.url.Url;
 const Gradient = css.css_values.gradient.Gradient;
 const Resolution = css.css_values.resolution.Resolution;
@@ -25,8 +23,8 @@ pub const Image = union(enum) {
     /// An `image-set()`.
     image_set: ImageSet,
 
-    pub usingnamespace css.DeriveParse(@This());
-    pub usingnamespace css.DeriveToCss(@This());
+    pub const parse = css.DeriveParse(@This()).parse;
+    pub const toCss = css.DeriveToCss(@This()).toCss;
 
     pub fn deinit(_: *@This(), _: std.mem.Allocator) void {
         // TODO: implement this
@@ -68,7 +66,7 @@ pub const Image = union(enum) {
 
     pub fn hasVendorPrefix(this: *const @This()) bool {
         const prefix = this.getVendorPrefix();
-        return !prefix.isEmpty() and !prefix.eq(VendorPrefix{ .none = true });
+        return !prefix.isEmpty() and prefix != VendorPrefix{ .none = true };
     }
 
     /// Returns the vendor prefix used in the image value.
@@ -76,7 +74,7 @@ pub const Image = union(enum) {
         return switch (this.*) {
             .gradient => |a| a.getVendorPrefix(),
             .image_set => |a| a.getVendorPrefix(),
-            else => VendorPrefix.empty(),
+            else => .{},
         };
     }
 
@@ -95,24 +93,7 @@ pub const Image = union(enum) {
     }
 
     pub inline fn eql(this: *const Image, other: *const Image) bool {
-        return switch (this.*) {
-            .none => switch (other.*) {
-                .none => true,
-                else => false,
-            },
-            .url => |*a| switch (other.*) {
-                .url => a.eql(&other.url),
-                else => false,
-            },
-            .image_set => |*a| switch (other.*) {
-                .image_set => a.eql(&other.image_set),
-                else => false,
-            },
-            .gradient => |a| switch (other.*) {
-                .gradient => a.eql(other.gradient),
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -129,6 +110,70 @@ pub const Image = union(enum) {
         };
     }
 
+    pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) css.SmallList(Image, 6) {
+        const ColorFallbackKind = css.ColorFallbackKind;
+        // Determine which prefixes and color fallbacks are needed.
+        const prefixes = this.getNecessaryPrefixes(targets);
+        const fallbacks = this.getNecessaryFallbacks(targets);
+        var res = css.SmallList(Image, 6){};
+
+        // Get RGB fallbacks if needed.
+        const rgb = if (fallbacks.rgb)
+            this.getFallback(allocator, ColorFallbackKind.RGB)
+        else
+            null;
+
+        // Prefixed properties only support RGB.
+        const prefix_image = if (rgb) |r| &r else this;
+
+        // Legacy -webkit-gradient()
+        if (prefixes.webkit and
+            if (targets.browsers) |browsers| css.prefixes.Feature.isWebkitGradient(browsers) else false and
+                prefix_image.* == .gradient)
+        {
+            if (prefix_image.getLegacyWebkit(allocator)) |legacy| {
+                res.append(allocator, legacy);
+            }
+        }
+
+        // Standard syntax, with prefixes.
+        if (prefixes.webkit) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.WEBKIT));
+        }
+
+        if (prefixes.moz) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.MOZ));
+        }
+
+        if (prefixes.o) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.O));
+        }
+
+        if (prefixes.none) {
+            // Unprefixed, rgb fallback.
+            if (rgb) |r| {
+                res.append(allocator, r);
+            }
+
+            // P3 fallback.
+            if (fallbacks.p3) {
+                res.append(allocator, this.getFallback(allocator, ColorFallbackKind.P3));
+            }
+
+            // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
+            if (fallbacks.lab) {
+                this.* = this.getFallback(allocator, ColorFallbackKind.LAB);
+            }
+        } else if (res.pop()) |last| {
+            // Prefixed property with no unprefixed version.
+            // Replace self with the last prefixed version so that it doesn't
+            // get duplicated when the caller pushes the original value.
+            this.* = last;
+        }
+
+        return res;
+    }
+
     pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Image {
         return switch (this.*) {
             .gradient => |grad| .{ .gradient = bun.create(allocator, Gradient, grad.getFallback(allocator, kind)) },
@@ -139,7 +184,7 @@ pub const Image = union(enum) {
     pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
         return switch (this.*) {
             .gradient => |grad| grad.getNecessaryFallbacks(targets),
-            else => css.ColorFallbackKind.empty(),
+            else => css.ColorFallbackKind{},
         };
     }
 
@@ -208,17 +253,16 @@ pub const ImageSet = struct {
             } else {
                 try dest.delim(',', false);
             }
-            try option.toCss(W, dest, this.vendor_prefix.neq(VendorPrefix{ .none = true }));
+            try option.toCss(W, dest, this.vendor_prefix != VendorPrefix{ .none = true });
         }
         return dest.writeChar(')');
     }
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
         return css.Feature.isCompatible(.image_set, browsers) and
-            for (this.options.items) |opt|
-        {
-            if (!opt.image.isCompatible(browsers)) break false;
-        } else true;
+            for (this.options.items) |opt| {
+                if (!opt.image.isCompatible(browsers)) break false;
+            } else true;
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
@@ -230,7 +274,7 @@ pub const ImageSet = struct {
     }
 
     pub fn eql(this: *const ImageSet, other: *const ImageSet) bool {
-        return this.vendor_prefix.eql(other.vendor_prefix) and css.generic.eqlList(ImageSetOption, &this.options, &other.options);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -260,9 +304,10 @@ pub const ImageSetOption = struct {
         const start_position = input.input.tokenizer.getPosition();
         const loc = input.currentSourceLocation();
         const image = if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |url| brk: {
-            const record_idx = switch (input.addImportRecordForUrl(
+            const record_idx = switch (input.addImportRecord(
                 url,
                 start_position,
+                .url,
             )) {
                 .result => |idx| idx,
                 .err => |e| return .{ .err = e },
@@ -347,12 +392,7 @@ pub const ImageSetOption = struct {
     }
 
     pub fn eql(lhs: *const ImageSetOption, rhs: *const ImageSetOption) bool {
-        return lhs.image.eql(&rhs.image) and lhs.resolution.eql(&rhs.resolution) and (brk: {
-            if (lhs.file_type != null and rhs.file_type != null) {
-                break :brk bun.strings.eql(lhs.file_type.?, rhs.file_type.?);
-            }
-            break :brk false;
-        });
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

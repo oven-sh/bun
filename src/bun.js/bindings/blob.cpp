@@ -26,4 +26,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlo
     return JSC::JSValue::decode(encoded);
 }
 
+size_t Blob::memoryCost() const
+{
+    return sizeof(Blob) + JSBlob::memoryCost(m_impl);
+}
+
 }

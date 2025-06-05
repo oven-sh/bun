@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
+import {
+  formatAnnotationToHtml,
+  isCI,
+  parseAnnotations,
+  printEnvironment,
+  reportAnnotationToBuildKite,
+  startGroup,
+} from "./utils.mjs";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -35,6 +43,10 @@ async function build(args) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+  }
+
+  if (isCI) {
+    printEnvironment();
   }
 
   const env = {
@@ -102,7 +114,8 @@ async function build(args) {
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
-  await spawn("cmake", generateArgs, { env }, "configuration");
+
+  await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
   if (existsSync(envPath)) {
@@ -116,7 +129,8 @@ async function build(args) {
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);
-  await spawn("cmake", buildArgs, { env }, "compilation");
+
+  await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   printDuration("total", Date.now() - startTime);
 }
@@ -125,16 +139,28 @@ function cmakePath(path) {
   return path.replace(/\\/g, "/");
 }
 
+/** @param {string} str */
+const toAlphaNumeric = str => str.replace(/[^a-z0-9]/gi, "-");
 function getCachePath(branch) {
-  const buildPath = process.env.BUILDKITE_BUILD_PATH;
-  const repository = process.env.BUILDKITE_REPO;
-  const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
-  const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
-  const branchName = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const {
+    BUILDKITE_BUILD_PATH: buildPath,
+    BUILDKITE_REPO: repository,
+    BUILDKITE_PULL_REQUEST_REPO: fork,
+    BUILDKITE_BRANCH,
+    BUILDKITE_STEP_KEY,
+  } = process.env;
+
+  // NOTE: settings that could be long should be truncated to avoid hitting max
+  // path length limit on windows (4096)
+  const repositoryKey = toAlphaNumeric(
+    // remove domain name, only leaving 'org/repo'
+    (fork || repository).replace(/^https?:\/\/github\.com\/?/, ""),
+  );
+  const branchName = toAlphaNumeric(branch || BUILDKITE_BRANCH);
   const branchKey = branchName.startsWith("gh-readonly-queue-")
     ? branchName.slice(18, branchName.indexOf("-pr-"))
-    : branchName;
-  const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
+    : branchName.slice(0, 32);
+  const stepKey = toAlphaNumeric(BUILDKITE_STEP_KEY);
   return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }
 
@@ -203,16 +229,24 @@ async function spawn(command, args, options, label) {
     timestamp = Date.now();
   });
 
+  let stdoutBuffer = "";
+
   let done;
   if (pipe) {
     const stdout = new Promise(resolve => {
       subprocess.stdout.on("end", resolve);
-      subprocess.stdout.on("data", data => process.stdout.write(data));
+      subprocess.stdout.on("data", data => {
+        stdoutBuffer += data.toString();
+        process.stdout.write(data);
+      });
     });
 
     const stderr = new Promise(resolve => {
       subprocess.stderr.on("end", resolve);
-      subprocess.stderr.on("data", data => process.stderr.write(data));
+      subprocess.stderr.on("data", data => {
+        stdoutBuffer += data.toString();
+        process.stderr.write(data);
+      });
     });
 
     done = Promise.all([stdout, stderr]);
@@ -233,9 +267,40 @@ async function spawn(command, args, options, label) {
     return;
   }
 
-  if (error) {
-    console.error(error);
-  } else if (signalCode) {
+  if (isBuildkite()) {
+    let annotated;
+    try {
+      const { annotations } = parseAnnotations(stdoutBuffer);
+      for (const annotation of annotations) {
+        const content = formatAnnotationToHtml(annotation);
+        reportAnnotationToBuildKite({
+          priority: 10,
+          label: annotation.title || annotation.filename,
+          content,
+        });
+        annotated = true;
+      }
+    } catch (error) {
+      console.error(`Failed to parse annotations:`, error);
+    }
+
+    if (!annotated) {
+      const content = formatAnnotationToHtml({
+        filename: relative(process.cwd(), import.meta.filename),
+        title: "build failed",
+        content: stdoutBuffer,
+        source: "build",
+        level: "error",
+      });
+      reportAnnotationToBuildKite({
+        priority: 10,
+        label: "build failed",
+        content,
+      });
+    }
+  }
+
+  if (signalCode) {
     console.error(`Command killed: ${signalCode}`);
   } else {
     console.error(`Command exited: code ${exitCode}`);

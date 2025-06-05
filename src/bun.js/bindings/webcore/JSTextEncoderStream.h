@@ -29,7 +29,7 @@ public:
     using Base = JSDOMObject;
     static JSTextEncoderStream* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSTextEncoderStream* ptr = new (NotNull, JSC::allocateCell<JSTextEncoderStream>(vm)) JSTextEncoderStream(structure, *globalObject);
         ptr->finishCreation(vm);
         return ptr;

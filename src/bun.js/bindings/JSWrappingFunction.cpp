@@ -27,7 +27,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     JSC::JSFunction* wrappedFn = jsCast<JSC::JSFunction*>(wrappedFnValue.asCell());
     ASSERT(wrappedFn != nullptr);
 
-    auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::String(""_s) : symbolName->toWTFString();
+    auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::emptyString() : symbolName->toWTFString();
     auto name = Identifier::fromString(vm, nameStr);
     NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, nullptr, nameStr);
 
@@ -66,7 +66,7 @@ extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__create(
     Bun::NativeFunctionPtr functionPointer,
     JSC::EncodedJSValue wrappedFnEncoded)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue wrappedFn = JSC::JSValue::decode(wrappedFnEncoded);
     auto function = JSWrappingFunction::create(vm, globalObject, symbolName, functionPointer, wrappedFn);
     return JSC::JSValue::encode(function);

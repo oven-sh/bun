@@ -1,13 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const PrintErr = css.PrintErr;
 
@@ -27,15 +23,16 @@ pub const CssModule = struct {
         project_root: ?[]const u8,
         references: *CssModuleReferences,
     ) CssModule {
+        // TODO: this is BAAAAAAAAAAD we are going to remove it
         const hashes = hashes: {
             var hashes = ArrayList([]const u8).initCapacity(allocator, sources.items.len) catch bun.outOfMemory();
             for (sources.items) |path| {
                 var alloced = false;
                 const source = source: {
+                    // Make paths relative to project root so hashes are stable
                     if (project_root) |root| {
                         if (bun.path.Platform.auto.isAbsolute(root)) {
                             alloced = true;
-                            // TODO: should we use this allocator or something else
                             break :source allocator.dupe(u8, bun.path.relative(root, path)) catch bun.outOfMemory();
                         }
                     }
@@ -70,85 +67,88 @@ pub const CssModule = struct {
         // TODO: deinit
     }
 
+    pub fn getReference(this: *CssModule, allocator: Allocator, name: []const u8, source_index: u32) void {
+        const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+        if (gop.found_existing) {
+            gop.value_ptr.is_referenced = true;
+        } else {
+            gop.value_ptr.* = CssModuleExport{
+                .name = this.config.pattern.writeToString(allocator, .{}, this.hashes.items[source_index], this.sources.items[source_index], name),
+                .composes = .{},
+                .is_referenced = true,
+            };
+        }
+    }
+
     pub fn referenceDashed(
         this: *CssModule,
+        comptime W: type,
+        dest: *css.Printer(W),
         name: []const u8,
         from: *const ?css.css_properties.css_modules.Specifier,
         source_index: u32,
-    ) ?[]const u8 {
-        _ = this; // autofix
-        _ = name; // autofix
-        _ = from; // autofix
-        _ = source_index; // autofix
-        @panic(css.todo_stuff.depth);
+    ) PrintErr!?[]const u8 {
+        const allocator = dest.allocator;
+        const reference, const key = if (from.*) |specifier| switch (specifier) {
+            .global => return name[2..],
+            .import_record_index => |import_record_index| init: {
+                const import_record = try dest.importRecord(import_record_index);
+                break :init .{
+                    CssModuleReference{
+                        .dependency = .{
+                            .name = name[2..],
+                            .specifier = import_record.path.text,
+                        },
+                    },
+                    import_record.path.text,
+                };
+            },
+        } else {
+            // Local export. Mark as used.
+            const gop = this.exports_by_source_index.items[source_index].getOrPut(allocator, name) catch bun.outOfMemory();
+            if (gop.found_existing) {
+                gop.value_ptr.is_referenced = true;
+            } else {
+                var res = ArrayList(u8){};
+                res.appendSlice(allocator, "--") catch bun.outOfMemory();
+                gop.value_ptr.* = CssModuleExport{
+                    .name = this.config.pattern.writeToString(
+                        allocator,
+                        res,
+                        this.hashes.items[source_index],
+                        this.sources.items[source_index],
+                        name[2..],
+                    ),
+                    .composes = .{},
+                    .is_referenced = true,
+                };
+            }
+            return null;
+        };
+
+        const the_hash = hash(allocator, "{s}_{s}_{s}", .{ this.hashes.items[source_index], name, key }, false);
+
+        this.references.put(
+            allocator,
+            std.fmt.allocPrint(allocator, "--{s}", .{the_hash}) catch bun.outOfMemory(),
+            reference,
+        ) catch bun.outOfMemory();
+
+        return the_hash;
     }
 
     pub fn handleComposes(
-        this: *CssModule,
-        allocator: Allocator,
+        _: *CssModule,
+        comptime W: type,
+        _: *css.Printer(W),
         selectors: *const css.selector.parser.SelectorList,
-        composes: *const css.css_properties.css_modules.Composes,
-        source_index: u32,
+        _: *const css.css_properties.css_modules.Composes,
+        _: u32,
     ) css.Maybe(void, css.PrinterErrorKind) {
+        // const allocator = dest.allocator;
         for (selectors.v.slice()) |*sel| {
-            if (sel.len() == 1) {
-                const component: *const css.selector.parser.Component = &sel.components.items[0];
-                switch (component.*) {
-                    .class => |id| {
-                        for (composes.names.slice()) |name| {
-                            const reference: CssModuleReference = if (composes.from) |*specifier|
-                                switch (specifier.*) {
-                                    .source_index => |dep_source_index| {
-                                        if (this.exports_by_source_index.items[dep_source_index].get(name.v)) |entry| {
-                                            const entry_name = entry.name;
-                                            const composes2 = &entry.composes;
-                                            const @"export" = this.exports_by_source_index.items[source_index].getPtr(id.v).?;
-
-                                            @"export".composes.append(allocator, .{ .local = .{ .name = entry_name } }) catch bun.outOfMemory();
-                                            @"export".composes.appendSlice(allocator, composes2.items) catch bun.outOfMemory();
-                                        }
-                                        continue;
-                                    },
-                                    .global => CssModuleReference{ .global = .{ .name = name.v } },
-                                    .file => |file| CssModuleReference{
-                                        .dependency = .{
-                                            .name = name.v,
-                                            .specifier = file,
-                                        },
-                                    },
-                                }
-                            else
-                                CssModuleReference{
-                                    .local = .{
-                                        .name = this.config.pattern.writeToString(
-                                            allocator,
-                                            ArrayList(u8){},
-                                            this.hashes.items[source_index],
-                                            this.sources.items[source_index],
-                                            name.v,
-                                        ),
-                                    },
-                                };
-
-                            const export_value = this.exports_by_source_index.items[source_index].getPtr(id.v) orelse unreachable;
-                            export_value.composes.append(allocator, reference) catch bun.outOfMemory();
-
-                            const contains_reference = brk: {
-                                for (export_value.composes.items) |*compose_| {
-                                    const compose: *const CssModuleReference = compose_;
-                                    if (compose.eql(&reference)) {
-                                        break :brk true;
-                                    }
-                                }
-                                break :brk false;
-                            };
-                            if (!contains_reference) {
-                                export_value.composes.append(allocator, reference) catch bun.outOfMemory();
-                            }
-                        }
-                    },
-                    else => {},
-                }
+            if (sel.len() == 1 and sel.components.items[0] == .class) {
+                continue;
             }
 
             // The composes property can only be used within a simple class selector.
@@ -199,28 +199,28 @@ pub const CssModule = struct {
 pub const Config = struct {
     /// The name pattern to use when renaming class names and other identifiers.
     /// Default is `[hash]_[local]`.
-    pattern: Pattern,
+    pattern: Pattern = .{},
 
     /// Whether to rename dashed identifiers, e.g. custom properties.
-    dashed_idents: bool,
+    dashed_idents: bool = false,
 
     /// Whether to scope animation names.
     /// Default is `true`.
-    animation: bool,
+    animation: bool = true,
 
     /// Whether to scope grid names.
     /// Default is `true`.
-    grid: bool,
+    grid: bool = true,
 
     /// Whether to scope custom identifiers
     /// Default is `true`.
-    custom_idents: bool,
+    custom_idents: bool = true,
 };
 
 /// A CSS modules class name pattern.
 pub const Pattern = struct {
     /// The list of segments in the pattern.
-    segments: css.SmallList(Segment, 2),
+    segments: css.SmallList(Segment, 3) = css.SmallList(Segment, 3).initInlined(&[_]Segment{ .local, .{ .literal = "_" }, .hash }),
 
     /// Write the substituted pattern to a destination.
     pub fn write(
@@ -381,6 +381,8 @@ pub const CssModuleReference = union(enum) {
         /// The name to reference within the dependency.
         name: []const u8,
         /// The dependency specifier for the referenced file.
+        ///
+        /// import record idx
         specifier: []const u8,
     },
 
@@ -390,6 +392,7 @@ pub const CssModuleReference = union(enum) {
         return switch (this.*) {
             .local => |v| bun.strings.eql(v.name, other.local.name),
             .global => |v| bun.strings.eql(v.name, other.global.name),
+            // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
             .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
         };
     }
@@ -397,10 +400,33 @@ pub const CssModuleReference = union(enum) {
 
 // TODO: replace with bun's hash
 pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_start: bool) []const u8 {
-    _ = fmt; // autofix
-    _ = args; // autofix
-    _ = allocator; // autofix
-    _ = at_start; // autofix
-    // @compileError(css.todo_stuff.depth);
-    @panic(css.todo_stuff.depth);
+    const count = std.fmt.count(fmt, args);
+    var stack_fallback = std.heap.stackFallback(128, allocator);
+    const fmt_alloc = if (count <= 128) stack_fallback.get() else allocator;
+    var hasher = bun.Wyhash11.init(0);
+    var fmt_str = std.fmt.allocPrint(fmt_alloc, fmt, args) catch bun.outOfMemory();
+    hasher.update(fmt_str);
+
+    const h: u32 = @truncate(hasher.final());
+    var h_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &h_bytes, h, .little);
+
+    const encode_len = bun.base64.simdutfEncodeLenUrlSafe(h_bytes[0..].len);
+
+    var slice_to_write = if (encode_len <= 128 - @as(usize, @intFromBool(at_start)))
+        allocator.alloc(u8, encode_len + @as(usize, @intFromBool(at_start))) catch bun.outOfMemory()
+    else
+        fmt_str[0..];
+
+    const base64_encoded_hash_len = bun.base64.simdutfEncodeUrlSafe(slice_to_write, &h_bytes);
+
+    const base64_encoded_hash = slice_to_write[0..base64_encoded_hash_len];
+
+    if (at_start and base64_encoded_hash.len > 0 and base64_encoded_hash[0] >= '0' and base64_encoded_hash[0] <= '9') {
+        std.mem.copyBackwards(u8, slice_to_write[1..][0..base64_encoded_hash_len], base64_encoded_hash);
+        slice_to_write[0] = '_';
+        return slice_to_write[0 .. base64_encoded_hash_len + 1];
+    }
+
+    return base64_encoded_hash;
 }

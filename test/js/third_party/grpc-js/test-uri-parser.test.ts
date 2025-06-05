@@ -15,10 +15,10 @@
  *
  */
 
-import assert from "assert";
-import * as uriParser from "@grpc/grpc-js/build/src/uri-parser";
 import * as resolver from "@grpc/grpc-js/build/src/resolver";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import * as uriParser from "@grpc/grpc-js/build/src/uri-parser";
+import assert from "assert";
+import { describe, it } from "bun:test";
 
 describe("URI Parser", function () {
   describe("parseUri", function () {

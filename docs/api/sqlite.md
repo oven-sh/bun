@@ -75,14 +75,14 @@ To instead throw an error when a parameter is missing and allow binding without 
 import { Database } from "bun:sqlite";
 
 const strict = new Database(
-  ":memory:", 
+  ":memory:",
   { strict: true }
 );
 
 // throws error because of the typo:
 const query = strict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 
 const notStrict = new Database(
   ":memory:"
@@ -90,7 +90,7 @@ const notStrict = new Database(
 // does not throw error:
 notStrict
   .query("SELECT $message;")
-  .all({ messag: "Hello world" });
+  .all({ message: "Hello world" });
 ```
 
 ### Load via ES module import
@@ -177,7 +177,7 @@ const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
 ## WAL mode
 
-SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent writes. It's broadly recommended to enable WAL mode for most typical applications.
+SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) which dramatically improves performance, especially in situations with many concurrent readers and a single writer. It's broadly recommended to enable WAL mode for most typical applications.
 
 To enable WAL mode, run this pragma query at the beginning of your application:
 

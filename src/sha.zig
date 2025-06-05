@@ -1,6 +1,6 @@
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const std = @import("std");
-pub const bun = @import("root").bun;
+pub const bun = @import("bun");
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
@@ -10,7 +10,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
-            BoringSSL.load();
+            bun.BoringSSL.load();
             var this: @This() = .{
                 .hasher = undefined,
             };
@@ -44,7 +44,7 @@ fn NewEVP(comptime digest_size: comptime_int, comptime MDName: []const u8) type 
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const md = @field(BoringSSL, MDName)();
             var this = @This(){};
@@ -56,7 +56,7 @@ fn NewEVP(comptime digest_size: comptime_int, comptime MDName: []const u8) type 
             return this;
         }
 
-        pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
+        pub fn hash(bytes: []const u8, out: *Digest, engine: ?*BoringSSL.ENGINE) void {
             const md = @field(BoringSSL, MDName)();
 
             bun.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);

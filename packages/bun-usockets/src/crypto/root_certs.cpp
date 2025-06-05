@@ -8,6 +8,8 @@
 #include <string.h>
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
+extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
+
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
 // for the OpenSSL CLI, but works poorly for this case because it involves
@@ -27,54 +29,82 @@ us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
   in = BIO_new_mem_buf(content.str, content.len);
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
-  }
+  } else {
+    x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
+    if (x == NULL) {
+      OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
+    }
 
-  x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-  if (x == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    goto end;
+    // NOTE: PEM_read_bio_X509 allocates, so input BIO must be freed.
+    BIO_free(in);
   }
   return x;
-end:
-  X509_free(x);
-  BIO_free(in);
-  return NULL;
 }
 
-static X509 *
-us_ssl_ctx_get_X509_without_callback_from_file(const char *filename) {
+static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
+  BIO *in = NULL;
+  STACK_OF(X509) *certs = NULL;
   X509 *x = NULL;
-  BIO *in;
+  unsigned long last_err;
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
-  in = BIO_new(BIO_s_file());
+  in = BIO_new_file(filename, "r");
   if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-    goto end;
-  }
-
-  if (BIO_read_filename(in, filename) <= 0) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_SYS_LIB);
     goto end;
   }
 
-  x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-  if (x == NULL) {
+  certs = sk_X509_new_null();
+  if (certs == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+    goto end;
+  }
+
+  while ((x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL))) {
+    if (!sk_X509_push(certs, x)) {
+      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+      X509_free(x);
+      goto end;
+    }
+  }
+
+  last_err = ERR_peek_last_error();
+  // Ignore error if its EOF/no start line found.
+  if (ERR_GET_LIB(last_err) == ERR_LIB_PEM && ERR_GET_REASON(last_err) == PEM_R_NO_START_LINE) {
+    ERR_clear_error();
+  } else {
+    goto end;
+  }
+
+  if (sk_X509_num(certs) == 0) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
     goto end;
   }
-  return x;
-end:
-  X509_free(x);
+
   BIO_free(in);
+  return certs;
+
+end:
+  BIO_free(in);
+  if (certs) {
+    sk_X509_pop_free(certs, X509_free);
+  }
+
+  char error_msg[256];
+  ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
+  BUN__warn__extra_ca_load_failed(filename, error_msg);
+  ERR_clear_error();
+
   return NULL;
 }
 
-static void us_internal_init_root_certs(X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])], X509 *&root_extra_cert_instances) {
+static void us_internal_init_root_certs(
+    X509 *root_cert_instances[root_certs_size],
+    STACK_OF(X509) *&root_extra_cert_instances) {
   static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
   static std::atomic_bool root_cert_instances_initialized = 0;
+
   if (std::atomic_load(&root_cert_instances_initialized) == 1)
     return;
 
@@ -89,13 +119,9 @@ static void us_internal_init_root_certs(X509 *root_cert_instances[sizeof(root_ce
     }
 
     // get extra cert option from environment variable
-    const char *extra_cert = getenv("NODE_EXTRA_CA_CERTS");
-    if (extra_cert) {
-      size_t length = strlen(extra_cert);
-      if (length > 0) {
-        root_extra_cert_instances =
-            us_ssl_ctx_get_X509_without_callback_from_file(extra_cert);
-      }
+    const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
+    if (extra_certs && extra_certs[0]) {
+      root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
     }
   }
 
@@ -119,9 +145,8 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
-    NULL};
-  static X509 *root_extra_cert_instances = NULL;
+  static X509 *root_cert_instances[root_certs_size] = {NULL};
+  static STACK_OF(X509) *root_extra_cert_instances = NULL;
 
   us_internal_init_root_certs(root_cert_instances, root_extra_cert_instances);
 
@@ -135,8 +160,11 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   if (root_extra_cert_instances) {
-    X509_up_ref(root_extra_cert_instances);
-    X509_STORE_add_cert(store, root_extra_cert_instances);
+    for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
+      X509 *cert = sk_X509_value(root_extra_cert_instances, i);
+      X509_up_ref(cert);
+      X509_STORE_add_cert(store, cert);
+    }
   }
 
   return store;

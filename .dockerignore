@@ -16,3 +16,6 @@ zig-out
 build
 vendor
 node_modules
+*.trace
+
+packages/bun-uws/fuzzing

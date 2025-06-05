@@ -31,6 +31,7 @@
 #include <JavaScriptCore/PropertySlot.h>
 #include <type_traits>
 #include "ErrorCode.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
@@ -224,12 +225,12 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
         JSC::MarkedArgumentBuffer arguments;
         appendForEachArguments<JSIterator>(lexicalGlobalObject, *thisObject.globalObject(), arguments, value);
         arguments.append(&thisObject);
-        if (UNLIKELY(arguments.hasOverflowed())) {
+        if (arguments.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);
             return {};
         }
-        JSC::call(&lexicalGlobalObject, callback, callData, thisValue, arguments);
-        if (UNLIKELY(scope.exception()))
+        JSC::profiledCall(&lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
+        if (scope.exception()) [[unlikely]]
             break;
     }
     return JSC::jsUndefined();
@@ -257,7 +258,7 @@ JSC::JSValue JSDOMIteratorBase<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObj
 template<typename JSWrapper, typename IteratorTraits>
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, IteratorTraits>::next(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto iterator = JSC::jsDynamicCast<JSDOMIteratorBase<JSWrapper, IteratorTraits>*>(callFrame->thisValue());

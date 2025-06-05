@@ -28,6 +28,7 @@
 
 #include "BunClientData.h"
 #include "BroadcastChannelRegistry.h"
+#include "BunBroadcastChannelRegistry.h"
 #include "EventNames.h"
 #include "EventTarget.h"
 #include "MessageEvent.h"
@@ -42,7 +43,7 @@
 #include <wtf/CallbackAggregator.h>
 #include <wtf/Identified.h>
 #include <wtf/HashMap.h>
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/Scope.h>
 
@@ -50,19 +51,19 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(BroadcastChannel);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
-static HashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
 {
-    static NeverDestroyed<HashMap<BroadcastChannelIdentifier, BroadcastChannel*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>> map;
     return map;
 }
 
 static Lock channelToContextIdentifierLock;
-static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
 {
-    static NeverDestroyed<HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
 }
 
@@ -263,11 +264,11 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         if (!globalObject)
             return;
 
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, std::nullopt, WTFMove(dummyPorts));
-        if (UNLIKELY(scope.exception())) {
+        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, nullptr, WTFMove(dummyPorts));
+        if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());
             return;

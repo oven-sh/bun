@@ -551,3 +551,75 @@ exports[\`t2 1\`] = \`"abc\\\`def"\`;
 exports[\`t3 1\`] = \`"abc def ghi"\`;
 "
 `;
+
+exports[`snapshots property matchers 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`
+{
+  "createdAt": Any<Date>,
+  "id": Any<Number>,
+  "name": "LeBron James",
+}
+\`;
+"
+`;
+
+exports[`inline snapshots grow file for new snapshot 1`] = `
+"
+      test("abc", () => { expect("hello").toMatchInlineSnapshot(\`"hello"\`) });
+    "
+`;
+
+exports[`inline snapshots backtick in test name 1`] = `"test("\`", () => {expect("abc").toMatchInlineSnapshot(\`"abc"\`);})"`;
+
+exports[`inline snapshots dollars curly in test name 1`] = `"test("\${}", () => {expect("abc").toMatchInlineSnapshot(\`"abc"\`);})"`;
+
+exports[`inline snapshots #15283 1`] = `
+"it("Should work", () => {
+      expect(\`This is \\\`wrong\\\`\`).toMatchInlineSnapshot(\`"This is \\\`wrong\\\`"\`);
+    });"
+`;
+
+exports[`snapshots unicode surrogate halves 1`] = `
+"// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`abc 1\`] = \`"😊abc\\\`\\\${def} �, � "\`;
+"
+`;
+
+exports[`error inline snapshots 1`] = `"hello"`;
+
+exports[`error inline snapshots 2`] = `undefined`;
+
+exports[`error inline snapshots 3`] = `undefined`;
+
+exports[`error inline snapshots 4`] = `undefined`;
+
+exports[`error inline snapshots: hint 1`] = `undefined`;
+
+exports[`snapshot numbering 1`] = `"item one"`;
+
+exports[`snapshot numbering 2`] = `"snap"`;
+
+exports[`snapshot numbering 4`] = `"snap"`;
+
+exports[`snapshot numbering 6`] = `"hello"`;
+
+exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`indented inline snapshots 4`] = `
+"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoMatchInlineSnapshot\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+Expected: \x1B[2m
+\x1B[0m\x1B[32m                \x1B[0m\x1B[2m{
+  \x1B[0m\x1B[32m            \x1B[0m\x1B[2m"a": 2,
+\x1B[0m\x1B[32m                \x1B[0m\x1B[2m}
+\x1B[0m
+Received: \x1B[2m
+\x1B[0m\x1B[2m{
+  \x1B[0m\x1B[2m"a": 2,
+\x1B[0m\x1B[2m}
+\x1B[0m
+"
+`;

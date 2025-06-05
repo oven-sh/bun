@@ -36,12 +36,12 @@ public:
     using StaticOperation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, Ref<DeferredPromise>&&);
 
     template<Operation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
-    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
+    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
     {
         return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [&operationName](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
             auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
             if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-                if (UNLIKELY(!thisObject))
+                if (!thisObject) [[unlikely]]
                     return rejectPromiseWithThisTypeError(promise.get(), JSClass::info()->className, operationName);
             } else
                 ASSERT(thisObject);
@@ -56,12 +56,13 @@ public:
     // This function is a special case for custom operations want to handle the creation of the promise themselves.
     // It is triggered via the extended attribute [ReturnsOwnPromise].
     template<typename IDLOperation<JSClass>::Operation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
-    static JSC::EncodedJSValue callReturningOwnPromise(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
+    static JSC::EncodedJSValue callReturningOwnPromise(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
     {
         auto* thisObject = IDLOperation<JSClass>::cast(lexicalGlobalObject, callFrame);
         if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
-            if (UNLIKELY(!thisObject))
+            if (!thisObject) [[unlikely]] {
                 return rejectPromiseWithThisTypeError(lexicalGlobalObject, JSClass::info()->className, operationName);
+            }
         } else
             ASSERT(thisObject);
 

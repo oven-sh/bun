@@ -1,11 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Command = bun.CLI.Command;
 const Output = bun.Output;
 const Global = bun.Global;
 const http = bun.http;
 const OOM = bun.OOM;
-const Headers = http.Headers;
 const HeaderBuilder = http.HeaderBuilder;
 const MutableString = bun.MutableString;
 const URL = bun.URL;
@@ -34,7 +33,6 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 const E = bun.JSAst.E;
 const G = bun.JSAst.G;
-const BabyList = bun.BabyList;
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
@@ -53,8 +51,8 @@ pub const PublishCommand = struct {
 
             normalized_pkg_info: string,
 
-            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
-            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
+            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
+            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
             script_env: if (directory_publish) *DotEnv.Loader else void,
 
             const FromTarballError = OOM || error{
@@ -242,7 +240,6 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
-                    abs_tarball_path,
                 );
 
                 Pack.Context.printSummary(
@@ -281,11 +278,10 @@ pub const PublishCommand = struct {
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
                 var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
+                const load_from_disk_result = lockfile.loadFromCwd(
                     manager,
                     manager.allocator,
                     manager.log,
-                    manager.options.lockfile_path,
                     false,
                 );
 
@@ -322,9 +318,7 @@ pub const PublishCommand = struct {
                     },
                 };
 
-                return switch (manager.options.log_level) {
-                    inline else => |log_level| Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
-                };
+                return Pack.pack(&pack_ctx, manager.original_package_json_path, true);
             }
         };
     }
@@ -441,6 +435,8 @@ pub const PublishCommand = struct {
 
         if (manager.options.do.run_scripts) {
             const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            try context.script_env.map.put("npm_command", "publish");
+
             if (context.publish_script) |publish_script| {
                 _ = Run.runPackageScriptForeground(
                     context.command_ctx,
@@ -682,12 +678,11 @@ pub const PublishCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.windows.updateStdioModeFlags(.std_in, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
-                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+                _ = bun.c.SetConsoleMode(bun.FD.stdin().native(), mode);
             }
         };
 
@@ -802,7 +797,7 @@ pub const PublishCommand = struct {
                         const nanoseconds = nanoseconds: {
                             if (res.headers.get("retry-after")) |retry| default: {
                                 const trimmed = strings.trim(retry, &strings.whitespace_chars);
-                                const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
+                                const seconds = std.fmt.parseInt(u32, trimmed, 10) catch break :default;
                                 break :nanoseconds seconds * std.time.ns_per_s;
                             }
 
@@ -876,7 +871,6 @@ pub const PublishCommand = struct {
         json_source: logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
-        abs_tarball_path: stringZ,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -892,7 +886,7 @@ pub const PublishCommand = struct {
         // TODO: npm version
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
-        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}));
+        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -915,7 +909,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)}) },
+                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -928,10 +922,12 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{s}", .{
-                        strings.withoutTrailingSlash(registry.url.href),
+                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                        // always use replace https with http
+                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+                        strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
                         package_name,
-                        std.fs.path.basename(abs_tarball_path),
+                        Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
                 },
                 logger.Loc.Empty,
@@ -953,7 +949,7 @@ pub const PublishCommand = struct {
                 Output.err(err, "failed to open workspace directory", .{});
                 Global.crash();
             };
-            defer _ = bun.sys.close(workspace_root);
+            defer workspace_root.close();
 
             try normalizeBin(
                 allocator,
@@ -963,7 +959,7 @@ pub const PublishCommand = struct {
             );
         }
 
-        const buffer_writer = try bun.js_printer.BufferWriter.init(allocator);
+        const buffer_writer = bun.js_printer.BufferWriter.init(allocator);
         var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
         const written = bun.js_printer.printJSON(
@@ -973,6 +969,7 @@ pub const PublishCommand = struct {
             &json_source,
             .{
                 .minify_whitespace = true,
+                .mangled_props = null,
             },
         ) catch |err| {
             switch (err) {
@@ -1146,9 +1143,9 @@ pub const PublishCommand = struct {
                 var dirs: std.ArrayListUnmanaged(struct { std.fs.Dir, string, bool }) = .{};
                 defer dirs.deinit(allocator);
 
-                try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir, false });
+                try dirs.append(allocator, .{ bin_dir.stdDir(), normalized_bin_dir, false });
 
-                while (dirs.popOrNull()) |dir_info| {
+                while (dirs.pop()) |dir_info| {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 
@@ -1156,7 +1153,7 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try bun.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                            const join = try std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
@@ -1362,8 +1359,8 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{s}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
-                std.fs.path.basename(ctx.abs_tarball_path),
+            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+                Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });
 

@@ -25,6 +25,6 @@ describe("process.binding", () => {
 
     const map = uv.getErrorMap();
     expect(map).toBeDefined();
-    expect(map.get(-56)).toEqual(["EISCONN", "socket is already connected"]);
+    expect(map.get(uv.UV_EISCONN)).toEqual(["EISCONN", "socket is already connected"]);
   });
 });

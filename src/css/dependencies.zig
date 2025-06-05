@@ -1,18 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const logger = bun.logger;
-const Log = logger.Log;
+const bun = @import("bun");
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
 const Url = css_values.url.Url;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 // const Location = css.Location;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub const DependencyOptions = struct {
@@ -64,14 +58,16 @@ pub const ImportDependency = struct {
     /// The location of the dependency in the source file.
     loc: SourceRange,
 
-    pub fn new(allocator: Allocator, rule: *const css.css_rules.import.ImportRule, filename: []const u8) ImportDependency {
+    pub fn new(allocator: Allocator, rule: *const css.css_rules.import.ImportRule, filename: []const u8, local_names: ?*const css.LocalsResultsMap, symbols: *const bun.JSAst.Symbol.Map) ImportDependency {
         const supports = if (rule.supports) |*supports| brk: {
             const s = css.to_css.string(
                 allocator,
                 css.css_rules.supports.SupportsCondition,
                 supports,
-                css.PrinterOptions{},
+                css.PrinterOptions.default(),
                 null,
+                local_names,
+                symbols,
             ) catch bun.Output.panic(
                 "Unreachable code: failed to stringify SupportsCondition.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
                 .{},
@@ -80,7 +76,7 @@ pub const ImportDependency = struct {
         } else null;
 
         const media = if (rule.media.media_queries.items.len > 0) media: {
-            const s = css.to_css.string(allocator, css.MediaList, &rule.media, css.PrinterOptions{}, null) catch bun.Output.panic(
+            const s = css.to_css.string(allocator, css.MediaList, &rule.media, css.PrinterOptions.default(), null, local_names, symbols) catch bun.Output.panic(
                 "Unreachable code: failed to stringify MediaList.\n\nThis is a bug in Bun's CSS printer. Please file a bug report at https://github.com/oven-sh/bun/issues/new/choose",
                 .{},
             );

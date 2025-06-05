@@ -8,6 +8,7 @@
 #include "JSEventTarget.h"
 #include "JavaScriptCore/JSArray.h"
 #include "wtf/text/MakeString.h"
+#include "../ErrorCode.h"
 
 namespace Bun {
 
@@ -15,7 +16,7 @@ using namespace JSC;
 using namespace WebCore;
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
@@ -29,8 +30,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     auto eventType = callFrame->argument(1).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (UNLIKELY(!thisObject))
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+    if (!thisObject) [[unlikely]] {
+        return Bun::throwError(globalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "ERR_INVALID_ARG_TYPE: first argument must be of type EventEmitter"_s);
+    }
 
     MarkedArgumentBuffer values;
     auto& listeners = thisObject->wrapped().eventListeners(WTF::makeAtomString(eventType));

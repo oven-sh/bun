@@ -1,6 +1,8 @@
 const { hideFromStack } = require("internal/shared");
-const { ArrayIsArray } = require("internal/primordials");
+
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const ArrayIsArray = Array.isArray;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -24,7 +26,9 @@ const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
 function validateLinkHeaderFormat(value, name) {
   if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
     throw $ERR_INVALID_ARG_VALUE(
-      `The arguments ${name} is invalid must be an array or string of format "</styles.css>; rel=preload; as=style"`,
+      name,
+      value,
+      `must be an array or string of format "</styles.css>; rel=preload; as=style"`,
     );
   }
 }
@@ -55,23 +59,27 @@ function validateLinkHeaderValue(hints) {
   }
 
   throw $ERR_INVALID_ARG_VALUE(
-    `The arguments hints is invalid must be an array or string of format "</styles.css>; rel=preload; as=style"`,
+    "hints",
+    hints,
+    `must be an array or string of format "</styles.css>; rel=preload; as=style"`,
   );
 }
-hideFromStack(validateLinkHeaderValue);
-// TODO: do it in NodeValidator.cpp
-function validateObject(value, name) {
-  if (typeof value !== "object" || value === null) throw $ERR_INVALID_ARG_TYPE(name, "object", value);
+
+function validateInternalField(object, fieldKey, className) {
+  if (typeof object !== "object" || object === null || !ObjectPrototypeHasOwnProperty.$call(object, fieldKey)) {
+    throw $ERR_INVALID_ARG_TYPE("this", className, object);
+  }
 }
-hideFromStack(validateObject);
+hideFromStack(validateLinkHeaderValue, validateInternalField);
 
 export default {
-  validateObject: validateObject,
+  /** (value, name) */
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
-  /** `(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER)` */
+  /** `(value, name, min, max)` */
   validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
-  /** `(value, name, min = undefined, max)` */
+  /** `(value, name, min, max)` */
   validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
   /** `(value, name)` */
   validateString: $newCppFunction("NodeValidator.cpp", "jsFunction_validateString", 0),
@@ -103,4 +111,9 @@ export default {
   validateUndefined: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUndefined", 0),
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
+  /** `(value, name, oneOf)` */
+  validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
+  isUint8Array: value => value instanceof Uint8Array,
+  /** `(object, fieldKey, className)` */
+  validateInternalField,
 };

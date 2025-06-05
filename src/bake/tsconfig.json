@@ -1,22 +1,14 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["DOM", "ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "strict": true,
-    "noImplicitAny": false,
-    "allowJs": true,
-    "downlevelIteration": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "paths": {
-      "bun-framework-react/*": ["./bun-framework-react/*"]
+      "bun-framework-react/*": ["./bun-framework-react/*"],
+      "bindgen": ["../codegen/bindgen-lib"]
     },
     "jsx": "react-jsx",
     "types": ["react/experimental"]
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js"],
+  "references": [{ "path": "../../packages/bun-types" }]
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
@@ -7,8 +7,6 @@ const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const Length = css.css_values.length.Length;
 const Percentage = css.css_values.percentage.Percentage;
@@ -88,7 +86,7 @@ pub const SyntaxString = union(enum) {
 
         // PERF(alloc): count first?
         while (true) {
-            const component = switch (SyntaxComponent.parseString(trimmed_input)) {
+            const component = switch (SyntaxComponent.parseString(&trimmed_input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
@@ -260,8 +258,7 @@ pub const SyntaxComponent = struct {
     kind: SyntaxComponentKind,
     multiplier: Multiplier,
 
-    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponent, void) {
-        var input = input_;
+    pub fn parseString(input: *[]const u8) css.Maybe(SyntaxComponent, void) {
         const kind = switch (SyntaxComponentKind.parseString(input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -276,11 +273,11 @@ pub const SyntaxComponent = struct {
         }
 
         var multiplier: Multiplier = .none;
-        if (bun.strings.startsWithChar(input, '+')) {
-            input = input[1..];
+        if (bun.strings.startsWithChar(input.*, '+')) {
+            input.* = input.*[1..];
             multiplier = .space;
-        } else if (bun.strings.startsWithChar(input, '#')) {
-            input = input[1..];
+        } else if (bun.strings.startsWithChar(input.*, '#')) {
+            input.* = input.*[1..];
             multiplier = .comma;
         }
 
@@ -334,13 +331,13 @@ pub const SyntaxComponentKind = union(enum) {
     /// A literal component.
     literal: []const u8,
 
-    pub fn parseString(input_: []const u8) css.Maybe(SyntaxComponentKind, void) {
+    pub fn parseString(input: *[]const u8) css.Maybe(SyntaxComponentKind, void) {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
-        var input = std.mem.trimLeft(u8, input_, SPACE_CHARACTERS);
-        if (bun.strings.startsWithChar(input, '<')) {
+        input.* = std.mem.trimLeft(u8, input.*, SPACE_CHARACTERS);
+        if (bun.strings.startsWithChar(input.*, '<')) {
             // https://drafts.css-houdini.org/css-properties-values-api/#consume-data-type-name
-            const end_idx = std.mem.indexOfScalar(u8, input, '>') orelse return .{ .err = {} };
-            const name = input[1..end_idx];
+            const end_idx = std.mem.indexOfScalar(u8, input.*, '>') orelse return .{ .err = {} };
+            const name = input.*[1..end_idx];
             // todo_stuff.match_ignore_ascii_case
             const component: SyntaxComponentKind = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
                 .length
@@ -373,17 +370,17 @@ pub const SyntaxComponentKind = union(enum) {
             else
                 return .{ .err = {} };
 
-            input = input[end_idx + 1 ..];
+            input.* = input.*[end_idx + 1 ..];
             return .{ .result = component };
-        } else if (input.len > 0 and isIdentStart(input[0])) {
+        } else if (input.len > 0 and isIdentStart(input.*[0])) {
             // A literal.
             var end_idx: usize = 0;
             while (end_idx < input.len and
-                isNameCodePoint(input[end_idx])) : (end_idx +=
-                bun.strings.utf8ByteSequenceLengthUnsafe(input[end_idx]))
+                isNameCodePoint(input.*[end_idx])) : (end_idx +=
+                bun.strings.utf8ByteSequenceLengthUnsafe(input.*[end_idx]))
             {}
-            const literal = input[0..end_idx];
-            input = input[end_idx..];
+            const literal = input.*[0..end_idx];
+            input.* = input.*[end_idx..];
             return .{ .result = SyntaxComponentKind{ .literal = literal } };
         } else {
             return .{ .err = {} };

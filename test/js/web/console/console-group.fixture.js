@@ -41,11 +41,22 @@ console.groupEnd();
 console.groupEnd(); // Extra
 console.groupEnd(); // Extra
 
+class NamedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "NamedError";
+  }
+}
+
 // Group with different log types
 console.group("Different logs");
 console.log("Regular log");
 console.info("Info log");
 console.warn("Warning log");
+console.warn(new Error("console.warn an error"));
+console.error(new Error("console.error an error"));
+console.error(new NamedError("console.error a named error"));
+console.warn(new NamedError("console.warn a named error"));
 console.error("Error log");
 console.debug("Debug log");
 console.groupEnd();

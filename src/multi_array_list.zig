@@ -1,11 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const testing = std.testing;
 
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
@@ -24,11 +23,16 @@ pub fn MultiArrayList(comptime T: type) type {
         len: usize = 0,
         capacity: usize = 0,
 
-        pub const Elem = switch (@typeInfo(T)) {
-            .Struct => T,
-            .Union => |u| struct {
-                pub const Bare =
-                    @Type(.{ .Union = .{
+        pub const empty: Self = .{
+            .bytes = undefined,
+            .len = 0,
+            .capacity = 0,
+        };
+
+        const Elem = switch (@typeInfo(T)) {
+            .@"struct" => T,
+            .@"union" => |u| struct {
+                pub const Bare = @Type(.{ .@"union" = .{
                     .layout = u.layout,
                     .tag_type = null,
                     .fields = u.fields,
@@ -70,6 +74,12 @@ pub fn MultiArrayList(comptime T: type) type {
             len: usize,
             capacity: usize,
 
+            pub const empty: Slice = .{
+                .ptrs = undefined,
+                .len = 0,
+                .capacity = 0,
+            };
+
             pub fn items(self: Slice, comptime field: Field) []FieldType(field) {
                 const F = FieldType(field);
                 if (self.capacity == 0) {
@@ -85,9 +95,9 @@ pub fn MultiArrayList(comptime T: type) type {
 
             pub fn set(self: *Slice, index: usize, elem: T) void {
                 const e = switch (@typeInfo(T)) {
-                    .Struct => elem,
-                    .Union => Elem.fromT(elem),
-                    else => @compileError("unreachable"),
+                    .@"struct" => elem,
+                    .@"union" => Elem.fromT(elem),
+                    else => unreachable,
                 };
                 inline for (fields, 0..) |field_info, i| {
                     self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_info.name);
@@ -100,14 +110,14 @@ pub fn MultiArrayList(comptime T: type) type {
                     @field(result, field_info.name) = self.items(@as(Field, @enumFromInt(i)))[index];
                 }
                 return switch (@typeInfo(T)) {
-                    .Struct => result,
-                    .Union => Elem.toT(result.tags, result.data),
-                    else => @compileError("unreachable"),
+                    .@"struct" => result,
+                    .@"union" => Elem.toT(result.tags, result.data),
+                    else => unreachable,
                 };
             }
 
             pub fn toMultiArrayList(self: Slice) Self {
-                if (self.ptrs.len == 0) {
+                if (self.ptrs.len == 0 or self.capacity == 0) {
                     return .{};
                 }
                 const unaligned_ptr = self.ptrs[sizes.fields[0]];
@@ -253,21 +263,13 @@ pub fn MultiArrayList(comptime T: type) type {
             return index;
         }
 
-        /// Remove and return the last element from the list.
-        /// Asserts the list has at least one item.
+        /// Remove and return the last element from the list, or return null if list is empty.
         /// Invalidates pointers to fields of the removed element.
-        pub fn pop(self: *Self) T {
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
             const val = self.get(self.len - 1);
             self.len -= 1;
             return val;
-        }
-
-        /// Remove and return the last element from the list, or
-        /// return `null` if list is empty.
-        /// Invalidates pointers to fields of the removed element, if any.
-        pub fn popOrNull(self: *Self) ?T {
-            if (self.len == 0) return null;
-            return self.pop();
         }
 
         /// Inserts an item into an ordered list.  Shifts all elements
@@ -279,6 +281,7 @@ pub fn MultiArrayList(comptime T: type) type {
             self.insertAssumeCapacity(index, elem);
         }
 
+        /// Invalidates all element pointers.
         pub fn clearRetainingCapacity(this: *Self) void {
             this.len = 0;
         }
@@ -292,9 +295,9 @@ pub fn MultiArrayList(comptime T: type) type {
             assert(index <= self.len);
             self.len += 1;
             const entry = switch (@typeInfo(T)) {
-                .Struct => elem,
-                .Union => Elem.fromT(elem),
-                else => @compileError("unreachable"),
+                .@"struct" => elem,
+                .@"union" => Elem.fromT(elem),
+                else => unreachable,
             };
             const slices = self.slice();
             inline for (fields, 0..) |field_info, field_index| {
@@ -359,11 +362,8 @@ pub fn MultiArrayList(comptime T: type) type {
         /// If `new_len` is greater than zero, this may fail to reduce the capacity,
         /// but the data remains intact and the length is updated to new_len.
         pub fn shrinkAndFree(self: *Self, gpa: Allocator, new_len: usize) void {
-            if (new_len == 0) {
-                gpa.free(self.allocatedBytes());
-                self.* = .{};
-                return;
-            }
+            if (new_len == 0) return clearAndFree(self, gpa);
+
             assert(new_len <= self.capacity);
             assert(new_len <= self.len);
 
@@ -402,6 +402,11 @@ pub fn MultiArrayList(comptime T: type) type {
             }
             gpa.free(self.allocatedBytes());
             self.* = other;
+        }
+
+        pub fn clearAndFree(self: *Self, gpa: Allocator) void {
+            gpa.free(self.allocatedBytes());
+            self.* = .{};
         }
 
         /// Reduce length to `new_len`.
@@ -485,7 +490,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
         /// `ctx` has the following method:
         /// `fn lessThan(ctx: @TypeOf(ctx), a_index: usize, b_index: usize) bool`
-        fn sortInternal(self: Self, a: usize, b: usize, ctx: anytype, comptime mode: enum { stable, unstable }) void {
+        fn sortInternal(self: Self, a: usize, b: usize, ctx: anytype, comptime mode: std.sort.Mode) void {
             const sort_context: struct {
                 sub_ctx: @TypeOf(ctx),
                 slice: Slice,
@@ -493,7 +498,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 pub fn swap(sc: @This(), a_index: usize, b_index: usize) void {
                     inline for (fields, 0..) |field_info, i| {
                         if (@sizeOf(field_info.type) != 0) {
-                            const field = @as(Field, @enumFromInt(i));
+                            const field: Field = @enumFromInt(i);
                             const ptr = sc.slice.items(field);
                             mem.swap(field_info.type, &ptr[a_index], &ptr[b_index]);
                         }
@@ -562,12 +567,16 @@ pub fn MultiArrayList(comptime T: type) type {
             return self.bytes[0..capacityInBytes(self.capacity)];
         }
 
+        pub fn memoryCost(self: Self) usize {
+            return capacityInBytes(self.capacity);
+        }
+
         pub fn zero(self: Self) void {
             @memset(self.allocatedBytes(), 0);
         }
 
         fn FieldType(comptime field: Field) type {
-            return meta.fieldInfo(Elem, field).type;
+            return @FieldType(Elem, @tagName(field));
         }
 
         const Entry = entry: {
@@ -575,11 +584,11 @@ pub fn MultiArrayList(comptime T: type) type {
             for (&entry_fields, sizes.fields) |*entry_field, i| entry_field.* = .{
                 .name = fields[i].name ++ "_ptr",
                 .type = *fields[i].type,
-                .default_value = null,
+                .default_value_ptr = null,
                 .is_comptime = fields[i].is_comptime,
                 .alignment = fields[i].alignment,
             };
-            break :entry @Type(.{ .Struct = .{
+            break :entry @Type(.{ .@"struct" = .{
                 .layout = .@"extern",
                 .fields = &entry_fields,
                 .decls = &.{},
@@ -596,329 +605,10 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         comptime {
-            if (builtin.mode == .Debug) {
+            if (builtin.zig_backend == .stage2_llvm and !builtin.strip_debug_info) {
                 _ = &dbHelper;
                 _ = &Slice.dbHelper;
             }
         }
     };
-}
-
-test "basic usage" {
-    const ally = testing.allocator;
-
-    const Foo = struct {
-        a: u32,
-        b: []const u8,
-        c: u8,
-    };
-
-    var list = MultiArrayList(Foo){};
-    defer list.deinit(ally);
-
-    try testing.expectEqual(@as(usize, 0), list.items(.a).len);
-
-    try list.ensureTotalCapacity(ally, 2);
-
-    list.appendAssumeCapacity(.{
-        .a = 1,
-        .b = "foobar",
-        .c = 'a',
-    });
-
-    list.appendAssumeCapacity(.{
-        .a = 2,
-        .b = "zigzag",
-        .c = 'b',
-    });
-
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b' });
-
-    try testing.expectEqual(@as(usize, 2), list.items(.b).len);
-    try testing.expectEqualStrings("foobar", list.items(.b)[0]);
-    try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
-
-    try list.append(ally, .{
-        .a = 3,
-        .b = "fizzbuzz",
-        .c = 'c',
-    });
-
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
-
-    try testing.expectEqual(@as(usize, 3), list.items(.b).len);
-    try testing.expectEqualStrings("foobar", list.items(.b)[0]);
-    try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
-    try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
-
-    // Add 6 more things to force a capacity increase.
-    for (0..6) |i| {
-        try list.append(ally, .{
-            .a = @as(u32, @intCast(4 + i)),
-            .b = "whatever",
-            .c = @as(u8, @intCast('d' + i)),
-        });
-    }
-
-    try testing.expectEqualSlices(
-        u32,
-        &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 },
-        list.items(.a),
-    );
-    try testing.expectEqualSlices(
-        u8,
-        &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i' },
-        list.items(.c),
-    );
-
-    list.shrinkAndFree(ally, 3);
-
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
-
-    try testing.expectEqual(@as(usize, 3), list.items(.b).len);
-    try testing.expectEqualStrings("foobar", list.items(.b)[0]);
-    try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
-    try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
-
-    list.set(try list.addOne(ally), .{
-        .a = 4,
-        .b = "xnopyt",
-        .c = 'd',
-    });
-    try testing.expectEqualStrings("xnopyt", list.pop().b);
-    try testing.expectEqual(@as(?u8, 'c'), if (list.popOrNull()) |elem| elem.c else null);
-    try testing.expectEqual(@as(u32, 2), list.pop().a);
-    try testing.expectEqual(@as(u8, 'a'), list.pop().c);
-    try testing.expectEqual(@as(?Foo, null), list.popOrNull());
-}
-
-// This was observed to fail on aarch64 with LLVM 11, when the capacityInBytes
-// function used the @reduce code path.
-test "regression test for @reduce bug" {
-    const ally = testing.allocator;
-    var list = MultiArrayList(struct {
-        tag: std.zig.Token.Tag,
-        start: u32,
-    }){};
-    defer list.deinit(ally);
-
-    try list.ensureTotalCapacity(ally, 20);
-
-    try list.append(ally, .{ .tag = .keyword_const, .start = 0 });
-    try list.append(ally, .{ .tag = .identifier, .start = 6 });
-    try list.append(ally, .{ .tag = .equal, .start = 10 });
-    try list.append(ally, .{ .tag = .builtin, .start = 12 });
-    try list.append(ally, .{ .tag = .l_paren, .start = 19 });
-    try list.append(ally, .{ .tag = .string_literal, .start = 20 });
-    try list.append(ally, .{ .tag = .r_paren, .start = 25 });
-    try list.append(ally, .{ .tag = .semicolon, .start = 26 });
-    try list.append(ally, .{ .tag = .keyword_pub, .start = 29 });
-    try list.append(ally, .{ .tag = .keyword_fn, .start = 33 });
-    try list.append(ally, .{ .tag = .identifier, .start = 36 });
-    try list.append(ally, .{ .tag = .l_paren, .start = 40 });
-    try list.append(ally, .{ .tag = .r_paren, .start = 41 });
-    try list.append(ally, .{ .tag = .identifier, .start = 43 });
-    try list.append(ally, .{ .tag = .bang, .start = 51 });
-    try list.append(ally, .{ .tag = .identifier, .start = 52 });
-    try list.append(ally, .{ .tag = .l_brace, .start = 57 });
-    try list.append(ally, .{ .tag = .identifier, .start = 63 });
-    try list.append(ally, .{ .tag = .period, .start = 66 });
-    try list.append(ally, .{ .tag = .identifier, .start = 67 });
-    try list.append(ally, .{ .tag = .period, .start = 70 });
-    try list.append(ally, .{ .tag = .identifier, .start = 71 });
-    try list.append(ally, .{ .tag = .l_paren, .start = 75 });
-    try list.append(ally, .{ .tag = .string_literal, .start = 76 });
-    try list.append(ally, .{ .tag = .comma, .start = 113 });
-    try list.append(ally, .{ .tag = .period, .start = 115 });
-    try list.append(ally, .{ .tag = .l_brace, .start = 116 });
-    try list.append(ally, .{ .tag = .r_brace, .start = 117 });
-    try list.append(ally, .{ .tag = .r_paren, .start = 118 });
-    try list.append(ally, .{ .tag = .semicolon, .start = 119 });
-    try list.append(ally, .{ .tag = .r_brace, .start = 121 });
-    try list.append(ally, .{ .tag = .eof, .start = 123 });
-
-    const tags = list.items(.tag);
-    try testing.expectEqual(tags[1], .identifier);
-    try testing.expectEqual(tags[2], .equal);
-    try testing.expectEqual(tags[3], .builtin);
-    try testing.expectEqual(tags[4], .l_paren);
-    try testing.expectEqual(tags[5], .string_literal);
-    try testing.expectEqual(tags[6], .r_paren);
-    try testing.expectEqual(tags[7], .semicolon);
-    try testing.expectEqual(tags[8], .keyword_pub);
-    try testing.expectEqual(tags[9], .keyword_fn);
-    try testing.expectEqual(tags[10], .identifier);
-    try testing.expectEqual(tags[11], .l_paren);
-    try testing.expectEqual(tags[12], .r_paren);
-    try testing.expectEqual(tags[13], .identifier);
-    try testing.expectEqual(tags[14], .bang);
-    try testing.expectEqual(tags[15], .identifier);
-    try testing.expectEqual(tags[16], .l_brace);
-    try testing.expectEqual(tags[17], .identifier);
-    try testing.expectEqual(tags[18], .period);
-    try testing.expectEqual(tags[19], .identifier);
-    try testing.expectEqual(tags[20], .period);
-    try testing.expectEqual(tags[21], .identifier);
-    try testing.expectEqual(tags[22], .l_paren);
-    try testing.expectEqual(tags[23], .string_literal);
-    try testing.expectEqual(tags[24], .comma);
-    try testing.expectEqual(tags[25], .period);
-    try testing.expectEqual(tags[26], .l_brace);
-    try testing.expectEqual(tags[27], .r_brace);
-    try testing.expectEqual(tags[28], .r_paren);
-    try testing.expectEqual(tags[29], .semicolon);
-    try testing.expectEqual(tags[30], .r_brace);
-    try testing.expectEqual(tags[31], .eof);
-}
-
-test "ensure capacity on empty list" {
-    const ally = testing.allocator;
-
-    const Foo = struct {
-        a: u32,
-        b: u8,
-    };
-
-    var list = MultiArrayList(Foo){};
-    defer list.deinit(ally);
-
-    try list.ensureTotalCapacity(ally, 2);
-    list.appendAssumeCapacity(.{ .a = 1, .b = 2 });
-    list.appendAssumeCapacity(.{ .a = 3, .b = 4 });
-
-    try testing.expectEqualSlices(u32, &[_]u32{ 1, 3 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 2, 4 }, list.items(.b));
-
-    list.len = 0;
-    list.appendAssumeCapacity(.{ .a = 5, .b = 6 });
-    list.appendAssumeCapacity(.{ .a = 7, .b = 8 });
-
-    try testing.expectEqualSlices(u32, &[_]u32{ 5, 7 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 6, 8 }, list.items(.b));
-
-    list.len = 0;
-    try list.ensureTotalCapacity(ally, 16);
-
-    list.appendAssumeCapacity(.{ .a = 9, .b = 10 });
-    list.appendAssumeCapacity(.{ .a = 11, .b = 12 });
-
-    try testing.expectEqualSlices(u32, &[_]u32{ 9, 11 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 10, 12 }, list.items(.b));
-}
-
-test "insert elements" {
-    const ally = testing.allocator;
-
-    const Foo = struct {
-        a: u8,
-        b: u32,
-    };
-
-    var list = MultiArrayList(Foo){};
-    defer list.deinit(ally);
-
-    try list.insert(ally, 0, .{ .a = 1, .b = 2 });
-    try list.ensureUnusedCapacity(ally, 1);
-    list.insertAssumeCapacity(1, .{ .a = 2, .b = 3 });
-
-    try testing.expectEqualSlices(u8, &[_]u8{ 1, 2 }, list.items(.a));
-    try testing.expectEqualSlices(u32, &[_]u32{ 2, 3 }, list.items(.b));
-}
-
-test "union" {
-    const ally = testing.allocator;
-
-    const Foo = union(enum) {
-        a: u32,
-        b: []const u8,
-    };
-
-    var list = MultiArrayList(Foo){};
-    defer list.deinit(ally);
-
-    try testing.expectEqual(@as(usize, 0), list.items(.tags).len);
-
-    try list.ensureTotalCapacity(ally, 2);
-
-    list.appendAssumeCapacity(.{ .a = 1 });
-    list.appendAssumeCapacity(.{ .b = "zigzag" });
-
-    try testing.expectEqualSlices(meta.Tag(Foo), list.items(.tags), &.{ .a, .b });
-    try testing.expectEqual(@as(usize, 2), list.items(.tags).len);
-
-    list.appendAssumeCapacity(.{ .b = "foobar" });
-    try testing.expectEqualStrings("zigzag", list.items(.data)[1].b);
-    try testing.expectEqualStrings("foobar", list.items(.data)[2].b);
-
-    // Add 6 more things to force a capacity increase.
-    for (0..6) |i| {
-        try list.append(ally, .{ .a = @as(u32, @intCast(4 + i)) });
-    }
-
-    try testing.expectEqualSlices(
-        meta.Tag(Foo),
-        &.{ .a, .b, .b, .a, .a, .a, .a, .a, .a },
-        list.items(.tags),
-    );
-    try testing.expectEqual(list.get(0), .{ .a = 1 });
-    try testing.expectEqual(list.get(1), .{ .b = "zigzag" });
-    try testing.expectEqual(list.get(2), .{ .b = "foobar" });
-    try testing.expectEqual(list.get(3), .{ .a = 4 });
-    try testing.expectEqual(list.get(4), .{ .a = 5 });
-    try testing.expectEqual(list.get(5), .{ .a = 6 });
-    try testing.expectEqual(list.get(6), .{ .a = 7 });
-    try testing.expectEqual(list.get(7), .{ .a = 8 });
-    try testing.expectEqual(list.get(8), .{ .a = 9 });
-
-    list.shrinkAndFree(ally, 3);
-
-    try testing.expectEqual(@as(usize, 3), list.items(.tags).len);
-    try testing.expectEqualSlices(meta.Tag(Foo), list.items(.tags), &.{ .a, .b, .b });
-
-    try testing.expectEqual(list.get(0), .{ .a = 1 });
-    try testing.expectEqual(list.get(1), .{ .b = "zigzag" });
-    try testing.expectEqual(list.get(2), .{ .b = "foobar" });
-}
-
-test "sorting a span" {
-    var list: MultiArrayList(struct { score: u32, chr: u8 }) = .{};
-    defer list.deinit(testing.allocator);
-
-    try list.ensureTotalCapacity(testing.allocator, 42);
-    for (
-        // zig fmt: off
-        [42]u8{ 'b', 'a', 'c', 'a', 'b', 'c', 'b', 'c', 'b', 'a', 'b', 'a', 'b', 'c', 'b', 'a', 'a', 'c', 'c', 'a', 'c', 'b', 'a', 'c', 'a', 'b', 'b', 'c', 'c', 'b', 'a', 'b', 'a', 'b', 'c', 'b', 'a', 'a', 'c', 'c', 'a', 'c' },
-        [42]u32{ 1,   1,   1,   2,   2,   2,   3,   3,   4,   3,   5,   4,   6,   4,   7,   5,   6,   5,   6,   7,   7,   8,   8,   8,   9,   9,  10,   9,  10,  11,  10,  12,  11,  13,  11,  14,  12,  13,  12,  13,  14,  14 },
-        // zig fmt: on
-    ) |chr, score| {
-        list.appendAssumeCapacity(.{ .chr = chr, .score = score });
-    }
-
-    const sliced = list.slice();
-    list.sortSpan(6, 21, struct {
-        chars: []const u8,
-
-        fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-            return ctx.chars[a] < ctx.chars[b];
-        }
-    }{ .chars = sliced.items(.chr) });
-
-    var i: u32 = 0;
-    var j: u32 = 6;
-    var c: u8 = 'a';
-
-    while (j < 21) {
-        i = j;
-        j += 5;
-        var n: u32 = 3;
-        for (sliced.items(.chr)[i..j], sliced.items(.score)[i..j]) |chr, score| {
-            try testing.expectEqual(score, n);
-            try testing.expectEqual(chr, c);
-            n += 1;
-        }
-        c += 1;
-    }
 }

@@ -1,24 +1,14 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
-const C = bun.C;
+
 const options = @import("./options.zig");
 const logger = bun.logger;
 const js_ast = bun.JSAst;
-const js_lexer = bun.js_lexer;
-const Defines = @import("./defines.zig");
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
-const Npm = @import("./install/npm.zig");
-const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
@@ -354,7 +344,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(Api.BunInstall);
@@ -469,10 +459,22 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("saveTextLockfile")) |save_text_lockfile| {
+                        if (save_text_lockfile.asBool()) |value| {
+                            install.save_text_lockfile = value;
+                        }
+                    }
+
                     if (install_obj.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();
                             if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
+                        }
+                    }
+
+                    if (install_obj.get("ignoreScripts")) |ignore_scripts_expr| {
+                        if (ignore_scripts_expr.asBool()) |ignore_scripts| {
+                            install.ignore_scripts = ignore_scripts;
                         }
                     }
 
@@ -591,6 +593,14 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (run_expr.get("elide-lines")) |elide_lines| {
+                        if (elide_lines.data == .e_number) {
+                            this.ctx.bundler_options.elide_lines = @intFromFloat(elide_lines.data.e_number.value);
+                        } else {
+                            try this.addError(elide_lines.loc, "Expected number");
+                        }
+                    }
+
                     if (run_expr.get("shell")) |shell| {
                         if (shell.asString(allocator)) |value| {
                             if (strings.eqlComptime(value, "bun")) {
@@ -610,6 +620,125 @@ pub const Bunfig = struct {
                             this.ctx.debug.run_in_bun = value;
                         } else {
                             try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
+            }
+
+            if (json.getObject("serve")) |serve_obj2| {
+                if (serve_obj2.getObject("static")) |serve_obj| {
+                    if (serve_obj.get("plugins")) |config_plugins| {
+                        const plugins: ?[]const []const u8 = plugins: {
+                            if (config_plugins.data == .e_array) {
+                                const raw_plugins = config_plugins.data.e_array.items.slice();
+                                if (raw_plugins.len == 0) break :plugins null;
+                                const plugins = try this.allocator.alloc(string, raw_plugins.len);
+                                for (raw_plugins, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    plugins[i] = try p.data.e_string.string(allocator);
+                                }
+                                break :plugins plugins;
+                            } else {
+                                const p = try config_plugins.data.e_string.string(allocator);
+                                const plugins = try this.allocator.alloc(string, 1);
+                                plugins[0] = p;
+                                break :plugins plugins;
+                            }
+                        };
+
+                        // TODO: accept entire config object.
+                        this.bunfig.serve_plugins = plugins;
+                    }
+
+                    if (serve_obj.get("hmr")) |hmr| {
+                        if (hmr.asBool()) |value| {
+                            this.bunfig.serve_hmr = value;
+                        }
+                    }
+
+                    if (serve_obj.get("minify")) |minify| {
+                        if (minify.asBool()) |value| {
+                            this.bunfig.serve_minify_syntax = value;
+                            this.bunfig.serve_minify_whitespace = value;
+                            this.bunfig.serve_minify_identifiers = value;
+                        } else if (minify.isObject()) {
+                            if (minify.get("syntax")) |syntax| {
+                                this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
+                            }
+
+                            if (minify.get("whitespace")) |whitespace| {
+                                this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
+                            }
+
+                            if (minify.get("identifiers")) |identifiers| {
+                                this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
+                            }
+                        } else {
+                            try this.addError(minify.loc, "Expected minify to be boolean or object");
+                        }
+                    }
+
+                    if (serve_obj.get("define")) |expr| {
+                        try this.expect(expr, .e_object);
+                        var valid_count: usize = 0;
+                        const properties = expr.data.e_object.properties.slice();
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            valid_count += 1;
+                        }
+                        var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                        var keys = buffer[0..valid_count];
+                        var values = buffer[valid_count..];
+                        var i: usize = 0;
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
+                            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                            i += 1;
+                        }
+                        this.bunfig.serve_define = Api.StringMap{
+                            .keys = keys,
+                            .values = values,
+                        };
+                    }
+                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+
+                    if (serve_obj.get("publicPath")) |public_path| {
+                        if (public_path.asString(allocator)) |value| {
+                            this.bunfig.serve_public_path = value;
+                        }
+                    }
+
+                    if (serve_obj.get("env")) |env| {
+                        switch (env.data) {
+                            .e_null => {
+                                this.bunfig.serve_env_behavior = .disable;
+                            },
+                            .e_boolean => |boolean| {
+                                this.bunfig.serve_env_behavior = if (boolean.value) .load_all else .disable;
+                            },
+                            .e_string => |str| {
+                                if (str.eqlComptime("inline")) {
+                                    this.bunfig.serve_env_behavior = .load_all;
+                                } else if (str.eqlComptime("disable")) {
+                                    this.bunfig.serve_env_behavior = .disable;
+                                } else {
+                                    const slice = try str.string(allocator);
+                                    if (strings.indexOfChar(slice, '*')) |asterisk| {
+                                        if (asterisk > 0) {
+                                            this.bunfig.serve_env_prefix = slice[0..asterisk];
+                                            this.bunfig.serve_env_behavior = .prefix;
+                                        } else {
+                                            this.bunfig.serve_env_behavior = .load_all;
+                                        }
+                                    } else {
+                                        try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                                    }
+                                }
+                            },
+                            else => {
+                                try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                            },
                         }
                     }
                 }
@@ -719,7 +848,6 @@ pub const Bunfig = struct {
                     .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
-                    .react_fast_refresh = false,
                 };
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;

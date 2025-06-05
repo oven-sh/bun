@@ -117,19 +117,21 @@ bool isValidReasonPhrase(const String& value)
 }
 
 // See https://fetch.spec.whatwg.org/#concept-header
-bool isValidHTTPHeaderValue(const String& value)
+bool isValidHTTPHeaderValue(const StringView& value)
 {
+    auto length = value.length();
+    if (length == 0) return true;
     UChar c = value[0];
     if (isTabOrSpace(c))
         return false;
-    c = value[value.length() - 1];
+    c = value[length - 1];
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {
         const LChar* begin = value.span8().data();
         const LChar* end = begin + value.length();
         for (const LChar* p = begin; p != end; ++p) {
-            if (UNLIKELY(*p <= 13)) {
+            if (*p <= 13) [[unlikely]] {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
                     return false;
@@ -147,7 +149,7 @@ bool isValidHTTPHeaderValue(const String& value)
 }
 
 // See RFC 7231, Section 5.3.2.
-bool isValidAcceptHeaderValue(const String& value)
+bool isValidAcceptHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
         UChar c = value[i];
@@ -181,7 +183,7 @@ static bool containsCORSUnsafeRequestHeaderBytes(const String& value)
 
 // See RFC 7231, Section 5.3.5 and 3.1.3.2.
 // https://fetch.spec.whatwg.org/#cors-safelisted-request-header
-bool isValidLanguageHeaderValue(const String& value)
+bool isValidLanguageHeaderValue(const StringView& value)
 {
     for (unsigned i = 0; i < value.length(); ++i) {
         UChar c = value[i];
@@ -193,7 +195,7 @@ bool isValidLanguageHeaderValue(const String& value)
 }
 
 // See RFC 7230, Section 3.2.6.
-bool isValidHTTPToken(StringView value)
+bool isValidHTTPToken(const StringView& value)
 {
     if (value.isEmpty())
         return false;
@@ -213,11 +215,6 @@ bool isValidHTTPToken(StringView value)
             return false;
     }
     return true;
-}
-
-bool isValidHTTPToken(const String& value)
-{
-    return isValidHTTPToken(StringView(value));
 }
 
 #if USE(GLIB)
@@ -340,7 +337,8 @@ static String trimInputSample(CharType* p, size_t length)
 
 std::optional<WallTime> parseHTTPDate(const String& value)
 {
-    double dateInMillisecondsSinceEpoch = parseDate(value.utf8().span());
+    auto utf8Data = value.utf8();
+    double dateInMillisecondsSinceEpoch = parseDate({ reinterpret_cast<const LChar*>(utf8Data.data()), utf8Data.length() });
     if (!std::isfinite(dateInMillisecondsSinceEpoch))
         return std::nullopt;
     // This assumes system_clock epoch equals Unix epoch which is true for all implementations but unspecified.
@@ -374,7 +372,7 @@ StringView filenameFromHTTPContentDisposition(StringView value)
         return value;
     }
 
-    return String();
+    return emptyString();
 }
 
 String extractMIMETypeFromMediaType(const String& mediaType)
@@ -817,18 +815,18 @@ size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>&
 }
 
 // Implements <https://fetch.spec.whatwg.org/#forbidden-header-name>.
-bool isForbiddenHeaderName(const String& name)
+bool isForbiddenHeaderName(const StringView name)
 {
     return false;
 }
 
-bool isForbiddenHeader(const String& name, StringView value)
+bool isForbiddenHeader(const StringView name, StringView value)
 {
     return false;
 }
 
 // Implements <https://fetch.spec.whatwg.org/#no-cors-safelisted-request-header-name>.
-bool isNoCORSSafelistedRequestHeaderName(const String& name)
+bool isNoCORSSafelistedRequestHeaderName(const StringView name)
 {
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
@@ -846,27 +844,27 @@ bool isNoCORSSafelistedRequestHeaderName(const String& name)
 }
 
 // Implements <https://fetch.spec.whatwg.org/#privileged-no-cors-request-header-name>.
-bool isPriviledgedNoCORSRequestHeaderName(const String& name)
+bool isPriviledgedNoCORSRequestHeaderName(const StringView name)
 {
     return false;
     // return equalLettersIgnoringASCIICase(name, "range"_s);
 }
 
 // Implements <https://fetch.spec.whatwg.org/#forbidden-response-header-name>.
-bool isForbiddenResponseHeaderName(const String& name)
+bool isForbiddenResponseHeaderName(const StringView name)
 {
     return false;
     // return equalLettersIgnoringASCIICase(name, "set-cookie"_s) || equalLettersIgnoringASCIICase(name, "set-cookie2"_s);
 }
 
 // Implements <https://fetch.spec.whatwg.org/#forbidden-method>.
-bool isForbiddenMethod(StringView name)
+bool isForbiddenMethod(const StringView name)
 {
     // return equalLettersIgnoringASCIICase(name, "connect"_s) || equalLettersIgnoringASCIICase(name, "trace"_s) || equalLettersIgnoringASCIICase(name, "track"_s);
     return false;
 }
 
-bool isSimpleHeader(const String& name, const String& value)
+bool isSimpleHeader(const StringView name, const StringView value)
 {
     HTTPHeaderName headerName;
     return !findHTTPHeaderName(name, headerName);

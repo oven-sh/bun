@@ -21,7 +21,7 @@ using namespace WebCore;
 // Ensure overriding globals doesn't impact usages.
 JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto* obj = constructEmptyObject(globalObject);
     obj->putDirectIndex(

@@ -30,6 +30,9 @@
 #include <iostream>
 
 #include "libusockets.h"
+#include "bun-usockets/src/internal/internal.h"
+
+
 
 #include "LoopData.h"
 #include "AsyncSocketData.h"
@@ -54,28 +57,6 @@ struct AsyncSocket {
     template <typename, typename> friend struct TopicTree;
     template <bool> friend struct HttpResponse;
 
-private:
-    /* Helper, do not use directly (todo: move to uSockets or de-crazify) */
-    void throttle_helper(int toggle) {
-        /* These should be exposed by uSockets */
-        static thread_local int us_events[2] = {0, 0};
-
-        struct us_poll_t *p = (struct us_poll_t *) this;
-        struct us_loop_t *loop = us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this));
-
-        if (toggle) {
-            /* Pause */
-            int events = us_poll_events(p);
-            if (events) {
-                us_events[getBufferedAmount() ? 1 : 0] = events;
-            }
-            us_poll_change(p, loop, 0);
-        } else {
-            /* Resume */
-            int events = us_events[getBufferedAmount() ? 1 : 0];
-            us_poll_change(p, loop, events);
-        }
-    }
 
 public:
     /* Returns SSL pointer or FD as pointer */
@@ -105,13 +86,13 @@ public:
 
     /* Experimental pause */
     us_socket_t *pause() {
-        throttle_helper(1);
+        us_socket_pause(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
     /* Experimental resume */
     us_socket_t *resume() {
-        throttle_helper(0);
+        us_socket_resume(SSL, (us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
@@ -150,7 +131,7 @@ public:
         getLoopData()->setCorkedSocket(this, SSL);
     }
 
-    /* Returns wheter we are corked or not */
+    /* Returns whether we are corked */
     bool isCorked() {
         return getLoopData()->isCorkedWith(this);
     }
@@ -201,9 +182,9 @@ public:
     }
 
     /* Returns the user space backpressure. */
-    unsigned int getBufferedAmount() {
+    size_t getBufferedAmount() {
         /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return (unsigned int) getAsyncSocketData()->buffer.totalLength();
+        return getAsyncSocketData()->buffer.totalLength();
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */
@@ -241,6 +222,63 @@ public:
         return addressAsText(getRemoteAddress());
     }
 
+    /**
+    * Flushes the socket buffer by writing as much data as possible to the underlying socket.
+    * 
+    * @return The total number of bytes successfully written to the socket
+    */
+    size_t flush() {
+        /* Check if socket is valid for operations */
+        if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
+            /* Socket is closed, no flushing is possible */
+            return 0;
+        }
+
+        /* Get the associated asynchronous socket data structure */
+        AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
+        size_t total_written = 0;
+        
+        /* Continue flushing as long as we have data in the buffer */
+        while (asyncSocketData->buffer.length()) {
+            /* Get current buffer size */
+            size_t buffer_len = asyncSocketData->buffer.length();
+            
+            /* Limit write size to INT_MAX as the underlying socket API uses int for length */
+            int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
+
+            /* Attempt to write data to the socket */
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, 0);
+            total_written += written;
+            
+            /* Check if we couldn't write the entire buffer */
+            if ((unsigned int) written < buffer_len) {
+                /* Remove the successfully written data from the buffer */
+                asyncSocketData->buffer.erase((unsigned int) written);
+                
+                /* If we wrote less than we attempted, the socket buffer is likely full
+                * likely is used as an optimization hint to the compiler
+                * since written < buffer_len is very likely to be true
+                */
+                if(written < max_flush_len) {
+                     [[likely]]
+                    /* Cannot write more at this time, return what we've written so far */
+                    return total_written;
+                }
+                /* If we wrote exactly max_flush_len, we might be able to write more, so continue
+                 * This is unlikely to happen, because this would be INT_MAX bytes, which is unlikely to be written in one go
+                 * but we keep this check for completeness
+                 */
+                continue;
+            }
+
+            /* Successfully wrote the entire buffer, clear the buffer */
+            asyncSocketData->buffer.clear();
+        }
+
+        /* Return the total number of bytes written during this flush operation */
+        return total_written;
+    }
+
     /* Write in three levels of prioritization: cork-buffer, syscall, socket-buffer. Always drain if possible.
      * Returns pair of bytes written (anywhere) and wheter or not this call resulted in the polling for
      * writable (or we are in a state that implies polling for writable). */
@@ -252,7 +290,6 @@ public:
 
         LoopData *loopData = getLoopData();
         AsyncSocketData<SSL> *asyncSocketData = getAsyncSocketData();
-
         /* We are limited if we have a per-socket buffer */
         if (asyncSocketData->buffer.length()) {
             size_t buffer_len = asyncSocketData->buffer.length();
@@ -280,7 +317,7 @@ public:
             asyncSocketData->buffer.clear();
         }
 
-        if (length) {
+        if (length) {          
             if (loopData->isCorkedWith(this)) {
                 /* We are corked */
                 if (LoopData::CORK_BUFFER_SIZE - loopData->getCorkOffset() >= (unsigned int) length) {

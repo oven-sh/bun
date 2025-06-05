@@ -1,23 +1,13 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
-const MediaList = css.MediaList;
-const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
-const PrinterError = css.PrinterError;
 const PrintErr = css.PrintErr;
-const Dependency = css.Dependency;
-const dependencies = css.dependencies;
-const Url = css.css_values.url.Url;
-const Size2D = css.css_values.size.Size2D;
 const fontprops = css.css_properties.font;
-const LayerName = css.css_rules.layer.LayerName;
-const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
-const Angle = css.css_values.angle.Angle;
 const CustomProperty = css.css_properties.custom.CustomProperty;
 const CustomPropertyName = css.css_properties.custom.CustomPropertyName;
 const DashedIdent = css.css_values.ident.DashedIdent;
@@ -114,7 +104,7 @@ pub const FontPaletteValuesProperty = union(enum) {
             .override_colors => |*o| {
                 try dest.writeStr("override-colors");
                 try dest.delim(':', false);
-                try css.to_css.fromList(OverrideColors, o, W, dest);
+                try css.to_css.fromList(OverrideColors, o.items, W, dest);
             },
             .custom => |*custom| {
                 try dest.writeStr(custom.name.asStr());

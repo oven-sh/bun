@@ -1,9 +1,40 @@
 const env = @import("env.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
+
+/// All runtime feature flags that can be toggled with an environment variable.
+/// The field names correspond exactly to the expected environment variable names.
+pub const RuntimeFeatureFlag = enum {
+    BUN_ASSUME_PERFECT_INCREMENTAL,
+    BUN_DEBUG_NO_DUMP,
+    BUN_DESTRUCT_VM_ON_EXIT,
+    BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING,
+    BUN_DISABLE_SOURCE_CODE_PREVIEW,
+    BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW,
+    BUN_DUMP_STATE_ON_CRASH,
+    BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS,
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER,
+    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE,
+    BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO,
+    BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX,
+    BUN_FEATURE_FLAG_DISABLE_IO_POOL,
+    BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING,
+    BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK,
+    BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS,
+    BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH,
+    BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE,
+    BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE,
+    BUN_FEATURE_FLAG_FORCE_IO_POOL,
+    BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304,
+    BUN_FEATURE_FLAG_NO_LIBDEFLATE,
+    BUN_INSTRUMENTS,
+    BUN_INTERNAL_BUNX_INSTALL,
+    BUN_NO_CODESIGN_MACHO_BINARY,
+    BUN_TRACE,
+};
 
 /// Enable breaking changes for the next major release of Bun
 // TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
-pub const breaking_changes_1_2 = false;
+pub const breaking_changes_1_3 = false;
 
 /// Store and reuse file descriptors during module resolution
 /// This was a ~5% performance improvement
@@ -12,9 +43,6 @@ pub const store_file_descriptors = !env.isBrowser;
 pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
-
-// TODO: remove this flag, it should use bun.Output.scoped
-pub const verbose_watcher = false;
 
 pub const css_supports_fence = true;
 
@@ -62,7 +90,7 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// https://github.com/oven-sh/bun/issues/10733
 pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -113,8 +141,6 @@ pub const unwrap_commonjs_to_esm = true;
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const source_map_debug_id = true;
 
-pub const alignment_tweak = false;
-
 pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
@@ -152,17 +178,16 @@ pub fn isLibdeflateEnabled() bool {
         return false;
     }
 
-    return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
+    return !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE);
 }
 
-/// Enable Bun Kit's experimental bundler tools
-pub const bake = env.is_canary or env.isDebug;
+/// Enable the "app" option in Bun.serve. This option will likely be removed
+/// in favor of HTML loaders and configuring framework options in bunfig.toml
+pub fn bake() bool {
+    // In canary or if an environment variable is specified.
+    return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE);
+}
 
-/// Additional debugging features for Bake, such as the incremental visualizer.
-pub const bake_debugging_features = bake and (env.is_canary or env.isDebug);
-
-/// Enable --server-components
-pub const cli_server_components = bake;
-
-/// Enable CSS handling in `bun build`
-pub const css = env.is_canary or env.isDebug;
+/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
+/// To use them, extra flags are passed in addition to this one.
+pub const bake_debugging_features = env.is_canary or env.isDebug;

@@ -1,6 +1,5 @@
 #!/usr/bin/env pwsh
 param(
-  # TODO: change this to 'latest' when Bun for Windows is stable.
   [String]$Version = "latest",
   # Forces installing the baseline build regardless of what CPU you are actually using.
   [Switch]$ForceBaseline = $false,
@@ -24,7 +23,7 @@ if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based")
 
 # This corresponds to .win10_rs5 in build.zig
 $MinBuild = 17763;
-$MinBuildName = "Windows 10 1809"
+$MinBuildName = "Windows 10 1809 / Windows Server 2019"
 
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {

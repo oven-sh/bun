@@ -75,14 +75,16 @@ bun build --compile --target=bun-darwin-x64 ./path/to/my/app.ts --outfile myapp
 
 The order of the `--target` flag does not matter, as long as they're delimited by a `-`.
 
-| --target              | Operating System | Architecture | Modern | Baseline |
-| --------------------- | ---------------- | ------------ | ------ | -------- |
-| bun-linux-x64         | Linux            | x64          | ✅     | ✅       |
-| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      |
-| bun-windows-x64       | Windows          | x64          | ✅     | ✅       |
-| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       |
-| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       |
-| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      |
+| --target              | Operating System | Architecture | Modern | Baseline | Libc  |
+| --------------------- | ---------------- | ------------ | ------ | -------- | ----- |
+| bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
+| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
+| bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
+| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       | -     |
+| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
+| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
+| bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
+| bun-linux-arm64-musl  | Linux            | arm64        | ✅     | N/A      | musl  |
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 
@@ -196,6 +198,8 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
+// await fs.promises.readFile(icon)
+// fs.readFileSync(icon)
 ```
 
 ### Embed SQLite databases
@@ -278,6 +282,68 @@ $ bun build --compile --asset-naming="[name].[ext]" ./index.ts
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
+
+## Windows-specific flags
+
+When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+
+- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
+- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+
+{% callout %}
+
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+
+{% /callout %}
+
+## Code signing on macOS
+
+To codesign a standalone executable on macOS (which fixes Gatekeeper warnings), use the `codesign` command.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" ./myapp
+```
+
+We recommend including an `entitlements.plist` file with JIT permissions.
+
+```xml#entitlements.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+To codesign with JIT support, pass the `--entitlements` flag to `codesign`.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" --entitlements entitlements.plist ./myapp
+```
+
+After codesigning, verify the executable:
+
+```sh
+$ codesign -vvv --verify ./myapp
+./myapp: valid on disk
+./myapp: satisfies its Designated Requirement
+```
+
+{% callout %}
+
+Codesign support requires Bun v1.2.4 or newer.
+
+{% /callout %}
 
 ## Unsupported CLI arguments
 

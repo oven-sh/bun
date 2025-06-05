@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
-    if (@import("builtin").target.isWasm()) {
+    if (@import("builtin").cpu.arch.isWasm()) {
         break :brk BuildTarget.wasm;
     } else {
         break :brk BuildTarget.native;
@@ -18,8 +18,7 @@ pub const isMac = build_target == .native and @import("builtin").target.os.tag =
 pub const isBrowser = !isWasi and isWasm;
 pub const isWindows = @import("builtin").target.os.tag == .windows;
 pub const isPosix = !isWindows and !isWasm;
-pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
-pub const isRelease = std.builtin.Mode.Debug != @import("builtin").mode and !isTest;
+pub const isDebug = @import("builtin").mode == .Debug;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
@@ -27,12 +26,21 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
+pub const show_crash_trace = isDebug or isTest or enable_asan;
+/// All calls to `@export` should be gated behind this check, so that code
+/// generators that compile Zig code know not to reference and compile a ton of
+/// unused code.
+pub const export_cpp_apis = @import("builtin").output_mode == .Obj or isTest;
 
 pub const build_options = @import("build_options");
 
+/// Set if compiling with `-Dno_llvm`
+/// All places this is used is working around a Zig bug.
+pub const zig_self_hosted_backend = build_options.zig_self_hosted_backend;
+
 pub const reported_nodejs_version = build_options.reported_nodejs_version;
 pub const baseline = build_options.baseline;
-pub const enableSIMD: bool = !baseline;
+pub const enableSIMD: bool = !baseline and !zig_self_hosted_backend;
 pub const git_sha = build_options.sha;
 pub const git_sha_short = if (build_options.sha.len > 0) build_options.sha[0..9] else "";
 pub const git_sha_shorter = if (build_options.sha.len > 0) build_options.sha[0..6] else "";
@@ -40,8 +48,8 @@ pub const is_canary = build_options.is_canary;
 pub const canary_revision = if (is_canary) build_options.canary_revision else "";
 pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
-pub const enable_logs = build_options.enable_logs or isDebug;
-
+pub const enable_logs = build_options.enable_logs;
+pub const enable_asan = build_options.enable_asan;
 pub const codegen_path = build_options.codegen_path;
 pub const codegen_embed = build_options.codegen_embed;
 

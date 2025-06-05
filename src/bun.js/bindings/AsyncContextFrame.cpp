@@ -44,7 +44,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     }
 
     // Construct a low-overhead wrapper
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     return AsyncContextFrame::create(
         vm,
         jsCast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),
@@ -97,7 +97,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
 // }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    if (LIKELY(!global->isAsyncContextTrackingEnabled())) {
+    if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
@@ -105,11 +105,19 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    if (LIKELY(!global->isAsyncContextTrackingEnabled())) {
+    if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
     }
 
     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
+}
+JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
+{
+    return AsyncContextFrame::call(global, functionObject, thisValue, args);
+}
+JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
+{
+    return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
 }
 
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

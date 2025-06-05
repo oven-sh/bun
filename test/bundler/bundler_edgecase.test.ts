@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
+import { isBroken, isWindows } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -186,18 +186,7 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
-  itBundled("edgecase/ProcessEnvArbitrary", {
-    files: {
-      "/entry.js": /* js */ `
-        capture(process.env.ARBITRARY);
-      `,
-    },
-    target: "browser",
-    capture: ["process.env.ARBITRARY"],
-    env: {
-      ARBITRARY: "secret environment stuff!",
-    },
-  });
+
   itBundled("edgecase/StarExternal", {
     files: {
       "/entry.js": /* js */ `
@@ -1347,7 +1336,7 @@ describe("bundler", () => {
     target: "bun",
     run: true,
     todo: isBroken && isWindows,
-    debugTimeoutScale: 5,
+    timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -2076,7 +2065,7 @@ describe("bundler", () => {
     run: true,
   });
 
-  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
+  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node
     ["require", "import.meta.require", "__require"],
@@ -2253,4 +2242,119 @@ describe("bundler", () => {
       stdout: "windows",
     },
   });
+
+  itBundled("edgecase/TSPublicFieldMinification", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export class Foo {
+          constructor(public name: string) {}
+        }
+
+        const keys = Object.keys(new Foo('test'))
+        if (keys.length !== 1) throw new Error('Keys length is not 1')
+        if (keys[0] !== 'name') throw new Error('keys[0] is not "name"')
+        console.log('success')
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    target: "bun",
+    run: {
+      stdout: "success",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/14585
+  itBundled("identifiers/SameNameDifferentModulesWithMinifyIdentifiersDisabled", {
+    files: {
+      "/foo.js": `
+        {
+            var d = 0;
+        }
+
+        export const foo = () => {}
+      `,
+      "/bar.js": `
+        // bar.js - The collision happens with this function declaration
+        function d() {}
+        export function bar() {d.length;}
+      `,
+      "/index.js": `
+        import { foo } from "./foo.js";
+        import { bar } from "./bar.js";
+
+        // Execute in order
+        foo();
+        bar();
+      `,
+    },
+    entryPoints: ["/index.js"],
+    outfile: "/out.js",
+    minifyIdentifiers: false,
+    run: {
+      stdout: "",
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello,world,etc,blah];
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// @bun
+        // entry.ts
+        import * as hello from "node:test";
+        import * as world from "fs";
+        import * as etc from "console";
+        import * as blah from "bun:jsc";
+        +[hello, world, etc, blah];
+        "
+      `);
+    },
+  });
+  itBundled("edgecase/NodeBuiltinWithoutPrefix2", {
+    files: {
+      "/entry.ts": `
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello,world,etc];
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        import * as hello from "node:test";
+        import * as world from "node:fs";
+        import * as etc from "console";
+        +[hello, world, etc];
+        "
+      `);
+    },
+  });
 });
+
+for (const backend of ["api", "cli"] as const) {
+  describe(`bundler_edgecase/${backend}`, () => {
+    itBundled("edgecase/ProcessEnvArbitrary", {
+      files: {
+        "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+      },
+      target: "browser",
+      backend,
+      capture: ["process.env.ARBITRARY"],
+      env: {
+        ARBITRARY: "secret environment stuff!",
+      },
+    });
+  });
+}

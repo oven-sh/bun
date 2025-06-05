@@ -12,6 +12,7 @@
 #include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
+#include "NativeModuleImpl.h"
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
@@ -54,7 +55,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
@@ -74,7 +75,31 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
-#if BUN_DEBUG
+ALWAYS_INLINE JSC::JSValue generateNativeModule(
+    JSC::JSGlobalObject* globalObject,
+    JSC::VM& vm,
+    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+{
+    Vector<JSC::Identifier, 4> propertyNames;
+    JSC::MarkedArgumentBuffer arguments;
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    generator(
+        globalObject,
+        JSC::Identifier::EmptyIdentifier, // Our generators do not do anything with the key
+        propertyNames,
+        arguments);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
+    // assigns the `default` export first.
+    ASSERT_WITH_MESSAGE(
+        propertyNames.at(0) == vm.propertyNames->defaultKeyword,
+        "The native module must export a default value first.");
+    JSValue defaultValue = arguments.at(0);
+    ASSERT(defaultValue);
+    return defaultValue;
+}
+
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
@@ -156,7 +181,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 // so we want to write it to the internal field when loaded.
 JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 

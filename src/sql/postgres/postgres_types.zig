@@ -1,17 +1,13 @@
 const std = @import("std");
-const bun = @import("root").bun;
-const postgres = bun.JSC.Postgres;
+const bun = @import("bun");
+const postgres = bun.api.Postgres;
 const Data = postgres.Data;
-const protocol = @This();
-const PostgresInt32 = postgres.PostgresInt32;
-const PostgresShort = postgres.PostgresShort;
 const String = bun.String;
-const debug = postgres.debug;
-const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
 const JSC = bun.JSC;
 const short = postgres.short;
 const int4 = postgres.int4;
+const AnyPostgresError = postgres.AnyPostgresError;
 
 //     select b.typname,  b.oid, b.typarray
 //       from pg_catalog.pg_type a
@@ -81,10 +77,10 @@ pub const Tag = enum(short) {
     int4 = 23,
     // regproc = 24,
     text = 25,
-    // oid = 26,
+    oid = 26,
     // tid = 27,
-    // xid = 28,
-    // cid = 29,
+    xid = 28,
+    cid = 29,
     // oidvector = 30,
     // pg_type = 71,
     // pg_attribute = 75,
@@ -169,7 +165,18 @@ pub const Tag = enum(short) {
     bit_array = 1561,
     varbit_array = 1563,
     numeric_array = 1231,
+    jsonb = 3802,
+    jsonb_array = 3807,
+    // Not really sure what this is.
+    jsonpath = 4072,
+    jsonpath_array = 4073,
+    // another oid for pg_database
+    pg_database_array2 = 10052,
     _,
+
+    pub fn tagName(this: Tag) ?[]const u8 {
+        return std.enums.tagName(Tag, this);
+    }
 
     pub fn isBinaryFormatSupported(this: Tag) bool {
         return switch (this) {
@@ -243,38 +250,28 @@ pub const Tag = enum(short) {
         };
     }
 
-    pub fn toJSTypedArrayType(comptime T: Tag) JSValue.JSType {
+    pub fn toJSTypedArrayType(comptime T: Tag) !JSValue.JSType {
         return comptime switch (T) {
             .int4_array => .Int32Array,
             // .int2_array => .Uint2Array,
             .float4_array => .Float32Array,
             // .float8_array => .Float64Array,
-            else => @compileError("TODO: not implemented"),
+            else => error.UnsupportedArrayType,
         };
     }
 
-    pub fn byteArrayType(comptime T: Tag) type {
+    pub fn byteArrayType(comptime T: Tag) !type {
         return comptime switch (T) {
             .int4_array => i32,
             // .int2_array => i16,
             .float4_array => f32,
             // .float8_array => f64,
-            else => @compileError("TODO: not implemented"),
+            else => error.UnsupportedArrayType,
         };
     }
 
-    pub fn unsignedByteArrayType(comptime T: Tag) type {
-        return comptime switch (T) {
-            .int4_array => u32,
-            // .int2_array => u16,
-            .float4_array => f32,
-            // .float8_array => f64,
-            else => @compileError("TODO: not implemented"),
-        };
-    }
-
-    pub fn pgArrayType(comptime T: Tag) type {
-        return PostgresBinarySingleDimensionArray(byteArrayType(T));
+    pub fn pgArrayType(comptime T: Tag) !type {
+        return PostgresBinarySingleDimensionArray(try byteArrayType(T));
     }
 
     fn toJSWithType(
@@ -282,7 +279,7 @@ pub const Tag = enum(short) {
         globalObject: *JSC.JSGlobalObject,
         comptime Type: type,
         value: Type,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         switch (tag) {
             .numeric => {
                 return numeric.toJS(globalObject, value);
@@ -292,7 +289,7 @@ pub const Tag = enum(short) {
                 return numeric.toJS(globalObject, value);
             },
 
-            .json => {
+            .json, .jsonb => {
                 return json.toJS(globalObject, value);
             },
 
@@ -326,7 +323,7 @@ pub const Tag = enum(short) {
         tag: Tag,
         globalObject: *JSC.JSGlobalObject,
         value: anytype,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return toJSWithType(tag, globalObject, @TypeOf(value), value);
     }
 
@@ -345,7 +342,7 @@ pub const Tag = enum(short) {
                 return .timestamptz;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 if (tag == .Int32Array)
                     return .int4_array;
 
@@ -363,16 +360,16 @@ pub const Tag = enum(short) {
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return error.JSError;
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Number object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             if (tag == .BooleanObject) {
-                return error.JSError;
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return error.JSError;
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Unknown object is not a valid PostgreSQL type", .{}).throw();
             }
 
             // We will JSON.stringify anything else.
@@ -387,7 +384,7 @@ pub const Tag = enum(short) {
 
         if (value.isAnyInt()) {
             const int = value.toInt64();
-            if (int >= std.math.minInt(u32) and int <= std.math.maxInt(u32)) {
+            if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
                 return .int4;
             }
 
@@ -414,7 +411,7 @@ pub const string = struct {
         globalThis: *JSC.JSGlobalObject,
         comptime Type: type,
         value: Type,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         switch (comptime Type) {
             [:0]u8, []u8, []const u8, [:0]const u8 => {
                 var str = String.fromUTF8(value);
@@ -456,7 +453,7 @@ pub const numeric = struct {
     pub fn toJS(
         _: *JSC.JSGlobalObject,
         value: anytype,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return JSValue.jsNumber(value);
     }
 };
@@ -468,14 +465,13 @@ pub const json = struct {
     pub fn toJS(
         globalObject: *JSC.JSGlobalObject,
         value: *Data,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         defer value.deinit();
         var str = bun.String.fromUTF8(value.slice());
         defer str.deref();
         const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
-        if (parse_result.isAnyError()) {
-            globalObject.throwValue(parse_result);
-            return error.JSError;
+        if (parse_result.AnyPostgresError()) {
+            return globalObject.throwValue(parse_result);
         }
 
         return parse_result;
@@ -489,7 +485,7 @@ pub const @"bool" = struct {
     pub fn toJS(
         _: *JSC.JSGlobalObject,
         value: bool,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         return JSValue.jsBoolean(value);
     }
 };
@@ -514,7 +510,7 @@ pub const date = struct {
         else if (value.isNumber())
             value.asNumber()
         else if (value.isString()) brk: {
-            var str = value.toBunString(globalObject);
+            var str = value.toBunString(globalObject) catch @panic("unreachable");
             defer str.deref();
             break :brk str.parseDate(globalObject);
         } else return 0;
@@ -549,7 +545,7 @@ pub const bytea = struct {
     pub fn toJS(
         globalObject: *JSC.JSGlobalObject,
         value: *Data,
-    ) anyerror!JSValue {
+    ) AnyPostgresError!JSValue {
         defer value.deinit();
 
         // var slice = value.slice()[@min(1, value.len)..];

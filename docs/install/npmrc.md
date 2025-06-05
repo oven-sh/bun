@@ -6,11 +6,11 @@ Bun supports loading configuration options from [`.npmrc`](https://docs.npmjs.co
 
 {% /callout %}
 
-# Supported options
+## Supported options
 
 ### `registry`: Set the default registry
 
-The default registry is used to resolve packages, it's default value is `npm`'s official registry (`https://registry.npmjs.org/`).
+The default registry is used to resolve packages, its default value is `npm`'s official registry (`https://registry.npmjs.org/`).
 
 To change it, you can set the `registry` option in `.npmrc`:
 

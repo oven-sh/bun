@@ -4,14 +4,14 @@
 
 test("you can't crash the resolver with import.meta.resolve/Sync", () => {
   expect(() => {
-    console.log(import.meta.resolveSync("#foo", "file:/Users/dave"));
+    console.log(import.meta.resolveSync("#foo", "file:/Users/chloe"));
   }).toThrow();
   expect(() => {
-    console.log(import.meta.resolve("#foo", "file:/Users/dave"));
+    console.log(import.meta.resolve("#foo", "file:/Users/chloe"));
   }).toThrow();
 });
 
-// TODO(@paperdave): ensure this crash isn't possible.
+// TODO(@paperclover): ensure this crash isn't possible.
 test.todo("you can't crash the resolver with Bun.plugin", () => {
   //
 });

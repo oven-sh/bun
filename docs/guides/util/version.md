@@ -5,7 +5,7 @@ name: Get the current Bun version
 Get the current version of Bun in a semver format.
 
 ```ts#index.ts
-Bun.version; // => "0.6.15"
+Bun.version; // => "$BUN_LATEST_VERSION"
 ```
 
 ---

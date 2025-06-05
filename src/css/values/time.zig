@@ -1,40 +1,30 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.Length;
-const Percentage = css.css_values.percentage.Percentage;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const Url = css.css_values.url.Url;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
 const Angle = css.css_values.angle.Angle;
-const Resolution = css.css_values.resolution.Resolution;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const Ident = css.css_values.ident.Ident;
 
 /// A CSS [`<time>`](https://www.w3.org/TR/css-values-4/#time) value, in either
 /// seconds or milliseconds.
 ///
 /// Time values may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
-pub const Time = union(enum) {
+pub const Time = union(Tag) {
     /// A time in seconds.
     seconds: CSSNumber,
     /// A time in milliseconds.
     milliseconds: CSSNumber,
 
     const Tag = enum(u8) { seconds = 1, milliseconds = 2 };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -44,19 +34,19 @@ pub const Time = union(enum) {
     }
 
     pub fn parse(input: *css.Parser) Result(Time) {
-        var calc_result = switch (input.tryParse(Calc(Time).parse, .{})) {
-            .result => |v| v,
-            .err => |e| return .{ .err = e },
-        };
-        switch (calc_result) {
-            .value => |v| {
-                const ret: Time = v.*;
-                // redundant allocation
-                calc_result.deinit(input.allocator());
-                return .{ .result = ret };
+        switch (input.tryParse(Calc(Time).parse, .{})) {
+            .result => |vv| switch (vv) {
+                .value => |v| {
+                    const ret: Time = v.*;
+                    // redundant allocation
+                    var vvv = vv;
+                    vvv.deinit(input.allocator());
+                    return .{ .result = ret };
+                },
+                // Time is always compatible, so they will always compute to a value.
+                else => return .{ .err = input.newErrorForNextToken() },
             },
-            // Time is always compatible, so they will always compute to a value.
-            else => return .{ .err = input.newErrorForNextToken() },
+            .err => {},
         }
 
         const location = input.currentSourceLocation();
@@ -67,14 +57,14 @@ pub const Time = union(enum) {
         switch (token.*) {
             .dimension => |*dim| {
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
-                    return .{ .result = .{ .seconds = dim.value } };
+                    return .{ .result = .{ .seconds = dim.num.value } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
-                    return .{ .result = .{ .milliseconds = dim.value } };
+                    return .{ .result = .{ .milliseconds = dim.num.value } };
                 } else {
                     return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = dim.unit }) };
                 }
             },
-            else => return .{ .err = location.newUnexpectedTokenError(token) },
+            else => return .{ .err = location.newUnexpectedTokenError(token.*) },
         }
     }
 
@@ -101,6 +91,13 @@ pub const Time = union(enum) {
                 }
             },
         }
+    }
+
+    pub fn isZero(this: *const Time) bool {
+        return switch (this.*) {
+            .seconds => |s| s == 0.0,
+            .milliseconds => |ms| ms == 0.0,
+        };
     }
 
     /// Returns the time in milliseconds.
@@ -138,11 +135,20 @@ pub const Time = union(enum) {
         };
     }
 
+    pub fn addInternal(this: Time, allocator: std.mem.Allocator, other: Time) Time {
+        return this.add(allocator, other);
+    }
+
+    pub fn intoCalc(this: Time, allocator: std.mem.Allocator) Calc(Time) {
+        return Calc(Time){ .value = bun.create(allocator, Time, this) };
+    }
+
     pub fn add(this: @This(), _: std.mem.Allocator, other: @This()) Time {
-        return switch (this) {
-            .seconds => |v| .{ .seconds = v + other.seconds },
-            .milliseconds => |v| .{ .milliseconds = v + other.milliseconds },
-        };
+        return this.op(&other, {}, struct {
+            fn mul(_: void, a: f32, b: f32) f32 {
+                return a + b;
+            }
+        }.mul);
     }
 
     pub fn partialCmp(this: *const Time, other: *const Time) ?std.math.Order {

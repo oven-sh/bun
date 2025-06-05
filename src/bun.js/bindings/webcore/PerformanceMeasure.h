@@ -44,6 +44,8 @@ public:
 
     JSC::JSValue detail(JSC::JSGlobalObject&);
 
+    size_t memoryCost() const;
+
 private:
     PerformanceMeasure(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& detail);
     ~PerformanceMeasure();

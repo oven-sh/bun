@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
-import type { Inspector, InspectorEventMap } from ".";
 import type { JSC } from "../protocol";
+import type { Inspector, InspectorEventMap } from "./index";
 
 /**
  * An inspector that communicates with a debugger over a WebSocket.
@@ -170,6 +170,7 @@ export class WebSocketInspector extends EventEmitter<InspectorEventMap> implemen
 
   #accept(message: string): void {
     let data: JSC.Event | JSC.Response;
+
     try {
       data = JSON.parse(message);
     } catch (cause) {

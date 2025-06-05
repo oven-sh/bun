@@ -1,26 +1,10 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
-const CSSNumberFns = css.css_values.number.CSSNumberFns;
-const Calc = css.css_values.calc.Calc;
-const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const Length = css.css_values.length.Length;
-const Percentage = css.css_values.percentage.Percentage;
-const CssColor = css.css_values.color.CssColor;
-const Image = css.css_values.image.Image;
-const CSSInteger = css.css_values.number.CSSInteger;
-const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const Angle = css.css_values.angle.Angle;
-const Time = css.css_values.time.Time;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CustomIdentFns = css.css_values.ident.CustomIdentFns;
-const Ident = css.css_values.ident.Ident;
 
 /// A CSS `<resolution>` value.
 pub const Resolution = union(enum) {
@@ -39,20 +23,7 @@ pub const Resolution = union(enum) {
     }
 
     pub fn eql(this: *const Resolution, other: *const Resolution) bool {
-        return switch (this.*) {
-            .dpi => |*a| switch (other.*) {
-                .dpi => a.* == other.dpi,
-                else => false,
-            },
-            .dpcm => |*a| switch (other.*) {
-                .dpcm => a.* == other.dpcm,
-                else => false,
-            },
-            .dppx => |*a| switch (other.*) {
-                .dppx => a.* == other.dppx,
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn parse(input: *css.Parser) Result(Resolution) {

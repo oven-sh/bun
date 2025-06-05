@@ -1,50 +1,26 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
-const QueryStringMap = @import("../../url.zig").QueryStringMap;
-const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const JSC = bun.JSC;
-const js = JSC.C;
-const WebCore = @import("../webcore/response.zig");
-const Bundler = bun.bundler;
+const WebCore = bun.webcore;
+const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
-const VirtualMachine = JavaScript.VirtualMachine;
-const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
-const Base = @import("../base.zig");
-const getAllocator = Base.getAllocator;
-const JSObject = JSC.JSObject;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
 const JSError = bun.JSError;
-const OOM = bun.OOM;
 
-const To = Base.To;
-const Request = WebCore.Request;
 const String = bun.String;
-const FetchEvent = WebCore.FetchEvent;
-const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
-const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = bun.logger;
 const Loader = options.Loader;
 const Target = options.Target;
-const JSAst = bun.JSAst;
-const JSParser = bun.js_parser;
-const JSPrinter = bun.js_printer;
-const ScanPassResult = JSParser.ScanPassResult;
-const Mimalloc = @import("../../mimalloc_arena.zig");
-const Runtime = @import("../../runtime.zig").Runtime;
-const JSLexer = bun.js_lexer;
-const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
-const debug = bun.Output.scoped(.Bundler, false);
+const debug = bun.Output.scoped(.Transpiler, false);
 
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
@@ -60,6 +36,7 @@ pub const JSBundler = struct {
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
+        force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
         no_macros: bool = false,
@@ -75,9 +52,12 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        experimental_css: bool = false,
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        has_any_on_before_parse: bool = false,
+        throw_on_error: bool = true,
+        env_behavior: Api.DotEnvBehavior = .disable,
+        env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -98,16 +78,10 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
-            if (try config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental_css = if (enable_css.isBoolean())
-                    enable_css.toBoolean()
-                else if (enable_css.isObject()) true: {
-                    if (try enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
-                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
-                    }
-
-                    break :true true;
-                } else false;
+            var did_set_target = false;
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
+                this.target = target;
+                did_set_target = true;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -147,7 +121,7 @@ pub const JSBundler = struct {
                     };
 
                     const is_last = i == length - 1;
-                    var plugin_result = try bun_plugins.addPlugin(function, config, onstart_promise_array, is_last);
+                    var plugin_result = try bun_plugins.addPlugin(function, config, onstart_promise_array, is_last, false);
 
                     if (!plugin_result.isEmptyOrUndefinedOrNull()) {
                         if (plugin_result.asAnyPromise()) |promise| {
@@ -159,14 +133,14 @@ pub const JSBundler = struct {
                                     plugin_result = val;
                                 },
                                 .rejected => |err| {
-                                    return globalThis.throwValue2(err);
+                                    return globalThis.throwValue(err);
                                 },
                             }
                         }
                     }
 
                     if (plugin_result.toError()) |err| {
-                        return globalThis.throwValue2(err);
+                        return globalThis.throwValue(err);
                     } else if (globalThis.hasException()) {
                         return error.JSError;
                     }
@@ -185,15 +159,10 @@ pub const JSBundler = struct {
                 if (bytecode) {
                     // Default to CJS for bytecode, since esm doesn't really work yet.
                     this.format = .cjs;
+                    if (did_set_target and this.target != .bun and this.bytecode) {
+                        return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    }
                     this.target = .bun;
-                }
-            }
-
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-
-                if (target != .bun and this.bytecode) {
-                    return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                 }
             }
 
@@ -215,7 +184,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
+                if (config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
@@ -228,6 +197,35 @@ pub const JSBundler = struct {
                         "sourcemap",
                         options.SourceMapOption,
                     );
+                }
+            }
+
+            if (try config.get(globalThis, "env")) |env| {
+                if (env != .undefined) {
+                    if (env == .null or env == .false or (env.isNumber() and env.asNumber() == 0)) {
+                        this.env_behavior = .disable;
+                    } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
+                        this.env_behavior = .load_all;
+                    } else if (env.isString()) {
+                        const slice = try env.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        if (strings.eqlComptime(slice.slice(), "inline")) {
+                            this.env_behavior = .load_all;
+                        } else if (strings.eqlComptime(slice.slice(), "disable")) {
+                            this.env_behavior = .disable;
+                        } else if (strings.indexOfChar(slice.slice(), '*')) |asterisk| {
+                            if (asterisk > 0) {
+                                this.env_behavior = .prefix;
+                                try this.env_prefix.appendSliceExact(slice.slice()[0..asterisk]);
+                            } else {
+                                this.env_behavior = .load_all;
+                            }
+                        } else {
+                            return globalThis.throwInvalidArguments("env must be 'inline', 'disable', or a string with a '*' character", .{});
+                        }
+                    } else {
+                        return globalThis.throwInvalidArguments("env must be 'inline', 'disable', or a string with a '*' character", .{});
+                    }
                 }
             }
 
@@ -321,16 +319,14 @@ pub const JSBundler = struct {
 
                 defer path.deinit();
 
-                var dir = std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
-                    globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
-                };
+                var dir = bun.FD.fromStdDir(std.fs.cwd().openDir(path.slice(), .{}) catch |err| {
+                    return globalThis.throwPretty("{s}: failed to open root directory: {s}", .{ @errorName(err), path.slice() });
+                });
                 defer dir.close();
 
                 var rootdir_buf: bun.PathBuffer = undefined;
-                const rootdir = bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf) catch |err| {
-                    globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
-                    return error.JSError;
+                const rootdir = dir.getFdPath(&rootdir_buf) catch |err| {
+                    return globalThis.throwPretty("{s}: failed to get full root directory path: {s}", .{ @errorName(err), path.slice() });
                 };
                 try this.rootdir.appendSliceExact(rootdir);
             }
@@ -357,7 +353,7 @@ pub const JSBundler = struct {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
-            //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
+            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
             if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
@@ -408,17 +404,13 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "define")) |define| {
-                if (!define.isObject()) {
-                    return globalThis.throwInvalidArguments("define must be an object", .{});
-                }
-
-                var define_iter = JSC.JSPropertyIterator(.{
+                var define_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, define);
                 defer define_iter.deinit();
 
-                while (define_iter.next()) |prop| {
+                while (try define_iter.next()) |prop| {
                     const property_value = define_iter.value;
                     const value_type = property_value.jsType();
 
@@ -427,7 +419,7 @@ pub const JSBundler = struct {
                     }
 
                     var val = JSC.ZigString.init("");
-                    property_value.toZigString(&val, globalThis);
+                    try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
@@ -444,7 +436,7 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnObject(globalThis, "loader")) |loaders| {
-                var loader_iter = JSC.JSPropertyIterator(.{
+                var loader_iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
                 }).init(globalThis, loaders);
@@ -455,7 +447,7 @@ pub const JSBundler = struct {
                 var loader_values = try allocator.alloc(Api.Loader, loader_iter.len);
                 errdefer allocator.free(loader_values);
 
-                while (loader_iter.next()) |prop| {
+                while (try loader_iter.next()) |prop| {
                     if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         return globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                     }
@@ -473,6 +465,10 @@ pub const JSBundler = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
+            }
+
+            if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
+                this.throw_on_error = flag;
             }
 
             return this;
@@ -531,6 +527,7 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+            self.env_prefix.deinit();
             self.footer.deinit();
         }
     };
@@ -544,17 +541,7 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch |err| {
-            switch (err) {
-                error.JSError => {
-                    return .zero;
-                },
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        const config = try Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator());
 
         return bun.BundleV2.generateFromJavaScript(
             config,
@@ -562,16 +549,10 @@ pub const JSBundler = struct {
             globalThis,
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
-        ) catch |err| {
-            switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-            }
-        };
+        );
     }
 
+    /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -581,62 +562,36 @@ pub const JSBundler = struct {
     }
 
     pub const Resolve = struct {
+        bv2: *BundleV2,
         import_record: MiniImportRecord,
+        value: Value,
 
-        /// Null means the Resolve is aborted
-        completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
-
-        value: Value = .{ .pending = {} },
-
-        js_task: JSC.AnyTask = undefined,
-        task: JSC.AnyEventLoop.Task = undefined,
+        js_task: JSC.AnyTask,
+        task: JSC.AnyEventLoop.Task,
 
         pub const MiniImportRecord = struct {
             kind: bun.ImportKind,
             source_file: string = "",
             namespace: string = "",
             specifier: string = "",
-            importer_source_index: ?u32 = null,
+            importer_source_index: u32,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
 
-            pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
-                return null;
-            }
+            // pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
+            //     return null;
+            // }
         };
 
-        pub fn create(
-            from: union(enum) {
-                MiniImportRecord: MiniImportRecord,
-                ImportRecord: struct {
-                    importer_source_index: u32,
-                    import_record_index: u32,
-                    source_file: []const u8 = "",
-                    original_target: Target,
-                    record: *const bun.ImportRecord,
-                },
-            },
-            completion: *bun.BundleV2.JSBundleCompletionTask,
-        ) Resolve {
-            completion.ref();
+        pub fn init(bv2: *bun.BundleV2, record: MiniImportRecord) Resolve {
+            return .{
+                .bv2 = bv2,
+                .import_record = record,
+                .value = .pending,
 
-            return Resolve{
-                .import_record = switch (from) {
-                    .MiniImportRecord => from.MiniImportRecord,
-                    .ImportRecord => |file| MiniImportRecord{
-                        .kind = file.record.kind,
-                        .source_file = file.source_file,
-                        .namespace = file.record.path.namespace,
-                        .specifier = file.record.path.text,
-                        .importer_source_index = file.importer_source_index,
-                        .import_record_index = file.import_record_index,
-                        .range = file.record.range,
-                        .original_target = file.original_target,
-                    },
-                },
-                .completion = completion,
-                .value = .{ .pending = {} },
+                .task = undefined,
+                .js_task = undefined,
             };
         }
 
@@ -652,9 +607,9 @@ pub const JSBundler = struct {
                     bun.default_allocator.free(this.namespace);
                 }
             },
-            no_match: void,
-            pending: void,
-            consumed: void,
+            no_match,
+            pending,
+            consumed,
 
             pub fn consume(this: *Value) Value {
                 const result = this.*;
@@ -678,32 +633,18 @@ pub const JSBundler = struct {
 
         pub fn deinit(this: *Resolve) void {
             this.value.deinit();
-            if (this.completion) |completion|
-                completion.deref();
             bun.default_allocator.destroy(this);
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
         pub fn dispatch(this: *Resolve) void {
-            var completion = this.completion orelse {
-                this.deinit();
-                return;
-            };
-            completion.ref();
-
             this.js_task = AnyTask.init(this);
-            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
+            this.bv2.jsLoopForPlugins().enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
         }
 
         pub fn runOnJSThread(this: *Resolve) void {
-            var completion = this.completion orelse {
-                this.deinit();
-                return;
-            };
-
-            completion.plugins.?.matchOnResolve(
-                completion.globalThis,
+            this.bv2.plugins.?.matchOnResolve(
                 this.import_record.specifier,
                 this.import_record.namespace,
                 this.import_record.source_file,
@@ -713,22 +654,19 @@ pub const JSBundler = struct {
         }
 
         export fn JSBundlerPlugin__onResolveAsync(
-            this: *Resolve,
+            resolve: *Resolve,
             _: *anyopaque,
             path_value: JSValue,
             namespace_value: JSValue,
             external_value: JSValue,
         ) void {
-            var completion = this.completion orelse {
-                this.deinit();
-                return;
-            };
             if (path_value.isEmptyOrUndefinedOrNull() or namespace_value.isEmptyOrUndefinedOrNull()) {
-                this.value = .{ .no_match = {} };
+                resolve.value = .{ .no_match = {} };
             } else {
-                const path = path_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(completion.globalThis, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
-                this.value = .{
+                const global = resolve.bv2.plugins.?.globalObject();
+                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                resolve.value = .{
                     .success = .{
                         .path = path.slice(),
                         .namespace = namespace.slice(),
@@ -737,7 +675,7 @@ pub const JSBundler = struct {
                 };
             }
 
-            completion.bundler.onResolveAsync(this);
+            resolve.bv2.onResolveAsync(resolve);
         }
 
         comptime {
@@ -748,53 +686,54 @@ pub const JSBundler = struct {
     const DeferredTask = bun.bundle_v2.DeferredTask;
 
     pub const Load = struct {
+        bv2: *BundleV2,
+
         source_index: Index,
         default_loader: options.Loader,
-        path: []const u8 = "",
-        namespace: []const u8 = "",
-
-        /// Null means the task was aborted.
-        completion: ?*bun.BundleV2.JSBundleCompletionTask = null,
+        path: []const u8,
+        namespace: []const u8,
 
         value: Value,
-        js_task: JSC.AnyTask = undefined,
-        task: JSC.AnyEventLoop.Task = undefined,
-        parse_task: *bun.ParseTask = undefined,
-
+        js_task: JSC.AnyTask,
+        task: JSC.AnyEventLoop.Task,
+        parse_task: *bun.ParseTask,
         /// Faster path: skip the extra threadpool dispatch when the file is not found
-        was_file: bool = false,
-
-        // We only allow the user to call defer once right now
-        called_defer: bool = false,
+        was_file: bool,
+        /// Defer may only be called once
+        called_defer: bool,
 
         const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
-        pub fn create(
-            completion: *bun.BundleV2.JSBundleCompletionTask,
-            source_index: Index,
-            default_loader: options.Loader,
-            path: Fs.Path,
-        ) Load {
-            completion.ref();
-            return Load{
-                .source_index = source_index,
-                .default_loader = default_loader,
-                .completion = completion,
-                .value = .{ .pending = {} },
-                .path = path.text,
-                .namespace = path.namespace,
+        pub fn init(bv2: *bun.BundleV2, parse: *bun.bundle_v2.ParseTask) Load {
+            return .{
+                .bv2 = bv2,
+                .parse_task = parse,
+                .source_index = parse.source_index,
+                .default_loader = parse.path.loader(&bv2.transpiler.options.loaders) orelse .js,
+                .value = .pending,
+                .path = parse.path.text,
+                .namespace = parse.path.namespace,
+                .was_file = false,
+                .called_defer = false,
+                .task = undefined,
+                .js_task = undefined,
             };
+        }
+
+        pub fn bakeGraph(load: *const Load) bun.bake.Graph {
+            return load.parse_task.known_target.bakeGraph();
         }
 
         pub const Value = union(enum) {
             err: logger.Msg,
             success: struct {
                 source_code: []const u8 = "",
-                loader: options.Loader = options.Loader.file,
+                loader: options.Loader = .file,
             },
-            pending: void,
-            no_match: void,
-            consumed: void,
+            pending,
+            no_match,
+            /// The value has been de-initialized or left over from `consume()`
+            consumed,
 
             pub fn deinit(this: *Value) void {
                 switch (this.*) {
@@ -809,6 +748,9 @@ pub const JSBundler = struct {
                 this.* = .{ .consumed = {} };
             }
 
+            /// Moves the value, replacing the original with `.consumed`. It is
+            /// safe to `deinit()` the consumed value, but the memory in `err`
+            /// and `success` must be freed by the caller.
             pub fn consume(this: *Value) Value {
                 const result = this.*;
                 this.* = .{ .consumed = {} };
@@ -819,66 +761,55 @@ pub const JSBundler = struct {
         pub fn deinit(this: *Load) void {
             debug("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
             this.value.deinit();
-            if (this.completion) |completion|
-                completion.deref();
         }
 
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
-        pub fn runOnJSThread(this: *Load) void {
-            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-                this.deinit();
-                return;
-            };
-
-            completion.plugins.?.matchOnLoad(
-                completion.globalThis,
-                this.path,
-                this.namespace,
-                this,
-                this.default_loader,
+        pub fn runOnJSThread(load: *Load) void {
+            load.bv2.plugins.?.matchOnLoad(
+                load.path,
+                load.namespace,
+                load,
+                load.default_loader,
+                load.bakeGraph() != .client,
             );
         }
 
         pub fn dispatch(this: *Load) void {
-            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-                this.deinit();
-                return;
-            };
-            completion.ref();
-
             this.js_task = AnyTask.init(this);
             const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
-            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+            this.bv2.jsLoopForPlugins().enqueueTaskConcurrent(concurrent_task);
         }
 
-        export fn JSBundlerPlugin__onDefer(
-            this: *Load,
-            globalObject: *JSC.JSGlobalObject,
-        ) JSValue {
+        export fn JSBundlerPlugin__onDefer(load: *Load, global: *JSC.JSGlobalObject) JSValue {
+            return JSC.toJSHostValue(global, load.onDefer(global));
+        }
+        fn onDefer(this: *Load, globalObject: *JSC.JSGlobalObject) bun.JSError!JSValue {
             if (this.called_defer) {
-                globalObject.throw("can't call .defer() more than once within an onLoad plugin", .{});
-                return .undefined;
+                return globalObject.throw("Can't call .defer() more than once within an onLoad plugin", .{});
             }
             this.called_defer = true;
 
-            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s})", .{ @intFromPtr(this), this.path });
 
-            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-                @intFromPtr(this),
-                this.path,
-                @atomicLoad(
-                    usize,
-                    &this.parse_task.ctx.graph.parse_pending,
-                    .monotonic,
-                ),
-                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
-            });
+            // Notify the bundler thread about the deferral. This will decrement
+            // the pending item counter and increment the deferred counter.
+            switch (this.parse_task.ctx.loop().*) {
+                .js => |jsc_event_loop| {
+                    jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this.parse_task.ctx, BundleV2.onNotifyDefer));
+                },
+                .mini => |*mini| {
+                    mini.enqueueTaskConcurrentWithExtraCtx(
+                        Load,
+                        BundleV2,
+                        this,
+                        BundleV2.onNotifyDeferMini,
+                        .task,
+                    );
+                },
+            }
 
-            defer this.parse_task.ctx.loop().wakeup();
-            const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
-            return promise;
+            return this.bv2.plugins.?.appendDeferPromise();
         }
 
         export fn JSBundlerPlugin__onLoadAsync(
@@ -888,24 +819,28 @@ pub const JSBundler = struct {
             loader_as_int: JSValue,
         ) void {
             JSC.markBinding(@src());
-            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-                this.deinit();
-                return;
-            };
             if (source_code_value.isEmptyOrUndefinedOrNull() or loader_as_int.isEmptyOrUndefinedOrNull()) {
                 this.value = .{ .no_match = {} };
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    completion.bundler.graph.pool.pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    this.bv2.graph.pool.worker_pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
                     this.deinit();
                     return;
                 }
             } else {
                 const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
-                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
-                // TODO:
+                const global = this.bv2.plugins.?.globalObject();
+                const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, source_code_value, bun.default_allocator) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => {
+                            bun.outOfMemory();
+                        },
+                        error.JSError => {},
+                    }
+
                     @panic("Unexpected: source_code is not a string");
+                };
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),
@@ -914,7 +849,7 @@ pub const JSBundler = struct {
                 };
             }
 
-            completion.bundler.onLoadAsync(this);
+            this.bv2.onLoadAsync(this);
         }
 
         comptime {
@@ -924,14 +859,41 @@ pub const JSBundler = struct {
 
     pub const Plugin = opaque {
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
-        pub fn create(globalObject: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
+        pub fn create(global: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());
-            const plugin = JSBundlerPlugin__create(globalObject, target);
+            const plugin = JSBundlerPlugin__create(global, target);
             JSC.JSValue.fromCell(plugin).protect();
             return plugin;
         }
 
-        extern fn JSBundlerPlugin__tombestone(*Plugin) void;
+        extern fn JSBundlerPlugin__callOnBeforeParsePlugins(
+            *Plugin,
+            bun_context: *anyopaque,
+            namespace: *const String,
+            path: *const String,
+            on_before_parse_args: ?*anyopaque,
+            on_before_parse_result: ?*anyopaque,
+            should_continue: *i32,
+        ) i32;
+
+        pub fn callOnBeforeParsePlugins(this: *Plugin, ctx: *anyopaque, namespace: *const String, path: *const String, on_before_parse_args: ?*anyopaque, on_before_parse_result: ?*anyopaque, should_continue: *i32) i32 {
+            return JSBundlerPlugin__callOnBeforeParsePlugins(this, ctx, namespace, path, on_before_parse_args, on_before_parse_result, should_continue);
+        }
+
+        extern fn JSBundlerPlugin__hasOnBeforeParsePlugins(*Plugin) i32;
+        pub fn hasOnBeforeParsePlugins(this: *Plugin) bool {
+            return JSBundlerPlugin__hasOnBeforeParsePlugins(this) != 0;
+        }
+
+        extern fn JSBundlerPlugin__tombstone(*Plugin) void;
+        pub fn deinit(this: *Plugin) void {
+            JSC.markBinding(@src());
+            JSBundlerPlugin__tombstone(this);
+            JSC.JSValue.fromCell(this).unprotect();
+        }
+
+        extern fn JSBundlerPlugin__globalObject(*Plugin) *JSC.JSGlobalObject;
+        pub const globalObject = JSBundlerPlugin__globalObject;
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
@@ -941,16 +903,15 @@ pub const JSBundler = struct {
         ) bool;
 
         extern fn JSBundlerPlugin__matchOnLoad(
-            *JSC.JSGlobalObject,
             *Plugin,
             namespaceString: *const String,
             path: *const String,
             context: *anyopaque,
             u8,
+            bool,
         ) void;
 
         extern fn JSBundlerPlugin__matchOnResolve(
-            *JSC.JSGlobalObject,
             *Plugin,
             namespaceString: *const String,
             path: *const String,
@@ -960,11 +921,8 @@ pub const JSBundler = struct {
         ) void;
 
         extern fn JSBundlerPlugin__drainDeferred(*Plugin, rejected: bool) void;
-        extern fn JSBundlerPlugin__appendDeferPromise(*Plugin, rejected: bool) JSValue;
-
-        pub fn appendDeferPromise(this: *Plugin) JSValue {
-            return JSBundlerPlugin__appendDeferPromise(this, false);
-        }
+        extern fn JSBundlerPlugin__appendDeferPromise(*Plugin) JSValue;
+        pub const appendDeferPromise = JSBundlerPlugin__appendDeferPromise;
 
         pub fn hasAnyMatches(
             this: *Plugin,
@@ -972,7 +930,7 @@ pub const JSBundler = struct {
             is_onLoad: bool,
         ) bool {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.hasAnyMatches");
+            const tracer = bun.perf.trace("JSBundler.hasAnyMatches");
             defer tracer.end();
 
             const namespace_string = if (path.isFile())
@@ -987,14 +945,14 @@ pub const JSBundler = struct {
 
         pub fn matchOnLoad(
             this: *Plugin,
-            globalThis: *JSC.JSGlobalObject,
             path: []const u8,
             namespace: []const u8,
             context: *anyopaque,
             default_loader: options.Loader,
+            is_server_side: bool,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
+            const tracer = bun.perf.trace("JSBundler.matchOnLoad");
             defer tracer.end();
             debug("JSBundler.matchOnLoad(0x{x}, {s}, {s})", .{ @intFromPtr(this), namespace, path });
             const namespace_string = if (namespace.len == 0)
@@ -1004,12 +962,11 @@ pub const JSBundler = struct {
             const path_string = bun.String.createUTF8(path);
             defer namespace_string.deref();
             defer path_string.deref();
-            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
+            JSBundlerPlugin__matchOnLoad(this, &namespace_string, &path_string, context, @intFromEnum(default_loader), is_server_side);
         }
 
         pub fn matchOnResolve(
             this: *Plugin,
-            globalThis: *JSC.JSGlobalObject,
             path: []const u8,
             namespace: []const u8,
             importer: []const u8,
@@ -1017,7 +974,7 @@ pub const JSBundler = struct {
             import_record_kind: bun.ImportKind,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
+            const tracer = bun.perf.trace("JSBundler.matchOnResolve");
             defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
@@ -1028,7 +985,7 @@ pub const JSBundler = struct {
             defer namespace_string.deref();
             defer path_string.deref();
             defer importer_string.deref();
-            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @intFromEnum(import_record_kind));
+            JSBundlerPlugin__matchOnResolve(this, &namespace_string, &path_string, &importer_string, context, @intFromEnum(import_record_kind));
         }
 
         pub fn addPlugin(
@@ -1037,23 +994,23 @@ pub const JSBundler = struct {
             config: JSC.JSValue,
             onstart_promises_array: JSC.JSValue,
             is_last: bool,
+            is_bake: bool,
         ) !JSValue {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
+            const tracer = bun.perf.trace("JSBundler.addPlugin");
             defer tracer.end();
-            const value = JSBundlerPlugin__runSetupFunction(this, object, config, onstart_promises_array, JSValue.jsBoolean(is_last));
-            if (value == .zero) return error.JSError;
-            return value;
+            return JSBundlerPlugin__runSetupFunction(
+                this,
+                object,
+                config,
+                onstart_promises_array,
+                JSValue.jsBoolean(is_last),
+                JSValue.jsBoolean(is_bake),
+            ).unwrap();
         }
 
         pub fn drainDeferred(this: *Plugin, rejected: bool) void {
             JSBundlerPlugin__drainDeferred(this, rejected);
-        }
-
-        pub fn deinit(this: *Plugin) void {
-            JSC.markBinding(@src());
-            JSBundlerPlugin__tombestone(this);
-            JSC.JSValue.fromCell(this).unprotect();
         }
 
         pub fn setConfig(this: *Plugin, config: *anyopaque) void {
@@ -1069,30 +1026,39 @@ pub const JSBundler = struct {
             JSC.JSValue,
             JSC.JSValue,
             JSC.JSValue,
-        ) JSValue;
+            JSC.JSValue,
+        ) JSValue.MaybeException;
 
         pub export fn JSBundlerPlugin__addError(
             ctx: *anyopaque,
-            _: *Plugin,
+            plugin: *Plugin,
             exception: JSValue,
             which: JSValue,
         ) void {
             switch (which.to(i32)) {
                 0 => {
-                    var this: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
-                    var completion = this.completion orelse return;
-                    this.value = .{
-                        .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.import_record.source_file, exception) catch @panic("Out of memory in addError callback"),
+                    const resolve: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
+                    resolve.value = .{
+                        .err = logger.Msg.fromJS(
+                            bun.default_allocator,
+                            plugin.globalObject(),
+                            resolve.import_record.source_file,
+                            exception,
+                        ) catch bun.outOfMemory(),
                     };
-                    completion.bundler.onResolveAsync(this);
+                    resolve.bv2.onResolveAsync(resolve);
                 },
                 1 => {
-                    var this: *Load = bun.cast(*Load, ctx);
-                    var completion = this.completion orelse return;
-                    this.value = .{
-                        .err = logger.Msg.fromJS(bun.default_allocator, completion.globalThis, this.path, exception) catch @panic("Out of memory in addError callback"),
+                    const load: *Load = bun.cast(*Load, ctx);
+                    load.value = .{
+                        .err = logger.Msg.fromJS(
+                            bun.default_allocator,
+                            plugin.globalObject(),
+                            load.path,
+                            exception,
+                        ) catch bun.outOfMemory(),
                     };
-                    completion.bundler.onLoadAsync(this);
+                    load.bv2.onLoadAsync(load);
                 },
                 else => @panic("invalid error type"),
             }
@@ -1102,14 +1068,17 @@ pub const JSBundler = struct {
 
 const Blob = JSC.WebCore.Blob;
 pub const BuildArtifact = struct {
-    pub usingnamespace JSC.Codegen.JSBuildArtifact;
+    pub const js = JSC.Codegen.JSBuildArtifact;
+    pub const toJS = js.toJS;
+    pub const fromJS = js.fromJS;
+    pub const fromJSDirect = js.fromJSDirect;
 
     blob: JSC.WebCore.Blob,
     loader: options.Loader = .file,
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong.Optional = .empty,
 
     pub const OutputKind = enum {
         chunk,
@@ -1332,3 +1301,4 @@ pub const BuildArtifact = struct {
 };
 
 const Output = bun.Output;
+const BundleV2 = bun.bundle_v2.BundleV2;

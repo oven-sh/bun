@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, rejectUnauthorizedScope } from "harness";
+import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles } from "harness";
 import path from "path";
 
 describe("Server", () => {
@@ -317,8 +317,7 @@ describe("Server", () => {
     }
   });
 
-
-  test('server should return a body for a OPTIONS Request', async () => {
+  test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -327,15 +326,16 @@ describe("Server", () => {
     });
     {
       const url = `http://${server.hostname}:${server.port}/`;
-      const response = await fetch(new Request(url, {
-        method: 'OPTIONS',
-      }));
+      const response = await fetch(
+        new Request(url, {
+          method: "OPTIONS",
+        }),
+      );
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
       expect(response.url).toBe(url);
     }
   });
-
 
   test("abort signal on server with stream", async () => {
     {
@@ -421,7 +421,7 @@ describe("Server", () => {
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
       expect.unreachable();
     } catch (err: any) {
-      expect(err.code).toBe("ConnectionClosed");
+      expect(err.code).toBe("ECONNRESET");
     }
 
     {
@@ -456,7 +456,7 @@ describe("Server", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    expect(stderr.toString('utf-8')).toBeEmpty();
+    expect(stderr.toString("utf-8")).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 });
@@ -768,3 +768,520 @@ test.skip("should be able to stream huge amounts of data", async () => {
   expect(written).toBe(CONTENT_LENGTH);
   expect(received).toBe(CONTENT_LENGTH);
 }, 30_000);
+
+describe("HEAD requests #15355", () => {
+  test("should be able to make HEAD requests with content-length or transfer-encoding (async)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await Bun.sleep(1);
+        if (req.method === "HEAD") {
+          if (req.url.endsWith("/content-length")) {
+            return new Response(null, {
+              headers: {
+                "Content-Length": "11",
+              },
+            });
+          }
+          return new Response(null, {
+            headers: {
+              "Transfer-Encoding": "chunked",
+            },
+          });
+        }
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World");
+        }
+        return new Response(async function* () {
+          yield "Hello";
+          await Bun.sleep(1);
+          yield " ";
+          await Bun.sleep(1);
+          yield "World";
+        });
+      },
+    });
+
+    {
+      const response = await fetch(server.url + "/content-length");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    {
+      const response = await fetch(server.url + "/chunked");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("Hello World");
+    }
+
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("");
+    }
+  });
+
+  test("should be able to make HEAD requests with content-length or transfer-encoding (sync)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.method === "HEAD") {
+          if (req.url.endsWith("/content-length")) {
+            return new Response(null, {
+              headers: {
+                "Content-Length": "11",
+              },
+            });
+          }
+          return new Response(null, {
+            headers: {
+              "Transfer-Encoding": "chunked",
+            },
+          });
+        }
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World");
+        }
+        return new Response(async function* () {
+          yield "Hello";
+          await Bun.sleep(1);
+          yield " ";
+          await Bun.sleep(1);
+          yield "World";
+        });
+      },
+    });
+
+    {
+      const response = await fetch(server.url + "/content-length");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    {
+      const response = await fetch(server.url + "/chunked");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("Hello World");
+    }
+
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(await response.text()).toBe("");
+    }
+  });
+
+  test("should fallback to the body if content-length is missing in the headers", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.url.endsWith("/content-length")) {
+          return new Response("Hello World", {
+            headers: {
+              "Content-Type": "text/plain",
+              "X-Bun-Test": "1",
+            },
+          });
+        }
+
+        if (req.url.endsWith("/chunked")) {
+          return new Response(
+            async function* () {
+              yield "Hello";
+              await Bun.sleep(1);
+              yield " ";
+              await Bun.sleep(1);
+              yield "World";
+            },
+            {
+              headers: {
+                "Content-Type": "text/plain",
+                "X-Bun-Test": "1",
+              },
+            },
+          );
+        }
+
+        return new Response(null, {
+          headers: {
+            "Content-Type": "text/plain",
+            "X-Bun-Test": "1",
+          },
+        });
+      },
+    });
+    {
+      const response = await fetch(server.url + "/content-length", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/chunked", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/null", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("0");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+      expect(await response.text()).toBe("");
+    }
+  });
+
+  test("HEAD requests should not have body", async () => {
+    const dir = tempDirWithFiles("fsr", {
+      "hello": "Hello World",
+    });
+
+    const filename = path.join(dir, "hello");
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.url.endsWith("/file")) {
+          return new Response(Bun.file(filename));
+        }
+        return new Response("Hello World");
+      },
+    });
+
+    {
+      const response = await fetch(server.url);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+    {
+      const response = await fetch(server.url + "/file");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("Hello World");
+    }
+
+    function doHead(server: Server, path: string): Promise<{ headers: string; body: string }> {
+      const { promise, resolve } = Promise.withResolvers();
+      // use node net to make a HEAD request
+      const net = require("net");
+      const url = new URL(server.url);
+      const socket = net.createConnection(url.port, url.hostname);
+      socket.write(`HEAD ${path} HTTP/1.1\r\nHost: ${url.hostname}:${url.port}\r\n\r\n`);
+      let body = "";
+      let headers = "";
+      socket.on("data", data => {
+        body += data.toString();
+        if (!headers) {
+          const headerIndex = body.indexOf("\r\n\r\n");
+          if (headerIndex !== -1) {
+            headers = body.slice(0, headerIndex);
+            body = body.slice(headerIndex + 4);
+
+            setTimeout(() => {
+              // wait to see if we get extra data
+              resolve({ headers, body });
+              socket.destroy();
+            }, 100);
+          }
+        }
+      });
+      return promise as Promise<{ headers: string; body: string }>;
+    }
+    {
+      const response = await fetch(server.url, {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const response = await fetch(server.url + "/file", {
+        method: "HEAD",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    }
+    {
+      const { headers, body } = await doHead(server, "/");
+      expect(headers.toLowerCase()).toContain("content-length: 11");
+      expect(body).toBe("");
+    }
+    {
+      const { headers, body } = await doHead(server, "/file");
+      expect(headers.toLowerCase()).toContain("content-length: 11");
+      expect(body).toBe("");
+    }
+  });
+
+  describe("HEAD request should respect status", () => {
+    test("status only without headers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("0");
+    });
+    test("status only with headers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, {
+            status: 404,
+            headers: { "X-Bun-Test": "1", "Content-Length": "11" },
+          });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(response.headers.get("x-bun-test")).toBe("1");
+    });
+
+    test("status only with transfer-encoding", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(null, { status: 404, headers: { "Transfer-Encoding": "chunked" } });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("transfer-encoding")).toBe("chunked");
+    });
+
+    test("status only with body", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("Hello World", { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-length")).toBe("11");
+      expect(await response.text()).toBe("");
+    });
+
+    test("should allow Strict-Transport-Security", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("Hello World", {
+            status: 200,
+            headers: { "Strict-Transport-Security": "max-age=31536000" },
+          });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
+    });
+  });
+});
+
+describe("websocket and routes test", () => {
+  const serverConfigurations = [
+    {
+      // main route for upgrade
+      routes: {
+        "/": (req: Request, server: Server) => {
+          if (server.upgrade(req)) return;
+          return new Response("Forbidden", { status: 403 });
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      testName: "main route for upgrade",
+    },
+    {
+      // Generic route for upgrade
+      routes: {
+        "/*": (req: Request, server: Server) => {
+          if (server.upgrade(req)) return;
+          return new Response("Forbidden", { status: 403 });
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      expectedPath: "/bun",
+      testName: "generic route for upgrade",
+    },
+    // GET route for upgrade
+    {
+      routes: {
+        "/ws": {
+          GET: (req: Request, server: Server) => {
+            if (server.upgrade(req)) return;
+            return new Response("Forbidden", { status: 403 });
+          },
+          POST: (req: Request) => {
+            return new Response(req.body);
+          },
+        },
+      },
+      shouldBeUpgraded: true,
+      hasPOST: true,
+      expectedPath: "/ws",
+      testName: "GET route for upgrade",
+    },
+    // POST route and fetch route for upgrade
+    {
+      routes: {
+        "/": {
+          POST: (req: Request, server: Server) => {
+            return new Response("Hello World");
+          },
+        },
+      },
+      fetch: (req: Request, server: Server) => {
+        if (server.upgrade(req)) return;
+        return new Response("Forbidden", { status: 403 });
+      },
+      shouldBeUpgraded: true,
+      hasPOST: true,
+      testName: "POST route + fetch route for upgrade",
+    },
+    // POST route for upgrade
+    {
+      routes: {
+        "/": {
+          POST: (req: Request, server: Server) => {
+            return new Response("Hello World");
+          },
+        },
+      },
+      shouldBeUpgraded: false,
+      hasPOST: true,
+      testName: "POST route for upgrade and no fetch",
+    },
+    // fetch only
+    {
+      fetch: (req: Request, server: Server) => {
+        if (server.upgrade(req)) return;
+        return new Response("Forbidden", { status: 403 });
+      },
+      shouldBeUpgraded: true,
+      hasPOST: false,
+      testName: "fetch only for upgrade",
+    },
+  ];
+  for (const config of serverConfigurations) {
+    const { routes, fetch: serverFetch, shouldBeUpgraded, hasPOST, expectedPath, testName } = config;
+    test(testName, async () => {
+      using server = Bun.serve({
+        port: 0,
+        routes,
+        fetch: serverFetch,
+        websocket: {
+          message: (ws, message) => {
+            // PING PONG
+            ws.send(`recv: ${message}`);
+          },
+        },
+      });
+
+      {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const url = new URL(server.url);
+        url.pathname = expectedPath || "/";
+        url.hostname = "127.0.0.1";
+        const ws = new WebSocket(url.toString()); // bun crashes here
+        ws.onopen = () => {
+          ws.send("Hello server");
+        };
+        ws.onmessage = event => {
+          resolve(event.data);
+          ws.close();
+        };
+        ws.onerror = reject;
+        ws.onclose = event => {
+          reject(event.code);
+        };
+        if (shouldBeUpgraded) {
+          const result = await promise;
+          expect(result).toBe("recv: Hello server");
+        } else {
+          const result = await promise.catch(e => e);
+          expect(result).toBe(1002);
+        }
+        if (hasPOST) {
+          const result = await fetch(url, {
+            method: "POST",
+            body: "Hello World",
+          });
+          expect(result.status).toBe(200);
+          const body = await result.text();
+          expect(body).toBe("Hello World");
+        }
+      }
+    });
+  }
+});
+
+test("should be able to redirect when using empty streams #15320", async () => {
+  using server = Bun.serve({
+    port: 0,
+    websocket: void 0,
+    async fetch(req, server2) {
+      const url = new URL(req.url);
+      if (url.pathname === "/redirect") {
+        const emptyStream = new ReadableStream({
+          start(controller) {
+            // Immediately close the stream to make it empty
+            controller.close();
+          },
+        });
+
+        return new Response(emptyStream, {
+          status: 307,
+          headers: {
+            location: "/",
+          },
+        });
+      }
+
+      return new Response("Hello, World");
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}/redirect`);
+  expect(await response.text()).toBe("Hello, World");
+});

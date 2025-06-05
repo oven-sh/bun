@@ -1,7 +1,7 @@
-import path from "path";
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
-import crypto from "crypto";
+import path from "path";
 import { debug } from "./console";
 
 export function join(...paths: (string | string[])[]): string {

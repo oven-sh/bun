@@ -43,12 +43,12 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
 
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
-    if (UNLIKELY(!thisValue.isCell())) {
+    if (!thisValue.isCell()) [[unlikely]] {
         return nullptr;
     }
 
     JSCell* thisCell = thisValue.asCell();
-    if (UNLIKELY(!thisCell->isObject())) {
+    if (!thisCell->isObject()) [[unlikely]] {
         return nullptr;
     }
 

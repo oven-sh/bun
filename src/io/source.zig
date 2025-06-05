@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const uv = bun.windows.libuv;
 
 const log = bun.Output.scoped(.PipeSource, true);
@@ -48,7 +48,7 @@ pub const Source = union(enum) {
     }
     pub fn toStream(this: Source) *uv.uv_stream_t {
         return switch (this) {
-            .pipe => @ptrCast(this.pipe),
+            .pipe => this.pipe.asStream(),
             .tty => @ptrCast(this.tty),
             .sync_file, .file => unreachable,
         };
@@ -58,7 +58,7 @@ pub const Source = union(enum) {
         return switch (this) {
             .pipe => |pipe| pipe.fd(),
             .tty => |tty| tty.fd(),
-            .sync_file, .file => |file| bun.FDImpl.fromUV(file.file).encode(),
+            .sync_file, .file => |file| .fromUV(file.file),
         };
     }
 
@@ -129,7 +129,7 @@ pub const Source = union(enum) {
     pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Tty) {
         log("openTTY (fd = {})", .{fd});
 
-        const uv_fd = bun.uvfdcast(fd);
+        const uv_fd = fd.uv();
 
         if (uv_fd == 0) {
             if (!stdin_tty_init) {
@@ -151,17 +151,17 @@ pub const Source = union(enum) {
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
-        bun.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
+        bun.assert(fd.isValid() and fd.uv() != -1);
         log("openFile (fd = {})", .{fd});
         const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
 
         file.* = std.mem.zeroes(Source.File);
-        file.file = bun.uvfdcast(fd);
+        file.file = fd.uv();
         return file;
     }
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
-        const rc = bun.windows.libuv.uv_guess_handle(bun.uvfdcast(fd));
+        const rc = bun.windows.libuv.uv_guess_handle(fd.uv());
         log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
 
         switch (rc) {
@@ -214,7 +214,7 @@ pub const Source = union(enum) {
             },
             else => .{
                 .err = .{
-                    .errno = @intFromEnum(bun.C.E.NOTSUP),
+                    .errno = @intFromEnum(bun.sys.E.NOTSUP),
                     .syscall = .uv_tty_set_mode,
                     .fd = this.getFd(),
                 },
@@ -224,7 +224,7 @@ pub const Source = union(enum) {
 };
 
 export fn Source__setRawModeStdin(raw: bool) c_int {
-    const tty = switch (Source.openTty(bun.JSC.VirtualMachine.get().uvLoop(), bun.STDIN_FD)) {
+    const tty = switch (Source.openTty(bun.JSC.VirtualMachine.get().uvLoop(), .stdin())) {
         .result => |tty| tty,
         .err => |e| return e.errno,
     };

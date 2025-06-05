@@ -1,17 +1,15 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const std = @import("std");
-const Fs = @import("../fs.zig");
 const RunCommand = @import("run_command.zig").RunCommand;
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-const SemverString = @import("../install/semver.zig").String;
 
 const CLI = bun.CLI;
 const Command = CLI.Command;
 
-const bundler = bun.bundler;
+const transpiler = bun.transpiler;
 
 const FilterArg = @import("filter_arg.zig");
 
@@ -29,6 +27,7 @@ const ScriptConfig = struct {
     // ../../node_modules/.bin
     // and so forth, in addition to the user's $PATH.
     PATH: []const u8,
+    elide_count: ?usize,
 
     fn cmp(_: void, a: @This(), b: @This()) bool {
         return bun.strings.cmpStringsAsc({}, a.package_name, b.package_name);
@@ -66,7 +65,7 @@ pub const ProcessHandle = struct {
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
 
         this.start_time = std.time.Instant.now() catch null;
-        var spawned: bun.spawn.SpawnProcessResult = brk: {
+        var spawned: bun.spawn.process.SpawnProcessResult = brk: {
 
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a std.ArrayList shared
@@ -247,7 +246,7 @@ const State = struct {
         if (data[data.len - 1] == '\n') {
             data = data[0 .. data.len - 1];
         }
-        if (max_lines == null) return .{ .content = data, .elided_count = 0 };
+        if (max_lines == null or max_lines.? == 0) return .{ .content = data, .elided_count = 0 };
         var i: usize = data.len;
         var lines: usize = 0;
         while (i > 0) : (i -= 1) {
@@ -282,7 +281,9 @@ const State = struct {
         }
         for (this.handles) |*handle| {
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            const e = elide(handle.buffer.items, if (is_abort) null else 10);
+            const elide_lines = if (is_abort) null else handle.config.elide_count orelse 10;
+            const e = elide(handle.buffer.items, elide_lines);
+
             try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });
             if (e.elided_count > 0) {
                 try this.draw_buf.writer().print(
@@ -406,14 +407,9 @@ const AbortHandler = struct {
                 .mask = std.posix.empty_sigset,
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
-            // if we can't set the handler, we just ignore it
-            std.posix.sigaction(std.posix.SIG.INT, &action, null) catch |err| {
-                if (Environment.isDebug) {
-                    Output.warn("Failed to set abort handler: {s}\n", .{@errorName(err)});
-                }
-            };
+            std.posix.sigaction(std.posix.SIG.INT, &action, null);
         } else {
-            const res = bun.windows.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
+            const res = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             if (res == 0) {
                 if (Environment.isDebug) {
                     Output.warn("Failed to set abort handler\n", .{});
@@ -426,13 +422,13 @@ const AbortHandler = struct {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         if (Environment.isWindows) {
             // restores default Ctrl+C behavior
-            _ = bun.windows.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
+            _ = bun.c.SetConsoleCtrlHandler(null, std.os.windows.FALSE);
         }
     }
 };
 
 fn windowsIsTerminal() bool {
-    const res = bun.windows.GetFileType(bun.STDOUT_FD.cast());
+    const res = bun.windows.GetFileType(bun.FD.stdout().native());
     return res == bun.windows.FILE_TYPE_CHAR;
 }
 
@@ -459,8 +455,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var root_buf: bun.PathBuffer = undefined;
     const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, fsinstance.top_level_dir, &root_buf);
 
-    var this_bundler: bundler.Bundler = undefined;
-    _ = try RunCommand.configureEnvForRun(ctx, &this_bundler, null, true, false);
+    var this_transpiler: transpiler.Transpiler = undefined;
+    _ = try RunCommand.configureEnvForRun(ctx, &this_transpiler, null, true, false);
 
     var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
     defer package_json_iter.deinit();
@@ -472,7 +468,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const pkgjson = bun.PackageJSON.parse(&this_bundler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
+        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
         };
@@ -482,7 +478,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         if (!filter_instance.matches(path, pkgjson.name))
             continue;
 
-        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_bundler, null, dirpath, ctx.debug.run_in_bun);
+        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
             const original_content = pkgscripts.get(name) orelse continue;
@@ -513,6 +509,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .combined = copy_script.items[0 .. copy_script.items.len - 1 :0],
                 .deps = pkgjson.dependencies,
                 .PATH = PATH,
+                .elide_count = ctx.bundler_options.elide_lines,
             });
         }
     }
@@ -522,19 +519,25 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
-    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_bundler.env);
+    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
-        RunCommand.findShell(this_bundler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
+        RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
         bun.selfExePath() catch return error.MissingShell;
 
     var state = State{
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
-        .pretty_output = if (Environment.isWindows) windowsIsTerminal() else Output.enable_ansi_colors_stdout,
+        .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
-        .env = this_bundler.env,
+        .env = this_transpiler.env,
     };
+
+    // Check if elide-lines is used in a non-terminal environment
+    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
+        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
+        Global.exit(1);
+    }
 
     // initialize the handles
     var map = bun.StringHashMap(std.ArrayList(*ProcessHandle)).init(ctx.allocator);
@@ -547,7 +550,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) } else {},
+                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) },
                 .stream = true,
             },
         };

@@ -91,7 +91,6 @@
 @splunk/otel
 @strapi/strapi
 @sveltejs/kit
-@swc/core
 @syncfusion/ej2-angular-base
 @taquito/taquito
 @temporalio/core-bridge

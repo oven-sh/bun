@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 
@@ -11,13 +11,7 @@ const SmallList = css.SmallList;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 
-const LengthPercentage = css.css_values.length.LengthPercentage;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const CSSNumber = css.css_values.number.CSSNumber;
 const LengthPercentageOrAuto = css.css_values.length.LengthPercentageOrAuto;
-const Size2D = css.css_values.size.Size2D;
-const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;
@@ -234,7 +228,11 @@ pub const Background = struct {
     }
 
     pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
-        return this.color.getNecessaryFallbacks(targets).bitwiseOr(this.getImage().getNecessaryFallbacks(targets));
+        return bun.bits.@"or"(
+            css.ColorFallbackKind,
+            this.color.getNecessaryFallbacks(targets),
+            this.getImage().getNecessaryFallbacks(targets),
+        );
     }
 
     pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
@@ -327,8 +325,6 @@ pub const BackgroundPosition = struct {
     /// The y-position.
     y: VerticalPosition,
 
-    pub usingnamespace css.DefineListShorthand(@This());
-
     const PropertyFieldMap = .{
         .x = css.PropertyIdTag.@"background-position-x",
         .y = css.PropertyIdTag.@"background-position-y",
@@ -402,7 +398,7 @@ pub const BackgroundRepeat = struct {
             .err => |e| return .{ .err = e },
         };
 
-        const y = input.tryParse(BackgroundRepeatKeyword.parse, .{}).unwrapOrNoOptmizations(x);
+        const y = input.tryParse(BackgroundRepeatKeyword.parse, .{}).unwrapOr(x);
 
         return .{ .result = .{ .x = x, .y = y } };
     }
@@ -448,7 +444,12 @@ pub const BackgroundRepeatKeyword = enum {
     /// The image is placed once and not repeated in this direction.
     @"no-repeat",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
@@ -460,7 +461,12 @@ pub const BackgroundAttachment = enum {
     /// The background is fixed with regard to the element's contents.
     local,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() @This() {
         return .scroll;
@@ -476,7 +482,12 @@ pub const BackgroundOrigin = enum {
     /// The position is relative to the content box.
     @"content-box",
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 };
 
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
@@ -492,7 +503,12 @@ pub const BackgroundClip = enum {
     /// The background is clipped to the text content of the element.
     text,
 
-    pub usingnamespace css.DefineEnumProperty(@This());
+    const css_impl = css.DefineEnumProperty(@This());
+    pub const eql = css_impl.eql;
+    pub const hash = css_impl.hash;
+    pub const parse = css_impl.parse;
+    pub const toCss = css_impl.toCss;
+    pub const deepClone = css_impl.deepClone;
 
     pub fn default() BackgroundClip {
         return .@"border-box";
@@ -524,63 +540,56 @@ pub const AspectRatio = struct {
 };
 
 pub const BackgroundProperty = packed struct(u16) {
-    @"background-color": bool = false,
-    @"background-image": bool = false,
-    @"background-position-x": bool = false,
-    @"background-position-y": bool = false,
-    @"background-repeat": bool = false,
-    @"background-size": bool = false,
-    @"background-attachment": bool = false,
-    @"background-origin": bool = false,
-    @"background-clip": bool = false,
+    color: bool = false,
+    image: bool = false,
+    @"position-x": bool = false,
+    @"position-y": bool = false,
+    repeat: bool = false,
+    size: bool = false,
+    attachment: bool = false,
+    origin: bool = false,
+    clip: bool = false,
     __unused: u7 = 0,
 
-    pub usingnamespace css.Bitflags(@This());
+    pub const @"background-color" = BackgroundProperty{ .color = true };
+    pub const @"background-image" = BackgroundProperty{ .image = true };
+    pub const @"background-position-x" = BackgroundProperty{ .@"position-x" = true };
+    pub const @"background-position-y" = BackgroundProperty{ .@"position-y" = true };
+    pub const @"background-position" = BackgroundProperty{ .@"position-x" = true, .@"position-y" = true };
+    pub const @"background-repeat" = BackgroundProperty{ .repeat = true };
+    pub const @"background-size" = BackgroundProperty{ .size = true };
+    pub const @"background-attachment" = BackgroundProperty{ .attachment = true };
+    pub const @"background-origin" = BackgroundProperty{ .origin = true };
+    pub const @"background-clip" = BackgroundProperty{ .clip = true };
 
-    pub const @"background-color" = BackgroundProperty{ .@"background-color" = true };
-    pub const @"background-image" = BackgroundProperty{ .@"background-image" = true };
-    pub const @"background-position-x" = BackgroundProperty{ .@"background-position-x" = true };
-    pub const @"background-position-y" = BackgroundProperty{ .@"background-position-y" = true };
-    pub const @"background-position" = BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true };
-    pub const @"background-repeat" = BackgroundProperty{ .@"background-repeat" = true };
-    pub const @"background-size" = BackgroundProperty{ .@"background-size" = true };
-    pub const @"background-attachment" = BackgroundProperty{ .@"background-attachment" = true };
-    pub const @"background-origin" = BackgroundProperty{ .@"background-origin" = true };
-    pub const @"background-clip" = BackgroundProperty{ .@"background-clip" = true };
     pub const background = BackgroundProperty{
-        .@"background-color" = true,
-        .@"background-image" = true,
-        .@"background-position-x" = true,
-        .@"background-position-y" = true,
-        .@"background-repeat" = true,
-        .@"background-size" = true,
-        .@"background-attachment" = true,
-        .@"background-origin" = true,
-        .@"background-clip" = true,
+        .color = true,
+        .image = true,
+        .@"position-x" = true,
+        .@"position-y" = true,
+        .repeat = true,
+        .size = true,
+        .attachment = true,
+        .origin = true,
+        .clip = true,
     };
 
-    pub fn fromPropertyId(property_id: css.PropertyId) ?BackgroundProperty {
+    pub fn isEmpty(this: @This()) bool {
+        return bun.bits.asInt(@This(), this) == 0;
+    }
+
+    pub fn tryFromPropertyId(property_id: css.PropertyId) ?BackgroundProperty {
         return switch (property_id) {
-            .@"background-color" => BackgroundProperty{ .@"background-color" = true },
-            .@"background-image" => BackgroundProperty{ .@"background-image" = true },
-            .@"background-position-x" => BackgroundProperty{ .@"background-position-x" = true },
-            .@"background-position-y" => BackgroundProperty{ .@"background-position-y" = true },
-            .@"background-position" => BackgroundProperty{ .@"background-position-x" = true, .@"background-position-y" = true },
-            .@"background-repeat" => BackgroundProperty{ .@"background-repeat" = true },
-            .@"background-size" => BackgroundProperty{ .@"background-size" = true },
-            .@"background-attachment" => BackgroundProperty{ .@"background-attachment" = true },
-            .@"background-origin" => BackgroundProperty{ .@"background-origin" = true },
-            .background => BackgroundProperty{
-                .@"background-color" = true,
-                .@"background-image" = true,
-                .@"background-position-x" = true,
-                .@"background-position-y" = true,
-                .@"background-repeat" = true,
-                .@"background-size" = true,
-                .@"background-attachment" = true,
-                .@"background-origin" = true,
-                .@"background-clip" = true,
-            },
+            .@"background-color" => @"background-color",
+            .@"background-image" => @"background-image",
+            .@"background-position-x" => @"background-position-x",
+            .@"background-position-y" => @"background-position-y",
+            .@"background-position" => @"background-position",
+            .@"background-repeat" => @"background-repeat",
+            .@"background-size" => @"background-size",
+            .@"background-attachment" => @"background-attachment",
+            .@"background-origin" => @"background-origin",
+            .background => background,
             else => null,
         };
     }
@@ -655,7 +664,7 @@ pub const BackgroundHandler = struct {
                 if (this.clips) |*clips_and_vp| {
                     var clips: *SmallList(BackgroundClip, 1) = &clips_and_vp.*[0];
                     const vp: *VendorPrefix = &clips_and_vp.*[1];
-                    if (!vendor_prefix.eql(vp.*) and !val.eql(clips)) {
+                    if (vendor_prefix != vp.* and !val.eql(clips)) {
                         this.flush(allocator, dest, context);
                         clips.deinit(allocator);
                         this.clips = .{ val.deepClone(allocator), vendor_prefix };
@@ -664,7 +673,7 @@ pub const BackgroundHandler = struct {
                             clips.deinit(allocator);
                             clips.* = val.deepClone(allocator);
                         }
-                        vp.insert(vendor_prefix);
+                        bun.bits.insert(VendorPrefix, vp, vendor_prefix);
                     }
                 } else {
                     this.clips = .{ val.deepClone(allocator), vendor_prefix };
@@ -684,10 +693,10 @@ pub const BackgroundHandler = struct {
                 }
                 var clips_vp = VendorPrefix{ .none = true };
                 if (this.clips) |*clips_and_vp| {
-                    if (!clips_vp.eql(clips_and_vp.*[1]) and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
+                    if (clips_vp != clips_and_vp.*[1] and !clips_and_vp.*[0].eql(&clips_and_vp[0])) {
                         this.flush(allocator, dest, context);
                     } else {
-                        clips_vp.insert(clips_and_vp.*[1]);
+                        bun.bits.insert(VendorPrefix, &clips_vp, clips_and_vp.*[1]);
                     }
                 }
 
@@ -726,8 +735,8 @@ pub const BackgroundHandler = struct {
                     this.flush(allocator, dest, context);
                     var unparsed = val.deepClone(allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    if (BackgroundProperty.fromPropertyId(val.property_id)) |prop| {
-                        this.flushed_properties.insert(prop);
+                    if (BackgroundProperty.tryFromPropertyId(val.property_id)) |prop| {
+                        bun.bits.insert(BackgroundProperty, &this.flushed_properties, prop);
                     }
 
                     dest.append(allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
@@ -810,7 +819,7 @@ pub const BackgroundHandler = struct {
             fn push(self: *BackgroundHandler, alloc: Allocator, d: *css.DeclarationList, comptime property_field_name: []const u8, val: anytype) void {
                 d.append(alloc, @unionInit(Property, property_field_name, val)) catch bun.outOfMemory();
                 const prop = @field(BackgroundProperty, property_field_name);
-                self.flushed_properties.insert(prop);
+                bun.bits.insert(BackgroundProperty, &self.flushed_properties, prop);
             }
         }.push;
 
@@ -867,7 +876,7 @@ pub const BackgroundHandler = struct {
                         return clip.* == BackgroundClip.text;
                     }
                 }.predicate)) context.targets.prefixes(clips.*[1], .background_clip) else clips.*[1];
-                const clip_property = if (!clip_prefixes.eql(css.VendorPrefix{ .none = true }))
+                const clip_property = if (clip_prefixes != css.VendorPrefix{ .none = true })
                     css.Property{ .@"background-clip" = .{ clips.*[0].deepClone(allocator), clip_prefixes } }
                 else
                     null;
@@ -892,7 +901,7 @@ pub const BackgroundHandler = struct {
                         .size = size,
                         .attachment = attachment,
                         .origin = origin,
-                        .clip = if (clip_prefixes.eql(css.VendorPrefix{ .none = true })) clip else BackgroundClip.default(),
+                        .clip = if (clip_prefixes == css.VendorPrefix{ .none = true }) clip else BackgroundClip.default(),
                     });
                 }
                 defer {
@@ -906,7 +915,7 @@ pub const BackgroundHandler = struct {
                     clips.*[0].clearRetainingCapacity();
                 }
 
-                if (!this.flushed_properties.intersects(BackgroundProperty.background)) {
+                if (this.flushed_properties.isEmpty()) {
                     for (backgrounds.getFallbacks(allocator, context.targets).slice()) |fallback| {
                         push(this, allocator, dest, "background", fallback);
                     }
@@ -916,7 +925,7 @@ pub const BackgroundHandler = struct {
 
                 if (clip_property) |clip| {
                     dest.append(allocator, clip) catch bun.outOfMemory();
-                    this.flushed_properties.insert(BackgroundProperty.@"background-clip");
+                    this.flushed_properties.clip = true;
                 }
 
                 this.reset(allocator);
@@ -924,9 +933,9 @@ pub const BackgroundHandler = struct {
             }
         }
 
-        if (bun.take(&maybe_color)) |color_| {
-            var color: CssColor = color_;
-            if (!this.flushed_properties.contains(BackgroundProperty.@"background-color")) {
+        if (bun.take(&maybe_color)) |color_const| {
+            var color: CssColor = color_const;
+            if (!this.flushed_properties.color) {
                 for (color.getFallbacks(allocator, context.targets).slice()) |fallback| {
                     push(this, allocator, dest, "background-color", fallback);
                 }
@@ -936,7 +945,7 @@ pub const BackgroundHandler = struct {
 
         if (bun.take(&maybe_images)) |images_| {
             var images: css.SmallList(Image, 1) = images_;
-            if (!this.flushed_properties.contains(BackgroundProperty.@"background-image")) {
+            if (!this.flushed_properties.image) {
                 var fallbacks = images.getFallbacks(allocator, context.targets);
                 for (fallbacks.slice()) |fallback| {
                     push(this, allocator, dest, "background-image", fallback);
@@ -991,7 +1000,7 @@ pub const BackgroundHandler = struct {
                     .@"background-clip" = .{ clips.deepClone(allocator), prefixes },
                 },
             ) catch bun.outOfMemory();
-            this.flushed_properties.insert(BackgroundProperty.@"background-clip");
+            this.flushed_properties.clip = true;
         }
 
         this.reset(allocator);
@@ -1023,15 +1032,17 @@ pub const BackgroundHandler = struct {
         // If the last declaration is prefixed, pop the last value
         // so it isn't duplicated when we flush.
         if (this.has_prefix) {
-            var prop = this.decls.pop();
-            prop.deinit(allocator);
+            var maybe_prop = this.decls.pop();
+            if (maybe_prop) |*prop| {
+                prop.deinit(allocator);
+            }
         }
 
         dest.appendSlice(allocator, this.decls.items) catch bun.outOfMemory();
         this.decls.clearRetainingCapacity();
 
         this.flush(allocator, dest, context);
-        this.flushed_properties = BackgroundProperty.empty();
+        this.flushed_properties = BackgroundProperty{};
     }
 };
 

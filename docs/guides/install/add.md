@@ -22,7 +22,7 @@ This will add the package to `dependencies` in `package.json`. By default, the `
 
 ---
 
-To "pin" to the `latest` version of the package, use `--exact`. This will add the package to `dependencies` without the `^`, pinning your project to the exact version you installed.
+To "pin" to an exact version of the package, use `--exact`. This will add the package to `dependencies` without the `^`, pinning your project to the exact version you installed.
 
 ```sh
 $ bun add zod --exact

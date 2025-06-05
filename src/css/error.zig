@@ -1,13 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const Log = logger.Log;
 
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
-const DashedIdent = css_values.ident.DashedIdent;
-const Ident = css_values.ident.Ident;
 pub const Error = css.Error;
 const Location = css.Location;
 
@@ -30,6 +28,26 @@ pub fn Err(comptime T: type) type {
         kind: T,
         /// The location where the error occurred.
         loc: ?ErrorLocation,
+
+        pub fn fmt(
+            this: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            if (@hasDecl(T, "fmt")) {
+                try writer.print("{}", .{this.kind});
+                return;
+            }
+            @compileError("fmt not implemented for " ++ @typeName(T));
+        }
+
+        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+            var error_string = ArrayList(u8){};
+            defer error_string.deinit(allocator);
+            error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
+            return bun.String.fromBytes(error_string.items).toJS(globalThis);
+        }
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
             if (T != ParserError) {
@@ -55,6 +73,18 @@ pub fn Err(comptime T: type) type {
                     .column = err.location.column,
                 },
             };
+        }
+
+        pub fn addToLogger(this: @This(), log: *logger.Log, source: *const logger.Source, allocator: std.mem.Allocator) !void {
+            try log.addMsg(.{
+                .kind = .err,
+                .data = .{
+                    .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
+                    .text = try std.fmt.allocPrint(allocator, "{}", .{this.kind}),
+                },
+            });
+
+            log.errors += 1;
         }
     };
 }
@@ -86,10 +116,9 @@ pub fn ParserErrorKind(comptime T: type) type {
         /// A parse error reported by downstream consumer code.
         custom: T,
 
-        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), comptime formatter: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             return switch (this) {
-                .basic => |basic| writer.print("basic: {}", .{basic}),
-                .custom => |custom| writer.print("custom: {}", .{custom}),
+                inline else => |kind| try kind.format(formatter, options, writer),
             };
         }
     };
@@ -108,10 +137,10 @@ pub const BasicParseErrorKind = union(enum) {
     /// A qualified rule was encountered that was invalid.
     qualified_rule_invalid,
 
-    pub fn format(this: *const BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt; // autofix
         _ = opts; // autofix
-        return switch (this.*) {
+        return switch (this) {
             .unexpected_token => |token| {
                 try writer.print("unexpected token: {}", .{token});
             },
@@ -152,6 +181,16 @@ pub const ErrorLocation = struct {
     pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("{s}:{d}:{d}", .{ this.filename, this.line, this.column });
     }
+
+    pub fn toLocation(this: @This(), source: *const logger.Source, allocator: Allocator) !logger.Location {
+        return logger.Location{
+            .file = source.path.text,
+            .namespace = source.path.namespace,
+            .line = @intCast(this.line + 1),
+            .column = @intCast(this.column),
+            .line_text = if (bun.strings.getLinesInText(source.contents, this.line, 1)) |lines| try allocator.dupe(u8, lines.buffer[0]) else null,
+        };
+    }
 };
 
 /// A printer error type.
@@ -170,6 +209,17 @@ pub const PrinterErrorKind = union(enum) {
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     no_import_records,
+
+    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        return switch (this) {
+            .ambiguous_url_in_custom_property => |data| writer.print("Ambiguous relative URL '{s}' in custom property declaration", .{data.url}),
+            .fmt_error => writer.writeAll("Formatting error occurred"),
+            .invalid_composes_nesting => writer.writeAll("The 'composes' property cannot be used within nested rules"),
+            .invalid_composes_selector => writer.writeAll("The 'composes' property can only be used with a simple class selector"),
+            .invalid_css_modules_pattern_in_grid => writer.writeAll("CSS modules pattern must end with '[local]' when used in CSS grid"),
+            .no_import_records => writer.writeAll("No import records found"),
+        };
+    }
 };
 
 /// A parser error.
@@ -209,10 +259,22 @@ pub const ParserError = union(enum) {
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
-            .at_rule_invalid => |name| writer.print("at_rule_invalid: {s}", .{name}),
-            .unexpected_token => |token| writer.print("unexpected_token: {}", .{token}),
-            .selector_error => |err| writer.print("selector_error: {}", .{err}),
-            else => writer.print("{s}", .{@tagName(this)}),
+            .at_rule_body_invalid => writer.writeAll("Invalid at-rule body"),
+            .at_rule_prelude_invalid => writer.writeAll("Invalid at-rule prelude"),
+            .at_rule_invalid => |name| writer.print("Unknown at-rule @{s}", .{name}),
+            .end_of_input => writer.writeAll("Unexpected end of input"),
+            .invalid_declaration => writer.writeAll("Invalid declaration"),
+            .invalid_media_query => writer.writeAll("Invalid media query"),
+            .invalid_nesting => writer.writeAll("Invalid CSS nesting"),
+            .deprecated_nest_rule => writer.writeAll("The @nest rule is deprecated, use standard CSS nesting instead"),
+            .invalid_page_selector => writer.writeAll("Invalid @page selector"),
+            .invalid_value => writer.writeAll("Invalid value"),
+            .qualified_rule_invalid => writer.writeAll("Invalid qualified rule"),
+            .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
+            .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
+            .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
+            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
+            .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
         };
     }
 };
@@ -285,27 +347,33 @@ pub const SelectorError = union(enum) {
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
     unexpected_selector_after_pseudo_element: css.Token,
+    ambiguous_css_module_class: []const u8,
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
-            .dangling_combinator, .empty_selector, .invalid_state, .missing_nesting_prefix, .missing_nesting_selector => {
-                try writer.print("{s}", .{@tagName(this)});
-            },
-            inline .expected_namespace, .unexpected_ident, .unsupported_pseudo_class_or_element => |str| {
-                try writer.print("{s}: {s}", .{ @tagName(this), str });
-            },
-            inline .bad_value_in_attr,
-            .class_needs_ident,
-            .expected_bar_in_attr,
-            .explicit_namespace_unexpected_token,
-            .invalid_qual_name_in_attr,
-            .no_qualified_name_in_attribute_selector,
-            .pseudo_element_expected_ident,
-            .unexpected_token_in_attribute_selector,
-            => |tok| {
-                try writer.print("{s}: {s}", .{ @tagName(this), @tagName(tok) });
-            },
-            else => try writer.print("{s}", .{@tagName(this)}),
+            .dangling_combinator => try writer.writeAll("Found a dangling combinator with no selector"),
+            .empty_selector => try writer.writeAll("Empty selector is not allowed"),
+            .invalid_state => try writer.writeAll("Token is not allowed in this state"),
+            .missing_nesting_prefix => try writer.writeAll("Selector must start with the '&' nesting selector"),
+            .missing_nesting_selector => try writer.writeAll("Missing '&' nesting selector"),
+            .invalid_pseudo_class_after_pseudo_element => try writer.writeAll("Invalid pseudo-class after pseudo-element"),
+            .invalid_pseudo_class_after_webkit_scrollbar => try writer.writeAll("Invalid pseudo-class after -webkit-scrollbar"),
+            .invalid_pseudo_class_before_webkit_scrollbar => try writer.writeAll("-webkit-scrollbar state found before -webkit-scrollbar pseudo-element"),
+
+            .expected_namespace => |str| try writer.print("Expected namespace '{s}'", .{str}),
+            .unexpected_ident => |str| try writer.print("Unexpected identifier '{s}'", .{str}),
+            .unsupported_pseudo_class_or_element => |str| try writer.print("Unsupported pseudo-class or pseudo-element '{s}'", .{str}),
+
+            .bad_value_in_attr => |tok| try writer.print("Invalid value in attribute selector: {}", .{tok}),
+            .class_needs_ident => |tok| try writer.print("Expected identifier after '.' in class selector, found: {}", .{tok}),
+            .expected_bar_in_attr => |tok| try writer.print("Expected '|' in attribute selector, found: {}", .{tok}),
+            .explicit_namespace_unexpected_token => |tok| try writer.print("Unexpected token in namespace: {}", .{tok}),
+            .invalid_qual_name_in_attr => |tok| try writer.print("Invalid qualified name in attribute selector: {}", .{tok}),
+            .no_qualified_name_in_attribute_selector => |tok| try writer.print("Missing qualified name in attribute selector: {}", .{tok}),
+            .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {}", .{tok}),
+            .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {}", .{tok}),
+            .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {}", .{tok}),
+            .ambiguous_css_module_class => |name| try writer.print("CSS module class: '{s}' is currently not supported.", .{name}),
         };
     }
 };

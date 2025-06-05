@@ -44,9 +44,11 @@ console.log(values);
 console.log(positionals);
 ```
 
+---
+
 then it outputs
 
-```
+```sh
 $ bun run cli.ts --flag1 --flag2 value
 {
   flag1: true,
@@ -54,4 +56,3 @@ $ bun run cli.ts --flag1 --flag2 value
 }
 [ "/path/to/bun", "/path/to/cli.ts" ]
 ```
-

@@ -3,6 +3,15 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import * as path from "node:path";
+function test(
+  label: string,
+  fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
+  timeout?: number,
+  isOnly = false,
+) {
+  return makeTest(label, fn, timeout, isOnly);
+}
+test.only = (label, fn, timeout) => makeTest(label, fn, timeout, true);
 
 const strings = [
   {
@@ -236,8 +245,13 @@ describe("WebSocket", () => {
   });
 });
 
-function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
-  it(
+function makeTest(
+  label: string,
+  fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
+  timeout?: number,
+  isOnly = false,
+) {
+  return (isOnly ? it.only : it)(
     label,
     testDone => {
       let isDone = false;

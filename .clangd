@@ -3,3 +3,6 @@ Index:
 
 CompileFlags:
   CompilationDatabase: build/debug
+
+Diagnostics:
+  UnusedIncludes: None

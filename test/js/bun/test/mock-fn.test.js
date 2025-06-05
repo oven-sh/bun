@@ -100,13 +100,16 @@ describe("mock()", () => {
   }
   test("are callable", () => {
     const fn = jest.fn(() => 42);
+    expect(fn).not.toHaveBeenCalledOnce();
     expect(fn()).toBe(42);
+    expect(fn).toHaveBeenCalledOnce();
     expect(fn).toHaveBeenCalled();
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
     expect(fn).toHaveBeenLastCalledWith();
     expect(fn()).toBe(42);
+    expect(fn).not.toHaveBeenCalledOnce();
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();

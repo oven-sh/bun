@@ -30,6 +30,8 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+const ArrayPrototypeSplice = Array.prototype.splice;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
@@ -412,7 +414,7 @@ function execFile(file, args, options, callback) {
  */
 function exec(command, options, callback) {
   const opts = normalizeExecArgs(command, options, callback);
-  return execFile(opts.file, opts.options, opts.callback);
+  return execFile(opts.file, null, opts.options, opts.callback);
 }
 
 const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
@@ -735,19 +737,35 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  // execArgv = options.execArgv || process.execArgv;
-  // validateArgumentsNullCheck(execArgv, "options.execArgv");
+  const execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  // if (execArgv === process.execArgv && process._eval != null) {
-  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
-  //   if (index > 0) {
-  //     // Remove the -e switch to avoid fork bombing ourselves.
-  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
-  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
-  //   }
-  // }
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice.$call(execArgv);
+      ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
+    }
+  }
 
-  args = [/*...execArgv,*/ modulePath, ...args];
+  args = [...execArgv, modulePath, ...args];
+
+  // Workaround: Pass trace event categories via environment variable
+  // This is needed because Bun doesn't recognize --trace-event-categories flag
+  const traceIndex = execArgv.indexOf("--trace-event-categories");
+  if (traceIndex !== -1 && traceIndex + 1 < execArgv.length) {
+    const categories = execArgv[traceIndex + 1];
+
+    // DEBUG: Log to verify this code is running
+    if ($debug) $debug("fork: Adding _BUN_TRACE_EVENT_CATEGORIES to env:", categories);
+
+    // Ensure we have a mutable env object
+    if (!options.env || options.env === process.env) {
+      options.env = { ...process.env };
+    }
+    options.env._BUN_TRACE_EVENT_CATEGORIES = categories;
+  }
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");

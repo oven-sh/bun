@@ -56,6 +56,7 @@ src/bun.js/api/JSBundler.zig
 src/bun.js/api/JSTranspiler.zig
 src/bun.js/api/server.zig
 src/bun.js/api/server/AnyRequestContext.zig
+src/bun.js/api/server/FileRoute.zig
 src/bun.js/api/server/HTMLBundle.zig
 src/bun.js/api/server/HTTPStatusText.zig
 src/bun.js/api/server/InspectorBunFrontendDevServerAgent.zig

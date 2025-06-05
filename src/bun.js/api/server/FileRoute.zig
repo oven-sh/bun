@@ -166,7 +166,11 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         return;
     }
 
-    const fd = fd_result.result;
+    const fd = fd_result.result.makeLibUVOwned() catch {
+        req.setYield(true);
+        this.deref();
+        return;
+    };
 
     const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since");
 

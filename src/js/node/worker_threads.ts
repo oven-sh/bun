@@ -331,12 +331,10 @@ class Worker extends EventEmitter {
     // prettier-ignore
     /**/ if (this.threadId === -1) {
     /**/   const onExitPromise = this.#onExitPromise;
-    /**/ 
     /**/   if (onExitPromise) {
     /**/     return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
     /**/   }
-    /**/ 
-    /**/   this.#onExitPromise = Promise.resolve<number>(0); 
+    /**/   this.#onExitPromise = Promise.resolve<void>(); 
     /**/   return this.#onExitPromise;
     /**/ }
     // THIS SHOULD NOT MERGE IN THE PR

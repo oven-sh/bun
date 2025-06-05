@@ -450,7 +450,9 @@ fn unhandledError(this: *WebWorker, _: anyerror) void {
 }
 
 pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
-    handle.?.requestTermination();
+    if (handle) |h| {
+        h.requestTermination();
+    }
 }
 
 fn spin(this: *WebWorker) void {

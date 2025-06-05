@@ -404,38 +404,34 @@ describe("Name Resolver", () => {
       },
       15_000,
     );
-    it(
-      "should not keep repeating failed resolutions",
-      done => {
-        const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;
-        let resultCount = 0;
-        const resolver = resolverManager.createResolver(
-          target,
-          {
-            onSuccessfulResolution: (
-              endpointList: Endpoint[],
-              serviceConfig: ServiceConfig | null,
-              serviceConfigError: StatusObject | null,
-            ) => {
-              assert.fail("Resolution succeeded unexpectedly");
-            },
-            onError: (error: StatusObject) => {
-              resultCount += 1;
-              if (resultCount === 1) {
-                process.nextTick(() => resolver.updateResolution());
-              }
-            },
+    it("should not keep repeating failed resolutions", done => {
+      const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;
+      let resultCount = 0;
+      const resolver = resolverManager.createResolver(
+        target,
+        {
+          onSuccessfulResolution: (
+            endpointList: Endpoint[],
+            serviceConfig: ServiceConfig | null,
+            serviceConfigError: StatusObject | null,
+          ) => {
+            assert.fail("Resolution succeeded unexpectedly");
           },
-          {},
-        );
-        resolver.updateResolution();
-        setTimeout(() => {
-          assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
-          done();
-        }, 10_000);
-      },
-      15_000,
-    );
+          onError: (error: StatusObject) => {
+            resultCount += 1;
+            if (resultCount === 1) {
+              process.nextTick(() => resolver.updateResolution());
+            }
+          },
+        },
+        {},
+      );
+      resolver.updateResolution();
+      setTimeout(() => {
+        assert.strictEqual(resultCount, 2, `resultCount ${resultCount} !== 2`);
+        done();
+      }, 10_000);
+    }, 15_000);
   });
   describe("UDS Names", () => {
     it("Should handle a relative Unix Domain Socket name", done => {

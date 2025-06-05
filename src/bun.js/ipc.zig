@@ -1003,8 +1003,14 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
                 },
                 .none => {},
             }
-        } else {
-            //
+        } else if (bun.JSC.API.TCPSocket.fromJS(handle)) |socket| {
+            // Handle regular TCP sockets
+            const fd = socket.socket.fd();
+            zig_handle = .init(fd, handle);
+        } else if (bun.JSC.API.TLSSocket.fromJS(handle)) |socket| {
+            // Handle TLS sockets - not supported yet
+            _ = socket;
+            // TODO: Handle TLS sockets
         }
     }
 

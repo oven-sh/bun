@@ -1432,7 +1432,9 @@ fn NewSocket(comptime ssl: bool) type {
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
-            _: u7 = 0,
+            /// When created from stdout/stderr fd, force synchronous writes
+            is_stdio_sync: bool = false,
+            _: u6 = 0,
         };
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
@@ -1491,6 +1493,15 @@ fn NewSocket(comptime ssl: bool) type {
                     );
                 },
                 .fd => |f| {
+                    // Check if this is stdout or stderr
+                    if (f.stdioTag()) |tag| {
+                        switch (tag) {
+                            .std_out, .std_err => {
+                                this.flags.is_stdio_sync = true;
+                            },
+                            else => {},
+                        }
+                    }
                     const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },
@@ -2509,6 +2520,11 @@ fn NewSocket(comptime ssl: bool) type {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
                     this.buffered_data_for_node_net.append(bun.default_allocator, remaining) catch bun.outOfMemory();
+
+                    // Flush immediately for stdout/stderr sockets to ensure synchronous behavior
+                    if (this.flags.is_stdio_sync) {
+                        this.internalFlush();
+                    }
                 }
             }
 
@@ -2537,16 +2553,29 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
-                this.bytes_written += written;
-                if (written > 0) {
-                    if (this.buffered_data_for_node_net.len > written) {
-                        const remaining = this.buffered_data_for_node_net.slice()[written..];
-                        _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
-                        this.buffered_data_for_node_net.len = @truncate(remaining.len);
-                    } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                // For stdio sockets, keep writing until all data is flushed
+                while (this.buffered_data_for_node_net.len > 0) {
+                    const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
+                    this.bytes_written += written;
+                    if (written > 0) {
+                        if (this.buffered_data_for_node_net.len > written) {
+                            const remaining = this.buffered_data_for_node_net.slice()[written..];
+                            _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
+                            this.buffered_data_for_node_net.len = @truncate(remaining.len);
+                        } else {
+                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                            this.buffered_data_for_node_net = .{};
+                        }
+                    }
+
+                    // For non-stdio sockets, only do one write attempt
+                    if (!this.flags.is_stdio_sync) {
+                        break;
+                    }
+
+                    // If no data was written, avoid infinite loop
+                    if (written == 0) {
+                        break;
                     }
                 }
             }

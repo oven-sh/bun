@@ -226,7 +226,7 @@ function moveMessagePortToContext() {
 
 const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
 
-class Worker extends EventEmitter {
+class Worker extends EventEmitter implements AsyncDisposable {
   #worker: WebWorker;
   #performance;
 
@@ -234,6 +234,10 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitResolvers = Promise.withResolvers<number | void>();
   #urlToRevoke = "";
+
+  async [Symbol.asyncDispose]() {
+    await this.terminate();
+  }
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();

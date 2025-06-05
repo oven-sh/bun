@@ -11,6 +11,8 @@
 
 namespace Bun {
 
+void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value);
+
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:
     using Base = JSInternalFieldObjectImpl<NODE_ERROR_COUNT>;

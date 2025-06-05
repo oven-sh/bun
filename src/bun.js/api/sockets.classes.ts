@@ -237,6 +237,9 @@ const sslOnly = {
     fn: "getX509Certificate",
     length: 0,
   },
+  SNICallback: {
+    setter: "setSNICallback",
+  },
 } as const;
 export default [
   generate(true),

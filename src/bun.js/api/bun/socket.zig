@@ -1379,6 +1379,7 @@ fn NewSocket(comptime ssl: bool) type {
         server_name: ?[]const u8 = null,
         buffered_data_for_node_net: bun.ByteList = .{},
         bytes_written: u64 = 0,
+        sni_callback: JSC.Strong.Optional = .empty,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -1787,12 +1788,36 @@ fn NewSocket(comptime ssl: bool) type {
                                 }
                             }
                         }
+
+                        const ctx = BoringSSL.SSL_get_SSL_CTX(ssl_ptr);
+
                         if (this.protos) |protos| {
                             if (this.handlers.is_server) {
-                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                                BoringSSL.SSL_CTX_set_alpn_select_cb(ctx, selectALPNCallback, bun.cast(*anyopaque, this));
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                             }
+                        }
+
+                        if (this.handlers.is_server) {
+                            _ = BoringSSL.SSL_CTX_set_tlsext_servername_callback(ctx, struct {
+                                fn cb(cb_ssl: ?*BoringSSL.SSL, _: [*c]c_int, arg: ?*anyopaque) callconv(.C) c_int {
+                                    const sn_type: c_int = BoringSSL.SSL_get_servername_type(cb_ssl);
+                                    if (sn_type == -1) {
+                                        return BoringSSL.SSL_TLSEXT_ERR_OK;
+                                    }
+
+                                    const sn: [*c]const u8 = BoringSSL.SSL_get_servername(cb_ssl, sn_type);
+                                    if (sn == null) {
+                                        return BoringSSL.SSL_TLSEXT_ERR_OK;
+                                    }
+
+                                    const cb_this: *This = @alignCast(@ptrCast(arg));
+                                    cb_this.onSNI(cb_this.socket, sn[0..std.mem.len(sn)]);
+                                    return BoringSSL.SSL_TLSEXT_ERR_OK;
+                                }
+                            }.cb);
+                            _ = BoringSSL.SSL_CTX_set_tlsext_servername_arg(ctx, bun.cast(*anyopaque, this));
                         }
                     }
                 }
@@ -1993,6 +2018,24 @@ fn NewSocket(comptime ssl: bool) type {
             }) catch |e| {
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(e) });
             };
+        }
+
+        pub fn onSNI(this: *This, _: Socket, servername: []const u8) void {
+            JSC.markBinding(@src());
+            log("onSNI {s} ({s})", .{ if (this.handlers.is_server) "S" else "C", servername });
+            if (this.socket.isDetached()) return;
+
+            if (this.sni_callback.get()) |callback| {
+                const globalObject = this.handlers.globalObject;
+                const this_value = this.getThisValue(globalObject);
+
+                _ = callback.call(globalObject, this_value, &[_]JSValue{
+                    this_value,
+                    ZigString.init(servername).toJS(globalObject),
+                }) catch |err| {
+                    _ = this.handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
+                };
+            }
         }
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
@@ -3180,6 +3223,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (version_len == 0) return JSValue.jsNull();
             const slice = version[0..version_len];
             return ZigString.fromUTF8(slice).toJS(globalObject);
+        }
+
+        pub fn setSNICallback(this: *This, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+            this.sni_callback.set(globalObject, value);
         }
 
         pub fn setMaxSendFragment(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

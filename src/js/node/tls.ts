@@ -5,10 +5,26 @@ const { Duplex } = require("node:stream");
 const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const {
+  validateFunction,
+  validateObject,
+  validateString,
+  validateInt32,
+  validateBuffer,
+} = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
-const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+const {
+  rootCertificates,
+  canonicalizeIP,
+  SecureContext: NodeTLSSecureContext,
+  SSL_OP_CIPHER_SERVER_PREFERENCE,
+  TLS1_3_VERSION,
+  TLS1_2_VERSION,
+  TLS1_1_VERSION,
+  TLS1_VERSION,
+} = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -31,6 +47,9 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayIsArray = Array.isArray;
+
 function parseCertString() {
   // Removed since JAN 2022 Node v18.0.0+ https://github.com/nodejs/node/pull/41479
   throwNotImplemented("Not implemented");
@@ -143,8 +162,8 @@ function splitEscapedAltNames(altNames) {
 }
 
 function checkServerIdentity(hostname, cert) {
-  const subject = cert.subject;
-  const altNames = cert.subjectaltname;
+  console.trace("checkServerIdentity", { hostname, cert });
+  const altNames = cert?.subjectaltname;
   const dnsNames = [];
   const ips = [];
 
@@ -170,7 +189,7 @@ function checkServerIdentity(hostname, cert) {
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
-  } else if (dnsNames.length > 0 || subject?.CN) {
+  } else if (dnsNames.length > 0 || cert?.subject?.CN) {
     const hostParts = splitHost(hostname);
     const wildcard = pattern => check(hostParts, pattern, true);
 
@@ -179,7 +198,7 @@ function checkServerIdentity(hostname, cert) {
       if (!valid) reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
     } else {
       // Match against Common Name only if no supported identifiers exist.
-      const cn = subject.CN;
+      const cn = cert?.subject?.CN;
 
       if (Array.isArray(cn)) valid = ArrayPrototypeSome.$call(cn, wildcard);
       else if (cn) valid = wildcard(cn);
@@ -204,42 +223,48 @@ var InternalSecureContext = class SecureContext {
   secureOptions;
 
   constructor(options) {
-    const context = {};
+    const { honorCipherOrder, minVersion, maxVersion, secureProtocol } = options;
+
+    const context = new NodeTLSSecureContext(secureProtocol, minVersion, maxVersion);
 
     if (options) {
-      let cert = options.cert;
+      let { cert } = options;
       if (cert) {
         throwOnInvalidTLSArray("options.cert", cert);
         this.cert = cert;
       }
 
-      let key = options.key;
+      let { key } = options;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
         this.key = key;
       }
 
-      let ca = options.ca;
+      let { ca } = options;
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;
       }
 
-      let passphrase = options.passphrase;
+      let { passphrase } = options;
       if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
       }
       this.passphrase = passphrase;
 
-      let servername = options.servername;
+      let { servername } = options;
       if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
       }
       this.servername = servername;
 
-      let secureOptions = options.secureOptions || 0;
+      let { secureOptions } = options;
       if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+      }
+
+      if (honorCipherOrder) {
+        secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
       }
 
       this.secureOptions = secureOptions;
@@ -261,6 +286,13 @@ var InternalSecureContext = class SecureContext {
     }
 
     this.context = context;
+    this.context.init(
+      secureProtocol,
+      toV("minimum", minVersion, DEFAULT_MIN_VERSION),
+      toV("maximum", maxVersion, DEFAULT_MAX_VERSION),
+    );
+
+    configureSecureContext(this.context, options);
   }
 };
 
@@ -272,6 +304,263 @@ function SecureContext(options): void {
 
 function createSecureContext(options) {
   return new SecureContext(options);
+}
+
+function configureSecureContext(context, options) {
+  validateObject(options, "options");
+
+  const {
+    allowPartialTrustChain,
+    ca,
+    cert,
+    ciphers = require("internal/tls").DEFAULT_CIPHERS_LIST,
+    clientCertEngine,
+    crl,
+    dhparam,
+    ecdhCurve = DEFAULT_ECDH_CURVE,
+    key,
+    passphrase,
+    pfx,
+    privateKeyIdentifier,
+    privateKeyEngine,
+    sessionIdContext,
+    sessionTimeout,
+    sigalgs,
+    ticketKeys,
+  } = options;
+
+  if (ciphers !== undefined && ciphers !== null) {
+    validateString(ciphers, "options.ciphers");
+  }
+
+  const { cipherList, cipherSuites } = processCiphers(ciphers, "options.ciphers");
+
+  if (cipherSuites !== "") {
+    context.setCipherSuites(cipherSuites);
+  }
+
+  context.setCiphers(cipherList);
+
+  if (cipherList === "" && context.getMinProto() < TLS1_3_VERSION && context.getMaxProto() > TLS1_2_VERSION) {
+    context.setMinProto(TLS1_3_VERSION);
+  }
+
+  if (ca) {
+    addCACerts(context, ArrayIsArray(ca) ? ca : [ca], "options.ca");
+  } else {
+    context.addRootCerts();
+  }
+
+  if (allowPartialTrustChain) {
+    context.setAllowPartialTrustChain();
+  }
+
+  if (cert) {
+    setCerts(context, ArrayIsArray(cert) ? cert : [cert], "options.cert");
+  }
+
+  // Set the key after the cert.
+  // `ssl_set_pkey` returns `0` when the key does not match the cert, but
+  // `ssl_set_cert` returns `1` and nullifies the key in the SSL structure
+  // which leads to the crash later on.
+  if (key) {
+    if (ArrayIsArray(key)) {
+      for (let i = 0; i < key.length; ++i) {
+        const val = key[i];
+        const pem = val?.pem !== undefined ? val.pem : val;
+        const pass = val?.passphrase !== undefined ? val.passphrase : passphrase;
+        setKey(context, pem, pass, "options");
+      }
+    } else {
+      setKey(context, key, passphrase, "options");
+    }
+  }
+
+  if (sigalgs !== undefined && sigalgs !== null) {
+    validateString(sigalgs, "options.sigalgs");
+
+    if (sigalgs === "") {
+      throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
+    }
+
+    context.setSigalgs(sigalgs);
+  }
+
+  if (privateKeyIdentifier !== undefined && privateKeyIdentifier !== null) {
+    if (privateKeyEngine === undefined || privateKeyEngine === null) {
+      // Engine is required when privateKeyIdentifier is present
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
+    }
+
+    if (key) {
+      // Both data key and engine key can't be set at the same time
+      throw $ERR_INVALID_ARG_VALUE("options.privateKeyIdentifier", privateKeyIdentifier);
+    }
+
+    if (typeof privateKeyIdentifier === "string" && typeof privateKeyEngine === "string") {
+      if (context.setEngineKey) {
+        context.setEngineKey(privateKeyIdentifier, privateKeyEngine);
+      } else {
+        throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
+      }
+    } else if (typeof privateKeyIdentifier !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyIdentifier",
+        ["string", "null", "undefined"],
+        privateKeyIdentifier,
+      );
+    } else {
+      throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
+    }
+  }
+
+  validateString(ecdhCurve, "options.ecdhCurve");
+  context.setECDHCurve(ecdhCurve);
+
+  if (dhparam !== undefined && dhparam !== null) {
+    validateKeyOrCertOption("options.dhparam", dhparam);
+    const warning = context.setDHParam(dhparam === "auto" || dhparam);
+    if (warning) {
+      process.emitWarning(warning, "SecurityWarning");
+    }
+  }
+
+  if (crl !== undefined && crl !== null) {
+    if (ArrayIsArray(crl)) {
+      for (const val of crl) {
+        validateKeyOrCertOption("options.crl", val);
+        context.addCRL(val);
+      }
+    } else {
+      validateKeyOrCertOption("options.crl", crl);
+      context.addCRL(crl);
+    }
+  }
+
+  if (sessionIdContext !== undefined && sessionIdContext !== null) {
+    validateString(sessionIdContext, "options.sessionIdContext");
+    context.setSessionIdContext(sessionIdContext);
+  }
+
+  if (pfx !== undefined && pfx !== null) {
+    if (ArrayIsArray(pfx)) {
+      ArrayPrototypeForEach.$call(pfx, val => {
+        const raw = val.buf || val;
+        const pass = val.passphrase || passphrase;
+        if (pass !== undefined && pass !== null) {
+          context.loadPKCS12(toBuf(raw), toBuf(pass));
+        } else {
+          context.loadPKCS12(toBuf(raw));
+        }
+      });
+    } else if (passphrase) {
+      context.loadPKCS12(toBuf(pfx), toBuf(passphrase));
+    } else {
+      context.loadPKCS12(toBuf(pfx));
+    }
+  }
+
+  if (typeof clientCertEngine === "string") {
+    if (typeof context.setClientCertEngine !== "function") {
+      throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
+    } else {
+      context.setClientCertEngine(clientCertEngine);
+    }
+  } else if (clientCertEngine !== undefined && clientCertEngine !== null) {
+    throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
+  }
+
+  if (ticketKeys !== undefined && ticketKeys !== null) {
+    validateBuffer(ticketKeys, "options.ticketKeys");
+    if (ticketKeys.byteLength !== 48) {
+      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
+    }
+    context.setTicketKeys(ticketKeys);
+  }
+
+  if (sessionTimeout !== undefined && sessionTimeout !== null) {
+    validateInt32(sessionTimeout, "options.sessionTimeout", 0);
+    context.setSessionTimeout(sessionTimeout);
+  }
+}
+
+function toV(which, v, def) {
+  v ??= def;
+  if (v === "TLSv1") return TLS1_VERSION;
+  if (v === "TLSv1.1") return TLS1_1_VERSION;
+  if (v === "TLSv1.2") return TLS1_2_VERSION;
+  if (v === "TLSv1.3") return TLS1_3_VERSION;
+  throw $ERR_TLS_INVALID_PROTOCOL_VERSION(v, which);
+}
+
+function toBuf(val, encoding?: BufferEncoding | "buffer") {
+  if (typeof val === "string") {
+    if (encoding === "buffer") {
+      encoding = "utf8";
+    }
+    return Buffer.from(val, encoding);
+  }
+  return val;
+}
+
+function addCACerts(context, certs, name) {
+  ArrayPrototypeForEach.$call(certs, cert => {
+    validateKeyOrCertOption(name, cert);
+    context.addCACert(cert);
+  });
+}
+
+function setCerts(context, certs, name) {
+  ArrayPrototypeForEach.$call(certs, cert => {
+    validateKeyOrCertOption(name, cert);
+    context.setCert(cert);
+  });
+}
+
+function validateKeyOrCertOption(name, value) {
+  if (typeof value !== "string" && !isArrayBufferView(value)) {
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "Buffer", "TypedArray", "DataView"], value);
+  }
+}
+
+function setKey(context, key, passphrase, name) {
+  validateKeyOrCertOption(`${name}.key`, key);
+  if (passphrase !== undefined && passphrase !== null) {
+    validateString(passphrase, `${name}.passphrase`);
+  }
+  context.setKey(key, passphrase);
+}
+
+function processCiphers(ciphers, name) {
+  ciphers = StringPrototypeSplit.$call(ciphers || require("internal/tls").DEFAULT_CIPHERS_LIST, ":");
+
+  const cipherList = ArrayPrototypeJoin.$call(
+    ArrayPrototypeFilter.$call(ciphers, cipher => {
+      if (cipher.length === 0) return false;
+      if (StringPrototypeStartsWith.$call(cipher, "TLS_")) return false;
+      if (StringPrototypeStartsWith.$call(cipher, "!TLS_")) return false;
+      return true;
+    }),
+    ":",
+  );
+
+  const cipherSuites = ArrayPrototypeJoin.$call(
+    ArrayPrototypeFilter.$call(ciphers, cipher => {
+      if (cipher.length === 0) return false;
+      if (StringPrototypeStartsWith.$call(cipher, "TLS_")) return true;
+      if (StringPrototypeStartsWith.$call(cipher, "!TLS_")) return true;
+      return false;
+    }),
+    ":",
+  );
+
+  // Specifying empty cipher suites for both TLS1.2 and TLS1.3 is invalid, its
+  // not possible to handshake with no suites.
+  if (cipherSuites === "" && cipherList === "") {
+    throw $ERR_INVALID_ARG_VALUE(name, ciphers);
+  }
+
+  return { cipherList, cipherSuites };
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -319,9 +608,14 @@ function TLSSocket(socket?, options?) {
   }
 
   if (typeof options === "object") {
-    const { ALPNProtocols } = options;
+    const { ALPNProtocols, SNICallback: sni } = options;
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
+    }
+
+    if (sni) {
+      validateFunction(sni, "options.SNICallback");
+      this._SNICallback = sni;
     }
 
     if (isNetSocketOrDuplex) {
@@ -337,6 +631,17 @@ function TLSSocket(socket?, options?) {
   this._securePending = true;
   this[kcheckServerIdentity] = options.checkServerIdentity || checkServerIdentity;
   this[ksession] = options.session || null;
+
+  this.once("connect", socket => {
+    if (socket?.isServer) {
+      this._handle.SNICallback = (socket, servername) => {
+        if (!servername || !this._SNICallback) {
+          // return requestOCSP(
+        }
+        console.trace("SNICallback", { servername }, this._SNICallback);
+      };
+    }
+  });
 }
 $toClass(TLSSocket, "TLSSocket", NetSocket);
 
@@ -512,6 +817,7 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  this._SNICallback = SNICallback;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -557,6 +863,12 @@ function Server(options, secureConnectionListener): void {
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
         this.ca = ca;
+      }
+
+      let sniCallback = options.SNICallback;
+      if (sniCallback) {
+        validateFunction(sniCallback, "options.SNICallback");
+        this._SNICallback = sniCallback;
       }
 
       let passphrase = options.passphrase;
@@ -623,6 +935,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        foo: "bar",
       },
       TLSSocket,
     ];
@@ -722,6 +1035,20 @@ function convertALPNProtocols(protocols, out) {
   } else if (Buffer.isBuffer(protocols)) {
     out.ALPNProtocols = protocols;
   }
+}
+
+function SNICallback(servername, callback) {
+  const contexts = this.server._contexts;
+
+  for (let i = contexts.length - 1; i >= 0; --i) {
+    const elem = contexts[i];
+    if (elem[0].test(servername)) {
+      callback(null, elem[1]);
+      return;
+    }
+  }
+
+  callback(null, undefined);
 }
 
 export default {

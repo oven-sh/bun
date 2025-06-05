@@ -39,6 +39,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSourceTextModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSyntheticModule;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeTLSSecureContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCommonJSExtensions;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;

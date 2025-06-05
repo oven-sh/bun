@@ -258,6 +258,10 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* NodeTLSSecureContextStructure() const { return m_NodeTLSSecureContextClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* NodeTLSSecureContext() const { return m_NodeTLSSecureContextClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NodeTLSSecureContextPrototype() const { return m_NodeTLSSecureContextClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -530,6 +534,7 @@ public:
     V(public, LazyClassStructure, m_NodeVMScriptClassStructure)                                              \
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
+    V(public, LazyClassStructure, m_NodeTLSSecureContextClassStructure)                                      \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \

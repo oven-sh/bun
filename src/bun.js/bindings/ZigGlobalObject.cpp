@@ -140,6 +140,7 @@
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
+#include "NodeTLS.h"
 #include "Performance.h"
 #include "ProcessBindingConstants.h"
 #include "ProcessBindingTTYWrap.h"
@@ -3394,6 +3395,7 @@ void GlobalObject::finishCreation(VM& vm)
     });
 
     configureNodeVM(vm, this);
+    configureNodeTLS(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);

@@ -266,6 +266,13 @@ JSC::EncodedJSValue throwArgumentTypeError(JSC::JSGlobalObject& lexicalGlobalObj
     return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeArgumentTypeErrorMessage(argumentIndex, argumentName, functionInterfaceName, functionName, "an instance of "_s, expectedType));
 }
 
+JSC::EncodedJSValue throwArgumentValueError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral argumentName, JSValue actualValue)
+{
+    WTF::StringBuilder builder;
+    Bun::determineSpecificType(JSC::getVM(&lexicalGlobalObject), &lexicalGlobalObject, builder, actualValue);
+    return Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, makeString("The \""_s, argumentName, "\" argument is invalid. Received "_s, builder.toString()));
+}
+
 void throwAttributeTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName, ASCIILiteral attributeName, ASCIILiteral expectedType)
 {
     throwTypeError(lexicalGlobalObject, scope, makeString("The "_s, interfaceName, '.', attributeName, " attribute must be an instance of "_s, expectedType));

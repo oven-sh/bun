@@ -345,8 +345,7 @@ describe("worker_threads", () => {
     let exitCode: number | undefined = undefined;
     worker.once("exit", code => (exitCode = code));
     await Bun.sleep(200);
-    const code = await worker.terminate();
-    expect<number | undefined>(code).toBe(undefined);
+    expect<number | undefined>(await worker.terminate()).toBe(undefined);
     expect<number | undefined>(exitCode).toBe(2);
   });
 

@@ -1,34 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const BabyList = @import("../baby_list.zig").BabyList;
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const Binding = js_ast.Binding;
-const renamer = bun.renamer;
-const Scope = js_ast.Scope;
-const Loc = Logger.Loc;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-pub const ParseTask = @import("parse_task.zig").ParseTask;
-
 /// Utility to construct `Ast`s intended for generated code, such as the
 /// boundary modules when dealing with server components. This is a saner
 /// alternative to building a string, then sending it through `js_parser`
@@ -369,3 +338,34 @@ pub const AstBuilder = struct {
         return p.newExpr(E.Dot{ .name = "exports", .name_loc = loc, .target = p.newExpr(E.Identifier{ .ref = p.module_ref }) });
     }
 };
+
+const bun = @import("bun");
+const string = bun.string;
+const Output = bun.Output;
+const strings = bun.strings;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+const js_parser = bun.js_parser;
+const Part = js_ast.Part;
+const js_ast = @import("../js_ast.zig");
+pub const Ref = @import("../ast/base.zig").Ref;
+const BabyList = @import("../baby_list.zig").BabyList;
+const ImportRecord = bun.ImportRecord;
+const ImportKind = bun.ImportKind;
+
+pub const Index = @import("../ast/base.zig").Index;
+const Symbol = js_ast.Symbol;
+const Stmt = js_ast.Stmt;
+const Expr = js_ast.Expr;
+const E = js_ast.E;
+const S = js_ast.S;
+const Binding = js_ast.Binding;
+const renamer = bun.renamer;
+const Scope = js_ast.Scope;
+const Loc = Logger.Loc;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+pub const ParseTask = bun.bundle_v2.ParseTask;

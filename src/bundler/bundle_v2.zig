@@ -41,85 +41,6 @@
 //
 //     make mimalloc-debug
 //
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-pub const std = @import("std");
-pub const lex = @import("../js_lexer.zig");
-pub const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-pub const Part = js_ast.Part;
-pub const js_printer = @import("../js_printer.zig");
-pub const js_ast = @import("../js_ast.zig");
-pub const linker = @import("../linker.zig");
-pub const sourcemap = bun.sourcemap;
-pub const StringJoiner = bun.StringJoiner;
-pub const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-pub const ThreadPoolLib = @import("../thread_pool.zig");
-pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-pub const BabyList = @import("../baby_list.zig").BabyList;
-pub const Fs = @import("../fs.zig");
-pub const schema = @import("../api/schema.zig");
-pub const Api = schema.Api;
-pub const _resolver = @import("../resolver/resolver.zig");
-pub const sync = bun.ThreadPool;
-pub const ImportRecord = bun.ImportRecord;
-pub const ImportKind = bun.ImportKind;
-pub const allocators = @import("../allocators.zig");
-pub const resolve_path = @import("../resolver/resolve_path.zig");
-pub const runtime = @import("../runtime.zig");
-pub const Timer = @import("../system_timer.zig");
-pub const OOM = bun.OOM;
-
-pub const HTMLScanner = @import("../HTMLScanner.zig");
-pub const isPackagePath = _resolver.isPackagePath;
-pub const NodeFallbackModules = @import("../node_fallbacks.zig");
-pub const CacheEntry = @import("../cache.zig").Fs.Entry;
-pub const URL = @import("../url.zig").URL;
-pub const Resolver = _resolver.Resolver;
-pub const TOML = @import("../toml/toml_parser.zig").TOML;
-pub const Dependency = js_ast.Dependency;
-pub const JSAst = js_ast.BundledAst;
-pub const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-pub const Symbol = js_ast.Symbol;
-pub const EventLoop = bun.JSC.AnyEventLoop;
-pub const MultiArrayList = bun.MultiArrayList;
-pub const Stmt = js_ast.Stmt;
-pub const Expr = js_ast.Expr;
-pub const E = js_ast.E;
-pub const S = js_ast.S;
-pub const G = js_ast.G;
-pub const B = js_ast.B;
-pub const Binding = js_ast.Binding;
-pub const AutoBitSet = bun.bit_set.AutoBitSet;
-pub const renamer = bun.renamer;
-pub const StableSymbolCount = renamer.StableSymbolCount;
-pub const MinifyRenamer = renamer.MinifyRenamer;
-pub const Scope = js_ast.Scope;
-pub const JSC = bun.JSC;
-pub const debugTreeShake = Output.scoped(.TreeShake, true);
-pub const debugPartRanges = Output.scoped(.PartRanges, true);
-pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-pub const Async = bun.Async;
-pub const Loc = Logger.Loc;
-pub const bake = bun.bake;
-pub const lol = bun.LOLHTML;
-pub const DataURL = @import("../resolver/resolver.zig").DataURL;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-pub const ParseTask = @import("parse_task.zig").ParseTask;
-pub const LinkerContext = @import("linker_context.zig").LinkerContext;
-pub const LinkerGraph = @import("linker_graph.zig").LinkerGraph;
-pub const Graph = @import("graph.zig").Graph;
 
 pub const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -3464,11 +3385,11 @@ pub const BundleV2 = struct {
     }
 };
 
-pub const BundleThread = @import("./bundle_thread.zig").BundleThread;
+pub const BundleThread = @import("./BundleThread.zig").BundleThread;
 
 pub const UseDirective = js_ast.UseDirective;
 pub const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-pub const ServerComponentParseTask = @import("./server_component_parse_task.zig").ServerComponentParseTask;
+pub const ServerComponentParseTask = @import("./ServerComponentParseTask.zig").ServerComponentParseTask;
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
@@ -3972,7 +3893,7 @@ pub fn targetFromHashbang(buffer: []const u8) ?options.Target {
     return null;
 }
 
-pub const AstBuilder = @import("./ast_builder.zig").AstBuilder;
+pub const AstBuilder = @import("./AstBuilder.zig").AstBuilder;
 
 pub const CssEntryPointMeta = struct {
     /// When this is true, a stub file is added to the Server's IncrementalGraph
@@ -4051,3 +3972,83 @@ const ExternalFreeFunctionAllocator = struct {
         bun.default_allocator.destroy(info);
     }
 };
+
+const Transpiler = bun.Transpiler;
+const bun = @import("bun");
+const string = bun.string;
+const Output = bun.Output;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
+
+pub const std = @import("std");
+pub const lex = @import("../js_lexer.zig");
+pub const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+pub const Part = js_ast.Part;
+pub const js_printer = @import("../js_printer.zig");
+pub const js_ast = @import("../js_ast.zig");
+pub const linker = @import("../linker.zig");
+pub const sourcemap = bun.sourcemap;
+pub const StringJoiner = bun.StringJoiner;
+pub const base64 = bun.base64;
+pub const Ref = @import("../ast/base.zig").Ref;
+pub const ThreadPoolLib = @import("../thread_pool.zig");
+pub const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+pub const BabyList = @import("../baby_list.zig").BabyList;
+pub const Fs = @import("../fs.zig");
+pub const schema = @import("../api/schema.zig");
+pub const Api = schema.Api;
+pub const _resolver = @import("../resolver/resolver.zig");
+pub const sync = bun.ThreadPool;
+pub const ImportRecord = bun.ImportRecord;
+pub const ImportKind = bun.ImportKind;
+pub const allocators = @import("../allocators.zig");
+pub const resolve_path = @import("../resolver/resolve_path.zig");
+pub const runtime = @import("../runtime.zig");
+pub const Timer = @import("../system_timer.zig");
+pub const OOM = bun.OOM;
+
+pub const HTMLScanner = @import("../HTMLScanner.zig");
+pub const isPackagePath = _resolver.isPackagePath;
+pub const NodeFallbackModules = @import("../node_fallbacks.zig");
+pub const CacheEntry = @import("../cache.zig").Fs.Entry;
+pub const URL = @import("../url.zig").URL;
+pub const Resolver = _resolver.Resolver;
+pub const TOML = @import("../toml/toml_parser.zig").TOML;
+pub const Dependency = js_ast.Dependency;
+pub const JSAst = js_ast.BundledAst;
+pub const Loader = options.Loader;
+pub const Index = @import("../ast/base.zig").Index;
+pub const Symbol = js_ast.Symbol;
+pub const EventLoop = bun.JSC.AnyEventLoop;
+pub const MultiArrayList = bun.MultiArrayList;
+pub const Stmt = js_ast.Stmt;
+pub const Expr = js_ast.Expr;
+pub const E = js_ast.E;
+pub const S = js_ast.S;
+pub const G = js_ast.G;
+pub const B = js_ast.B;
+pub const Binding = js_ast.Binding;
+pub const AutoBitSet = bun.bit_set.AutoBitSet;
+pub const renamer = bun.renamer;
+pub const StableSymbolCount = renamer.StableSymbolCount;
+pub const MinifyRenamer = renamer.MinifyRenamer;
+pub const Scope = js_ast.Scope;
+pub const JSC = bun.JSC;
+pub const debugTreeShake = Output.scoped(.TreeShake, true);
+pub const debugPartRanges = Output.scoped(.PartRanges, true);
+pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
+pub const Async = bun.Async;
+pub const Loc = Logger.Loc;
+pub const bake = bun.bake;
+pub const lol = bun.LOLHTML;
+pub const DataURL = @import("../resolver/resolver.zig").DataURL;
+
+pub const DeferredBatchTask = @import("DeferredBatchTask.zig").DeferredBatchTask;
+pub const ThreadPool = @import("ThreadPool.zig").ThreadPool;
+pub const ParseTask = @import("ParseTask.zig").ParseTask;
+pub const LinkerContext = @import("LinkerContext.zig").LinkerContext;
+pub const LinkerGraph = @import("LinkerGraph.zig").LinkerGraph;
+pub const Graph = @import("Graph.zig").Graph;

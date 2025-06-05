@@ -1,36 +1,3 @@
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
-const OOM = bun.OOM;
-
-const JSAst = js_ast.BundledAst;
-pub const Index = @import("../ast/base.zig").Index;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bundler = @import("bundle_v2.zig");
-const BundleV2 = bundler.BundleV2;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-pub const ParseTask = @import("parse_task.zig").ParseTask;
-const AstBuilder = bundler.AstBuilder;
-
 /// Files for Server Components are generated using `AstBuilder`, instead of
 /// running through the js_parser. It emits a ParseTask.Result and joins
 /// with the same logic that it runs though.
@@ -234,3 +201,36 @@ pub const ServerComponentParseTask = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const strings = bun.strings;
+const default_allocator = bun.default_allocator;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+const js_parser = bun.js_parser;
+const js_ast = @import("../js_ast.zig");
+pub const Ref = @import("../ast/base.zig").Ref;
+const ThreadPoolLib = @import("../thread_pool.zig");
+const BabyList = @import("../baby_list.zig").BabyList;
+const OOM = bun.OOM;
+
+const JSAst = js_ast.BundledAst;
+pub const Index = @import("../ast/base.zig").Index;
+const Stmt = js_ast.Stmt;
+const Expr = js_ast.Expr;
+const E = js_ast.E;
+const S = js_ast.S;
+const G = js_ast.G;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const JSC = bun.JSC;
+const Loc = Logger.Loc;
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+const AstBuilder = bundler.AstBuilder;

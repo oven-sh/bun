@@ -1,41 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const sourcemap = bun.sourcemap;
-const StringJoiner = bun.StringJoiner;
-pub const Ref = @import("../ast/base.zig").Ref;
-const BabyList = @import("../baby_list.zig").BabyList;
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Stmt = js_ast.Stmt;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const renamer = bun.renamer;
-const bundler = @import("bundle_v2.zig");
-const BundleV2 = bundler.BundleV2;
-const Graph = bundler.Graph;
-const LinkerGraph = bundler.LinkerGraph;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-pub const ParseTask = @import("parse_task.zig").ParseTask;
-const PathTemplate = bundler.PathTemplate;
-const PartRange = bundler.PartRange;
-const EntryPoint = bundler.EntryPoint;
-const CrossChunkImport = bundler.CrossChunkImport;
-const CompileResult = bundler.CompileResult;
-const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
-const LinkerContext = bundler.LinkerContext;
-
 pub const ChunkImport = struct {
     chunk_index: u32,
     import_kind: ImportKind,
@@ -618,3 +580,41 @@ pub const Chunk = struct {
         }
     };
 };
+
+const bun = @import("bun");
+const string = bun.string;
+const Output = bun.Output;
+const strings = bun.strings;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
+
+const std = @import("std");
+const options = @import("../options.zig");
+const js_ast = @import("../js_ast.zig");
+const sourcemap = bun.sourcemap;
+const StringJoiner = bun.StringJoiner;
+pub const Ref = @import("../ast/base.zig").Ref;
+const BabyList = @import("../baby_list.zig").BabyList;
+const ImportRecord = bun.ImportRecord;
+const ImportKind = bun.ImportKind;
+
+const Loader = options.Loader;
+pub const Index = @import("../ast/base.zig").Index;
+const Stmt = js_ast.Stmt;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+const renamer = bun.renamer;
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+const Graph = bundler.Graph;
+const LinkerGraph = bundler.LinkerGraph;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+pub const ParseTask = bun.bundle_v2.ParseTask;
+const PathTemplate = bundler.PathTemplate;
+const PartRange = bundler.PartRange;
+const EntryPoint = bundler.EntryPoint;
+const CrossChunkImport = bundler.CrossChunkImport;
+const CompileResult = bundler.CompileResult;
+const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
+const LinkerContext = bundler.LinkerContext;

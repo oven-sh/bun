@@ -1,30 +1,3 @@
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
-const Timer = @import("../system_timer.zig");
-
-pub const Index = @import("../ast/base.zig").Index;
-const JSC = bun.JSC;
-const Async = bun.Async;
-const bake = bun.bake;
-const bundler = @import("bundle_v2.zig");
-const BundleV2 = bundler.BundleV2;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-pub const ParseTask = @import("parse_task.zig").ParseTask;
-
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
 
@@ -188,3 +161,30 @@ pub fn BundleThread(CompletionStruct: type) type {
         }
     };
 }
+
+const Transpiler = bun.Transpiler;
+const bun = @import("bun");
+const Output = bun.Output;
+const Environment = bun.Environment;
+const default_allocator = bun.default_allocator;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+const js_ast = @import("../js_ast.zig");
+const linker = @import("../linker.zig");
+pub const Ref = @import("../ast/base.zig").Ref;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+const allocators = @import("../allocators.zig");
+const Timer = @import("../system_timer.zig");
+
+pub const Index = @import("../ast/base.zig").Index;
+const JSC = bun.JSC;
+const Async = bun.Async;
+const bake = bun.bake;
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;
+pub const ParseTask = bun.bundle_v2.ParseTask;

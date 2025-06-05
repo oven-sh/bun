@@ -1,57 +1,3 @@
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FeatureFlags = bun.FeatureFlags;
-
-const bundler = @import("bundle_v2.zig");
-const BundleV2 = bundler.BundleV2;
-
-const ContentHasher = bundler.ContentHasher;
-const UseDirective = bundler.UseDirective;
-const targetFromHashbang = bundler.targetFromHashbang;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_parser = bun.js_parser;
-const Part = js_ast.Part;
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-const base64 = bun.base64;
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const BabyList = @import("../baby_list.zig").BabyList;
-const Fs = @import("../fs.zig");
-const _resolver = @import("../resolver/resolver.zig");
-const ImportRecord = bun.ImportRecord;
-const runtime = @import("../runtime.zig");
-
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const CacheEntry = @import("../cache.zig").Fs.Entry;
-const URL = @import("../url.zig").URL;
-const Resolver = _resolver.Resolver;
-const TOML = @import("../toml/toml_parser.zig").TOML;
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Symbol = js_ast.Symbol;
-const EventLoop = bun.JSC.AnyEventLoop;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const G = js_ast.G;
-const JSC = bun.JSC;
-const Loc = Logger.Loc;
-const bake = bun.bake;
-
-pub const DeferredBatchTask = @import("deferred_batch_task.zig").DeferredBatchTask;
-pub const ThreadPool = @import("thread_pool.zig").ThreadPool;
-
 pub const ContentsOrFd = union(enum) {
     fd: struct {
         dir: StoredFileDescriptorType,
@@ -1444,3 +1390,57 @@ pub const ParseTask = struct {
         BundleV2.onParseTaskComplete(result, result.ctx);
     }
 };
+
+const Transpiler = bun.Transpiler;
+const bun = @import("bun");
+const string = bun.string;
+const Output = bun.Output;
+const Environment = bun.Environment;
+const strings = bun.strings;
+const default_allocator = bun.default_allocator;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const FeatureFlags = bun.FeatureFlags;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+
+const ContentHasher = bundler.ContentHasher;
+const UseDirective = bundler.UseDirective;
+const targetFromHashbang = bundler.targetFromHashbang;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+const js_parser = bun.js_parser;
+const Part = js_ast.Part;
+const js_ast = @import("../js_ast.zig");
+const linker = @import("../linker.zig");
+const base64 = bun.base64;
+pub const Ref = @import("../ast/base.zig").Ref;
+const ThreadPoolLib = @import("../thread_pool.zig");
+const BabyList = @import("../baby_list.zig").BabyList;
+const Fs = @import("../fs.zig");
+const _resolver = @import("../resolver/resolver.zig");
+const ImportRecord = bun.ImportRecord;
+const runtime = @import("../runtime.zig");
+
+const HTMLScanner = @import("../HTMLScanner.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const CacheEntry = @import("../cache.zig").Fs.Entry;
+const URL = @import("../url.zig").URL;
+const Resolver = _resolver.Resolver;
+const TOML = @import("../toml/toml_parser.zig").TOML;
+const JSAst = js_ast.BundledAst;
+const Loader = options.Loader;
+pub const Index = @import("../ast/base.zig").Index;
+const Symbol = js_ast.Symbol;
+const EventLoop = bun.JSC.AnyEventLoop;
+const Expr = js_ast.Expr;
+const E = js_ast.E;
+const G = js_ast.G;
+const JSC = bun.JSC;
+const Loc = Logger.Loc;
+const bake = bun.bake;
+
+pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
+pub const ThreadPool = bun.bundle_v2.ThreadPool;

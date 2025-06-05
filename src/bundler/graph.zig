@@ -1,28 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const BabyList = @import("../baby_list.zig").BabyList;
-const _resolver = @import("../resolver/resolver.zig");
-const allocators = @import("../allocators.zig");
-
-const JSAst = js_ast.BundledAst;
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const MultiArrayList = bun.MultiArrayList;
-const ThreadPool = @import("thread_pool.zig").ThreadPool;
-const ParseTask = @import("parse_task.zig").ParseTask;
-const PathToSourceIndexMap = @import("bundle_v2.zig").PathToSourceIndexMap;
-const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-const BundleV2 = @import("bundle_v2.zig").BundleV2;
-const AdditionalFile = @import("bundle_v2.zig").AdditionalFile;
-
 pub const Graph = struct {
     pool: *ThreadPool,
     heap: ThreadlocalArena = .{},
@@ -126,3 +101,28 @@ pub const Graph = struct {
         return false;
     }
 };
+
+const bun = @import("bun");
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const options = @import("../options.zig");
+const js_ast = @import("../js_ast.zig");
+pub const Ref = @import("../ast/base.zig").Ref;
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+const BabyList = @import("../baby_list.zig").BabyList;
+const _resolver = @import("../resolver/resolver.zig");
+const allocators = @import("../allocators.zig");
+
+const JSAst = js_ast.BundledAst;
+const Loader = options.Loader;
+pub const Index = @import("../ast/base.zig").Index;
+const MultiArrayList = bun.MultiArrayList;
+const ThreadPool = bun.bundle_v2.ThreadPool;
+const ParseTask = bun.bundle_v2.ParseTask;
+const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
+const ServerComponentBoundary = js_ast.ServerComponentBoundary;
+const BundleV2 = bun.bundle_v2.BundleV2;
+const AdditionalFile = bun.bundle_v2.AdditionalFile;

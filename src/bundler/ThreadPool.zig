@@ -1,24 +1,3 @@
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
-
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadPoolLib = @import("../thread_pool.zig");
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
-
-pub const Index = @import("../ast/base.zig").Index;
-const BundleV2 = @import("bundle_v2.zig").BundleV2;
-const ParseTask = @import("parse_task.zig").ParseTask;
-const LinkerContext = @import("linker_context.zig").LinkerContext;
-
 pub const ThreadPool = struct {
     /// macOS holds an IORWLock on every file open.
     /// This causes massive contention after about 4 threads as of macOS 15.2
@@ -291,3 +270,24 @@ pub const ThreadPool = struct {
         }
     };
 };
+
+const Transpiler = bun.Transpiler;
+const bun = @import("bun");
+const Output = bun.Output;
+const Environment = bun.Environment;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
+
+const std = @import("std");
+const Logger = @import("../logger.zig");
+const js_ast = @import("../js_ast.zig");
+const linker = @import("../linker.zig");
+pub const Ref = @import("../ast/base.zig").Ref;
+const ThreadPoolLib = @import("../thread_pool.zig");
+const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
+const allocators = @import("../allocators.zig");
+
+pub const Index = @import("../ast/base.zig").Index;
+const BundleV2 = bun.bundle_v2.BundleV2;
+const ParseTask = bun.bundle_v2.ParseTask;
+const LinkerContext = bun.bundle_v2.LinkerContext;

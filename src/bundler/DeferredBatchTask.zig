@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-
-pub const Ref = @import("../ast/base.zig").Ref;
-
-pub const Index = @import("../ast/base.zig").Index;
-const JSC = bun.JSC;
-
 /// This task is run once all parse and resolve tasks have been complete
 /// and we have deferred onLoad plugins that we need to resume
 ///
@@ -52,3 +44,11 @@ pub const DeferredBatchTask = struct {
         );
     }
 };
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+pub const Ref = @import("../ast/base.zig").Ref;
+
+pub const Index = @import("../ast/base.zig").Index;
+const JSC = bun.JSC;

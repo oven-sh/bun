@@ -1,27 +1,3 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-const std = @import("std");
-const string = bun.string;
-const Output = bun.Output;
-const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-const BabyList = bun.BabyList;
-
-const Logger = @import("bundle_v2.zig").Logger;
-const TopLevelSymbolToParts = @import("bundle_v2.zig").TopLevelSymbolToParts;
-const Index = @import("bundle_v2.zig").Index;
-const Part = @import("bundle_v2.zig").Part;
-const Ref = @import("bundle_v2.zig").Ref;
-const EntryPoint = @import("bundle_v2.zig").EntryPoint;
-const ServerComponentBoundary = @import("bundle_v2.zig").ServerComponentBoundary;
-const MultiArrayList = bun.MultiArrayList;
-const JSAst = @import("bundle_v2.zig").JSAst;
-const JSMeta = @import("bundle_v2.zig").JSMeta;
-const js_ast = @import("../js_ast.zig");
-const Symbol = @import("../js_ast.zig").Symbol;
-const ImportRecord = bun.ImportRecord;
-const ResolvedExports = @import("bundle_v2.zig").ResolvedExports;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-
 pub const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
 
@@ -465,3 +441,27 @@ pub const LinkerGraph = struct {
         pub const List = MultiArrayList(File);
     };
 };
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const std = @import("std");
+const string = bun.string;
+const Output = bun.Output;
+const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
+const BabyList = bun.BabyList;
+
+const Logger = bun.bundle_v2.Logger;
+const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
+const Index = bun.bundle_v2.Index;
+const Part = bun.bundle_v2.Part;
+const Ref = bun.bundle_v2.Ref;
+const EntryPoint = bun.bundle_v2.EntryPoint;
+const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
+const MultiArrayList = bun.MultiArrayList;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const js_ast = @import("../js_ast.zig");
+const Symbol = @import("../js_ast.zig").Symbol;
+const ImportRecord = bun.ImportRecord;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const AutoBitSet = bun.bit_set.AutoBitSet;

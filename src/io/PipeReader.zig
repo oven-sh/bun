@@ -428,15 +428,85 @@ const PosixBufferedReader = struct {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
     }
 
-    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-        return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, wrapReadFn(bun.sys.readNonblocking));
+    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, _: isize, received_hup: bool) void {
+        while (true) {
+            const streaming = parent.vtable.isStreamingEnabled();
+
+            if (resizable_buffer.capacity == 0) {
+                // Use stack buffer for streaming
+                const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
+
+                switch (bun.sys.readNonblocking(fd, stack_buffer)) {
+                    .result => |bytes_read| {
+                        if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
+
+                        if (bytes_read == 0) {
+                            // EOF - finished and closed pipe
+                            parent.closeWithoutReporting();
+                            parent.done();
+                            return;
+                        }
+
+                        if (streaming) {
+                            // Stream this chunk and register for next cycle
+                            _ = parent.vtable.onReadChunk(stack_buffer[0..bytes_read], if (received_hup and bytes_read < stack_buffer.len) .eof else .progress);
+                        } else {
+                            resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                        }
+                    },
+                    .err => |err| {
+                        if (!err.isRetry()) {
+                            parent.onError(err);
+                            return;
+                        }
+                        // EAGAIN - fall through to register for next poll
+                    },
+                }
+            } else {
+                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+                var buf: []u8 = resizable_buffer.unusedCapacitySlice();
+
+                switch (bun.sys.readNonblocking(fd, buf)) {
+                    .result => |bytes_read| {
+                        if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
+                        parent._offset += bytes_read;
+                        resizable_buffer.items.len += bytes_read;
+
+                        if (bytes_read == 0) {
+                            parent.closeWithoutReporting();
+                            parent.done();
+                            return;
+                        }
+
+                        if (streaming) {
+                            if (!parent.vtable.onReadChunk(buf[0..bytes_read], if (received_hup and bytes_read < buf.len) .eof else .progress)) {
+                                return;
+                            }
+                        }
+                    },
+                    .err => |err| {
+                        if (!err.isRetry()) {
+                            parent.onError(err);
+                            return;
+                        }
+                    },
+                }
+            }
+
+            // Register for next poll cycle unless we got HUP
+            if (!received_hup) {
+                parent.registerPoll();
+                return;
+            }
+
+            // We have received HUP but have not consumed it yet. We can't register for next poll cycle.
+            // We need to keep going.
+        }
     }
 
-    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
+    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
-
-        var received_hup = received_hup_;
 
         if (streaming) {
             const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
@@ -465,47 +535,12 @@ const PosixBufferedReader = struct {
                                 return;
                             }
 
-                            if (comptime file_type == .pipe) {
-                                if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                                    switch (bun.isReadable(fd)) {
-                                        .ready => {},
-                                        .hup => {
-                                            received_hup = true;
-                                        },
-                                        .not_ready => {
-                                            if (received_hup) {
-                                                parent.closeWithoutReporting();
-                                            }
-                                            defer {
-                                                if (received_hup) {
-                                                    parent.done();
-                                                }
-                                            }
-                                            if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                                if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained)) {
-                                                    return;
-                                                }
-                                            }
-
-                                            if (!received_hup) {
-                                                parent.registerPoll();
-                                            }
-
-                                            return;
-                                        },
-                                    }
+                            // Keep reading as much as we can
+                            if (stack_buffer_head.len < stack_buffer_cutoff) {
+                                if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
+                                    return;
                                 }
-                            }
-
-                            if (comptime file_type != .pipe) {
-                                // blocking pipes block a process, so we have to keep reading as much as we can
-                                // otherwise, we do want to stream the data
-                                if (stack_buffer_head.len < stack_buffer_cutoff) {
-                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress)) {
-                                        return;
-                                    }
-                                    stack_buffer_head = stack_buffer;
-                                }
+                                stack_buffer_head = stack_buffer;
                             }
                         },
                         .err => |err| {
@@ -558,33 +593,6 @@ const PosixBufferedReader = struct {
                         parent.done();
                         return;
                     }
-
-                    if (comptime file_type == .pipe) {
-                        if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                            switch (bun.isReadable(fd)) {
-                                .ready => {},
-                                .hup => {
-                                    received_hup = true;
-                                },
-                                .not_ready => {
-                                    if (received_hup) {
-                                        parent.closeWithoutReporting();
-                                    }
-                                    defer {
-                                        if (received_hup) {
-                                            parent.done();
-                                        }
-                                    }
-
-                                    if (!received_hup) {
-                                        parent.registerPoll();
-                                    }
-
-                                    return;
-                                },
-                            }
-                        }
-                    }
                 },
                 .err => |err| {
                     if (err.isRetry()) {
@@ -621,54 +629,16 @@ const PosixBufferedReader = struct {
                         return;
                     }
 
-                    if (comptime file_type == .pipe) {
-                        if (bun.Environment.isMac or !bun.linux.RWFFlagSupport.isMaybeSupported()) {
-                            switch (bun.isReadable(fd)) {
-                                .ready => {},
-                                .hup => {
-                                    received_hup = true;
-                                },
-                                .not_ready => {
-                                    if (received_hup) {
-                                        parent.closeWithoutReporting();
-                                    }
-                                    defer {
-                                        if (received_hup) {
-                                            parent.done();
-                                        }
-                                    }
-
-                                    if (parent.vtable.isStreamingEnabled()) {
-                                        defer {
-                                            resizable_buffer.clearRetainingCapacity();
-                                        }
-                                        if (!parent.vtable.onReadChunk(resizable_buffer.items, if (received_hup) .eof else .drained) and !received_hup) {
-                                            return;
-                                        }
-                                    }
-
-                                    if (!received_hup) {
-                                        parent.registerPoll();
-                                    }
-
-                                    return;
-                                },
+                    if (parent.vtable.isStreamingEnabled()) {
+                        if (resizable_buffer.items.len > 128_000) {
+                            defer {
+                                resizable_buffer.clearRetainingCapacity();
                             }
-                        }
-                    }
-
-                    if (comptime file_type != .pipe) {
-                        if (parent.vtable.isStreamingEnabled()) {
-                            if (resizable_buffer.items.len > 128_000) {
-                                defer {
-                                    resizable_buffer.clearRetainingCapacity();
-                                }
-                                if (!parent.vtable.onReadChunk(resizable_buffer.items, .progress)) {
-                                    return;
-                                }
-
-                                continue;
+                            if (!parent.vtable.onReadChunk(resizable_buffer.items, .progress)) {
+                                return;
                             }
+
+                            continue;
                         }
                     }
                 },

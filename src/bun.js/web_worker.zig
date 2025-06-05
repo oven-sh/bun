@@ -8,6 +8,7 @@ const JSValue = jsc.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 const WebWorker = @This();
+const http = @import("../http.zig");
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const new = bun.TrivialNew(@This());
 pub const ref = RefCount.ref;
@@ -626,6 +627,9 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     bun.uws.onThreadExit();
+
+    http.cleanupHTTPSocketTrackerForCurrentThread();
+
     this.freeWithoutDeinit();
 
     if (vm_to_deinit) |vm| {

@@ -45,7 +45,6 @@ const Batch = bun.ThreadPool.Batch;
 const TaggedPointerUnion = @import("./ptr.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
-//TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
 var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
@@ -4933,3 +4932,7 @@ pub const Headers = struct {
         return headers;
     }
 };
+
+pub fn cleanupHTTPSocketTrackerForCurrentThread() void {
+    socket_async_http_abort_tracker.clearRetainingCapacity();
+}

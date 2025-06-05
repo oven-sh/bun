@@ -196,6 +196,13 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
 
+    // Emit trace event for running immediates
+    if (to_run_now.items.len > 0) {
+        const trace_events = @import("./node/trace_events_impl.zig");
+        trace_events.emitCheckImmediate();
+        trace_events.emitRunAndClearNativeImmediates();
+    }
+
     var exception_thrown = false;
     for (to_run_now.items) |task| {
         exception_thrown = task.runImmediateTask(virtual_machine);

@@ -36,6 +36,13 @@ pub const Run = struct {
         bun.JSC.initialize(false);
         bun.Analytics.Features.standalone_executable += 1;
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            const trace_events = @import("./bun.js/node/trace_events_impl.zig");
+            trace_events.init(ctx.runtime_options.trace_event_categories);
+            trace_events.emitEnvironment();
+        }
+
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
         graph_ptr.set();
@@ -177,6 +184,13 @@ pub const Run = struct {
 
         bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            const trace_events = @import("./bun.js/node/trace_events_impl.zig");
+            trace_events.init(ctx.runtime_options.trace_event_categories);
+            trace_events.emitEnvironment();
+        }
+
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
@@ -274,6 +288,13 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
+    fn exit(this: *Run, code: bun.shell.ExitCode) noreturn {
+        this.vm.exit_handler.exit_code = code;
+        this.vm.exit_handler.dispatchOnBeforeExit();
+        this.vm.onExit();
+        this.vm.globalExit();
+    }
+
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
         run.any_unhandled = true;
@@ -319,6 +340,14 @@ pub const Run = struct {
         }
 
         var printed_sourcemap_warning_and_version = false;
+
+        defer {
+            // Clean up trace events when exiting
+            if (this.ctx.runtime_options.trace_event_categories.len > 0) {
+                const trace_events = @import("./bun.js/node/trace_events_impl.zig");
+                trace_events.deinit();
+            }
+        }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .rejected) {
@@ -452,8 +481,8 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         vm.onExit();
 
-        if (this.any_unhandled and !printed_sourcemap_warning_and_version) {
-            this.vm.exit_handler.exit_code = 1;
+        if (run.any_unhandled and !printed_sourcemap_warning_and_version) {
+            run.vm.exit_handler.exit_code = 1;
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 

@@ -638,6 +638,9 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    const trace_events = @import("./node/trace_events_impl.zig");
+    trace_events.emitBeforeExit();
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,11 +699,16 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    const trace_events = @import("./node/trace_events_impl.zig");
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
     const rare_data = this.rare_data orelse return;
     defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    trace_events.emitRunCleanup();
+
     // Make sure we run new cleanup hooks introduced by running cleanup hooks
     while (rare_data.cleanup_hooks.items.len > 0) {
         var hooks = rare_data.cleanup_hooks;
@@ -710,6 +718,8 @@ pub fn onExit(this: *VirtualMachine) void {
             hook.execute();
         }
     }
+
+    trace_events.emitAtExit();
 }
 
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;

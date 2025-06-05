@@ -286,11 +286,19 @@ pub const All = struct {
         // Split into a separate variable to avoid increasing the size of the timespec type.
         var has_set_now: bool = false;
 
+        var has_timers = false;
         while (this.next(&has_set_now, &now)) |t| {
+            has_timers = true;
             switch (t.fire(&now, vm)) {
                 .disarm => {},
                 .rearm => {},
             }
+        }
+
+        // Emit trace event if we processed any timers
+        if (has_timers) {
+            const trace_events = @import("../node/trace_events_impl.zig");
+            trace_events.emitRunTimers();
         }
     }
 

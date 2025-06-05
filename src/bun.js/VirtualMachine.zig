@@ -638,6 +638,8 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    trace_events.NodeTraceEvents.emitBeforeExit();
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,6 +698,8 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    trace_events.NodeTraceEvents.emitAtExit();
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -3566,3 +3570,11 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const EventLoopHandle = JSC.EventLoopHandle;
+const PackageJSON = options.PackageJSON;
+const MacroMap = @import("./api/JSBundler.zig").MacroMap;
+const timestamp = @import("./bun.js/bindings/shimmer.zig").shimmer().millitime;
+const simdutf = bun.simdutf;
+const trace_events = @import("./trace_events.zig");
+
+pub const has_created_instance_map: std.EnumArray(InitializedFramework, bool) = std.EnumArray(InitializedFramework, bool).initDefault(false, .{});

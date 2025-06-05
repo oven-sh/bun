@@ -1,5 +1,7 @@
 const EventLoop = @This();
 
+const trace_events = @import("./trace_events.zig");
+
 tasks: Queue = undefined,
 
 /// setImmediate() gets it's own two task queues
@@ -191,6 +193,8 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    trace_events.NodeTraceEvents.emitCheckImmediate();
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
@@ -364,6 +368,7 @@ pub fn autoTick(this: *EventLoop) void {
 
     if (Environment.isPosix) {
         ctx.timer.drainTimers(ctx);
+        trace_events.NodeTraceEvents.emitRunTimers();
     }
 
     ctx.onAfterEventLoop();
@@ -433,6 +438,7 @@ pub fn autoTickActive(this: *EventLoop) void {
 
     if (Environment.isPosix) {
         ctx.timer.drainTimers(ctx);
+        trace_events.NodeTraceEvents.emitRunTimers();
     }
 
     ctx.onAfterEventLoop();
@@ -644,3 +650,9 @@ const Environment = bun.Environment;
 const Waker = bun.Async.Waker;
 const uws = bun.uws;
 const Async = bun.Async;
+
+pub fn drainTimers(all: *Timer.All, vm: *VirtualMachine) void {
+    trace_events.NodeTraceEvents.emitRunTimers();
+
+    Timer.drainTimers(all, vm);
+}

@@ -18,6 +18,8 @@ const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
+const io = std.io;
+const trace_events = @import("./bun.js/trace_events.zig");
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
@@ -111,6 +113,12 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if enabled via CLI
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            b.env.map.put("NODE_TRACE_EVENT_CATEGORIES", ctx.runtime_options.trace_event_categories) catch {};
+        }
+        trace_events.NodeTraceEvents.init();
 
         doPreconnect(ctx.runtime_options.preconnect);
 
@@ -256,6 +264,12 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if enabled via CLI
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            b.env.map.put("NODE_TRACE_EVENT_CATEGORIES", ctx.runtime_options.trace_event_categories) catch {};
+        }
+        trace_events.NodeTraceEvents.init();
 
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {

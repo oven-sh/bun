@@ -160,6 +160,7 @@ src/bun.js/bindings/NodeFSStatFSBinding.cpp
 src/bun.js/bindings/NodeHTTP.cpp
 src/bun.js/bindings/NodeTimerObject.cpp
 src/bun.js/bindings/NodeTLS.cpp
+src/bun.js/bindings/NodeTraceEvents.cpp
 src/bun.js/bindings/NodeURL.cpp
 src/bun.js/bindings/NodeValidator.cpp
 src/bun.js/bindings/NodeVM.cpp

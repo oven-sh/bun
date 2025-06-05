@@ -1016,12 +1016,25 @@ pub const TestCommand = struct {
         Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        var env_loader = brk: {
+        var loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             const loader = try ctx.allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
+
+            // Set NODE_TRACE_EVENT_CATEGORIES if specified via CLI
+            if (ctx.runtime_options.trace_event_categories.len > 0) {
+                const entry = try loader.map.getOrPutWithoutValue("NODE_TRACE_EVENT_CATEGORIES");
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = try loader.allocator.dupe(u8, entry.key_ptr.*);
+                }
+                entry.value_ptr.* = .{
+                    .value = try loader.allocator.dupe(u8, ctx.runtime_options.trace_event_categories),
+                    .conditional = false,
+                };
+            }
+
             break :brk loader;
         };
         bun.JSC.initialize(false);
@@ -1082,7 +1095,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .args = ctx.args,
                 .log = ctx.log,
-                .env_loader = env_loader,
+                .env_loader = loader,
                 // we must store file descriptors because we reuse them for
                 // iterating through the directory tree recursively
                 //
@@ -1100,11 +1113,11 @@ pub const TestCommand = struct {
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;
 
-        const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
+        const node_env_entry = try loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
-            node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
+            node_env_entry.key_ptr.* = try loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
             node_env_entry.value_ptr.* = .{
-                .value = try env_loader.allocator.dupe(u8, "test"),
+                .value = try loader.allocator.dupe(u8, "test"),
                 .conditional = false,
             };
         }

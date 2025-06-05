@@ -87,8 +87,8 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             const err_value = vm.global.takeException(e);
             vm.printErrorLikeObjectToConsole(err_value.toError() orelse err_value);
-            if (vm.exit_handler.exit_code == 0) {
-                vm.exit_handler.exit_code = 1;
+            if (vm.exit_handler.getExitCode() == 0) {
+                vm.exit_handler.setExitCode(1);
             }
             vm.globalExit();
         },

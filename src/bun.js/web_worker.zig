@@ -448,7 +448,7 @@ fn spin(this: *WebWorker) void {
     var resolve_error = bun.String.empty;
     defer resolve_error.deref();
     const path = resolveEntryPointSpecifier(vm, this.unresolved_specifier, &resolve_error, vm.log) orelse {
-        vm.exit_handler.exit_code = 1;
+        vm.exit_handler.setExitCode(1);
         if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
             const err = resolve_error.toUTF8(bun.default_allocator);
             defer err.deinit();
@@ -469,7 +469,7 @@ fn spin(this: *WebWorker) void {
 
     var promise = vm.loadEntryPointForWebWorker(path) catch {
         // If we called process.exit(), don't override the exit code
-        if (!this.exit_called) vm.exit_handler.exit_code = 1;
+        if (!this.exit_called) vm.exit_handler.setExitCode(1);
         this.flushLogs();
         this.exitAndDeinit();
         return;
@@ -479,7 +479,7 @@ fn spin(this: *WebWorker) void {
         const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
         if (!handled) {
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.setExitCode(1);
             this.exitAndDeinit();
             return;
         }
@@ -588,7 +588,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         this.vm = null;
         vm.is_shutting_down = true;
         vm.onExit();
-        exit_code = vm.exit_handler.exit_code;
+        exit_code = vm.exit_handler.getExitCode();
         globalObject = vm.global;
         vm_to_deinit = vm;
     }

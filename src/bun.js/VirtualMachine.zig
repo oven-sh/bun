@@ -545,7 +545,7 @@ pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSGlobalObjec
     if (!handled) {
         // TODO maybe we want a separate code path for uncaught exceptions
         this.unhandled_error_counter += 1;
-        this.exit_handler.exit_code = 1;
+        this.exit_handler.setExitCode(1);
         this.onUnhandledRejection(this, globalObject, err);
     }
     return handled;
@@ -719,7 +719,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();
     }
-    bun.Global.exit(this.exit_handler.exit_code);
+    bun.Global.exit(this.exit_handler.getExitCode());
 }
 
 pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
@@ -3474,14 +3474,27 @@ pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
 }
 
 pub const ExitHandler = struct {
-    exit_code: u8 = 0,
+    /// nullable because we want to diffrentiate between an unset and set value
+    /// but reading should always be 0
+    exit_code: ?u8 = null,
+
+    pub fn getExitCode(this: *ExitHandler) u8 {
+        return this.exit_code orelse 0;
+    }
+
+    pub fn setExitCode(this: *ExitHandler, code: u8) void {
+        if (this.exit_code != null) {
+            return;
+        }
+        this.exit_code = code;
+    }
 
     pub export fn Bun__getExitCode(vm: *VirtualMachine) u8 {
-        return vm.exit_handler.exit_code;
+        return vm.exit_handler.getExitCode();
     }
 
     pub export fn Bun__setExitCode(vm: *VirtualMachine, code: u8) void {
-        vm.exit_handler.exit_code = code;
+        vm.exit_handler.setExitCode(code);
     }
 
     extern fn Process__dispatchOnBeforeExit(*JSGlobalObject, code: u8) void;
@@ -3491,7 +3504,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnExit(vm.global, this.exit_code);
+        Process__dispatchOnExit(vm.global, this.getExitCode());
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
         }
@@ -3500,7 +3513,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        Process__dispatchOnBeforeExit(vm.global, this.getExitCode());
     }
 };
 

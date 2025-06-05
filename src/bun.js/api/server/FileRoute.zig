@@ -1,16 +1,13 @@
 const FileRoute = @This();
 
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-pub const ref = RefCount.ref;
-pub const deref = RefCount.deref;
-
 ref_count: RefCount,
 server: ?AnyServer = null,
 blob: Blob,
 headers: Headers = .{ .allocator = bun.default_allocator },
 status_code: u16,
 stat_hash: bun.fs.StatHash = .{},
-has_last_modified_header: bool = false,
+has_last_modified_header: bool,
+has_content_length_header: bool,
 
 pub const InitOptions = struct {
     server: ?AnyServer,
@@ -78,6 +75,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .blob = blob,
                 .headers = headers,
                 .has_last_modified_header = headers.get("last-modified") != null,
+                .has_content_length_header = headers.get("content-length") != null,
                 .status_code = response.statusCode(),
             });
         }
@@ -92,6 +90,8 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                 .server = null,
                 .blob = b,
                 .headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = b } }) catch bun.outOfMemory(),
+                .has_content_length_header = false,
+                .has_last_modified_header = false,
                 .status_code = 200,
             });
         }
@@ -118,6 +118,10 @@ fn writeHeaders(this: *FileRoute, resp: AnyResponse) void {
             resp.writeHeader("last-modified", last_modified);
         }
     }
+
+    if (this.has_content_length_header) {
+        resp.markWroteContentLengthHeader();
+    }
 }
 
 fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
@@ -130,14 +134,14 @@ fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
 pub fn onHEADRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
     bun.debugAssert(this.server != null);
 
-    this.on(req, resp, true);
+    this.on(req, resp, .HEAD);
 }
 
 pub fn onRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
-    this.on(req, resp, false);
+    this.on(req, resp, bun.http.Method.find(req.method()) orelse .GET);
 }
 
-pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool) void {
+pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method) void {
     bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
@@ -194,8 +198,8 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool)
 
     if (!can_serve_file) {
         bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
-        this.deref();
         req.setYield(true);
+        this.deref();
         return;
     }
 
@@ -203,10 +207,10 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool)
         // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
         // GET or HEAD. When used in combination with If-None-Match, it is
         // ignored, unless the server doesn't support If-None-Match.
-        if (input_if_modified_since_date) |date| {
-            if (is_head or bun.strings.eqlCaseInsensitiveASCII(req.method(), "get", true)) {
-                if (this.lastModifiedDate()) |last_modified| {
-                    if (date > last_modified) {
+        if (input_if_modified_since_date) |requested_if_modified_since| {
+            if (method == .HEAD or method == .GET) {
+                if (this.lastModifiedDate()) |actual_last_modified_at| {
+                    if (actual_last_modified_at <= requested_if_modified_since) {
                         break :brk 304;
                     }
                 }
@@ -220,14 +224,11 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool)
         break :brk this.status_code;
     };
 
-    this.writeStatusCode(status_code, resp);
-    this.writeHeaders(resp);
-    if (file_type == .file and !resp.state().hasWrittenContentLengthHeader()) {
-        resp.writeHeaderInt("content-length", size);
-        resp.markWroteContentLengthHeader();
-    }
+    req.setYield(false);
 
+    this.writeStatusCode(status_code, resp);
     resp.writeMark();
+    this.writeHeaders(resp);
 
     switch (status_code) {
         204, 205, 304, 307, 308 => {
@@ -238,7 +239,12 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool)
         else => {},
     }
 
-    if (is_head) {
+    if (file_type == .file and !resp.state().hasWrittenContentLengthHeader()) {
+        resp.writeHeaderInt("content-length", size);
+        resp.markWroteContentLengthHeader();
+    }
+
+    if (method == .HEAD) {
         resp.endWithoutBody(resp.shouldCloseConnection());
         this.deref();
         return;
@@ -532,3 +538,7 @@ const DeinitScope = struct {
         }
     }
 };
+
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;

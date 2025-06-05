@@ -20,12 +20,13 @@ describe("Bun.file in serve routes", () => {
       "hello.txt": "Hello, World!",
       "empty.txt": "",
       "binary.bin": Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]),
-      "large.txt": Buffer.alloc(1024 * 1024 * 8, "bun").toString(), // 1MB file
+      "large.txt": Buffer.alloc(1024 * 1024 * 8, "bun").toString(), // 8MB file
       "unicode.txt": "Hello 世界 🌍 émojis",
       "json.json": JSON.stringify({ message: "test", number: 42 }),
       "nested/file.txt": "nested content",
       "special chars & symbols.txt": "special file content",
       "will-be-deleted.txt": "will be deleted",
+      "partial.txt": "0123456789ABCDEF",
     });
 
     const routes = {
@@ -55,7 +56,18 @@ describe("Bun.file in serve routes", () => {
         statusText: "Created",
       }),
       "/will-be-deleted.txt": new Response(Bun.file(join(tempDir, "will-be-deleted.txt"))),
-    };
+      "/custom-last-modified.txt": new Response(Bun.file(join(tempDir, "hello.txt")), {
+        headers: {
+          "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT",
+        },
+      }),
+      "/partial.txt": new Response(Bun.file(join(tempDir, "partial.txt"))),
+      "/partial-slice.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
+      "/fd-not-supported.txt": (() => {
+        // This would test file descriptors, but they're not supported yet
+        return new Response(Bun.file(join(tempDir, "hello.txt")));
+      })(),
+    } as const;
 
     server = Bun.serve({
       routes: routes,
@@ -77,14 +89,46 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Hello, World!");
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      const headers = res.headers.toJSON();
+      if (!new Date(headers["last-modified"]!).getTime()) {
+        throw new Error("Last-Modified header is not a valid date");
+      }
+
+      if (!new Date(headers["date"]!).getTime()) {
+        throw new Error("Date header is not a valid date");
+      }
+
+      delete headers.date;
+      delete headers["last-modified"];
+
+      // Snapshot the headers so a test fails if we change the headers later.
+      expect(headers).toMatchInlineSnapshot(`
+        {
+          "content-length": "13",
+          "content-type": "text/plain;charset=utf-8",
+        }
+      `);
     });
 
     it("serves empty file", async () => {
       const res = await fetch(new URL(`/empty.txt`, server.url));
       expect(res.status).toBe(204);
       expect(await res.text()).toBe("");
-      expect(res.headers.get("Content-Length")).toBe("0");
+      // A server MUST NOT send a Content-Length header field in any response
+      // with a status code of 1xx (Informational) or 204 (No Content). A server
+      // MUST NOT send a Content-Length header field in any 2xx (Successful)
+      // response to a CONNECT request (Section 9.3.6).
+      expect(res.headers.get("Content-Length")).toBeNull();
+
+      const headers = res.headers.toJSON();
+      delete headers.date;
+      delete headers["last-modified"];
+
+      expect(headers).toMatchInlineSnapshot(`
+        {
+          "content-type": "text/plain;charset=utf-8",
+        }
+      `);
     });
 
     it("serves empty file with custom status code", async () => {
@@ -109,12 +153,34 @@ describe("Bun.file in serve routes", () => {
       expect(text.length).toBe(1024 * 1024 * 8);
       expect(text).toBe(Buffer.alloc(1024 * 1024 * 8, "bun").toString());
       expect(res.headers.get("Content-Length")).toBe((1024 * 1024 * 8).toString());
+
+      const headers = res.headers.toJSON();
+      delete headers.date;
+      delete headers["last-modified"];
+
+      expect(headers).toMatchInlineSnapshot(`
+        {
+          "content-length": "8388608",
+          "content-type": "text/plain;charset=utf-8",
+        }
+      `);
     });
 
     it("serves unicode file", async () => {
       const res = await fetch(new URL(`/unicode.txt`, server.url));
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Hello 世界 🌍 émojis");
+
+      const headers = res.headers.toJSON();
+      delete headers.date;
+      delete headers["last-modified"];
+
+      expect(headers).toMatchInlineSnapshot(`
+        {
+          "content-length": "25",
+          "content-type": "text/plain;charset=utf-8",
+        }
+      `);
     });
 
     it("serves JSON file with correct content type", async () => {
@@ -214,28 +280,53 @@ describe("Bun.file in serve routes", () => {
   });
 
   describe("Conditional requests", () => {
-    it("handles If-Modified-Since", async () => {
-      // First request to get Last-Modified
+    describe.each(["GET", "HEAD"])("%s", method => {
+      it(`handles If-Modified-Since with future date (304)`, async () => {
+        // First request to get Last-Modified
+        const res1 = await fetch(new URL(`/hello.txt`, server.url));
+        const lastModified = res1.headers.get("Last-Modified");
+        expect(lastModified).not.toBeEmpty();
+
+        // If-Modified-Since is AFTER the file's last modified date (future)
+        // Should return 304 because file hasn't been modified since that future date
+        const res2 = await fetch(new URL(`/hello.txt`, server.url), {
+          method,
+          headers: {
+            "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+          },
+        });
+
+        expect(res2.status).toBe(304);
+        expect(await res2.text()).toBe("");
+      });
+
+      it(`handles If-Modified-Since with past date (200)`, async () => {
+        // If-Modified-Since is way in the past
+        // Should return 200 because file has been modified since then
+        const res = await fetch(new URL(`/hello.txt`, server.url), {
+          method,
+          headers: {
+            "If-Modified-Since": new Date(Date.now() - 1000000).toISOString(),
+          },
+        });
+
+        expect(res.status).toBe(200);
+      });
+    });
+
+    it("ignores If-Modified-Since for non-GET/HEAD requests", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
       const lastModified = res1.headers.get("Last-Modified");
-      expect(lastModified).not.toBeEmpty();
 
       const res2 = await fetch(new URL(`/hello.txt`, server.url), {
+        method: "POST",
         headers: {
           "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
         },
       });
 
-      expect(res2.status).toBe(304);
-      expect(await res2.text()).toBe("");
-
-      const res3 = await fetch(new URL(`/hello.txt`, server.url), {
-        headers: {
-          "If-Modified-Since": new Date(Date.now() - 1000000).toISOString(),
-        },
-      });
-
-      expect(res3.status).toBe(200);
+      // Should not return 304 for POST
+      expect(res2.status).not.toBe(304);
     });
 
     it.todo("handles ETag", async () => {
@@ -300,7 +391,6 @@ describe("Bun.file in serve routes", () => {
       const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
-      console.log(`Memory usage: ${baseline}MB -> ${final}MB (delta: ${delta}MB)`);
       expect(delta).toBeLessThan(100); // Should not leak significant memory
     }, 30000);
 
@@ -330,6 +420,148 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Hello, World!");
       expect(handler.mock.calls.length).toBe(previousCallCount);
+    });
+  });
+
+  describe("Last-Modified header handling", () => {
+    it("automatically adds Last-Modified header", async () => {
+      const res = await fetch(new URL(`/hello.txt`, server.url));
+      const lastModified = res.headers.get("Last-Modified");
+      expect(lastModified).not.toBeNull();
+      expect(lastModified).toMatch(/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
+    });
+
+    it("respects custom Last-Modified header", async () => {
+      const res = await fetch(new URL(`/custom-last-modified.txt`, server.url));
+      expect(res.headers.get("Last-Modified")).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+    });
+
+    it("uses custom Last-Modified for If-Modified-Since checks", async () => {
+      // Request with If-Modified-Since after custom date
+      const res1 = await fetch(new URL(`/custom-last-modified.txt`, server.url), {
+        headers: {
+          "If-Modified-Since": "Thu, 22 Oct 2015 07:28:00 GMT",
+        },
+      });
+      expect(res1.status).toBe(304);
+
+      // Request with If-Modified-Since before custom date
+      const res2 = await fetch(new URL(`/custom-last-modified.txt`, server.url), {
+        headers: {
+          "If-Modified-Since": "Tue, 20 Oct 2015 07:28:00 GMT",
+        },
+      });
+      expect(res2.status).toBe(200);
+    });
+  });
+
+  describe("File slicing", () => {
+    it("serves complete file", async () => {
+      const res = await fetch(new URL(`/partial.txt`, server.url));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("0123456789ABCDEF");
+      expect(res.headers.get("Content-Length")).toBe("16");
+    });
+
+    it("serves sliced file", async () => {
+      const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("56789");
+      expect(res.headers.get("Content-Length")).toBe("5");
+    });
+  });
+
+  describe("Special status codes", () => {
+    it("returns 204 for empty files with 200 status", async () => {
+      const res = await fetch(new URL(`/empty.txt`, server.url));
+      expect(res.status).toBe(204);
+      expect(await res.text()).toBe("");
+    });
+
+    it("preserves custom status for empty files", async () => {
+      const res = await fetch(new URL(`/empty-400.txt`, server.url));
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("");
+    });
+
+    it("returns appropriate status for 304 responses", async () => {
+      const res1 = await fetch(new URL(`/hello.txt`, server.url));
+      const lastModified = res1.headers.get("Last-Modified");
+
+      const res2 = await fetch(new URL(`/hello.txt`, server.url), {
+        headers: {
+          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+        },
+      });
+
+      expect(res2.status).toBe(304);
+      expect(res2.headers.get("Content-Length")).toBeNull();
+      expect(await res2.text()).toBe("");
+    });
+  });
+
+  describe("Streaming and file types", () => {
+    it("sets Content-Length for regular files", async () => {
+      const res = await fetch(new URL(`/hello.txt`, server.url));
+      expect(res.headers.get("Content-Length")).toBe("13");
+    });
+
+    it("handles HEAD requests with proper headers", async () => {
+      const res = await fetch(new URL(`/hello.txt`, server.url), { method: "HEAD" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Length")).toBe("13");
+      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Last-Modified")).not.toBeNull();
+      expect(await res.text()).toBe("");
+    });
+
+    it("handles abort/cancellation gracefully", async () => {
+      const controller = new AbortController();
+      const promise = fetch(new URL(`/large.txt`, server.url), {
+        signal: controller.signal,
+      });
+
+      // Abort immediately
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(/abort/i);
+    });
+  });
+
+  describe("File not found handling", () => {
+    it("falls back to handler when file doesn't exist", async () => {
+      const previousCallCount = handler.mock.calls.length;
+      const res = await fetch(new URL(`/nonexistent.txt`, server.url));
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(`fallback: ${server.url}nonexistent.txt`);
+      expect(handler.mock.calls.length).toBe(previousCallCount + 1);
+    });
+
+    it("falls back to handler when file is deleted after route creation", async () => {
+      const previousCallCount = handler.mock.calls.length;
+      const res = await fetch(new URL(`/will-be-deleted.txt`, server.url));
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(`fallback: ${server.url}will-be-deleted.txt`);
+      expect(handler.mock.calls.length).toBe(previousCallCount + 1);
+    });
+  });
+
+  describe("Content-Type detection", () => {
+    it("detects text/plain for .txt files", async () => {
+      const res = await fetch(new URL(`/hello.txt`, server.url));
+      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+    });
+
+    it("detects application/json for .json files", async () => {
+      const res = await fetch(new URL(`/json.json`, server.url));
+      expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+    });
+
+    it("detects application/octet-stream for binary files", async () => {
+      const res = await fetch(new URL(`/binary.bin`, server.url));
+      expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
     });
   });
 });

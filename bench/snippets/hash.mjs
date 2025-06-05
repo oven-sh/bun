@@ -50,6 +50,10 @@ bench("murmur64v2 (short)", () => {
   Bun.hash.murmur64v2(shortStr);
 });
 
+bench("rapidhash (short)", () => {
+  Bun.hash.rapidhash(shortStr);
+});
+
 bench("wyhash (128 KB)", () => {
   Bun.hash.wyhash(longStr);
 });
@@ -92,6 +96,10 @@ bench("murmur32v2 (128 KB)", () => {
 
 bench("murmur64v2 (128 KB)", () => {
   Bun.hash.murmur64v2(longStr);
+});
+
+bench("rapidhash (128 KB)", () => {
+  Bun.hash.rapidhash(longStr);
 });
 
 run();

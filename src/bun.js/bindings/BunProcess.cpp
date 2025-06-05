@@ -3221,7 +3221,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
-    if (value != 0)
+    if (!value.isEmpty())
         args.append(value);
     this->queueNextTick(globalObject, args);
 }
@@ -3230,9 +3230,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JS
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
-    if (value != 0) {
+    if (!value.isEmpty()) {
         args.append(value);
-        if (arg1 != 0) {
+        if (!arg1.isEmpty()) {
             args.append(arg1);
         }
     }
@@ -3245,7 +3245,7 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, con
     ASSERT_WITH_MESSAGE(func.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.ensureCapacity(NumArgs + 1);
-    if (func != 0) {
+    if (!func.isEmpty()) {
         argsBuffer.append(func);
         for (size_t i = 0; i < NumArgs; i++) {
             argsBuffer.append(args[i]);

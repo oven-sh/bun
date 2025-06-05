@@ -1351,10 +1351,35 @@ fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8,
     }
 }
 
+const kMaxSessionSize = 10 * 1024;
 fn newSessionCallback(ssl: ?*BoringSSL.SSL, session: ?*BoringSSL.SSL_SESSION) callconv(.C) c_int {
-    // The new_session_cb() is passed the ssl connection and the ssl session sess. If the callback returns 0, the session will be immediately removed again
-    std.log.debug("new session callback called {?*}/{?*}", .{ ssl, session });
-    return 1;
+    const this = bun.cast(*TLSSocket, BoringSSL.SSL_get_app_data(ssl));
+    const globalThis = this.handlers.globalObject;
+
+    // TODO: only do this if there is a session listener in JS; otherwise it's a waste of time
+    const size: c_int = BoringSSL.i2d_SSL_SESSION(session, null);
+    if (size > 0 and size < kMaxSessionSize) {
+        const thisValue = this.getThisValue(globalThis);
+        const vm = globalThis.bunVM();
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
+
+        const arraybuffer, const slice = JSC.ArrayBuffer.alloc(globalThis, .ArrayBuffer, @intCast(size)) catch |err| {
+            _ = this.handlers.callErrorHandler(thisValue, &.{ thisValue, globalThis.takeError(err) });
+            return 0;
+        };
+        var ticket_cptr: [*c]u8 = slice.ptr;
+        const write_len = BoringSSL.i2d_SSL_SESSION(session, &ticket_cptr);
+        if (write_len > 0) {
+            bun.assert(write_len == slice.len);
+            _ = this.handlers.onSession.call(globalThis, thisValue, &.{ thisValue, arraybuffer }) catch |err| {
+                _ = this.handlers.callErrorHandler(thisValue, &.{ thisValue, globalThis.takeError(err) });
+                return 0;
+            };
+        }
+    }
+
+    return 0;
 }
 
 fn NewSocket(comptime ssl: bool) type {
@@ -1805,11 +1830,11 @@ fn NewSocket(comptime ssl: bool) type {
                             }
                         }
 
-                        // if (this.handlers.onSession != .zero) {
-                        //     BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), &newSessionCallback);
-                        // }
-                        std.log.debug("setting new session callback", .{});
-                        BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), &newSessionCallback);
+                        if (!this.handlers.is_server and this.handlers.onSession != .zero) {
+                            _ = BoringSSL.SSL_CTX_set_session_cache_mode(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), BoringSSL.SSL_SESS_CACHE_CLIENT | BoringSSL.SSL_SESS_CACHE_NO_INTERNAL);
+                            _ = BoringSSL.SSL_set_app_data(ssl_ptr, @as(*anyopaque, this));
+                            BoringSSL.SSL_CTX_sess_set_new_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), &newSessionCallback);
+                        }
                     }
                 }
             }

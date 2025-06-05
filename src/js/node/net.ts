@@ -308,9 +308,6 @@ const SocketHandlers: SocketHandler = {
 
     self.emit("timeout", self);
   },
-  session(socket, session) {
-    console.log("session event", socket, session);
-  },
   binaryType: "buffer",
 } as const;
 
@@ -510,9 +507,6 @@ const ServerHandlers: SocketHandler = {
   drain(socket) {
     SocketHandlers.drain(socket);
   },
-  session(socket, session) {
-    SocketHandlers.session(socket, session);
-  },
   binaryType: "buffer",
 } as const;
 
@@ -650,7 +644,12 @@ const SocketHandlers2: SocketHandler<SocketHandleData> = {
     socket.data.req = undefined;
   },
   session(socket, session) {
-    console.log("session event", socket, session);
+    const { self } = socket.data;
+    const bunTLS = self[bunTlsSymbol];
+    const isTLS = typeof bunTLS === "function";
+    if (isTLS) {
+      self.emit("session", session);
+    }
   },
 };
 

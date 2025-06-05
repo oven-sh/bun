@@ -1615,7 +1615,25 @@ pub const RunCommand = struct {
                 Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
             } else if (ext.len > 0) {
                 Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
-            } else {
+            } else print: {
+                if (root_dir_info.enclosing_package_json) |package_json| outer: {
+                    if (package_json.scripts) |scripts| {
+                        const keys = scripts.keys();
+                        const idx = strings.didYouMean(keys, target_name) orelse
+                            break :outer;
+                        const entry = keys[idx];
+                        Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b><u>{s}<r>\"\n", .{target_name});
+                        var argv0 = std.fs.path.basename(bun.argv[0]);
+                        const extname = std.fs.path.extension(argv0);
+                        if (argv0.len > extname.len) {
+                            argv0.len -= extname.len;
+                        }
+
+                        Output.prettyError("\nDid you mean \"{s}\"?\n\n  <cyan><d>{s} <r><cyan><u>{s}<r>\n", .{ entry, argv0, entry });
+                        break :print;
+                    }
+                }
+
                 Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
             }
 

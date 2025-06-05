@@ -138,6 +138,7 @@ using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+JSC_DECLARE_CUSTOM_GETTER(processKChannelHandle);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
@@ -3732,6 +3733,35 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+    
+    // Add support for process[kChannelHandle] to access the channel
+    // This is needed for Node.js internal/child_process compatibility
+    auto* globalObject = this->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        auto kChannelHandle = Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.internal.child_process.channel"_s));
+        putDirectCustomAccessor(vm, kChannelHandle, 
+            CustomGetterSetter::create(vm, processKChannelHandle, nullptr),
+            PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum);
+    }
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processKChannelHandle, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    
+    Process* process = jsCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // First check if the channel property is already initialized
+    JSValue channelValue = process->getDirect(vm, Identifier::fromString(vm, "channel"_s));
+    if (!channelValue.isEmpty()) {
+        return JSValue::encode(channelValue);
+    }
+
+    // If not initialized, construct it
+    return JSValue::encode(constructProcessChannel(vm, process));
 }
 
 } // namespace Bun

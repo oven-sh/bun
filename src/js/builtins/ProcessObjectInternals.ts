@@ -437,6 +437,9 @@ export function windowsEnv(
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  const readStop = $newZigFunction("node_cluster_binding.zig", "channelReadStop", 0);
+  const readStart = $newZigFunction("node_cluster_binding.zig", "channelReadStart", 0);
+
   return new (class Control extends EventEmitter {
     constructor() {
       super();
@@ -448,6 +451,14 @@ export function getChannel() {
 
     unref() {
       setRef(false);
+    }
+
+    readStop() {
+      readStop();
+    }
+
+    readStart() {
+      readStart();
     }
   })();
 }

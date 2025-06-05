@@ -10,6 +10,7 @@ const JSC = bun.JSC;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const log = Output.scoped(.IPC, false);
+const IPC = @import("../ipc.zig");
 
 extern fn Bun__Process__queueNextTick1(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) void;
 extern fn Process__emitErrorEvent(global: *JSC.JSGlobalObject, value: JSC.JSValue) void;
@@ -298,4 +299,41 @@ pub fn channelIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject
 export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject) bool {
     const vm = globalObject.bunVM();
     return vm.channel_ref_should_ignore_one_disconnect_event_listener;
+}
+
+pub fn channelReadStop(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.getIPCInstance()) |instance| {
+        if (Environment.isWindows) {
+            if (instance.data.getSocket()) |socket| {
+                socket.asStream().readStop();
+            }
+        } else {
+            // On POSIX, we need to pause reading by unregistering the poll
+            // This is a no-op for now as POSIX IPC is event-driven
+            // and doesn't have an explicit pause mechanism
+        }
+    }
+    return .undefined;
+}
+
+pub fn channelReadStart(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    if (vm.getIPCInstance()) |instance| {
+        if (Environment.isWindows) {
+            if (instance.data.getSocket()) |socket| {
+                _ = socket.asStream().readStart(
+                    &instance.data,
+                    IPC.IPCHandlers.WindowsNamedPipe.onReadAlloc,
+                    IPC.IPCHandlers.WindowsNamedPipe.onReadError,
+                    IPC.IPCHandlers.WindowsNamedPipe.onRead,
+                );
+            }
+        } else {
+            // On POSIX, we need to resume reading by re-registering the poll
+            // This is a no-op for now as POSIX IPC is event-driven
+            // and doesn't have an explicit pause mechanism
+        }
+    }
+    return .undefined;
 }

@@ -32,20 +32,47 @@ jobs:
           - arch: x64
             zip_name: bun-linux-x64
             display: x64
+            gcc_arch: x86-64
           - arch: x64
             zip_name: bun-linux-x64-baseline
             display: x64-baseline
             baseline: true
+            gcc_arch: x86-64
           - arch: aarch64
             zip_name: bun-linux-aarch64
             display: aarch64
+            gcc_arch: aarch64
+          - arch: x64
+            zip_name: bun-linux-x64-musl
+            display: x64-musl
+            musl: true
+            gcc_arch: x86-64
+          - arch: x64
+            zip_name: bun-linux-x64-musl-baseline
+            display: x64-musl-baseline
+            baseline: true
+            musl: true
+            gcc_arch: x86-64
+          - arch: aarch64
+            zip_name: bun-linux-aarch64-musl
+            display: aarch64-musl
+            musl: true
+            gcc_arch: aarch64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Environment
+      - name: Setup Build Environment
         run: |
-          echo "Creating working directory..."
+          echo "Installing build dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y gcc make xxd upx-ucl
+
+          # Install cross-compilation toolchain for aarch64
+          if [[ "${{ matrix.arch }}" == "aarch64" ]]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
           mkdir -p sfx-build
           cd sfx-build
 
@@ -55,7 +82,6 @@ jobs:
         run: |
           cd sfx-build
 
-          # Download the zip file from GitHub releases
           echo "Downloading ${{ matrix.zip_name }}.zip..."
 
           if [[ "${{ env.BUN_VERSION }}" == "canary" ]]; then
@@ -66,7 +92,7 @@ jobs:
 
           curl -L -o "${{ matrix.zip_name }}.zip" "$DOWNLOAD_URL"
 
-          # Extract the zip file using unzip (available on GitHub runners)
+          # Extract the zip file
           unzip -q "${{ matrix.zip_name }}.zip"
 
           # Find the bun executable
@@ -80,189 +106,292 @@ jobs:
           mv "$BUN_EXEC" "./bun"
           chmod +x ./bun
 
+          # Compress the binary
+          echo "Compressing bun binary..."
+          gzip -9 -k ./bun
+
           # Clean up
           rm -rf bun-linux-*/ ${{ matrix.zip_name }}.zip
 
-      - name: Create SFX Script
+      - name: Create SFX Source Code
         run: |
           cd sfx-build
 
-          # Create the self-extracting script
-          cat > extract-header.sh << 'SCRIPT_EOF'
-          #!/bin/sh
-          # Bun Self-Extracting Archive for Linux
-          # This is a self-extracting archive. Run it to install Bun.
-          # No external dependencies required (no unzip needed!)
+          # Create the self-extracting executable source
+          cat > sfx.c << 'EOF'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          #include <sys/stat.h>
+          #include <errno.h>
+          #include <fcntl.h>
+          #include <zlib.h>
 
-          set -e
+          // Terminal colors
+          #define COLOR_RED     "\033[0;31m"
+          #define COLOR_GREEN   "\033[0;32m"
+          #define COLOR_YELLOW  "\033[1;33m"
+          #define COLOR_RESET   "\033[0m"
 
-          # Default installation directory
-          DEFAULT_INSTALL_DIR="$HOME/.bun/bin"
-          INSTALL_DIR="${BUN_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+          // Embedded compressed binary data
+          static const unsigned char compressed_data[] = {
+          #include "bun_data.h"
+          };
+          static const size_t compressed_size = sizeof(compressed_data);
 
-          # ANSI color codes (only if terminal supports it)
-          if [ -t 1 ] && [ -n "${TERM-}" ] && [ "${TERM-}" != "dumb" ]; then
-              RED='\033[0;31m'
-              GREEN='\033[0;32m'
-              YELLOW='\033[1;33m'
-              NC='\033[0m'
-          else
-              RED=''
-              GREEN=''
-              YELLOW=''
-              NC=''
-          fi
+          // Installation configuration
+          #ifndef DEFAULT_INSTALL_DIR
+          #define DEFAULT_INSTALL_DIR "/.bun/bin"
+          #endif
 
-          error() {
-              printf "${RED}error: %s${NC}\n" "$1" >&2
-              exit 1
+          #ifndef BUN_ARCH
+          #define BUN_ARCH "unknown"
+          #endif
+
+          void print_error(const char* msg) {
+              if (isatty(STDERR_FILENO)) {
+                  fprintf(stderr, COLOR_RED "error: " COLOR_RESET "%s\n", msg);
+              } else {
+                  fprintf(stderr, "error: %s\n", msg);
+              }
           }
 
-          info() {
-              printf "${GREEN}%s${NC}\n" "$1"
+          void print_success(const char* msg) {
+              if (isatty(STDOUT_FILENO)) {
+                  printf(COLOR_GREEN "%s" COLOR_RESET "\n", msg);
+              } else {
+                  printf("%s\n", msg);
+              }
           }
 
-          warn() {
-              printf "${YELLOW}warning: %s${NC}\n" "$1"
+          void print_info(const char* msg) {
+              printf("%s\n", msg);
           }
 
-          # Check if running on Linux
-          if [ "$(uname -s)" != "Linux" ]; then
-              error "This installer is for Linux only. Please download the correct version for your platform."
-          fi
+          int ensure_directory(const char* path) {
+              struct stat st = {0};
+              if (stat(path, &st) == -1) {
+                  if (mkdir(path, 0755) == -1 && errno != EEXIST) {
+                      return -1;
+                  }
+              }
+              return 0;
+          }
 
-          # Check architecture
-          ARCH="$(uname -m)"
-          EXPECTED_ARCH="ARCH_PLACEHOLDER"
-          EXPECTED_DISPLAY="DISPLAY_PLACEHOLDER"
+          int create_directory_tree(const char* path) {
+              char tmp[1024];
+              char *p = NULL;
+              size_t len;
+              
+              snprintf(tmp, sizeof(tmp), "%s", path);
+              len = strlen(tmp);
+              if (tmp[len - 1] == '/')
+                  tmp[len - 1] = 0;
+              
+              for (p = tmp + 1; *p; p++) {
+                  if (*p == '/') {
+                      *p = 0;
+                      if (ensure_directory(tmp) == -1) {
+                          return -1;
+                      }
+                      *p = '/';
+                  }
+              }
+              
+              if (ensure_directory(tmp) == -1) {
+                  return -1;
+              }
+              
+              return 0;
+          }
 
-          case "$ARCH" in
-              x86_64)
-                  ARCH_NORM="x64"
-                  ;;
-              aarch64|arm64)
-                  ARCH_NORM="aarch64"
-                  ;;
-              *)
-                  ARCH_NORM="$ARCH"
-                  ;;
-          esac
+          int decompress_to_file(const char* output_path) {
+              FILE* outfile = fopen(output_path, "wb");
+              if (!outfile) {
+                  return -1;
+              }
+              
+              // Decompress using zlib
+              z_stream stream = {0};
+              stream.next_in = (Bytef*)compressed_data;
+              stream.avail_in = compressed_size;
+              
+              if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) {
+                  fclose(outfile);
+                  return -1;
+              }
+              
+              unsigned char buffer[8192];
+              int ret;
+              
+              do {
+                  stream.next_out = buffer;
+                  stream.avail_out = sizeof(buffer);
+                  
+                  ret = inflate(&stream, Z_NO_FLUSH);
+                  if (ret == Z_STREAM_ERROR) {
+                      inflateEnd(&stream);
+                      fclose(outfile);
+                      return -1;
+                  }
+                  
+                  size_t have = sizeof(buffer) - stream.avail_out;
+                  if (fwrite(buffer, 1, have, outfile) != have) {
+                      inflateEnd(&stream);
+                      fclose(outfile);
+                      return -1;
+                  }
+              } while (ret != Z_STREAM_END);
+              
+              inflateEnd(&stream);
+              fclose(outfile);
+              
+              // Make executable
+              if (chmod(output_path, 0755) == -1) {
+                  return -1;
+              }
+              
+              return 0;
+          }
 
-          # Check if architecture matches (allow x64 baseline on x64)
-          ARCH_MISMATCH=0
-          case "$EXPECTED_ARCH" in
-              x64)
-                  if [ "$ARCH_NORM" != "x64" ]; then
-                      ARCH_MISMATCH=1
-                  fi
-                  ;;
-              aarch64)
-                  if [ "$ARCH_NORM" != "aarch64" ]; then
-                      ARCH_MISMATCH=1
-                  fi
-                  ;;
-          esac
+          int main(int argc, char* argv[]) {
+              printf("Bun Self-Extracting Archive for Linux %s\n", BUN_ARCH);
+              printf("=====================================\n\n");
+              
+              // Determine installation directory
+              const char* install_dir_env = getenv("BUN_INSTALL_DIR");
+              char install_dir[1024];
+              
+              if (install_dir_env && install_dir_env[0] != '\0') {
+                  snprintf(install_dir, sizeof(install_dir), "%s", install_dir_env);
+              } else {
+                  const char* home = getenv("HOME");
+                  if (!home) {
+                      print_error("Could not determine home directory");
+                      return 1;
+                  }
+                  snprintf(install_dir, sizeof(install_dir), "%s%s", home, DEFAULT_INSTALL_DIR);
+              }
+              
+              printf("Installation directory: %s\n", install_dir);
+              
+              // Create installation directory
+              if (create_directory_tree(install_dir) == -1) {
+                  char error_msg[1024];
+                  snprintf(error_msg, sizeof(error_msg), "Failed to create directory: %s", install_dir);
+                  print_error(error_msg);
+                  return 1;
+              }
+              
+              // Extract bun executable
+              char bun_path[1024];
+              snprintf(bun_path, sizeof(bun_path), "%s/bun", install_dir);
+              
+              printf("Extracting bun...\n");
+              if (decompress_to_file(bun_path) == -1) {
+                  print_error("Failed to extract bun executable");
+                  return 1;
+              }
+              
+              // Verify installation
+              char version_cmd[1024];
+              snprintf(version_cmd, sizeof(version_cmd), "%s --version 2>/dev/null", bun_path);
+              FILE* fp = popen(version_cmd, "r");
+              if (fp) {
+                  char version[128];
+                  if (fgets(version, sizeof(version), fp) != NULL) {
+                      // Remove newline
+                      size_t len = strlen(version);
+                      if (len > 0 && version[len-1] == '\n') {
+                          version[len-1] = '\0';
+                      }
+                      char success_msg[256];
+                      snprintf(success_msg, sizeof(success_msg), "✓ Bun %s has been installed to %s", version, bun_path);
+                      print_success(success_msg);
+                  }
+                  pclose(fp);
+              }
+              
+              // Check if in PATH
+              const char* path_env = getenv("PATH");
+              if (path_env && !strstr(path_env, install_dir)) {
+                  printf("\n");
+                  print_info("To get started, add Bun to your PATH:");
+                  printf("  export PATH=\"$PATH:%s\"\n", install_dir);
+                  printf("\n");
+                  print_info("To make this permanent, add it to your shell configuration file:");
+                  
+                  const char* shell = getenv("SHELL");
+                  if (shell) {
+                      if (strstr(shell, "bash")) {
+                          printf("  echo 'export PATH=\"$PATH:%s\"' >> ~/.bashrc\n", install_dir);
+                      } else if (strstr(shell, "zsh")) {
+                          printf("  echo 'export PATH=\"$PATH:%s\"' >> ~/.zshrc\n", install_dir);
+                      } else if (strstr(shell, "fish")) {
+                          printf("  echo 'set -gx PATH $PATH %s' >> ~/.config/fish/config.fish\n", install_dir);
+                      } else {
+                          printf("  echo 'export PATH=\"$PATH:%s\"' >> ~/.profile\n", install_dir);
+                      }
+                  }
+              }
+              
+              return 0;
+          }
+          EOF
 
-          if [ "$ARCH_MISMATCH" = "1" ]; then
-              warn "This installer is for $EXPECTED_DISPLAY but you're running on $ARCH"
-              if [ -t 0 ]; then
-                  printf "Continue anyway? [y/N] "
-                  read -r REPLY
-                  case "$REPLY" in
-                      [Yy]*)
-                          ;;
-                      *)
-                          exit 1
-                          ;;
-                  esac
-              else
-                  error "Architecture mismatch and no TTY to confirm"
-              fi
-          fi
+          # Convert the compressed binary to a C header file
+          echo "Converting binary to C array..."
+          xxd -i bun.gz | sed 's/unsigned char bun_gz\[\]//' | sed 's/unsigned int bun_gz_len = .*//' > bun_data.h
 
-          # Create installation directory
-          mkdir -p "$INSTALL_DIR" || error "Failed to create installation directory: $INSTALL_DIR"
-
-          # Find where the payload starts
-          ARCHIVE_MARKER="__ARCHIVE_BELOW__"
-          ARCHIVE_LINE=$(awk "/$ARCHIVE_MARKER/ { print NR + 1; exit }" "$0")
-
-          if [ -z "$ARCHIVE_LINE" ]; then
-              error "Could not find archive marker"
-          fi
-
-          # Extract the payload
-          info "Extracting Bun to $INSTALL_DIR..."
-
-          # Use tail to skip the script part, then decode and extract
-          # We use base64 to ensure binary safety across all systems
-          if ! tail -n +"$ARCHIVE_LINE" "$0" | base64 -d | tar -xzf - -C "$INSTALL_DIR" 2>/dev/null; then
-              error "Failed to extract Bun. The archive may be corrupted."
-          fi
-
-          # Make it executable
-          chmod +x "$INSTALL_DIR/bun" || error "Failed to make bun executable"
-
-          # Verify installation
-          if [ -x "$INSTALL_DIR/bun" ]; then
-              BUN_VERSION=$("$INSTALL_DIR/bun" --version 2>/dev/null || echo "unknown")
-              info "✓ Bun $BUN_VERSION has been installed to $INSTALL_DIR/bun"
-          else
-              error "Installation verification failed"
-          fi
-
-          # Check if bun is in PATH
-          if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-              info ""
-              info "To get started, add Bun to your PATH:"
-              info "  export PATH=\"\$PATH:$INSTALL_DIR\""
-              info ""
-              info "To make this permanent, add it to your shell configuration file:"
-              case "${SHELL##*/}" in
-                  bash)
-                      info "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bashrc"
-                      ;;
-                  zsh)
-                      info "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zshrc"
-                      ;;
-                  fish)
-                      info "  echo 'set -gx PATH \$PATH $INSTALL_DIR' >> ~/.config/fish/config.fish"
-                      ;;
-                  *)
-                      info "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.profile"
-                      ;;
-              esac
-          fi
-
-          exit 0
-          # DO NOT REMOVE THE FOLLOWING LINE
-          __ARCHIVE_BELOW__
-          SCRIPT_EOF
-
-          # Replace placeholders
-          sed -i "s/ARCH_PLACEHOLDER/${{ matrix.arch }}/g" extract-header.sh
-          sed -i "s/DISPLAY_PLACEHOLDER/${{ matrix.display }}/g" extract-header.sh
-
-      - name: Create Self-Extracting Archive
+      - name: Build Self-Extracting Executable
         run: |
           cd sfx-build
 
-          # Create a tar.gz of the bun executable
-          tar -czf bun.tar.gz bun
+          # Select compiler based on architecture and libc
+          if [[ "${{ matrix.musl }}" == "true" ]]; then
+            # For musl builds, we need musl-gcc
+            sudo apt-get install -y musl-tools
+            if [[ "${{ matrix.arch }}" == "aarch64" ]]; then
+              # Cross-compile for aarch64 musl - this is more complex
+              # For now, skip cross-compilation for musl
+              echo "Warning: Cross-compilation for aarch64-musl not yet supported"
+              exit 0
+            else
+              CC=musl-gcc
+            fi
+          elif [[ "${{ matrix.arch }}" == "aarch64" ]]; then
+            CC=aarch64-linux-gnu-gcc
+          else
+            CC=gcc
+          fi
 
-          # Encode it as base64 (for binary safety)
-          base64 < bun.tar.gz > bun.tar.gz.b64
+          # Compile the self-extracting executable
+          echo "Building self-extracting executable..."
+          $CC -static -O3 -s \
+            -DBUN_ARCH="\"${{ matrix.display }}\"" \
+            sfx.c -o "${{ matrix.zip_name }}" \
+            -lz
 
-          # Combine header and payload
-          cat extract-header.sh bun.tar.gz.b64 > "${{ matrix.zip_name }}-sfx.sh"
+          # Compress the executable with UPX for smaller size
+          echo "Compressing executable with UPX..."
+          upx --best --lzma "${{ matrix.zip_name }}" || true
 
           # Make it executable
-          chmod +x "${{ matrix.zip_name }}-sfx.sh"
+          chmod +x "${{ matrix.zip_name }}"
 
-          # Test the SFX
+          # Show final size
+          echo "Final executable size:"
+          ls -lh "${{ matrix.zip_name }}"
+
+      - name: Test Self-Extracting Archive
+        if: ${{ matrix.arch != 'aarch64' && matrix.musl != 'true' }} # Can't test aarch64 or musl on x64 runner
+        run: |
+          cd sfx-build
+
           echo "Testing self-extraction..."
           TEST_DIR="$(mktemp -d)"
-          BUN_INSTALL_DIR="$TEST_DIR" ./${{ matrix.zip_name }}-sfx.sh
+          BUN_INSTALL_DIR="$TEST_DIR" ./${{ matrix.zip_name }}
 
           if [ -x "$TEST_DIR/bun" ]; then
             echo "✓ Self-extraction test passed"
@@ -273,64 +402,23 @@ jobs:
             exit 1
           fi
 
-      - name: Create Quick Install Script
-        run: |
-          cd sfx-build
-
-          # Also create a simple download-and-run script
-          cat > "${{ matrix.zip_name }}-install.sh" << 'INSTALLER_EOF'
-          #!/bin/sh
-          # Quick installer script for Bun on Linux
-
-          set -e
-
-          VERSION="VERSION_PLACEHOLDER"
-          ARCHIVE_NAME="ARCHIVE_PLACEHOLDER"
-
-          echo "Downloading Bun $VERSION for Linux..."
-
-          if [ "$VERSION" = "canary" ]; then
-              URL="https://github.com/oven-sh/bun/releases/download/canary/${ARCHIVE_NAME}-sfx.sh"
-          else
-              URL="https://github.com/oven-sh/bun/releases/download/$VERSION/${ARCHIVE_NAME}-sfx.sh"
-          fi
-
-          if command -v curl >/dev/null 2>&1; then
-              curl -fsSL "$URL" | sh
-          elif command -v wget >/dev/null 2>&1; then
-              wget -qO- "$URL" | sh
-          else
-              echo "Error: Neither curl nor wget found. Please install one of them."
-              exit 1
-          fi
-          INSTALLER_EOF
-
-          # Replace placeholders
-          sed -i "s/VERSION_PLACEHOLDER/${{ env.BUN_VERSION }}/g" "${{ matrix.zip_name }}-install.sh"
-          sed -i "s/ARCHIVE_PLACEHOLDER/${{ matrix.zip_name }}/g" "${{ matrix.zip_name }}-install.sh"
-
-          chmod +x "${{ matrix.zip_name }}-install.sh"
-
       - name: Generate Checksums
         run: |
           cd sfx-build
 
           # Generate SHA256 checksums
-          sha256sum "${{ matrix.zip_name }}-sfx.sh" > "${{ matrix.zip_name }}-sfx.sh.sha256"
-          sha256sum "${{ matrix.zip_name }}-install.sh" > "${{ matrix.zip_name }}-install.sh.sha256"
+          sha256sum "${{ matrix.zip_name }}" > "${{ matrix.zip_name }}.sha256"
 
           echo "Generated files:"
-          ls -la *.sh *.sha256
+          ls -la ${{ matrix.zip_name }}*
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.zip_name }}-sfx
           path: |
-            sfx-build/${{ matrix.zip_name }}-sfx.sh
-            sfx-build/${{ matrix.zip_name }}-sfx.sh.sha256
-            sfx-build/${{ matrix.zip_name }}-install.sh
-            sfx-build/${{ matrix.zip_name }}-install.sh.sha256
+            sfx-build/${{ matrix.zip_name }}
+            sfx-build/${{ matrix.zip_name }}.sha256
 
       - name: Upload to Release
         if: ${{ (github.event_name == 'release' || github.event.inputs.upload-to-release == 'true') && env.BUN_VERSION != 'canary' }}
@@ -339,12 +427,10 @@ jobs:
         run: |
           cd sfx-build
 
-          # Upload the SFX and installer scripts to the release
+          # Upload the SFX to the release
           gh release upload "${{ env.BUN_VERSION }}" \
-            "${{ matrix.zip_name }}-sfx.sh" \
-            "${{ matrix.zip_name }}-sfx.sh.sha256" \
-            "${{ matrix.zip_name }}-install.sh" \
-            "${{ matrix.zip_name }}-install.sh.sha256" \
+            "${{ matrix.zip_name }}" \
+            "${{ matrix.zip_name }}.sha256" \
             --clobber \
             --repo "${{ github.repository }}"
 

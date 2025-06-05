@@ -56,14 +56,9 @@ success() {
 # Check for unzip and offer SFX alternative if not available
 use_sfx=0
 if ! command -v unzip >/dev/null 2>&1; then
-    echo -e "${Dim}unzip is not available. Using self-extracting archive instead.${Color_Off}"
+    echo -e "${Dim}unzip is not available. Using self-extracting executable instead.${Color_Off}"
     use_sfx=1
-    
-    # Check for required tools for SFX
-    for tool in sh tar gzip base64 awk tail; do
-        command -v "$tool" >/dev/null 2>&1 ||
-            error "$tool is required for self-extracting archive installation"
-    done
+    # No tool checks needed - SFX executables have zero dependencies!
 fi
 
 if [[ $# -gt 2 ]]; then
@@ -161,21 +156,34 @@ if [[ $use_sfx -eq 1 ]]; then
         linux-x64-musl) sfx_name="bun-linux-x64-musl" ;;
         linux-x64-musl-baseline) sfx_name="bun-linux-x64-musl-baseline" ;;
         linux-aarch64-musl) sfx_name="bun-linux-aarch64-musl" ;;
-        *) error "Self-extracting archives are not available for $target. Please install unzip." ;;
+        *) error "Self-extracting executables are not available for $target. Please install unzip." ;;
     esac
     
     if [[ $# = 0 ]]; then
-        sfx_uri=$github_repo/releases/latest/download/$sfx_name-sfx.sh
+        sfx_uri=$github_repo/releases/latest/download/$sfx_name
     else
-        sfx_uri=$github_repo/releases/download/$1/$sfx_name-sfx.sh
+        sfx_uri=$github_repo/releases/download/$1/$sfx_name
     fi
     
-    info "Downloading self-extracting archive..."
+    info "Downloading self-extracting executable..."
+    info "This is a zero-dependency native executable."
     
-    # Download and run the SFX with custom install directory
+    # Download the SFX executable
+    sfx_temp="$exe.sfx.tmp"
+    curl --fail --location --progress-bar --output "$sfx_temp" "$sfx_uri" ||
+        error "Failed to download self-extracting executable from \"$sfx_uri\""
+    
+    # Make it executable
+    chmod +x "$sfx_temp" ||
+        error "Failed to set permissions on self-extracting executable"
+    
+    # Run it with custom install directory
     export BUN_INSTALL_DIR="$bin_dir"
-    curl --fail --location --progress-bar "$sfx_uri" | sh ||
-        error "Failed to download and run self-extracting archive from \"$sfx_uri\""
+    "$sfx_temp" ||
+        error "Failed to run self-extracting executable"
+    
+    # Clean up
+    rm -f "$sfx_temp"
     
     # The SFX installs directly to bin_dir, so we're done with extraction
     exe=$bin_dir/bun

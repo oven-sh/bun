@@ -191,6 +191,9 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    virtual_machine.addTraceEvent("CheckImmediate", "node.environment");
+    virtual_machine.addTraceEvent("RunAndClearNativeImmediates", "node.environment");
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;

@@ -281,6 +281,14 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        vm.addTraceEvent("RunTimers", "node.environment");
+
+        if (Environment.isWindows) {
+            return;
+        }
+
+        bun.assert(this.thread_id == std.Thread.getCurrentId());
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.

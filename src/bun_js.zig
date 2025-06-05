@@ -69,6 +69,15 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            vm.trace_events = vm.allocator.create(bun.TraceEvents) catch unreachable;
+            vm.trace_events.?.* = bun.TraceEvents.init(vm.allocator, ctx.runtime_options.trace_event_categories);
+
+            // Emit initial trace events
+            vm.trace_events.?.addEvent("Environment", "node.environment");
+        }
+
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -207,6 +216,15 @@ pub const Run = struct {
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
+
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            vm.trace_events = vm.allocator.create(bun.TraceEvents) catch unreachable;
+            vm.trace_events.?.* = bun.TraceEvents.init(vm.allocator, ctx.runtime_options.trace_event_categories);
+
+            // Emit initial trace events
+            vm.trace_events.?.addEvent("Environment", "node.environment");
+        }
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

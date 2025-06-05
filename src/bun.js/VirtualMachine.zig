@@ -188,6 +188,8 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
+trace_events: ?*bun.TraceEvents = null,
+
 pub const ProcessAutoKiller = @import("ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -638,6 +640,10 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    if (this.trace_events) |trace_events| {
+        trace_events.addEvent("BeforeExit", "node.environment");
+    }
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,6 +702,10 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    if (this.trace_events) |trace_events| {
+        trace_events.addEvent("RunCleanup", "node.environment");
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -709,6 +719,15 @@ pub fn onExit(this: *VirtualMachine) void {
         for (hooks.items) |hook| {
             hook.execute();
         }
+    }
+
+    if (this.trace_events) |trace_events| {
+        trace_events.addEvent("AtExit", "node.environment");
+
+        // Write trace file before exit
+        const tmpdir = bun.getenvZ("TMPDIR") orelse bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse if (bun.Environment.isWindows) "C:\\Windows\\Temp" else "/tmp";
+        trace_events.writeToFile(tmpdir) catch {};
+        trace_events.deinit();
     }
 }
 
@@ -3473,6 +3492,12 @@ pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
     return vm.transpiler.resolver.bustDirCache(path);
 }
 
+pub fn addTraceEvent(this: *VirtualMachine, name: []const u8, category: []const u8) void {
+    if (this.trace_events) |trace_events| {
+        trace_events.addEvent(name, category);
+    }
+}
+
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
 
@@ -3566,3 +3591,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const TraceEvents = @import("./TraceEvents.zig").TraceEvents;

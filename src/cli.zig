@@ -209,34 +209,49 @@ pub const Arguments = struct {
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
-        clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
-        clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
-        clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
-        clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
-        clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
-        clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
-        clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
-        clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
         clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
-        clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
-        clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
-        clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
-        clap.parseParam("-p, --print <STR>                 Evaluate argument as a script and print the result") catch unreachable,
-        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
-        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
-        clap.parseParam("--port <STR>                      Set the default port for Bun.serve") catch unreachable,
-        clap.parseParam("-u, --origin <STR>") catch unreachable,
-        clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
-        clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
-        clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
-        clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
-        clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
-        clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
+        clap.parseParam("--install <STR>                   Auto-install dependencies during execution. Supported triggers: \"auto\", \"fallback\", \"force\"") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip registry queries and resolve from disk") catch unreachable,
+        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages") catch unreachable,
+        clap.parseParam("-i                                Automatically install dependencies and use the latest matching versions of packages") catch unreachable,
+        clap.parseParam("--if-present                      Exit if the script to run does not exist") catch unreachable,
+        clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen when running in watch mode") catch unreachable,
+        clap.parseParam("--dump-environment-variables        Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
+        clap.parseParam("--dump-limits                     Dump system limits. Useful for debugging") catch unreachable,
+        clap.parseParam("-c, --config <STR>?                Specify path to config file (bunfig.toml)") catch unreachable,
+        clap.parseParam("--strict                          Run in strict mode. Eager replace the Code Generator and other future breaking changes") catch unreachable,
+        clap.parseParam("--print <STR>                     Print javascript object or arguments to stdout") catch unreachable,
+        clap.parseParam("--strip-ansi                      Strip ANSI colors from stdout") catch unreachable,
+        clap.parseParam("-e, --eval <STR>                   Evaluate argument as a script") catch unreachable,
+        clap.parseParam("--tag <STR>                       Load configuration from package.json with a custom key (must be string, e.g. --tag=\"staging\")") catch unreachable,
+        clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
+        clap.parseParam("--experimental-strip              Experimental: strip unnecessary code from imported JavaScriptCore builtins") catch unreachable,
+        clap.parseParam("--strip-types                     Strip types from input files when using Bun.{build,write}") catch unreachable,
+        clap.parseParam("--no-experimental-strip           Force disabling experimental strip.") catch unreachable,
+        clap.parseParam("--no-strip-types                  Disable strip types from input files when using Bun.{build,write}") catch unreachable,
+        clap.parseParam("--require <STR>                    Require a module before running the script") catch unreachable,
+        clap.parseParam("-r <STR>                          Require a module before running the script") catch unreachable,
+        clap.parseParam("--preload <STR>                    Preload module at startup") catch unreachable,
+        // Compatibility no-ops. We handle these in https://github.com/oven-sh/bun/blob/main/src/cli.zig
+        clap.parseParam("--inspect <STR>?                     Activate Bun's debugger") catch unreachable,
+        clap.parseParam("--inspect-wait <STR>?                Activate Bun's debugger, wait for debugger to connect before executing") catch unreachable,
+        clap.parseParam("--inspect-brk <STR>?                 Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+        clap.parseParam("--enable-source-maps                Enable source map support in stack traces") catch unreachable,
+        clap.parseParam("--trace-warnings                    Print stack traces for process warnings") catch unreachable,
+        clap.parseParam("--preserve-symlinks                 Preserve symbolic links when resolving") catch unreachable,
+        clap.parseParam("--preserve-symlinks-main            Preserve symbolic links when resolving the main module") catch unreachable,
+        clap.parseParam("--input-type <STR>                  Set input type") catch unreachable,
+        clap.parseParam("--no-warnings                       Disable printing a stack trace on SIGINT") catch unreachable,
+        clap.parseParam("--experimental-loader <STR>          Use the specified module as a custom loader") catch unreachable,
+        clap.parseParam("--export-condition <STR>            use this condition") catch unreachable,
+        clap.parseParam("--no-deprecation                    Silence deprecation warnings") catch unreachable,
+        clap.parseParam("--experimental-shadow-realm         Enable experimental support for the ShadowRealm API") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Enable trace events for the specified categories") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -850,6 +865,10 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
+            }
+
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
             }
         }
 
@@ -1547,6 +1566,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        trace_event_categories: []const u8 = "",
     };
 
     var global_cli_ctx: Context = undefined;

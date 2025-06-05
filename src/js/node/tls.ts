@@ -2,7 +2,7 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
-const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
+const addServerName = $newZigFunction("socket.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
 
@@ -45,7 +45,7 @@ function unfqdn(host) {
 // String#toLowerCase() is locale-sensitive so we use
 // a conservative version that only lowercases A-Z.
 function toLowerCase(c) {
-  return StringFromCharCode.$call(32 + StringPrototypeCharCodeAt.$call(c, 0));
+  return StringFromCharCode(32 + StringPrototypeCharCodeAt.$call(c, 0));
 }
 
 function splitHost(host) {

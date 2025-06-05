@@ -460,7 +460,7 @@ pub const Value = union(Tag) {
                 var blob = this.use();
                 defer blob.detach();
                 blob.resolveSize();
-                const value = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
+                const value = JSC.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
                 this.* = .{
                     .Locked = .{

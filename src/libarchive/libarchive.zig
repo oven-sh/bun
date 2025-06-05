@@ -183,7 +183,6 @@ pub const BufferReadStream = struct {
     // }
 };
 
-
 pub const Archiver = struct {
     // impl: *lib.archive = undefined,
     // buf: []const u8 = undefined,

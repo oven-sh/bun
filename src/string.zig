@@ -547,10 +547,9 @@ pub const String = extern struct {
     ) JSC.JSValue;
 
     /// calls toJS on all elements of `array`.
-    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
+    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-
-        return BunString__createArray(globalObject, array.ptr, array.len);
+        return bun.jsc.fromJSHostValue(BunString__createArray(globalObject, array.ptr, array.len));
     }
 
     pub fn toZigString(this: String) ZigString {

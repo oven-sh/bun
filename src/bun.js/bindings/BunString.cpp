@@ -69,13 +69,7 @@ extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
 {
     ASSERT(simdutf::validate_ascii(bytes, length));
     auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
-    atom.impl()->ref();
-// Ignore the warning about returning a stack address
-// This is safe because we've ref'd the atom.impl() which will keep it alive
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreturn-stack-address"
-    return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
-#pragma clang diagnostic pop
+    return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
 }
 
 extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
@@ -84,13 +78,7 @@ extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
         auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
         if (atom.isNull())
             return { BunStringTag::Dead, {} };
-        atom.impl()->ref();
-        // Ignore the warning about returning a stack address
-// This is safe because we've ref'd the atom.impl() which will keep it alive
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreturn-stack-address"
-        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
-#pragma clang diagnostic pop
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
     }
 
     return { BunStringTag::Dead, {} };

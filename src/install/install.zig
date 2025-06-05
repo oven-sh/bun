@@ -5968,7 +5968,7 @@ pub const PackageManager = struct {
                 false,
             ) catch |err| {
                 const note = .{
-                    .fmt = "error occured while resolving {}",
+                    .fmt = "error occurred while resolving {}",
                     .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                         .path_sep = switch (dependency.version.tag) {
                             .folder => .auto,
@@ -7518,10 +7518,6 @@ pub const PackageManager = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-
-        if (subcommand == .pm and cli.positionals.len >= 2 and strings.eqlComptime(cli.positionals[1], "audit")) {
-            env.quiet = true;
-        }
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);

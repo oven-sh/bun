@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isBroken, isMacOS, isWindows, tmpdirSync, rmScope, tempDirWithFiles } from "harness";
-import { join } from "node:path";
-import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import type { Server } from "bun";
+import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
+import { isWindows, rmScope, tempDirWithFiles } from "harness";
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 
 describe("Bun.file in serve routes", () => {
   let server: Server;

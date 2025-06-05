@@ -449,12 +449,6 @@ fn unhandledError(this: *WebWorker, _: anyerror) void {
     this.flushLogs();
 }
 
-pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
-    if (handle) |h| {
-        h.requestTermination();
-    }
-}
-
 fn spin(this: *WebWorker) void {
     log("[{d}] spin start", .{this.execution_context_id});
 
@@ -645,6 +639,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
 
     this.deref();
     bun.exitThread();
+}
+
+pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
+    if (handle) |h| {
+        h.requestTermination();
+    }
 }
 
 /// Manages the complex timing surrounding web worker creation and destruction

@@ -342,12 +342,15 @@ describe("worker_threads", () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
+    let exitCode: number | undefined = undefined;
+    worker.once("exit", code => (exitCode = code));
     await Bun.sleep(200);
     const code = await worker.terminate();
-    expect(code).toBe(2);
+    expect<number | undefined>(code).toBe(undefined);
+    expect<number | undefined>(exitCode).toBe(2);
   });
 
-  test.todo("worker terminating forcefully properly interrupts", async () => {
+  test("worker terminating forcefully properly interrupts", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
     await new Promise<void>(done => {
       worker.on("message", () => done());

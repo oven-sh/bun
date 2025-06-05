@@ -9,14 +9,35 @@ server: ?AnyServer = null,
 blob: Blob,
 headers: Headers = .{ .allocator = bun.default_allocator },
 status_code: u16,
+stat_hash: bun.fs.StatHash = .{},
+has_last_modified_header: bool = false,
 
 pub const InitOptions = struct {
     server: ?AnyServer,
     status_code: u16 = 200,
 };
 
+pub fn lastModifiedDate(this: *const FileRoute) ?u64 {
+    if (this.has_last_modified_header) {
+        if (this.headers.get("last-modified")) |last_modified| {
+            var string = bun.String.init(last_modified);
+            defer string.deref();
+            const date_f64 = bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+            if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
+                return @intFromFloat(date_f64);
+            }
+        }
+    }
+
+    if (this.stat_hash.last_modified_u64 > 0) {
+        return this.stat_hash.last_modified_u64;
+    }
+
+    return null;
+}
+
 pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
-    var headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+    const headers = Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
     return bun.new(FileRoute, .{
         .ref_count = .init(),
         .server = opts.server,
@@ -27,28 +48,36 @@ pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
 }
 
 fn deinit(this: *FileRoute) void {
-    this.blob.detach();
+    this.blob.deinit();
     this.headers.deinit();
     bun.destroy(this);
 }
 
 pub fn memoryCost(this: *const FileRoute) usize {
-    return @sizeOf(FileRoute) + this.headers.memoryCost() + this.blob.memoryCost();
+    return @sizeOf(FileRoute) + this.headers.memoryCost() + this.blob.reported_estimated_size;
 }
 
 pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSError!?*FileRoute {
     if (argument.as(JSC.WebCore.Response)) |response| {
         response.body.value.toBlobIfPossible();
         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
+            if (response.body.value.Blob.store.?.data.file.pathlike == .fd) {
+                return globalThis.throwTODO("Support serving files from a file descriptor. Please pass a path instead.");
+            }
+
             var blob = response.body.value.use();
+
             blob.globalThis = globalThis;
             blob.allocator = null;
             response.body.value = .{ .Blob = blob.dupe() };
+            const headers = Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory();
+
             return bun.new(FileRoute, .{
                 .ref_count = .init(),
                 .server = null,
                 .blob = blob,
-                .headers = Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }) catch bun.outOfMemory(),
+                .headers = headers,
+                .has_last_modified_header = headers.get("last-modified") != null,
                 .status_code = response.statusCode(),
             });
         }
@@ -70,136 +99,156 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
     return null;
 }
 
-pub fn onHEADRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
-    req.setYield(false);
-    this.onHEAD(resp);
-}
-
 fn writeHeaders(this: *FileRoute, resp: AnyResponse) void {
+    const entries = this.headers.entries.slice();
+    const names = entries.items(.name);
+    const values = entries.items(.value);
+    const buf = this.headers.buf.items;
+
     switch (resp) {
         inline .SSL, .TCP => |s| {
-            const entries = this.headers.entries.slice();
-            const names = entries.items(.name);
-            const values = entries.items(.value);
-            const buf = this.headers.buf.items;
             for (names, values) |name, value| {
                 s.writeHeader(name.slice(buf), value.slice(buf));
             }
         },
     }
+
+    if (!this.has_last_modified_header) {
+        if (this.stat_hash.lastModified()) |last_modified| {
+            resp.writeHeader("last-modified", last_modified);
+        }
+    }
 }
 
-fn writeStatus(_: *FileRoute, status: u16, resp: AnyResponse) void {
+fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
     }
 }
 
-pub fn onHEAD(this: *FileRoute, resp: AnyResponse) void {
+pub fn onHEADRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
     bun.debugAssert(this.server != null);
-    this.ref();
-    if (this.server) |server| {
-        server.onPendingRequest();
-        resp.timeout(server.config().idleTimeout);
-    }
-    var size = this.blob.size();
-    if (size == 0) this.blob.resolveSize();
-    size = this.blob.size();
-    this.writeStatus(this.status_code, resp);
-    this.writeHeaders(resp);
-    resp.writeHeaderInt("Content-Length", size);
-    resp.endWithoutBody(resp.shouldCloseConnection());
-    this.deref();
+
+    this.on(req, resp, true);
 }
 
 pub fn onRequest(this: *FileRoute, req: *uws.Request, resp: AnyResponse) void {
-    req.setYield(false);
-    this.on(resp);
+    this.on(req, resp, false);
 }
 
-pub fn on(this: *FileRoute, resp: AnyResponse) void {
+pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, is_head: bool) void {
     bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
         resp.timeout(server.config().idleTimeout);
     }
-    var path = this.blob.getFileName() orelse {
-        this.writeStatus(404, resp);
-        resp.endWithoutBody(true);
+    const path = this.blob.store.?.getPath() orelse {
+        req.setYield(true);
         this.deref();
         return;
     };
 
-    var buf: bun.PathBuffer = undefined;
-    const is_ssl = resp == .SSL;
-    const fd_result = bun.sys.open(
-        path.sliceZ(&buf),
-        bun.O.RDONLY | bun.O.CLOEXEC | (if (is_ssl) bun.O.NONBLOCK else 0),
+    const open_flags = bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NONBLOCK;
+    const fd_result = bun.sys.openA(
+        path,
+        open_flags,
         0,
     );
     if (fd_result == .err) {
-        this.writeStatus(404, resp);
-        resp.endWithoutBody(true);
+        req.setYield(true);
         this.deref();
         return;
     }
 
     const fd = fd_result.result;
-    const stat = switch (bun.sys.fstat(fd)) {
-        .result => |s| s,
-        .err => |err| {
-            fd.close();
-            this.writeStatus(404, resp);
-            resp.endWithoutBody(true);
+
+    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since");
+
+    const can_serve_file: bool, const size: u64, const file_type: bun.io.FileType, const pollable: bool = brk: {
+        const stat = switch (bun.sys.fstat(fd)) {
+            .result => |s| s,
+            .err => break :brk .{ false, 0, undefined, false },
+        };
+
+        const stat_size: u64 = @intCast(@max(stat.size, 0));
+        const _size: u64 = @min(stat_size, @as(u64, this.blob.size));
+
+        if (bun.S.ISDIR(@intCast(stat.mode))) {
+            break :brk .{ false, 0, undefined, false };
+        }
+
+        this.stat_hash.hash(stat, path);
+
+        if (bun.S.ISFIFO(@intCast(stat.mode)) or bun.S.ISCHR(@intCast(stat.mode))) {
+            break :brk .{ true, _size, .pipe, true };
+        }
+
+        if (bun.S.ISSOCK(@intCast(stat.mode))) {
+            break :brk .{ true, _size, .socket, true };
+        }
+
+        break :brk .{ true, _size, .file, false };
+    };
+
+    if (!can_serve_file) {
+        bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
+        this.deref();
+        req.setYield(true);
+        return;
+    }
+
+    const status_code: u16 = brk: {
+        // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
+        // GET or HEAD. When used in combination with If-None-Match, it is
+        // ignored, unless the server doesn't support If-None-Match.
+        if (input_if_modified_since_date) |date| {
+            if (is_head or bun.strings.eqlCaseInsensitiveASCII(req.method(), "get", true)) {
+                if (this.lastModifiedDate()) |last_modified| {
+                    if (date > last_modified) {
+                        break :brk 304;
+                    }
+                }
+            }
+        }
+
+        if (size == 0 and file_type == .file and this.status_code == 200) {
+            break :brk 204;
+        }
+
+        break :brk this.status_code;
+    };
+
+    this.writeStatusCode(status_code, resp);
+    this.writeHeaders(resp);
+    if (file_type == .file and !resp.state().hasWrittenContentLengthHeader()) {
+        resp.writeHeaderInt("content-length", size);
+        resp.markWroteContentLengthHeader();
+    }
+
+    resp.writeMark();
+
+    switch (status_code) {
+        204, 205, 304, 307, 308 => {
+            resp.endWithoutBody(resp.shouldCloseConnection());
             this.deref();
             return;
         },
-    };
-    if (bun.S.ISDIR(stat.mode)) {
-        bun.Async.Closer.close(fd, {});
-        this.writeStatus(404, resp);
-        resp.endWithoutBody(true);
+        else => {},
+    }
+
+    if (is_head) {
+        resp.endWithoutBody(resp.shouldCloseConnection());
         this.deref();
         return;
     }
 
-    var nonblocking = is_ssl;
-    if (bun.S.ISREG(stat.mode)) {
-        nonblocking = false;
-    }
-    const pollable = bun.sys.isPollable(stat.mode) or nonblocking;
-    var file_type: FileType = if (bun.S.ISFIFO(stat.mode))
-        .pipe
-    else if (bun.S.ISSOCK(stat.mode))
-        .socket
-    else
-        .file;
-    if (nonblocking and file_type != .socket) {
-        file_type = .nonblocking_pipe;
-    }
-    nonblocking = nonblocking or (pollable and file_type != .pipe);
-    if (nonblocking and file_type == .pipe) {
-        file_type = .nonblocking_pipe;
-    }
-
-    const size = @as(u64, @intCast(stat.size));
-    this.writeStatus(this.status_code, resp);
-    this.writeHeaders(resp);
-    resp.writeHeaderInt("Content-Length", size);
-
-    switch (resp) {
-        .TCP => |r| {
-            r.prepareForSendfile();
-            const transfer = SendfileTransfer.create(fd, size, .{ .TCP = r }, this);
-            transfer.start();
-        },
-        .SSL => |r| {
-            const transfer = StreamTransfer.create(fd, r, this, pollable, nonblocking, file_type);
-            transfer.start();
-        },
-    }
+    const transfer = StreamTransfer.create(fd, resp, this, pollable, file_type != .file, file_type);
+    transfer.start(
+        if (file_type == .file) this.blob.offset else 0,
+        if (file_type == .file and this.blob.size > 0) @intCast(size) else null,
+    );
 }
 
 fn onResponseComplete(this: *FileRoute, resp: AnyResponse) void {
@@ -224,94 +273,28 @@ const AnyResponse = uws.AnyResponse;
 const linux = std.os.linux;
 const Async = bun.Async;
 const FileType = bun.io.FileType;
-
-const SendfileTransfer = struct {
-    fd: bun.FileDescriptor,
-    remain: u64,
-    resp: AnyResponse,
-    route: *FileRoute,
-    offset: u64 = 0,
-    has_listener: bool = false,
-
-    pub fn create(fd: bun.FileDescriptor, size: u64, resp: AnyResponse, route: *FileRoute) *SendfileTransfer {
-        return bun.new(SendfileTransfer, .{ .fd = fd, .remain = size, .resp = resp, .route = route });
-    }
-
-    fn start(this: *SendfileTransfer) void {
-        this.resp.onAborted(*SendfileTransfer, onAborted, this);
-        this.send();
-    }
-
-    fn send(this: *SendfileTransfer) void {
-        while (this.remain > 0) {
-            const start = this.offset;
-            var signed: i64 = @as(i64, @intCast(this.offset));
-            const rc = linux.sendfile(
-                this.resp.TCP.getNativeHandle().cast(),
-                this.fd.cast(),
-                &signed,
-                this.remain,
-            );
-            this.offset = @as(u64, @intCast(signed));
-            const errcode = bun.sys.getErrno(rc);
-            this.remain -= @min(this.remain, this.offset - start);
-
-            if (errcode == .SUCCESS and this.remain == 0) {
-                this.finish();
-                return;
-            }
-
-            if (errcode == .AGAIN) {
-                if (!this.has_listener) {
-                    this.has_listener = true;
-                    this.resp.onWritable(*SendfileTransfer, onWritable, this);
-                }
-                this.resp.TCP.markNeedsMore();
-                return;
-            }
-
-            this.finish();
-            return;
-        }
-        this.finish();
-    }
-
-    fn onWritable(this: *SendfileTransfer, _: u64, _: AnyResponse) bool {
-        if (this.route.server) |server| {
-            this.resp.timeout(server.config().idleTimeout);
-        }
-        this.send();
-        return this.remain == 0;
-    }
-
-    fn finish(this: *SendfileTransfer) void {
-        this.resp.TCP.endSendFile(this.offset, this.resp.shouldCloseConnection());
-        this.fd.close();
-        this.route.onResponseComplete(.{ .TCP = this.resp.TCP });
-        bun.destroy(this);
-    }
-
-    fn onAborted(this: *SendfileTransfer, resp: AnyResponse) void {
-        _ = resp;
-        this.fd.close();
-        this.route.onResponseComplete(.{ .TCP = this.resp.TCP });
-        bun.destroy(this);
-    }
-};
+const Output = bun.Output;
 
 const StreamTransfer = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(StreamTransfer),
     fd: bun.FileDescriptor,
-    resp: *uws.NewApp(true).Response,
+    resp: AnyResponse,
     route: *FileRoute,
-    pollable: bool,
-    nonblocking: bool,
-    file_type: FileType,
-    has_listener: bool = false,
+
+    defer_deinit: ?*bool = null,
+    max_size: ?u64 = null,
+
+    state: packed struct(u8) {
+        waiting_for_readable: bool = false,
+        waiting_for_writable: bool = false,
+        has_ended_response: bool = false,
+        _: u5 = 0,
+    } = .{},
+    const log = Output.scoped(.StreamTransfer, true);
 
     pub fn create(
         fd: bun.FileDescriptor,
-        resp: *uws.NewApp(true).Response,
+        resp: AnyResponse,
         route: *FileRoute,
         pollable: bool,
         nonblocking: bool,
@@ -321,104 +304,232 @@ const StreamTransfer = struct {
             .fd = fd,
             .resp = resp,
             .route = route,
-            .pollable = pollable,
-            .nonblocking = nonblocking,
-            .file_type = file_type,
         });
-        t.reader.flags.close_handle = false;
+        t.reader.flags.close_handle = true;
         t.reader.flags.pollable = pollable;
         t.reader.flags.nonblocking = nonblocking;
-        if (file_type == .socket) {
-            t.reader.flags.socket = true;
+        if (comptime bun.Environment.isPosix) {
+            if (file_type == .socket) {
+                t.reader.flags.socket = true;
+            }
         }
         t.reader.setParent(t);
         return t;
     }
 
-    fn start(this: *StreamTransfer) void {
+    fn start(this: *StreamTransfer, start_offset: usize, size: ?usize) void {
+        log("start", .{});
+
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
         this.resp.onAborted(*StreamTransfer, onAborted, this);
-        switch (this.reader.start(this.fd, this.pollable)) {
+        this.state.waiting_for_readable = true;
+        this.state.waiting_for_writable = true;
+        this.max_size = size;
+
+        switch (if (start_offset > 0)
+            this.reader.startFileOffset(this.fd, this.reader.flags.pollable, start_offset)
+        else
+            this.reader.start(this.fd, this.reader.flags.pollable)) {
             .err => {
                 this.finish();
                 return;
             },
             .result => {},
         }
-        if (this.reader.handle.getPoll()) |poll| {
-            if (this.file_type == .socket or this.reader.flags.socket) {
-                poll.flags.insert(.socket);
-            } else {
-                poll.flags.insert(.fifo);
-            }
-            if (this.reader.flags.nonblocking) {
-                poll.flags.insert(.nonblocking);
+
+        if (bun.Environment.isPosix) {
+            if (this.reader.handle.getPoll()) |poll| {
+                if (this.reader.flags.nonblocking) {
+                    poll.flags.insert(.nonblocking);
+                }
+
+                switch (this.reader.getFileType()) {
+                    .socket => poll.flags.insert(.socket),
+                    .nonblocking_pipe, .pipe => poll.flags.insert(.fifo),
+                    .file => {},
+                }
             }
         }
+
         this.reader.read();
     }
 
-    fn onReadChunk(this: *StreamTransfer, chunk: []const u8, state: bun.io.ReadState) bool {
-        if (chunk.len > 0) {
-            switch (this.resp.write(chunk)) {
-                .backpressure => {
-                    if (!this.has_listener) {
-                        this.has_listener = true;
-                        this.resp.onWritable(*StreamTransfer, onWritable, this);
-                    }
-                    this.reader.pause();
-                    this.resp.markNeedsMore();
-                    return false;
-                },
-                .want_more => {},
-            }
-        }
+    pub fn onReadChunk(this: *StreamTransfer, chunk_: []const u8, state_: bun.io.ReadState) bool {
+        log("onReadChunk", .{});
 
-        if (state == .eof) {
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
+        if (this.state.has_ended_response) {
+            this.state.waiting_for_readable = false;
             this.finish();
             return false;
         }
 
-        return true;
+        const chunk, const state = brk: {
+            if (this.max_size) |*max_size| {
+                const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
+                max_size.* -|= chunk.len;
+                if (state_ != .eof and max_size.* == 0) {
+                    break :brk .{ chunk, .eof };
+                }
+
+                break :brk .{ chunk, state_ };
+            }
+
+            break :brk .{ chunk_, state_ };
+        };
+
+        if (state == .eof) {
+            this.state.waiting_for_readable = false;
+            this.state.has_ended_response = true;
+            this.state.waiting_for_writable = false;
+            const resp = this.resp;
+            const route = this.route;
+            route.onResponseComplete(resp);
+            resp.end(chunk, resp.shouldCloseConnection());
+            this.finish();
+            return false;
+        }
+
+        switch (this.resp.write(chunk)) {
+            .backpressure => {
+                this.resp.onWritable(*StreamTransfer, onWritable, this);
+                this.reader.pause();
+                this.resp.markNeedsMore();
+                this.state.waiting_for_writable = true;
+                this.state.waiting_for_readable = false;
+                return false;
+            },
+            .want_more => {
+                this.state.waiting_for_readable = true;
+                this.state.waiting_for_writable = false;
+                return true;
+            },
+        }
     }
 
-    fn onReaderDone(this: *StreamTransfer) void {
+    pub fn onReaderDone(this: *StreamTransfer) void {
+        log("onReaderDone", .{});
+        this.state.waiting_for_readable = false;
+
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
         this.finish();
     }
 
-    fn onReaderError(this: *StreamTransfer, _: bun.sys.Error) void {
+    pub fn onReaderError(this: *StreamTransfer, _: bun.sys.Error) void {
+        log("onReaderError", .{});
+        this.state.waiting_for_readable = false;
+
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
         this.finish();
     }
 
-    fn eventLoop(this: *StreamTransfer) JSC.EventLoopHandle {
-        return this.route.server.?.vm().eventLoop();
+    pub fn eventLoop(this: *StreamTransfer) JSC.EventLoopHandle {
+        return JSC.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
     }
 
-    fn loop(this: *StreamTransfer) *Async.Loop {
+    pub fn loop(this: *StreamTransfer) *Async.Loop {
         return this.eventLoop().loop();
     }
 
     fn onWritable(this: *StreamTransfer, _: u64, _: AnyResponse) bool {
+        log("onWritable", .{});
+
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
+        if (this.reader.isDone()) {
+            @branchHint(.unlikely);
+            this.finish();
+            return false;
+        }
+
         if (this.route.server) |server| {
             this.resp.timeout(server.config().idleTimeout);
         }
-        this.has_listener = false;
+
+        this.state.waiting_for_writable = false;
+        this.state.waiting_for_readable = true;
         this.reader.read();
         return false;
     }
 
     fn finish(this: *StreamTransfer) void {
-        this.resp.endWithoutBody(this.resp.shouldCloseConnection());
-        this.reader.close();
-        this.fd.close();
-        this.route.onResponseComplete(.{ .SSL = this.resp });
-        bun.destroy(this);
+        log("finish", .{});
+        if (!this.state.has_ended_response) {
+            this.state.has_ended_response = true;
+            const resp = this.resp;
+            const route = this.route;
+            resp.endWithoutBody(resp.shouldCloseConnection());
+            route.onResponseComplete(resp);
+        }
+
+        if (!this.reader.isDone()) {
+            this.reader.close();
+            return;
+        }
+
+        this.deinit();
     }
 
     fn onAborted(this: *StreamTransfer, resp: AnyResponse) void {
-        _ = resp;
-        this.reader.close();
-        this.fd.close();
-        this.route.onResponseComplete(.{ .SSL = this.resp });
+        log("onAborted", .{});
+        var scope: DeinitScope = undefined;
+        scope.enter(this);
+        defer scope.exit();
+
+        this.state.has_ended_response = true;
+        this.route.onResponseComplete(resp);
+        this.finish();
+    }
+
+    fn deinit(this: *StreamTransfer) void {
+        if (this.defer_deinit) |defer_deinit| {
+            defer_deinit.* = true;
+            log("deinit deferred", .{});
+            return;
+        }
+
+        log("deinit", .{});
+        this.reader.deinit();
         bun.destroy(this);
+    }
+};
+
+const DeinitScope = struct {
+    stream: *StreamTransfer,
+    prev_defer_deinit: ?*bool,
+    deinit_called: bool = false,
+
+    /// This has to be an instance method to avoid a use-after-stack.
+    pub fn enter(this: *DeinitScope, stream: *StreamTransfer) void {
+        this.stream = stream;
+        this.deinit_called = false;
+        this.prev_defer_deinit = this.stream.defer_deinit;
+        if (this.prev_defer_deinit == null) {
+            this.stream.defer_deinit = &this.deinit_called;
+        }
+    }
+
+    pub fn exit(this: *DeinitScope) void {
+        if (this.prev_defer_deinit == null and &this.deinit_called == this.stream.defer_deinit) {
+            this.stream.defer_deinit = this.prev_defer_deinit;
+
+            if (this.deinit_called) {
+                this.stream.deinit();
+            }
+        }
     }
 };

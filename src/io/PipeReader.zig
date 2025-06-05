@@ -147,7 +147,7 @@ const PosixBufferedReader = struct {
         this.handle = .{ .fd = fd };
     }
 
-    fn getFileType(this: *const PosixBufferedReader) FileType {
+    pub fn getFileType(this: *const PosixBufferedReader) FileType {
         const flags = this.flags;
         if (flags.socket) {
             return .socket;
@@ -183,7 +183,6 @@ const PosixBufferedReader = struct {
     // No-op on posix.
     pub fn pause(this: *PosixBufferedReader) void {
         _ = this; // autofix
-
     }
 
     pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {

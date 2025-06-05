@@ -4794,6 +4794,16 @@ pub const Headers = struct {
         };
     }
 
+    pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
+        for (this.entries.items(.name), 0..) |name_ptr, i| {
+            if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name_ptr), name, true)) {
+                return this.asStr(this.entries.items(.value)[i]);
+            }
+        }
+
+        return null;
+    }
+
     pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
         var offset: u32 = @truncate(this.buf.items.len);
         try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);

@@ -2419,7 +2419,9 @@ pub fn finalizeBundle(
                     entry.key_ptr.* = try dev.allocator.dupe(u8, key);
                 }
             } else {
-                _ = map.swapRemove(key);
+                if (map.fetchSwapRemove(key)) |entry| {
+                    dev.allocator.free(entry.key);
+                }
             }
         }
 

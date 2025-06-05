@@ -255,7 +255,7 @@ fn setCwd_(globalObject: *JSC.JSGlobalObject, to: *JSC.ZigString) bun.JSError!JS
 // TODO(@190n) this may need to be noreturn
 pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
-    vm.exit_handler.exit_code = code;
+    vm.exit_handler.exit_code = code; // TODO(@alii) Is setting this multiple times incorrect? There's a regression node test for this (https://linear.app/oven/issue/BUN-13917/nodejs-test-test-worker-process-exit-async-modulejs)
     if (vm.worker) |worker| {
         // TODO(@190n) we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner

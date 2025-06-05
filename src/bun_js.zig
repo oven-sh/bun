@@ -22,6 +22,9 @@ const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
 
+// Node.js trace events support
+extern fn Bun__setTraceEventCategories([*:0]const u8) void;
+
 var run: Run = undefined;
 pub const Run = struct {
     ctx: Command.Context,
@@ -176,6 +179,13 @@ pub const Run = struct {
         }
 
         bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
+
+        // Set up trace event categories if specified
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            const categories_z = try bun.default_allocator.dupeZ(u8, ctx.runtime_options.trace_event_categories);
+            defer bun.default_allocator.free(categories_z);
+            Bun__setTraceEventCategories(categories_z);
+        }
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();

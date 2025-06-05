@@ -209,6 +209,14 @@
 #include <unistd.h>
 #endif
 
+#include "ZigGlobalObject.h"
+#include "ActiveDOMObject.h"
+#include "AsyncContextFrame.h"
+#include "Base64Helpers.h"
+#include "BunCommonStrings.h"
+#include "BunBuiltinNames.h"
+#include "NodeTraceEvents.h"
+
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
@@ -3402,6 +3410,9 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
     ASSERT(classInfo());
+
+    // Set up Node.js trace events support
+    Bun::setupNodeTraceEvents(this);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))

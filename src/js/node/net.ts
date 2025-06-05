@@ -751,6 +751,34 @@ function Socket(options?) {
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
+
+    // Create socket from fd immediately
+    if (!this._handle) {
+      this._handle = newDetachedSocket(false);
+      initSocketHandle(this);
+    }
+
+    // Connect using the fd
+    doConnect(this._handle, {
+      data: this,
+      fd: fd,
+      socket: this[khandlers],
+      allowHalfOpen: this.allowHalfOpen,
+    })
+      .then(() => {
+        // Socket is ready
+        this.connecting = false;
+        process.nextTick(() => {
+          this.emit("connect", this);
+          this.emit("ready");
+        });
+      })
+      .catch(error => {
+        if (!this.destroyed) {
+          this.emit("error", error);
+          this.emit("close", true);
+        }
+      });
   }
 
   if (socket instanceof Socket) {

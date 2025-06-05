@@ -1003,8 +1003,16 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *JSC.JSGlobalObject, callFrame: *J
                 },
                 .none => {},
             }
+        } else if (JSC.API.TCPSocket.fromJS(handle)) |socket| {
+            log("got TCPSocket", .{});
+            const fd = socket.socket.fd();
+            zig_handle = .init(fd, handle);
+        } else if (JSC.API.TLSSocket.fromJS(handle)) |socket| {
+            log("got TLSSocket", .{});
+            const fd = socket.socket.fd();
+            zig_handle = .init(fd, handle);
         } else {
-            //
+            log("unknown handle type", .{});
         }
     }
 

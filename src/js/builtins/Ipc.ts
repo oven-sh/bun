@@ -145,16 +145,16 @@
  * @param {{ keepOpen?: boolean } | undefined} options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(_message, _handle, _options) {
-  // sending file descriptors is not supported yet
-  return null; // send the message without the file descriptor
-
-  /*
+export function serialize(message, handle, options) {
   const net = require("node:net");
   const dgram = require("node:dgram");
+
+  console.log("[IPC serialize] message:", message, "handle:", handle, "handle type:", handle?.constructor?.name);
+
   if (handle instanceof net.Server) {
     // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
     const server = handle as unknown as (typeof net)["Server"] & { _handle: Bun.TCPSocketListener<unknown> };
+    if (!server._handle) return null;
     return [server._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
   } else if (handle instanceof net.Socket) {
     const new_message: { cmd: "NODE_HANDLE"; message: unknown; type: "net.Socket"; key?: string } = {
@@ -162,25 +162,23 @@ export function serialize(_message, _handle, _options) {
       message,
       type: "net.Socket",
     };
-    const socket = handle as unknown as (typeof net)["Socket"] & {
-      _handle: Bun.Socket;
-      server: (typeof net)["Server"] | null;
-      setTimeout(timeout: number): void;
-    };
+    const socket = handle as import("node:net").Socket;
+    console.log("[IPC serialize] socket._handle:", socket._handle);
     if (!socket._handle) return null; // failed
 
     // If the socket was created by net.Server
     if (socket.server) {
       // The worker should keep track of the socket
-      new_message.key = socket.server._connectionKey;
+      new_message.key = (socket.server as any)._connectionKey;
 
-      const firstTime = !this[kChannelHandle].sockets.send[message.key];
-      const socketList = getSocketList("send", this, message.key);
+      // TODO: Handle socket lists when cluster support is added
+      // const firstTime = !this[kChannelHandle].sockets.send[message.key];
+      // const socketList = getSocketList("send", this, message.key);
 
       // The server should no longer expose a .connection property
       // and when asked to close it should query the socket status from
       // the workers
-      if (firstTime) socket.server._setupWorker(socketList);
+      // if (firstTime) socket.server._setupWorker(socketList);
 
       // Act like socket is detached
       if (!options?.keepOpen) socket.server._connections--;
@@ -192,10 +190,11 @@ export function serialize(_message, _handle, _options) {
     // will be sent
     if (!options?.keepOpen) {
       // we can use a $newZigFunction to have it unset the callback
-      internal_handle.onread = nop;
-      socket._handle = null;
+      // internal_handle.onread = nop;
+      (socket as any)._handle = null;
       socket.setTimeout(0);
     }
+    console.log("[IPC serialize] returning handle and message");
     return [internal_handle, new_message];
   } else if (handle instanceof dgram.Socket) {
     // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
@@ -203,7 +202,6 @@ export function serialize(_message, _handle, _options) {
   } else {
     throw $ERR_INVALID_HANDLE_TYPE();
   }
-  */
 }
 /**
  * @param {Serialized} serialized
@@ -212,6 +210,7 @@ export function serialize(_message, _handle, _options) {
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
+  console.log("[IPC parseHandle] target:", target, "serialized:", serialized, "fd:", fd);
   const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
@@ -224,7 +223,25 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "net.Socket": {
-      throw new Error("TODO case net.Socket");
+      console.log("[IPC parseHandle] Creating net.Socket with fd:", fd);
+      const socket = new net.Socket({
+        fd: fd,
+        readable: true,
+        writable: true,
+      });
+
+      // If the socket was created by net.Server we will track the socket
+      if (serialized.key) {
+        // TODO: Add socket to connections list when cluster support is added
+        // const socketList = getSocketList("got", this, message.key);
+        // socketList.add({
+        //   socket: socket,
+        // });
+      }
+
+      console.log("[IPC parseHandle] Emitting socket, message:", serialized.message);
+      emit(target, serialized.message, socket);
+      return;
     }
     case "dgram.Socket": {
       throw new Error("TODO case dgram.Socket");

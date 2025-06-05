@@ -48,6 +48,10 @@ on:
         description: "Should types be PR'd to DefinitelyTyped?"
         type: boolean
         default: false
+      use-sfx:
+        description: Should macOS SFX archives be generated?
+        type: boolean
+        default: false
 
 jobs:
   sign:
@@ -326,6 +330,115 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
+
+  macos-sfx:
+    name: Generate macOS SFX Archives
+    runs-on: macos-latest
+    needs: sign
+    if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.use-sfx == 'true') }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            display: arm64
+          - arch: x64
+            display: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Environment
+        run: |
+          echo "Creating working directory..."
+          mkdir -p sfx-build
+      - name: Download Bun Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Download the zip file from GitHub releases
+          echo "Downloading bun-darwin-${{ matrix.arch }}.zip..."
+
+          if [[ "${{ env.BUN_VERSION }}" == "canary" ]]; then
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-${{ matrix.arch }}.zip"
+          else
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${{ env.BUN_VERSION }}/bun-darwin-${{ matrix.arch }}.zip"
+          fi
+
+          curl -L -o "bun-darwin-${{ matrix.arch }}.zip" "$DOWNLOAD_URL"
+
+          # Extract the zip file
+          unzip -q "bun-darwin-${{ matrix.arch }}.zip"
+
+          # Find the bun executable
+          BUN_EXEC=$(find . -name "bun" -type f | head -n 1)
+          if [[ -z "$BUN_EXEC" ]]; then
+            echo "Error: Could not find bun executable in the archive"
+            exit 1
+          fi
+
+          # Move it to a known location
+          mv "$BUN_EXEC" "./bun"
+          chmod +x ./bun
+
+          # Clean up
+          rm -rf bun-darwin-${{ matrix.arch }}
+      - name: Create Self-Extracting Archive
+        run: |
+          cd sfx-build
+
+          # Create the self-extracting script header
+          cat > extract-header.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -euo pipefail
+          DEFAULT_INSTALL_DIR="$HOME/.bun/bin"
+          INSTALL_DIR="${BUN_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+          ARCH="$(uname -m)"
+          EXPECTED_ARCH="ARCH_PLACEHOLDER"
+          if [[ "$ARCH" == "x86_64" ]]; then
+              ARCH="x64"
+          elif [[ "$ARCH" == "arm64" ]]; then
+              ARCH="arm64"
+          fi
+          if [[ "$ARCH" != "$EXPECTED_ARCH" ]]; then
+              echo "Warning: This installer is for $EXPECTED_ARCH but you're running on $ARCH"
+          fi
+          mkdir -p "$INSTALL_DIR"
+          PAYLOAD_LINE=$(awk '/^__PAYLOAD_BEGINS__/ { print NR + 1; exit 0; }' "$0")
+          echo "Extracting Bun to $INSTALL_DIR..."
+          tail -n +"$PAYLOAD_LINE" "$0" | base64 -D | tar -xzf - -C "$INSTALL_DIR"
+          chmod +x "$INSTALL_DIR/bun"
+          echo "Bun has been installed to $INSTALL_DIR/bun"
+          echo "Run 'export PATH=\"\$PATH:$INSTALL_DIR\"' to add it to your PATH"
+          exit 0
+          __PAYLOAD_BEGINS__
+          SCRIPT_EOF
+
+          # Replace the architecture placeholder
+          sed -i '' "s/ARCH_PLACEHOLDER/${{ matrix.display }}/g" extract-header.sh
+
+          # Create the SFX archive
+          tar -czf bun.tar.gz bun
+          base64 < bun.tar.gz > bun.tar.gz.b64
+          cat extract-header.sh bun.tar.gz.b64 > "bun-darwin-${{ matrix.arch }}-sfx.sh"
+          chmod +x "bun-darwin-${{ matrix.arch }}-sfx.sh"
+
+          # Generate checksum
+          shasum -a 256 "bun-darwin-${{ matrix.arch }}-sfx.sh" > "bun-darwin-${{ matrix.arch }}-sfx.sh.sha256"
+      - name: Upload to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Upload the SFX to the release
+          gh release upload "${{ env.BUN_VERSION }}" \
+            "bun-darwin-${{ matrix.arch }}-sfx.sh" \
+            "bun-darwin-${{ matrix.arch }}-sfx.sh.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"
 
   notify-sentry:
     name: Notify Sentry

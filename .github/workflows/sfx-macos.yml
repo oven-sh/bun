@@ -1,0 +1,379 @@
+name: Generate macOS SFX Archives
+concurrency: sfx-macos
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., "bun-v1.0.2", "canary")'
+        required: true
+        default: "canary"
+      upload-to-release:
+        description: "Upload SFX files to the release?"
+        type: boolean
+        default: false
+
+env:
+  BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
+
+jobs:
+  create-macos-sfx:
+    name: Create macOS Self-Extracting Archives
+    runs-on: macos-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            display: arm64
+          - arch: x64
+            display: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        run: |
+          echo "Creating working directory..."
+          mkdir -p sfx-build
+          cd sfx-build
+
+      - name: Download Bun Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Download the zip file from GitHub releases
+          echo "Downloading bun-darwin-${{ matrix.arch }}.zip..."
+
+          if [[ "${{ env.BUN_VERSION }}" == "canary" ]]; then
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-${{ matrix.arch }}.zip"
+          else
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${{ env.BUN_VERSION }}/bun-darwin-${{ matrix.arch }}.zip"
+          fi
+
+          curl -L -o "bun-darwin-${{ matrix.arch }}.zip" "$DOWNLOAD_URL"
+
+          # Extract the zip file
+          unzip -q "bun-darwin-${{ matrix.arch }}.zip"
+
+          # Find the bun executable
+          BUN_EXEC=$(find . -name "bun" -type f | head -n 1)
+          if [[ -z "$BUN_EXEC" ]]; then
+            echo "Error: Could not find bun executable in the archive"
+            exit 1
+          fi
+
+          # Move it to a known location
+          mv "$BUN_EXEC" "./bun"
+          chmod +x ./bun
+
+          # Clean up
+          rm -rf bun-darwin-${{ matrix.arch }}
+
+      - name: Create SFX Script
+        run: |
+          cd sfx-build
+
+          # Create the self-extracting script
+          cat > extract-header.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          # Bun Self-Extracting Archive for macOS
+          # This is a self-extracting archive. Run it to install Bun.
+
+          set -euo pipefail
+
+          # Default installation directory
+          DEFAULT_INSTALL_DIR="$HOME/.bun/bin"
+          INSTALL_DIR="${BUN_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+
+          # Colors for output
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[1;33m'
+          NC='\033[0m' # No Color
+
+          # Detect if stdout is a terminal
+          if [[ -t 1 ]]; then
+              INTERACTIVE=1
+          else
+              INTERACTIVE=0
+          fi
+
+          print_color() {
+              if [[ $INTERACTIVE -eq 1 ]]; then
+                  printf "%b%s%b\n" "$1" "$2" "$NC"
+              else
+                  echo "$2"
+              fi
+          }
+
+          error() {
+              print_color "$RED" "error: $1" >&2
+              exit 1
+          }
+
+          info() {
+              print_color "$GREEN" "$1"
+          }
+
+          warn() {
+              print_color "$YELLOW" "warning: $1"
+          }
+
+          # Check if running on macOS
+          if [[ "$(uname -s)" != "Darwin" ]]; then
+              error "This installer is for macOS only. Please download the correct version for your platform."
+          fi
+
+          # Check architecture
+          ARCH="$(uname -m)"
+          EXPECTED_ARCH="ARCH_PLACEHOLDER"
+
+          if [[ "$ARCH" == "x86_64" ]]; then
+              ARCH="x64"
+          elif [[ "$ARCH" == "arm64" ]]; then
+              ARCH="arm64"
+          fi
+
+          if [[ "$ARCH" != "$EXPECTED_ARCH" ]]; then
+              warn "This installer is for $EXPECTED_ARCH but you're running on $ARCH"
+              if [[ $INTERACTIVE -eq 1 ]]; then
+                  read -p "Continue anyway? [y/N] " -n 1 -r
+                  echo
+                  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                      exit 1
+                  fi
+              fi
+          fi
+
+          # Create installation directory
+          mkdir -p "$INSTALL_DIR" || error "Failed to create installation directory: $INSTALL_DIR"
+
+          # Find the payload offset
+          PAYLOAD_LINE=$(awk '/^__PAYLOAD_BEGINS__/ { print NR + 1; exit 0; }' "$0")
+          if [[ -z "$PAYLOAD_LINE" ]]; then
+              error "Could not find payload marker"
+          fi
+
+          # Extract and decompress the payload
+          info "Extracting Bun to $INSTALL_DIR..."
+          tail -n +"$PAYLOAD_LINE" "$0" | base64 -D | tar -xzf - -C "$INSTALL_DIR" || error "Failed to extract Bun"
+
+          # Make it executable
+          chmod +x "$INSTALL_DIR/bun" || error "Failed to make bun executable"
+
+          # Verify installation
+          if [[ -x "$INSTALL_DIR/bun" ]]; then
+              BUN_VERSION="$("$INSTALL_DIR/bun" --version 2>/dev/null || echo "unknown")"
+              info "✓ Bun $BUN_VERSION has been installed to $INSTALL_DIR/bun"
+          else
+              error "Installation verification failed"
+          fi
+
+          # Add to PATH if needed
+          if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+              info ""
+              info "To use Bun, add this to your shell configuration file (.bashrc, .zshrc, etc.):"
+              info "  export PATH=\"\$PATH:$INSTALL_DIR\""
+              info ""
+              info "Or run this command to use Bun in the current session:"
+              info "  export PATH=\"\$PATH:$INSTALL_DIR\""
+          fi
+
+          exit 0
+          __PAYLOAD_BEGINS__
+          SCRIPT_EOF
+
+          # Replace the architecture placeholder
+          sed -i '' "s/ARCH_PLACEHOLDER/${{ matrix.display }}/g" extract-header.sh
+
+      - name: Create Self-Extracting Archive
+        run: |
+          cd sfx-build
+
+          # Create a tar.gz of the bun executable
+          tar -czf bun.tar.gz bun
+
+          # Encode it as base64
+          base64 < bun.tar.gz > bun.tar.gz.b64
+
+          # Combine header and payload
+          cat extract-header.sh bun.tar.gz.b64 > "bun-darwin-${{ matrix.arch }}-sfx.sh"
+
+          # Make it executable
+          chmod +x "bun-darwin-${{ matrix.arch }}-sfx.sh"
+
+          # Test the SFX
+          echo "Testing self-extraction..."
+          TEST_DIR="$(mktemp -d)"
+          BUN_INSTALL_DIR="$TEST_DIR" ./bun-darwin-${{ matrix.arch }}-sfx.sh
+
+          if [[ -x "$TEST_DIR/bun" ]]; then
+            echo "✓ Self-extraction test passed"
+            "$TEST_DIR/bun" --version
+            rm -rf "$TEST_DIR"
+          else
+            echo "✗ Self-extraction test failed"
+            exit 1
+          fi
+
+      - name: Create Download Script
+        run: |
+          cd sfx-build
+
+          # Create installer script
+          cat > "bun-darwin-${{ matrix.arch }}-installer.sh" << 'INSTALLER_EOF'
+          #!/bin/bash
+          # Quick installer script for Bun on macOS
+
+          set -euo pipefail
+
+          ARCH="ARCH_PLACEHOLDER"
+          VERSION="VERSION_PLACEHOLDER"
+
+          if [[ "$ARCH" == "arm64" ]]; then
+              SFX_ARCH="aarch64"
+          else
+              SFX_ARCH="x64"
+          fi
+
+          echo "Downloading Bun $VERSION for macOS $ARCH..."
+
+          if [[ "$VERSION" == "canary" ]]; then
+              URL="https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-${SFX_ARCH}-sfx.sh"
+          else
+              URL="https://github.com/oven-sh/bun/releases/download/$VERSION/bun-darwin-${SFX_ARCH}-sfx.sh"
+          fi
+
+          curl -fsSL "$URL" | bash
+          INSTALLER_EOF
+
+          # Replace placeholders
+          sed -i '' "s/ARCH_PLACEHOLDER/${{ matrix.display }}/g" "bun-darwin-${{ matrix.arch }}-installer.sh"
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.BUN_VERSION }}/g" "bun-darwin-${{ matrix.arch }}-installer.sh"
+
+          chmod +x "bun-darwin-${{ matrix.arch }}-installer.sh"
+
+      - name: Generate Checksums
+        run: |
+          cd sfx-build
+
+          # Generate SHA256 checksums
+          shasum -a 256 "bun-darwin-${{ matrix.arch }}-sfx.sh" > "bun-darwin-${{ matrix.arch }}-sfx.sh.sha256"
+          shasum -a 256 "bun-darwin-${{ matrix.arch }}-installer.sh" > "bun-darwin-${{ matrix.arch }}-installer.sh.sha256"
+
+          echo "Generated files:"
+          ls -la *.sh *.sha256
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-darwin-${{ matrix.arch }}-sfx
+          path: |
+            sfx-build/bun-darwin-${{ matrix.arch }}-sfx.sh
+            sfx-build/bun-darwin-${{ matrix.arch }}-sfx.sh.sha256
+            sfx-build/bun-darwin-${{ matrix.arch }}-installer.sh
+            sfx-build/bun-darwin-${{ matrix.arch }}-installer.sh.sha256
+
+      - name: Upload to Release
+        if: ${{ (github.event_name == 'release' || github.event.inputs.upload-to-release == 'true') && env.BUN_VERSION != 'canary' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Upload the SFX and installer scripts to the release
+          gh release upload "${{ env.BUN_VERSION }}" \
+            "bun-darwin-${{ matrix.arch }}-sfx.sh" \
+            "bun-darwin-${{ matrix.arch }}-sfx.sh.sha256" \
+            "bun-darwin-${{ matrix.arch }}-installer.sh" \
+            "bun-darwin-${{ matrix.arch }}-installer.sh.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"
+
+  create-universal-installer:
+    name: Create Universal macOS Installer
+    runs-on: macos-latest
+    needs: create-macos-sfx
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download SFX Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bun-darwin-*-sfx
+          merge-multiple: true
+          path: sfx-files
+
+      - name: Create Universal Installer
+        run: |
+          cd sfx-files
+
+          # Create universal installer script
+          cat > bun-darwin-universal-installer.sh << 'UNIVERSAL_EOF'
+          #!/bin/bash
+          # Universal Bun installer for macOS (detects architecture automatically)
+
+          set -euo pipefail
+
+          VERSION="VERSION_PLACEHOLDER"
+
+          # Detect architecture
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" == "x86_64" ]]; then
+              SFX_ARCH="x64"
+          elif [[ "$ARCH" == "arm64" ]]; then
+              SFX_ARCH="aarch64"
+          else
+              echo "Error: Unsupported architecture: $ARCH"
+              exit 1
+          fi
+
+          echo "Detected architecture: $ARCH"
+          echo "Downloading Bun $VERSION for macOS..."
+
+          if [[ "$VERSION" == "canary" ]]; then
+              URL="https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-${SFX_ARCH}-sfx.sh"
+          else
+              URL="https://github.com/oven-sh/bun/releases/download/$VERSION/bun-darwin-${SFX_ARCH}-sfx.sh"
+          fi
+
+          curl -fsSL "$URL" | bash
+          UNIVERSAL_EOF
+
+          # Replace version placeholder
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.BUN_VERSION }}/g" bun-darwin-universal-installer.sh
+
+          chmod +x bun-darwin-universal-installer.sh
+
+          # Generate checksum
+          shasum -a 256 bun-darwin-universal-installer.sh > bun-darwin-universal-installer.sh.sha256
+
+      - name: Upload Universal Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-darwin-universal-sfx
+          path: |
+            sfx-files/bun-darwin-universal-installer.sh
+            sfx-files/bun-darwin-universal-installer.sh.sha256
+
+      - name: Upload to Release
+        if: ${{ (github.event_name == 'release' || github.event.inputs.upload-to-release == 'true') && env.BUN_VERSION != 'canary' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-files
+
+          gh release upload "${{ env.BUN_VERSION }}" \
+            "bun-darwin-universal-installer.sh" \
+            "bun-darwin-universal-installer.sh.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"

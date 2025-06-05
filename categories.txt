@@ -25,7 +25,7 @@ No cipher match: (look at electron? openssl.c)
 - errors with 'no cipher match' rather than a DeprecationWarning for ip servername: test-tls-ip-servername-deprecation.js
 connect() callback never called when invalid pfx provided: test-tls-invalid-pfx.js
 
-SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext.
+SecureContext: impl in c++? wrap us socket context. we have InternalSecureContext. (kai)
 
 Is ncrypt used in node tls, do we need to update it?
 

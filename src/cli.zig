@@ -231,6 +231,7 @@ pub const Arguments = struct {
         clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
         clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
         clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Enable trace events for the specified categories (comma-separated). Use 'node.environment' for Node.js environment events.") catch unreachable,
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
@@ -797,6 +798,10 @@ pub const Arguments = struct {
             ctx.runtime_options.smol = args.flag("--smol");
             ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
             ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
+            }
 
             if (args.option("--dns-result-order")) |order| {
                 ctx.runtime_options.dns_result_order = order;
@@ -1546,6 +1551,8 @@ pub const Command = struct {
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
         /// compatibility.
         expose_gc: bool = false,
+        /// Trace event categories to enable
+        trace_event_categories: ?[]const u8 = null,
         preserve_symlinks_main: bool = false,
     };
 

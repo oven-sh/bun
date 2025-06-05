@@ -192,6 +192,7 @@ pub const Run = struct {
                     .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
+                    .trace_event_categories = ctx.runtime_options.trace_event_categories,
                     .is_main_thread = true,
                     .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
                 },

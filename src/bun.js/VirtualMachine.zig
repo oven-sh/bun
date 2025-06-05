@@ -3,6 +3,7 @@
 //! Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
 const VirtualMachine = @This();
+const TraceEvents = @import("./trace_events.zig");
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
 
@@ -42,6 +43,8 @@ unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+trace_event_categories: ?[]const u8 = null,
+trace_events: ?*TraceEvents.TraceEvents = null,
 counters: Counters = .{},
 
 hot_reload: bun.CLI.Command.HotReload = .none,
@@ -638,6 +641,16 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    // Emit BeforeExit trace event
+    if (this.trace_events) |events| {
+        events.emit(.BeforeExit, "B");
+    }
+    defer {
+        if (this.trace_events) |events| {
+            events.emit(.BeforeExit, "E");
+        }
+    }
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,10 +709,33 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Emit AtExit trace event at the start
+    if (this.trace_events) |events| {
+        events.emit(.AtExit, "B");
+    }
+    defer {
+        if (this.trace_events) |events| {
+            events.emit(.AtExit, "E");
+        }
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
     const rare_data = this.rare_data orelse return;
+
+    // Emit RunCleanup trace event for cleanup hooks
+    if (rare_data.cleanup_hooks.items.len > 0) {
+        if (this.trace_events) |events| {
+            events.emit(.RunCleanup, "B");
+        }
+        defer {
+            if (this.trace_events) |events| {
+                events.emit(.RunCleanup, "E");
+            }
+        }
+    }
+
     defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
     // Make sure we run new cleanup hooks introduced by running cleanup hooks
     while (rare_data.cleanup_hooks.items.len > 0) {
@@ -715,6 +751,11 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
+    // Close trace events if they exist
+    if (this.trace_events) |events| {
+        events.deinit();
+    }
+
     if (this.destruct_main_thread_on_exit and this.is_main_thread) {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();
@@ -908,6 +949,14 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
+    // Initialize trace events if enabled
+    TraceEvents.init(vm) catch {};
+
+    // Emit Environment trace event
+    if (vm.trace_events) |events| {
+        events.emit(.Environment, "X");
+    }
+
     return vm;
 }
 
@@ -923,6 +972,7 @@ pub const Options = struct {
     store_fd: bool = false,
     smol: bool = false,
     dns_result_order: DNSResolver.Order = .verbatim,
+    trace_event_categories: ?[]const u8 = null,
 
     // --print needs the result from evaluating the main module
     eval: bool = false,
@@ -1024,12 +1074,21 @@ pub fn init(opts: Options) !*VirtualMachine {
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
+    vm.trace_event_categories = opts.trace_event_categories;
 
     if (opts.smol)
         is_smol_mode = opts.smol;
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+    // Initialize trace events if enabled
+    TraceEvents.init(vm) catch {};
+
+    // Emit Environment trace event
+    if (vm.trace_events) |events| {
+        events.emit(.Environment, "X");
+    }
 
     return vm;
 }
@@ -1187,6 +1246,17 @@ pub fn initWorker(
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc;
     vm.transpiler.setAllocator(allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+    // Workers should inherit trace event settings from parent
+    vm.trace_event_categories = worker.parent.trace_event_categories;
+
+    // Initialize trace events if enabled
+    TraceEvents.init(vm) catch {};
+
+    // Emit Environment trace event
+    if (vm.trace_events) |events| {
+        events.emit(.Environment, "X");
+    }
 
     return vm;
 }

@@ -1,4 +1,5 @@
 const EventLoop = @This();
+const TraceEvents = @import("./trace_events.zig");
 
 tasks: Queue = undefined,
 
@@ -191,10 +192,33 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    // Emit CheckImmediate trace event at the start
+    if (virtual_machine.trace_events) |events| {
+        events.emit(.CheckImmediate, "B");
+    }
+    defer {
+        // Emit CheckImmediate trace event at the end
+        if (virtual_machine.trace_events) |events| {
+            events.emit(.CheckImmediate, "E");
+        }
+    }
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
+
+    // Emit RunAndClearNativeImmediates if we have tasks
+    if (to_run_now.items.len > 0) {
+        if (virtual_machine.trace_events) |events| {
+            events.emit(.RunAndClearNativeImmediates, "B");
+        }
+        defer {
+            if (virtual_machine.trace_events) |events| {
+                events.emit(.RunAndClearNativeImmediates, "E");
+            }
+        }
+    }
 
     var exception_thrown = false;
     for (to_run_now.items) |task| {

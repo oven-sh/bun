@@ -281,6 +281,10 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Record trace event for timer execution
+        const TraceEvents = @import("../bindings/trace_events_binding.zig");
+        TraceEvents.TraceEventRecorder.record("RunTimers", "node.environment");
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.

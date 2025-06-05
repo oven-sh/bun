@@ -305,6 +305,9 @@ pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.http.MimeType {
 }
 
 pub fn onAfterEventLoop(this: *VirtualMachine) void {
+    // Record trace event for RunAndClearNativeImmediates
+    Bun__TraceEvent__record("RunAndClearNativeImmediates", "node.environment");
+
     if (this.after_event_loop_callback) |cb| {
         const ctx = this.after_event_loop_callback_ctx;
         this.after_event_loop_callback = null;
@@ -638,23 +641,10 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
-    this.exit_handler.dispatchOnBeforeExit();
-    var dispatch = false;
-    while (true) {
-        while (this.isEventLoopAlive()) : (dispatch = true) {
-            this.tick();
-            this.eventLoop().autoTickActive();
-        }
+    // Record trace event for BeforeExit
+    Bun__TraceEvent__record("BeforeExit", "node.environment");
 
-        if (dispatch) {
-            this.exit_handler.dispatchOnBeforeExit();
-            dispatch = false;
-
-            if (this.isEventLoopAlive()) continue;
-        }
-
-        break;
-    }
+    Process__dispatchOnBeforeExit(this.global, this.exit_handler.exit_code);
 }
 
 pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
@@ -696,6 +686,14 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Record trace event for RunCleanup
+    Bun__TraceEvent__record("RunCleanup", "node.environment");
+
+    Process__dispatchOnExit(this.global, this.exit_handler.exit_code);
+
+    // Record trace event for AtExit
+    Bun__TraceEvent__record("AtExit", "node.environment");
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -715,11 +713,10 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
-    if (this.destruct_main_thread_on_exit and this.is_main_thread) {
-        Zig__GlobalObject__destructOnExit(this.global);
-        this.deinit();
-    }
-    bun.Global.exit(this.exit_handler.exit_code);
+    // Write trace events to file before exiting
+    Bun__TraceEvent__writeToFile();
+
+    Global.exit(this.exit_handler.exit_code);
 }
 
 pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
@@ -3566,3 +3563,47 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const ScriptArguments = JSC.ScriptArguments;
+const GlobalSourceProvider = @import("./bindings/bindings.zig").ZigGlobalObject.GlobalSourceProvider;
+const JSVirtualMachine = JSC.JSVirtualMachine;
+const FeatureFlags = bun.FeatureFlags;
+const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const MiniEventLoop = JSC.MiniEventLoop;
+const ThreadPool = @import("../thread_pool.zig");
+const StringPointer = @import("../api/schema.zig").Api.StringPointer;
+const Bundler = bun.Bundler;
+const process = @import("./node/node_process.zig");
+const napi_exports = @import("./napi_exports.zig");
+const StackFrameParser = @import("../debug/StackFrameParser.zig");
+const StandaloneModuleGraph = @import("../standalone_allocator.zig").StandaloneModuleGraph;
+const dns = @import("../dns.zig");
+const Analytics = @import("../analytics/analytics_thread.zig");
+const SourceMapAPI = @import("../sourcemap/sourcemap.zig");
+const TimerReference = @import("./RuntimeTranspilerCache.zig").RuntimeTranspilerCache.TimerReference;
+const RuntimeTranspilerCache = @import("./RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
+const MimeType = @import("../bun_dev_http_server.zig").MimeType;
+const Timer = @import("../system_timer.zig").Timer;
+const GCTimer = bun.JSC.GCTimer;
+const BakeEntryPoint = bun.bake.EntryPoint;
+const RefCounter = @import("./api/Timer.zig").Timeout.RefCounter;
+const LifecycleScriptMap = std.ArrayHashMapUnmanaged(u32, JSValue, bun.ArrayIdentityContext, false);
+const RuntimeOptions = @import("./RuntimeTranspilerCache.zig").RuntimeOptions;
+const OwnedWebWorker = JSC.OwnedWebWorker;
+const UVTimer = uv.Timer;
+const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.PollPendingModulesTask;
+const DevServer = @import("../dev.zig").DevServer;
+const EventEmitter = @import("./EventEmitter.zig").EventEmitter;
+const Path = @import("../resolver/resolve_path.zig");
+
+// External C functions for trace events
+extern fn Bun__TraceEvent__record(name: [*:0]const u8, category: [*:0]const u8) void;
+extern fn Bun__TraceEvent__writeToFile() void;
+extern fn Process__dispatchOnBeforeExit(globalObject: *JSGlobalObject, exitCode: u8) void;
+extern fn Process__dispatchOnExit(globalObject: *JSGlobalObject, exitCode: u8) void;
+
+// Keep this out of the type to prevent recursive dependency analysis bugs.
+pub var has_created_debugger = false;
+
+comptime {
+    JSC.markBinding(@src());
+}

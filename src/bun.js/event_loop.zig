@@ -191,6 +191,10 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    // Record trace event for immediate task processing
+    const TraceEvents = @import("./bindings/trace_events_binding.zig");
+    TraceEvents.TraceEventRecorder.record("CheckImmediate", "node.environment");
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;

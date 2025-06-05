@@ -40,7 +40,7 @@ static StringView extractCookieName(const StringView& cookie)
 {
     auto nameEnd = cookie.find('=');
     if (nameEnd == notFound)
-        return String();
+        return StringView();
     return cookie.substring(0, nameEnd);
 }
 

@@ -112,6 +112,13 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories) |categories| {
+            const cstr = try std.fmt.allocPrintZ(arena.allocator(), "{s}", .{categories});
+            const TraceEvents = @import("./bun.js/bindings/trace_events_binding.zig");
+            TraceEvents.TraceEventRecorder.enable(JSC.ZigString.init(cstr).toWTFString());
+        }
+
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -256,6 +263,13 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories) |categories| {
+            const cstr = try std.fmt.allocPrintZ(arena.allocator(), "{s}", .{categories});
+            const TraceEvents = @import("./bun.js/bindings/trace_events_binding.zig");
+            TraceEvents.TraceEventRecorder.enable(JSC.ZigString.init(cstr).toWTFString());
+        }
 
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {

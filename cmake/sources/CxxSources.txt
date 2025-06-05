@@ -189,6 +189,7 @@ src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 src/bun.js/bindings/Strong.cpp
+src/bun.js/bindings/trace_events.cpp
 src/bun.js/bindings/Uint8Array.cpp
 src/bun.js/bindings/Undici.cpp
 src/bun.js/bindings/URLDecomposition.cpp

@@ -17,7 +17,18 @@ pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.CLI.Bun__Node__ProcessTitle;
-    title.* = ZigString.init(str orelse "bun");
+
+    if (str) |s| {
+        title.* = ZigString.init(s);
+    } else {
+        // When no title has been set, return the full executable path (like Node.js)
+        // Use argv[0] which should contain the full path to the executable
+        if (bun.argv.len > 0) {
+            title.* = ZigString.init(bun.argv[0]);
+        } else {
+            title.* = ZigString.init("bun");
+        }
+    }
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c

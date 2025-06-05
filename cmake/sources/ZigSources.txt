@@ -443,6 +443,7 @@ src/fd.zig
 src/feature_flags.zig
 src/fmt.zig
 src/fs.zig
+src/fs/stat_hash.zig
 src/futex.zig
 src/generated_perf_trace_events.zig
 src/generated_versions_list.zig

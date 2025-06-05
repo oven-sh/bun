@@ -53,8 +53,18 @@ success() {
     echo -e "${Green}$@ ${Color_Off}"
 }
 
-command -v unzip >/dev/null ||
-    error 'unzip is required to install bun'
+# Check for unzip and offer SFX alternative if not available
+use_sfx=0
+if ! command -v unzip >/dev/null 2>&1; then
+    echo -e "${Dim}unzip is not available. Using self-extracting archive instead.${Color_Off}"
+    use_sfx=1
+    
+    # Check for required tools for SFX
+    for tool in sh tar gzip base64 awk tail; do
+        command -v "$tool" >/dev/null 2>&1 ||
+            error "$tool is required for self-extracting archive installation"
+    done
+fi
 
 if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
@@ -140,19 +150,51 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
-curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
-    error "Failed to download bun from \"$bun_uri\""
+# Use SFX if unzip is not available
+if [[ $use_sfx -eq 1 ]]; then
+    # Map target to SFX filename
+    sfx_name=""
+    case "$target" in
+        linux-x64) sfx_name="bun-linux-x64" ;;
+        linux-x64-baseline) sfx_name="bun-linux-x64-baseline" ;;
+        linux-aarch64) sfx_name="bun-linux-aarch64" ;;
+        linux-x64-musl) sfx_name="bun-linux-x64-musl" ;;
+        linux-x64-musl-baseline) sfx_name="bun-linux-x64-musl-baseline" ;;
+        linux-aarch64-musl) sfx_name="bun-linux-aarch64-musl" ;;
+        *) error "Self-extracting archives are not available for $target. Please install unzip." ;;
+    esac
+    
+    if [[ $# = 0 ]]; then
+        sfx_uri=$github_repo/releases/latest/download/$sfx_name-sfx.sh
+    else
+        sfx_uri=$github_repo/releases/download/$1/$sfx_name-sfx.sh
+    fi
+    
+    info "Downloading self-extracting archive..."
+    
+    # Download and run the SFX with custom install directory
+    export BUN_INSTALL_DIR="$bin_dir"
+    curl --fail --location --progress-bar "$sfx_uri" | sh ||
+        error "Failed to download and run self-extracting archive from \"$sfx_uri\""
+    
+    # The SFX installs directly to bin_dir, so we're done with extraction
+    exe=$bin_dir/bun
+else
+    # Original unzip-based installation
+    curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
+        error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
-    error 'Failed to extract bun'
+    unzip -oqd "$bin_dir" "$exe.zip" ||
+        error 'Failed to extract bun'
 
-mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
-    error 'Failed to move extracted bun to destination'
+    mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
+        error 'Failed to move extracted bun to destination'
 
-chmod +x "$exe" ||
-    error 'Failed to set permissions on bun executable'
+    chmod +x "$exe" ||
+        error 'Failed to set permissions on bun executable'
 
-rm -r "$bin_dir/bun-$target" "$exe.zip"
+    rm -r "$bin_dir/bun-$target" "$exe.zip"
+fi
 
 tildify() {
     if [[ $1 = $HOME/* ]]; then

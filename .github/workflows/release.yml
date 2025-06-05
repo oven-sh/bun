@@ -49,7 +49,7 @@ on:
         type: boolean
         default: false
       use-sfx:
-        description: Should macOS SFX archives be generated?
+        description: Should self-extracting archives be generated?
         type: boolean
         default: false
 
@@ -437,6 +437,129 @@ jobs:
           gh release upload "${{ env.BUN_VERSION }}" \
             "bun-darwin-${{ matrix.arch }}-sfx.sh" \
             "bun-darwin-${{ matrix.arch }}-sfx.sh.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"
+
+  linux-sfx:
+    name: Generate Linux SFX Archives
+    runs-on: ubuntu-latest
+    needs: sign
+    if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.use-sfx == 'true') }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            zip_name: bun-linux-x64
+            display: x64
+          - arch: x64
+            zip_name: bun-linux-x64-baseline
+            display: x64-baseline
+            baseline: true
+          - arch: aarch64
+            zip_name: bun-linux-aarch64
+            display: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Environment
+        run: |
+          echo "Creating working directory..."
+          mkdir -p sfx-build
+      - name: Download Bun Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Download the zip file from GitHub releases
+          echo "Downloading ${{ matrix.zip_name }}.zip..."
+
+          if [[ "${{ env.BUN_VERSION }}" == "canary" ]]; then
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/canary/${{ matrix.zip_name }}.zip"
+          else
+            DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${{ env.BUN_VERSION }}/${{ matrix.zip_name }}.zip"
+          fi
+
+          curl -L -o "${{ matrix.zip_name }}.zip" "$DOWNLOAD_URL"
+
+          # Extract the zip file
+          unzip -q "${{ matrix.zip_name }}.zip"
+
+          # Find the bun executable
+          BUN_EXEC=$(find . -name "bun" -type f | head -n 1)
+          if [[ -z "$BUN_EXEC" ]]; then
+            echo "Error: Could not find bun executable in the archive"
+            exit 1
+          fi
+
+          # Move it to a known location
+          mv "$BUN_EXEC" "./bun"
+          chmod +x ./bun
+
+          # Clean up
+          rm -rf bun-linux-*/ ${{ matrix.zip_name }}.zip
+      - name: Create Self-Extracting Archive
+        run: |
+          cd sfx-build
+
+          # Create the self-extracting script header
+          cat > extract-header.sh << 'SCRIPT_EOF'
+          #!/bin/sh
+          set -e
+          DEFAULT_INSTALL_DIR="$HOME/.bun/bin"
+          INSTALL_DIR="${BUN_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+          ARCH="$(uname -m)"
+          EXPECTED_ARCH="ARCH_PLACEHOLDER"
+          EXPECTED_DISPLAY="DISPLAY_PLACEHOLDER"
+          case "$ARCH" in
+              x86_64) ARCH_NORM="x64" ;;
+              aarch64|arm64) ARCH_NORM="aarch64" ;;
+              *) ARCH_NORM="$ARCH" ;;
+          esac
+          ARCH_MISMATCH=0
+          case "$EXPECTED_ARCH" in
+              x64) [ "$ARCH_NORM" != "x64" ] && ARCH_MISMATCH=1 ;;
+              aarch64) [ "$ARCH_NORM" != "aarch64" ] && ARCH_MISMATCH=1 ;;
+          esac
+          if [ "$ARCH_MISMATCH" = "1" ]; then
+              echo "Warning: This installer is for $EXPECTED_DISPLAY but you're running on $ARCH"
+          fi
+          mkdir -p "$INSTALL_DIR"
+          ARCHIVE_LINE=$(awk '/^__ARCHIVE_BELOW__/ { print NR + 1; exit }' "$0")
+          echo "Extracting Bun to $INSTALL_DIR..."
+          tail -n +"$ARCHIVE_LINE" "$0" | base64 -d | tar -xzf - -C "$INSTALL_DIR"
+          chmod +x "$INSTALL_DIR/bun"
+          BUN_VERSION=$("$INSTALL_DIR/bun" --version 2>/dev/null || echo "unknown")
+          echo "Bun $BUN_VERSION has been installed to $INSTALL_DIR/bun"
+          echo "Run 'export PATH=\"\$PATH:$INSTALL_DIR\"' to add it to your PATH"
+          exit 0
+          __ARCHIVE_BELOW__
+          SCRIPT_EOF
+
+          # Replace placeholders
+          sed -i "s/ARCH_PLACEHOLDER/${{ matrix.arch }}/g" extract-header.sh
+          sed -i "s/DISPLAY_PLACEHOLDER/${{ matrix.display }}/g" extract-header.sh
+
+          # Create the SFX archive
+          tar -czf bun.tar.gz bun
+          base64 < bun.tar.gz > bun.tar.gz.b64
+          cat extract-header.sh bun.tar.gz.b64 > "${{ matrix.zip_name }}-sfx.sh"
+          chmod +x "${{ matrix.zip_name }}-sfx.sh"
+
+          # Generate checksum
+          sha256sum "${{ matrix.zip_name }}-sfx.sh" > "${{ matrix.zip_name }}-sfx.sh.sha256"
+      - name: Upload to Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd sfx-build
+
+          # Upload the SFX to the release
+          gh release upload "${{ env.BUN_VERSION }}" \
+            "${{ matrix.zip_name }}-sfx.sh" \
+            "${{ matrix.zip_name }}-sfx.sh.sha256" \
             --clobber \
             --repo "${{ github.repository }}"
 

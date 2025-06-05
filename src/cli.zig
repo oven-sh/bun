@@ -237,6 +237,8 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Enable trace events for specified categories (comma-separated)") catch unreachable,
+        clap.parseParam("--trace-event-file-pattern <STR>  Template for trace file names (e.g. 'trace-${rotation}.log')") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -850,6 +852,14 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
+            }
+
+            // Handle trace events
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
+            }
+            if (args.option("--trace-event-file-pattern")) |pattern| {
+                ctx.runtime_options.trace_event_file_pattern = pattern;
             }
         }
 
@@ -1547,6 +1557,8 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        trace_event_categories: ?[]const u8 = null,
+        trace_event_file_pattern: ?[]const u8 = null,
     };
 
     var global_cli_ctx: Context = undefined;

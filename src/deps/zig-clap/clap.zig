@@ -539,7 +539,7 @@ pub fn simpleHelpBunTopLevel(
                 const total_len = flags_len + value_len;
                 const num_spaces_after = max_spacing - total_len;
 
-                Output.pretty(space_buf[0..num_spaces_after] ++ desc_text, .{});
+                Output.pretty("{s}{s}", .{ space_buf[0..num_spaces_after], desc_text });
             }
         }
     }

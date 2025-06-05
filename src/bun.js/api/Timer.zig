@@ -281,6 +281,11 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // Emit trace event if tracing is enabled
+        if (@import("../trace_events.zig").TraceEvents.isEnabled()) {
+            @import("../trace_events.zig").TraceEvents.emitEnvironmentEvent("RunTimers");
+        }
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.

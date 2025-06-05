@@ -191,6 +191,11 @@ fn tickWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u32 {
 }
 
 pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
+    // Emit trace event for RunAndClearNativeImmediates
+    if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+        @import("./trace_events.zig").TraceEvents.emitEnvironmentEvent("RunAndClearNativeImmediates");
+    }
+
     var to_run_now = this.immediate_tasks;
 
     this.immediate_tasks = this.next_immediate_tasks;
@@ -198,6 +203,10 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
 
     var exception_thrown = false;
     for (to_run_now.items) |task| {
+        // Emit trace event for CheckImmediate before each task
+        if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+            @import("./trace_events.zig").TraceEvents.emitEnvironmentEvent("CheckImmediate");
+        }
         exception_thrown = task.runImmediateTask(virtual_machine);
     }
 

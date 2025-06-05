@@ -638,6 +638,11 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    // Emit trace event
+    if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+        @import("./trace_events.zig").TraceEvents.emitEnvironmentEvent("BeforeExit");
+    }
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,6 +701,11 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Emit trace event
+    if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+        @import("./trace_events.zig").TraceEvents.emitEnvironmentEvent("RunCleanup");
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -710,11 +720,21 @@ pub fn onExit(this: *VirtualMachine) void {
             hook.execute();
         }
     }
+
+    // Emit AtExit trace event after cleanup
+    if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+        @import("./trace_events.zig").TraceEvents.emitEnvironmentEvent("AtExit");
+    }
 }
 
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
+    // Shutdown trace events if enabled
+    if (@import("./trace_events.zig").TraceEvents.isEnabled()) {
+        @import("./trace_events.zig").TraceEvents.shutdown();
+    }
+
     if (this.destruct_main_thread_on_exit and this.is_main_thread) {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();

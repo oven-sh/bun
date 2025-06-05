@@ -112,6 +112,15 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories) |categories| {
+            const TraceEvents = @import("./bun.js/trace_events.zig").TraceEvents;
+            TraceEvents.initialize(categories, ctx.runtime_options.trace_event_file_pattern);
+
+            // Emit initial environment events
+            TraceEvents.emitEnvironmentEvent("Environment");
+        }
+
         doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -256,6 +265,15 @@ pub const Run = struct {
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
+
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories) |categories| {
+            const TraceEvents = @import("./bun.js/trace_events.zig").TraceEvents;
+            TraceEvents.initialize(categories, ctx.runtime_options.trace_event_file_pattern);
+
+            // Emit initial environment events
+            TraceEvents.emitEnvironmentEvent("Environment");
+        }
 
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {

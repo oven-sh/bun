@@ -1,4 +1,5 @@
 // import type { Readable, Writable } from "node:stream";
+
 // import type { WorkerOptions } from "node:worker_threads";
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
@@ -319,7 +320,32 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback: unknown): Promise<number> {
+    // Not a huge fan of this - this is checking for the case that the worker
+    // already exited super early, so any event listener we add will never fire.
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // prettier-ignore
+    /**/ if (this.threadId === -1) {
+    /**/   const onExitPromise = this.#onExitPromise;
+    /**/ 
+    /**/   if (onExitPromise) {
+    /**/     return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
+    /**/   }
+    /**/ 
+    /**/   this.#onExitPromise = Promise.resolve<number>(0); 
+    /**/   return this.#onExitPromise;
+    /**/ }
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+    // THIS SHOULD NOT MERGE IN THE PR
+
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",

@@ -33,13 +33,17 @@ describe("SQLite Statement column types", () => {
     expect(stmt.native.columns).toEqual(["id", "name", "weight", "image", "is_active"]);
     expect(stmt.native.columnsCount).toBe(5);
     
-    // Test the newly added columnTypes property
+    // Test the columnTypes property (uses actual data types from sqlite3_column_type)
     expect(stmt.native.columnTypes).toBeDefined();
     expect(Array.isArray(stmt.native.columnTypes)).toBe(true);
     expect(stmt.native.columnTypes.length).toBe(5);
-    
-    // Verify each column type is correct
     expect(stmt.native.columnTypes).toEqual(['integer', 'text', 'float', 'blob', 'integer']);
+    
+    // Test the columnDeclaredTypes property (uses declared types from sqlite3_column_decltype)
+    expect(stmt.native.columnDeclaredTypes).toBeDefined();
+    expect(Array.isArray(stmt.native.columnDeclaredTypes)).toBe(true);
+    expect(stmt.native.columnDeclaredTypes.length).toBe(5);
+    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'text', 'float', 'blob', 'integer']);
   });
 
   it("handles NULL values correctly", () => {
@@ -59,9 +63,11 @@ describe("SQLite Statement column types", () => {
     // Execute the statement to get column types
     const row = stmt.get();
 
-    // Since we're now using sqlite3_column_decltype(), which returns the declared type,
-    // TEXT columns will be reported as 'text' even when they contain NULL
-    expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
+    // columnTypes now returns actual data types - NULL values are reported as 'null'
+    expect(stmt.native.columnTypes).toEqual(['integer', 'null']);
+    
+    // columnDeclaredTypes still shows the declared table schema
+    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'text']);
   });
 
   it("reports actual column types based on data values", () => {
@@ -171,6 +177,55 @@ describe("SQLite Statement column types", () => {
     expect(typeof row.timestamp).toBe('string');
   });
 
+  it("shows difference between columnTypes and columnDeclaredTypes for expressions", () => {
+    const db = new Database(":memory:");
+
+    // Test with expressions where declared types differ from actual types
+    const stmt = db.prepare("SELECT length('bun') AS str_length, 42 AS magic_number, 'hello' AS greeting");
+    const row = stmt.get();
+
+    // columnTypes shows actual data types based on the values
+    expect(stmt.native.columnTypes).toEqual(['integer', 'integer', 'text']);
+    
+    // columnDeclaredTypes shows declared types (which are 'any' for expressions without explicit declarations)
+    expect(stmt.native.columnDeclaredTypes).toEqual(['any', 'any', 'any']);
+  });
+
+  it("shows difference for dynamic column types", () => {
+    const db = new Database(":memory:");
+
+    db.run(`
+      CREATE TABLE dynamic_types (
+        id INTEGER PRIMARY KEY,
+        value ANY
+      )
+    `);
+
+    // Insert an integer value
+    db.run(`INSERT INTO dynamic_types VALUES (1, 42)`);
+    
+    let stmt = db.prepare("SELECT * FROM dynamic_types");
+    let row = stmt.get();
+    
+    // columnTypes shows actual type (integer) for the current value
+    expect(stmt.native.columnTypes).toEqual(['integer', 'integer']);
+    
+    // columnDeclaredTypes shows the declared table schema
+    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'any']);
+    
+    // Update to a text value
+    db.run(`UPDATE dynamic_types SET value = 'text' WHERE id = 1`);
+    
+    stmt = db.prepare("SELECT * FROM dynamic_types");
+    row = stmt.get();
+    
+    // columnTypes now shows text for the current value
+    expect(stmt.native.columnTypes).toEqual(['integer', 'text']);
+    
+    // columnDeclaredTypes still shows the declared table schema
+    expect(stmt.native.columnDeclaredTypes).toEqual(['integer', 'any']);
+  });
+
   it("throws an error when accessing columnTypes before statement execution", () => {
     const db = new Database(":memory:");
     db.run(`CREATE TABLE test (id INTEGER, name TEXT)`);
@@ -182,5 +237,44 @@ describe("SQLite Statement column types", () => {
     expect(() => {
       stmt.native.columnTypes;
     }).toThrow("Statement must be executed before accessing columnTypes");
+    
+    // Accessing columnDeclaredTypes before executing should also throw
+    expect(() => {
+      stmt.native.columnDeclaredTypes;
+    }).toThrow("Statement must be executed before accessing columnDeclaredTypes");
+  });
+
+  it("throws an error when accessing columnTypes on non-read-only statements", () => {
+    const db = new Database(":memory:");
+    db.run(`CREATE TABLE test (id INTEGER, name TEXT)`);
+
+    // Test INSERT statement
+    const insertStmt = db.prepare("INSERT INTO test (id, name) VALUES (?, ?)");
+    insertStmt.run(1, "test");
+
+    expect(() => {
+      insertStmt.native.columnTypes;
+    }).toThrow("columnTypes is not available for non-read-only statements");
+
+    // Test UPDATE statement
+    const updateStmt = db.prepare("UPDATE test SET name = ? WHERE id = ?");
+    updateStmt.run("updated", 1);
+
+    expect(() => {
+      updateStmt.native.columnTypes;
+    }).toThrow("columnTypes is not available for non-read-only statements");
+
+    // Test DELETE statement
+    const deleteStmt = db.prepare("DELETE FROM test WHERE id = ?");
+    deleteStmt.run(1);
+
+    expect(() => {
+      deleteStmt.native.columnTypes;
+    }).toThrow("columnTypes is not available for non-read-only statements");
+
+    // columnDeclaredTypes should still work for these statements
+    expect(() => {
+      insertStmt.native.columnDeclaredTypes;
+    }).not.toThrow();
   });
 });

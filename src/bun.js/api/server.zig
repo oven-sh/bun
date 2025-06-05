@@ -61,6 +61,7 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
+pub const FileRoute = @import("./server/FileRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
 
@@ -68,6 +69,8 @@ pub const AnyRoute = union(enum) {
     /// Serve a static file
     /// "/robots.txt": new Response(...),
     static: *StaticRoute,
+    /// Serve a file from disk
+    file: *FileRoute,
     /// Bundle an HTML import
     /// import html from "./index.html";
     /// "/": html,
@@ -82,6 +85,7 @@ pub const AnyRoute = union(enum) {
     pub fn memoryCost(this: AnyRoute) usize {
         return switch (this) {
             .static => |static_route| static_route.memoryCost(),
+            .file => |file_route| file_route.memoryCost(),
             .html => |html_bundle_route| html_bundle_route.data.memoryCost(),
             .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
@@ -90,6 +94,7 @@ pub const AnyRoute = union(enum) {
     pub fn setServer(this: AnyRoute, server: ?AnyServer) void {
         switch (this) {
             .static => |static_route| static_route.server = server,
+            .file => |file_route| file_route.server = server,
             .html => |html_bundle_route| html_bundle_route.server = server,
             .framework_router => {}, // DevServer contains .server field
         }
@@ -98,6 +103,7 @@ pub const AnyRoute = union(enum) {
     pub fn deref(this: AnyRoute) void {
         switch (this) {
             .static => |static_route| static_route.deref(),
+            .file => |file_route| file_route.deref(),
             .html => |html_bundle_route| html_bundle_route.deref(),
             .framework_router => {}, // not reference counted
         }
@@ -106,6 +112,7 @@ pub const AnyRoute = union(enum) {
     pub fn ref(this: AnyRoute) void {
         switch (this) {
             .static => |static_route| static_route.ref(),
+            .file => |file_route| file_route.ref(),
             .html => |html_bundle_route| html_bundle_route.ref(),
             .framework_router => {}, // not reference counted
         }
@@ -182,6 +189,9 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (try FileRoute.fromJS(global, argument)) |file_route| {
+            return .{ .file = file_route };
+        }
         return .{ .static = try StaticRoute.fromJS(global, argument) orelse return null };
     }
 };
@@ -2510,6 +2520,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     switch (entry.route) {
                         .static => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path, entry.method);
+                        },
+                        .file => |file_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, file_route, entry.path, entry.method);
                         },
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);

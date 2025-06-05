@@ -232,7 +232,7 @@ class Worker extends EventEmitter {
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
-  #onExitPromise: Promise<number> | number | undefined = undefined;
+  #onExitResolvers = Promise.withResolvers<number | void>();
   #urlToRevoke = "";
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
@@ -320,29 +320,12 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown): Promise<number> {
-    // Not a huge fan of this - this is checking for the case that the worker
-    // already exited super early, so any event listener we add will never fire.
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // prettier-ignore
-    /**/ if (this.threadId === -1) {
-    /**/   const onExitPromise = this.#onExitPromise;
-    /**/   if (onExitPromise) {
-    /**/     return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
-    /**/   }
-    /**/   this.#onExitPromise = Promise.resolve<void>(); 
-    /**/   return this.#onExitPromise;
-    /**/ }
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
-    // THIS SHOULD NOT MERGE IN THE PR
+  terminate(callback?: unknown): Promise<number | void> {
+    // threadId = -1 signifies the worker was closed already. Node returns PromiseResolve() in this case
+    // https://github.com/nodejs/node/blob/61601089f7f2f0e5e7abe8240f198585f585704c/lib/internal/worker.js#L390
+    if (this.threadId === -1) {
+      return Promise.resolve<void>();
+    }
 
     if (typeof callback === "function") {
       process.emitWarning(
@@ -353,12 +336,7 @@ class Worker extends EventEmitter {
       this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
     }
 
-    const onExitPromise = this.#onExitPromise;
-    if (onExitPromise) {
-      return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
-    }
-
-    const { resolve, promise } = Promise.withResolvers();
+    const { resolve, promise } = this.#onExitResolvers;
 
     this.#worker.addEventListener(
       "close",
@@ -367,9 +345,8 @@ class Worker extends EventEmitter {
       },
       { once: true },
     );
-    this.#worker.terminate();
 
-    this.#onExitPromise = promise;
+    this.#worker.terminate();
 
     return promise;
   }
@@ -383,8 +360,8 @@ class Worker extends EventEmitter {
     return stringPromise.then(s => new HeapSnapshotStream(s));
   }
 
-  #onClose(e) {
-    this.#onExitPromise = e.code;
+  #onClose(e: Event & { code: number }) {
+    this.#onExitResolvers.resolve(e.code);
     this.emit("exit", e.code);
   }
 

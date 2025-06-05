@@ -18,6 +18,7 @@ const JSC = bun.JSC;
 const AsyncHTTP = bun.http.AsyncHTTP;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const DNSResolver = @import("bun.js/api/bun/dns_resolver.zig").DNSResolver;
+const trace_events = @import("./trace_events.zig");
 
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
@@ -113,6 +114,14 @@ pub const Run = struct {
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         doPreconnect(ctx.runtime_options.preconnect);
+
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            trace_events.init(vm.allocator, ctx.runtime_options.trace_event_categories) catch |err| {
+                Output.prettyErrorln("Failed to initialize trace events: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+        }
 
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
@@ -268,6 +277,14 @@ pub const Run = struct {
 
         doPreconnect(ctx.runtime_options.preconnect);
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            trace_events.init(vm.allocator, ctx.runtime_options.trace_event_categories) catch |err| {
+                Output.prettyErrorln("Failed to initialize trace events: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+        }
+
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
 
         const callback = OpaqueWrap(Run, Run.start);
@@ -283,6 +300,9 @@ pub const Run = struct {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        // Emit Environment trace event
+        trace_events.emit("Environment", "node.environment", .Instant);
 
         this.addConditionalGlobals();
         do_redis_preconnect: {

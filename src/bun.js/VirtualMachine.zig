@@ -638,6 +638,10 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    // Emit BeforeExit trace event
+    const timer = trace_events.TraceTimer.begin("BeforeExit", "node.environment");
+    defer timer.end();
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,11 +700,20 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Emit AtExit trace event
+    const timer = trace_events.TraceTimer.begin("AtExit", "node.environment");
+    defer timer.end();
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
     const rare_data = this.rare_data orelse return;
     defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+
+    // Emit RunCleanup trace event
+    trace_events.emit("RunCleanup", "node.environment", .Begin);
+    defer trace_events.emit("RunCleanup", "node.environment", .End);
+
     // Make sure we run new cleanup hooks introduced by running cleanup hooks
     while (rare_data.cleanup_hooks.items.len > 0) {
         var hooks = rare_data.cleanup_hooks;
@@ -719,6 +732,10 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();
     }
+
+    // Finalize trace events before exit
+    trace_events.deinit();
+
     bun.Global.exit(this.exit_handler.exit_code);
 }
 
@@ -3566,3 +3583,4 @@ const DotEnv = bun.DotEnv;
 const HotReloader = JSC.hot_reloader.HotReloader;
 const Body = webcore.Body;
 const Counters = @import("./Counters.zig");
+const trace_events = @import("../trace_events.zig");

@@ -166,6 +166,7 @@ src/bun.js/bindings/NodeVM.cpp
 src/bun.js/bindings/NodeVMModule.cpp
 src/bun.js/bindings/NodeVMScript.cpp
 src/bun.js/bindings/NodeVMSourceTextModule.cpp
+src/bun.js/bindings/NodeVMSyntheticModule.cpp
 src/bun.js/bindings/NoOpForTesting.cpp
 src/bun.js/bindings/ObjectBindings.cpp
 src/bun.js/bindings/objects.cpp

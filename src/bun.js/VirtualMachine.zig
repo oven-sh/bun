@@ -638,6 +638,9 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
 }
 
 pub fn onBeforeExit(this: *VirtualMachine) void {
+    @import("./trace_events.zig").addEnvironmentEvent("BeforeExit", 'B') catch {};
+    defer @import("./trace_events.zig").addEnvironmentEvent("BeforeExit", 'E') catch {};
+
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
@@ -696,6 +699,9 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    @import("./trace_events.zig").addEnvironmentEvent("RunCleanup", 'B') catch {};
+    defer @import("./trace_events.zig").addEnvironmentEvent("RunCleanup", 'E') catch {};
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -715,6 +721,14 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
+    @import("./trace_events.zig").addEnvironmentEvent("AtExit", 'B') catch {};
+    @import("./trace_events.zig").addEnvironmentEvent("AtExit", 'E') catch {};
+
+    // Flush trace events to file before exiting
+    var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const cwd = std.posix.getcwd(&cwd_buf) catch ".";
+    @import("./trace_events.zig").flush(cwd);
+
     if (this.destruct_main_thread_on_exit and this.is_main_thread) {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();

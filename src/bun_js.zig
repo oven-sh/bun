@@ -36,6 +36,14 @@ pub const Run = struct {
         bun.JSC.initialize(false);
         bun.Analytics.Features.standalone_executable += 1;
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            std.io.getStdErr().writer().print("TRACE: Initializing trace events with categories: {s}\n", .{ctx.runtime_options.trace_event_categories}) catch {};
+            @import("./bun.js/trace_events.zig").initialize(ctx.allocator, ctx.runtime_options.trace_event_categories);
+        } else {
+            std.io.getStdErr().writer().print("TRACE: Not initializing trace events, categories len = {}\n", .{ctx.runtime_options.trace_event_categories.len}) catch {};
+        }
+
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
         graph_ptr.set();
@@ -177,6 +185,14 @@ pub const Run = struct {
 
         bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
 
+        // Initialize trace events if requested
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            std.io.getStdErr().writer().print("TRACE: Initializing trace events with categories: {s}\n", .{ctx.runtime_options.trace_event_categories}) catch {};
+            @import("./bun.js/trace_events.zig").initialize(ctx.allocator, ctx.runtime_options.trace_event_categories);
+        } else {
+            std.io.getStdErr().writer().print("TRACE: Not initializing trace events, categories len = {}\n", .{ctx.runtime_options.trace_event_categories.len}) catch {};
+        }
+
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
@@ -283,6 +299,9 @@ pub const Run = struct {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        // Add end event for Environment trace
+        @import("./bun.js/trace_events.zig").addEnvironmentEvent("Environment", 'E') catch {};
 
         this.addConditionalGlobals();
         do_redis_preconnect: {

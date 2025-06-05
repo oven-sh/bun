@@ -286,6 +286,15 @@ pub const All = struct {
         // Split into a separate variable to avoid increasing the size of the timespec type.
         var has_set_now: bool = false;
 
+        // Add trace event for timers if any are active
+        const has_timers = this.active_timer_count > 0;
+        if (has_timers) {
+            @import("../trace_events.zig").addEnvironmentEvent("RunTimers", 'B') catch {};
+        }
+        defer if (has_timers) {
+            @import("../trace_events.zig").addEnvironmentEvent("RunTimers", 'E') catch {};
+        };
+
         while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(&now, vm)) {
                 .disarm => {},

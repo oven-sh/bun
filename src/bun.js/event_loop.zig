@@ -196,6 +196,14 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
 
+    // Add trace event for immediate tasks
+    if (to_run_now.items.len > 0) {
+        @import("./trace_events.zig").addEnvironmentEvent("CheckImmediate", 'B') catch {};
+        defer @import("./trace_events.zig").addEnvironmentEvent("CheckImmediate", 'E') catch {};
+        @import("./trace_events.zig").addEnvironmentEvent("RunAndClearNativeImmediates", 'B') catch {};
+        defer @import("./trace_events.zig").addEnvironmentEvent("RunAndClearNativeImmediates", 'E') catch {};
+    }
+
     var exception_thrown = false;
     for (to_run_now.items) |task| {
         exception_thrown = task.runImmediateTask(virtual_machine);

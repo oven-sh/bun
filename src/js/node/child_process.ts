@@ -735,19 +735,28 @@ function fork(modulePath, args = [], options) {
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
-  // execArgv = options.execArgv || process.execArgv;
-  // validateArgumentsNullCheck(execArgv, "options.execArgv");
+  const execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  // if (execArgv === process.execArgv && process._eval != null) {
-  //   const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
-  //   if (index > 0) {
-  //     // Remove the -e switch to avoid fork bombing ourselves.
-  //     execArgv = ArrayPrototypeSlice.$call(execArgv);
-  //     ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
-  //   }
-  // }
+  // Store execArgv separately to pass to Bun runtime
+  options.__execArgv = execArgv;
 
-  args = [/*...execArgv,*/ modulePath, ...args];
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.$call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      const newExecArgv = ArrayPrototypeSlice.$call(execArgv);
+      ArrayPrototypeSplice.$call(newExecArgv, index - 1, 2);
+      // Only pass modulePath and args, not execArgv
+      args = [modulePath, ...args];
+    } else {
+      // Only pass modulePath and args, not execArgv
+      args = [modulePath, ...args];
+    }
+  } else {
+    // Only pass modulePath and args, not execArgv
+    args = [modulePath, ...args];
+  }
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -1285,9 +1294,19 @@ class ChildProcess extends EventEmitter {
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
 
+    // Handle execArgv if present (from fork)
+    let cmd;
+    if (options.__execArgv && options.__execArgv.length > 0) {
+      // When execArgv is present, we need to pass them as runtime options to Bun
+      // The command array should be: [bun_executable, ...execArgv, script_file, ...args]
+      cmd = [file, ...options.__execArgv, ...Array.prototype.slice.$call(spawnargs, 1)];
+    } else {
+      cmd = [file, ...Array.prototype.slice.$call(spawnargs, 1)];
+    }
+
     try {
       this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+        cmd: cmd,
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,

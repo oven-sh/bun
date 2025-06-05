@@ -250,6 +250,7 @@ pub const Process = struct {
             this.poller = .{ .detached = {} };
         }
         this.onWaitPid(waitpid_result, rusage);
+        if (this.hasExited()) this.deref();
     }
 
     pub fn onWaitPidFromEventLoopTask(this: *Process) void {
@@ -257,6 +258,7 @@ pub const Process = struct {
             @compileError("not implemented on this platform");
         }
         this.wait(false);
+        if (this.hasExited()) this.deref();
     }
 
     fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
@@ -296,7 +298,6 @@ pub const Process = struct {
         } orelse return;
 
         this.onExit(status, &rusage_result);
-        this.deref();
     }
 
     pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {

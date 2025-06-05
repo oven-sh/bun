@@ -379,7 +379,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
-    if (worker.isClosingOrTerminated()) return JSValue::encode(jsNumber(-1)); // TODO(@alii @190n): What does Node do?
+    if (worker.isClosingOrTerminated()) return JSValue::encode(jsNumber(-1));
     // Main thread starts at 1
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts

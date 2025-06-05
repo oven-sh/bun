@@ -1,4 +1,5 @@
 const EventLoop = @This();
+const TraceEvents = @import("./node/trace_events.zig");
 
 tasks: Queue = undefined,
 
@@ -196,6 +197,11 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
 
+    if (to_run_now.items.len > 0) {
+        TraceEvents.emitInstant("RunAndClearNativeImmediates");
+        TraceEvents.emitInstant("CheckImmediate");
+    }
+
     var exception_thrown = false;
     for (to_run_now.items) |task| {
         exception_thrown = task.runImmediateTask(virtual_machine);
@@ -364,6 +370,7 @@ pub fn autoTick(this: *EventLoop) void {
 
     if (Environment.isPosix) {
         ctx.timer.drainTimers(ctx);
+        TraceEvents.emitInstant("RunTimers");
     }
 
     ctx.onAfterEventLoop();

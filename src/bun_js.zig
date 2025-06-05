@@ -114,6 +114,12 @@ pub const Run = struct {
 
         doPreconnect(ctx.runtime_options.preconnect);
 
+        // Initialize trace events if enabled
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            @import("bun.js/node/trace_events.zig").initialize(vm, ctx.runtime_options.trace_event_categories);
+            @import("bun.js/node/trace_events.zig").emitInstant("Environment");
+        }
+
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
@@ -267,6 +273,12 @@ pub const Run = struct {
         vm.transpiler.env.loadTracy();
 
         doPreconnect(ctx.runtime_options.preconnect);
+
+        // Initialize trace events if enabled
+        if (ctx.runtime_options.trace_event_categories.len > 0) {
+            @import("bun.js/node/trace_events.zig").initialize(vm, ctx.runtime_options.trace_event_categories);
+            @import("bun.js/node/trace_events.zig").emitInstant("Environment");
+        }
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
 

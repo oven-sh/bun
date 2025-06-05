@@ -237,6 +237,7 @@ pub const Arguments = struct {
         clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
         clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
         clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
+        clap.parseParam("--trace-event-categories <STR>    Enable trace event recording for the specified categories") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -800,6 +801,10 @@ pub const Arguments = struct {
 
             if (args.option("--dns-result-order")) |order| {
                 ctx.runtime_options.dns_result_order = order;
+            }
+
+            if (args.option("--trace-event-categories")) |categories| {
+                ctx.runtime_options.trace_event_categories = categories;
             }
 
             if (args.option("--inspect")) |inspect_flag| {
@@ -1547,6 +1552,7 @@ pub const Command = struct {
         /// compatibility.
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
+        trace_event_categories: []const u8 = "",
     };
 
     var global_cli_ctx: Context = undefined;

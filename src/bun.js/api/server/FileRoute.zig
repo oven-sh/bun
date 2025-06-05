@@ -270,7 +270,6 @@ const AnyServer = JSC.API.AnyServer;
 const Blob = JSC.WebCore.Blob;
 const writeStatus = @import("../server.zig").writeStatus;
 const AnyResponse = uws.AnyResponse;
-const linux = std.os.linux;
 const Async = bun.Async;
 const FileType = bun.io.FileType;
 const Output = bun.Output;

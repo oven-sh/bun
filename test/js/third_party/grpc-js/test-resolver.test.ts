@@ -404,7 +404,7 @@ describe("Name Resolver", () => {
       },
       15_000,
     );
-    it.todo(
+    it(
       "should not keep repeating failed resolutions",
       done => {
         const target = resolverManager.mapUriDefaultScheme(parseUri("host.invalid")!)!;

@@ -3679,8 +3679,8 @@ pub const ImportTracker = struct {
 
 pub const PathTemplate = options.PathTemplate;
 
-pub const Chunk = @import("./chunk.zig").Chunk;
-pub const ChunkImport = @import("./chunk.zig").ChunkImport;
+pub const Chunk = @import("./Chunk.zig").Chunk;
+pub const ChunkImport = @import("./Chunk.zig").ChunkImport;
 
 pub const CrossChunkImport = struct {
     chunk_index: Index.Int = 0,

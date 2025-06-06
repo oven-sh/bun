@@ -116,11 +116,21 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
     // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
     var i: u32 = 0;
     const read_eventlist_bytes = if (this.read_ptr) |ptr| brk: {
+        // Check if watch_count is 0 before waiting, return empty if no watches
+        const count = this.watch_count.load(.acquire);
+        if (count == 0) return .{ .result = &.{} };
         Futex.waitForever(&this.watch_count, 0);
+        // Check if fd was closed while waiting
+        if (this.fd == bun.invalid_fd) return .{ .result = &.{} };
         i = ptr.i;
         break :brk this.eventlist_bytes[0..ptr.len];
     } else outer: while (true) {
+        // Check if watch_count is 0 before waiting, return empty if no watches
+        const count = this.watch_count.load(.acquire);
+        if (count == 0) return .{ .result = &.{} };
         Futex.waitForever(&this.watch_count, 0);
+        // Check if fd was closed while waiting
+        if (this.fd == bun.invalid_fd) return .{ .result = &.{} };
 
         const rc = std.posix.system.read(
             this.fd.cast(),
@@ -213,6 +223,9 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
         }
     }
 
+    // Clear read_ptr if we've processed all buffered events
+    this.read_ptr = null;
+
     return .{ .result = this.eventlist_ptrs[0..count] };
 }
 
@@ -221,6 +234,8 @@ pub fn stop(this: *INotifyWatcher) void {
     if (this.fd != bun.invalid_fd) {
         this.fd.close();
         this.fd = bun.invalid_fd;
+        // Wake up any threads waiting on watch_count
+        Futex.wake(&this.watch_count, 10);
     }
 }
 
@@ -236,6 +251,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
 
     // TODO: is this thread safe?
     var remaining_events = events.len;
+    var event_offset: usize = 0;
 
     const eventlist_index = this.watchlist.items(.eventlist_index);
 
@@ -244,7 +260,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         var temp_name_list: [128]?[:0]u8 = undefined;
         var temp_name_off: u8 = 0;
 
-        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
+        const slice = events[event_offset..][0..@min(128, remaining_events, this.watch_events.len)];
         var watchevents = this.watch_events[0..slice.len];
         var watch_event_id: u32 = 0;
         for (slice) |event| {
@@ -297,6 +313,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
         } else {
             break;
         }
+        event_offset += slice.len;
         remaining_events -= slice.len;
     }
 

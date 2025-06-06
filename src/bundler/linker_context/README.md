@@ -82,15 +82,340 @@ The LinkerContext operates in several main phases:
 
 #### `scanImportsAndExports.zig`
 
-**Purpose**: Analyzes all import/export relationships across the module graph.
+**Purpose**: Analyzes all import/export relationships across the module graph, determining module compatibility, resolving dependencies, and setting up the foundation for code generation. This is the critical first phase of linking that establishes how modules will interact in the final bundle.
 
-**Key functions**:
+**Core Algorithm**: The function operates in 6 distinct steps, each building on the previous to create a complete understanding of the module graph:
 
-- Determines which modules must be CommonJS
-- Processes CSS imports and assets
-- Resolves import/export statements
-- Handles dynamic imports
-- Sets up wrapper functions for different module formats
+**Step 1: Determine CommonJS Module Classification**
+This step analyzes import patterns to decide which modules must be treated as CommonJS vs ECMAScript modules, which affects how they're bundled and accessed.
+
+*What happens*:
+- Examines each import record to understand how modules are being used
+- Marks modules as CommonJS when required by import patterns or file characteristics
+- Sets up wrapper flags that determine code generation strategy
+
+*Key decision logic*:
+```javascript
+// Import star or default import from a module with no ES6 exports
+// forces that module to be treated as CommonJS
+import * as ns from './empty-file'; // Forces './empty-file' to be CJS
+import defaultValue from './empty-file'; // Forces './empty-file' to be CJS
+
+// Regular named imports don't force CommonJS treatment
+import { namedExport } from './empty-file'; // './empty-file' stays ES6 compatible
+```
+
+*Critical edge cases handled*:
+- `require()` calls always force the target module to be CommonJS
+- Dynamic imports (`import()`) behave like `require()` when code splitting is disabled
+- Modules with `force_cjs_to_esm` flag get special ESM wrapper treatment
+- Entry points get different wrapper treatment based on output format
+
+*Example transformation*:
+```javascript
+// Input: module-a.js (has no exports)
+// No code, just an empty file
+
+// Input: module-b.js  
+import * as a from './module-a.js';
+console.log(a);
+
+// Result: module-a.js is marked as exports_kind = .cjs, wrap = .cjs
+// This ensures the namespace object 'a' exists at runtime
+```
+
+**Step 2: Dependency Wrapper Propagation**
+This step ensures that any module importing a CommonJS module is properly set up to handle the wrapper functions that will be generated.
+
+*What happens*:
+- Traverses dependency chains to mark files that need wrapper functions
+- Propagates wrapper requirements up the dependency tree
+- Handles export star statements with dynamic exports
+
+*Algorithm*:
+```javascript
+// For each module that needs wrapping:
+function wrap(sourceIndex) {
+  if (alreadyWrapped[sourceIndex]) return;
+  
+  // Mark this module as wrapped
+  flags[sourceIndex].wrap = (isCommonJS ? .cjs : .esm);
+  
+  // Recursively wrap all modules that import this one
+  for (importRecord in allImportsOfThisModule) {
+    wrap(importRecord.sourceIndex);
+  }
+}
+```
+
+*Example cascade*:
+```javascript
+// File hierarchy:
+// entry.js → utils.js → legacy.cjs
+
+// legacy.cjs (CommonJS module)
+exports.helper = function() { return 'help'; };
+
+// utils.js (imports CommonJS)
+import { helper } from './legacy.cjs'; // Forces utils.js to be wrapped
+
+// entry.js (imports wrapped module)  
+import { helper } from './utils.js'; // Forces entry.js to be wrapped
+
+// Result: All three files get wrapper functions to maintain compatibility
+```
+
+**Step 3: Resolve Export Star Statements**
+This step processes `export * from 'module'` statements by collecting all the actual exports from target modules and making them available in the current module.
+
+*What happens*:
+- Recursively traverses export star chains to collect all re-exported names
+- Handles export star conflicts when multiple modules export the same name
+- Ignores export stars from CommonJS modules (since their exports aren't statically analyzable)
+- Generates code for expression-style loaders (JSON, CSS modules, etc.)
+
+*Export star resolution algorithm*:
+```javascript
+// For: export * from './moduleA'; export * from './moduleB';
+function resolveExportStars(currentModule) {
+  for (exportStarTarget in currentModule.exportStars) {
+    // Skip if target is CommonJS (exports not statically known)
+    if (exportStarTarget.isCommonJS) continue;
+    
+    // Add all named exports from target, except 'default'
+    for (exportName in exportStarTarget.namedExports) {
+      if (exportName === 'default') continue; // export * never re-exports default
+      
+      if (!currentModule.resolvedExports[exportName]) {
+        currentModule.resolvedExports[exportName] = exportStarTarget.exports[exportName];
+      } else {
+        // Mark as potentially ambiguous - multiple sources for same name
+        currentModule.resolvedExports[exportName].potentiallyAmbiguous = true;
+      }
+    }
+    
+    // Recursively resolve nested export stars
+    resolveExportStars(exportStarTarget);
+  }
+}
+```
+
+*Example resolution*:
+```javascript
+// constants.js
+export const API_URL = 'https://api.example.com';
+export const VERSION = '1.0.0';
+
+// utils.js  
+export const formatDate = (date) => date.toISOString();
+export const API_URL = 'https://dev.api.example.com'; // Conflict!
+
+// index.js
+export * from './constants.js';
+export * from './utils.js';
+
+// Result: index.js exports formatDate, VERSION, and API_URL (marked as potentially ambiguous)
+// Bundler will emit warning about API_URL conflict
+```
+
+*Expression-style loader code generation*:
+During this step, files loaded with expression-style loaders (JSON, CSS modules, text files) have their lazy export statements converted to actual module exports:
+
+```javascript
+// styles.module.css → generates:
+var styles_module_default = {
+  container: "container_abc123",
+  button: "button_def456 container_abc123", // includes composes
+};
+
+// data.json → generates:  
+var data_default = { "name": "example", "version": "1.0" };
+```
+
+**Step 4: Match Imports with Exports**
+This step connects import statements with their corresponding export definitions, creating the binding relationships needed for code generation.
+
+*What happens*:
+- For each import in each file, finds the corresponding export definition
+- Handles re-exports by tracing through export chains  
+- Creates dependency relationships between parts of different files
+- Handles CommonJS compatibility for import/export objects
+- Creates wrapper parts for modules that need runtime wrappers
+
+*Import matching algorithm*:
+```javascript
+// For: import { helper } from './utils.js';
+function matchImport(importRef, importSourceIndex) {
+  let targetModule = importSourceIndex;
+  let targetRef = importRef;
+  
+  // If this import is actually a re-export, follow the chain
+  while (importsToBindMap[targetModule][targetRef]) {
+    const reExportData = importsToBindMap[targetModule][targetRef];
+    targetModule = reExportData.sourceIndex;
+    targetRef = reExportData.importRef;
+  }
+  
+  // Add dependency from importing part to all parts that declare the symbol
+  const declaringParts = symbolToPartsMap[targetModule][targetRef];
+  for (partIndex of declaringParts) {
+    importingPart.dependencies.add({
+      sourceIndex: targetModule,
+      partIndex: partIndex
+    });
+  }
+}
+```
+
+*Example import resolution*:
+```javascript
+// math.js
+export const PI = 3.14159;
+export function square(x) { return x * x; } // Declared in part 0
+
+// utils.js  
+export { PI, square } from './math.js'; // Re-export in part 0
+
+// app.js
+import { square } from './utils.js'; // Part 1 imports square
+console.log(square(5)); // Usage in part 1
+
+// Result: app.js part 1 depends on math.js part 0 (where square is declared)
+// The re-export through utils.js is tracked but doesn't create additional dependencies
+```
+
+*CommonJS compatibility handling*:
+```javascript
+// For CommonJS entry points in ES module output format:
+if (isEntryPoint && outputFormat === 'esm' && moduleKind === 'cjs') {
+  // Mark exports/module symbols as unbound so they don't get renamed
+  symbols[exportsRef].kind = .unbound; // Keep "exports" name
+  symbols[moduleRef].kind = .unbound;  // Keep "module" name
+}
+```
+
+**Step 5: Create Namespace Exports**
+This step generates the namespace export objects that ES6 import star statements and CommonJS interop require.
+
+*What happens*:
+- Executed in parallel across all reachable files for performance
+- Creates export objects for modules that need them (CommonJS modules, star imports)
+- Resolves ambiguous re-exports by choosing the first declaration found
+- Generates sorted export alias lists for deterministic output
+
+*Namespace object creation logic*:
+```javascript
+// For a module with exports: { helper, version, DEFAULT }
+// Creates namespace object like:
+{
+  helper: helper_symbol_ref,
+  version: version_symbol_ref,  
+  default: DEFAULT_symbol_ref,
+  [Symbol.toStringTag]: 'Module',
+  __esModule: true // For CommonJS interop
+}
+```
+
+*Example*:
+```javascript
+// utils.js
+export const helper = () => 'help';
+export const version = '1.0';
+export default 'DEFAULT_VALUE';
+
+// app.js  
+import * as utils from './utils.js';
+console.log(utils.helper()); // Accesses namespace object
+
+// Generated namespace object for utils.js:
+var utils_exports = {
+  helper: helper,
+  version: version, 
+  default: 'DEFAULT_VALUE',
+  __esModule: true
+};
+```
+
+**Step 6: Bind Imports to Exports**
+The final step creates the actual dependency relationships and generates runtime symbol imports for bundler helper functions.
+
+*What happens*:
+- Generates symbol import declarations for runtime helper functions (`__toESM`, `__toCommonJS`, etc.)
+- Creates entry point dependencies to ensure all exports are included
+- Sets up cross-chunk binding code for code splitting scenarios
+- Handles wrapper function dependencies and exports object dependencies
+
+*Runtime helper usage examples*:
+```javascript
+// __toESM: Used when importing CommonJS with ES6 syntax
+import utils from './commonjs-module.js';
+// Generates: __toESM(require('./commonjs-module.js'))
+
+// __toCommonJS: Used when requiring ES6 module  
+const utils = require('./es6-module.js');
+// Generates: __toCommonJS(es6_module_exports)
+
+// __require: Used for external require() calls in non-CommonJS output
+const path = require('path'); 
+// Generates: __require('path')
+
+// __reExport: Used for export star from external modules
+export * from 'external-package';
+// Generates: __reExport(exports, require('external-package'))
+```
+
+*Entry point dependency handling*:
+```javascript
+// For entry points, ensure all exports are included in final bundle
+for (exportAlias of entryPointExports) {
+  const exportDef = resolvedExports[exportAlias];
+  const declaringParts = getPartsDeclaringSymbol(exportDef.sourceIndex, exportDef.ref);
+  
+  // Add dependencies from entry point to all parts that declare exports
+  entryPointPart.dependencies.addAll(declaringParts);
+}
+```
+
+*Wrapper function dependency setup*:
+```javascript
+// When a module needs wrapping, other modules must depend on its wrapper
+if (targetModule.needsWrapper) {
+  // Import the wrapper function instead of direct module access
+  currentPart.dependencies.add({
+    sourceIndex: targetModule.index,
+    ref: targetModule.wrapperRef // Points to require_moduleName() function
+  });
+  
+  // For ES6 imports of CommonJS, add __toESM wrapper
+  if (importKind !== 'require' && targetModule.isCommonJS) {
+    record.wrapWithToESM = true;
+    generateRuntimeSymbolImport('__toESM');
+  }
+}
+```
+
+**Key Data Structures Modified**:
+
+- `exports_kind[]`: Classification of each module (`.cjs`, `.esm`, `.esm_with_dynamic_fallback`, `.none`)
+- `flags[].wrap`: Wrapper type needed (`.none`, `.cjs`, `.esm`) 
+- `resolved_exports[]`: Map of export names to their source definitions
+- `imports_to_bind[]`: Map of import references to their target definitions
+- `parts[].dependencies[]`: Cross-file part dependencies for bundling
+- `import_records[].wrap_with_*`: Flags for runtime wrapper function calls
+
+**Error Handling**: The function includes comprehensive validation:
+- CSS modules `composes` property validation across files
+- Top-level await compatibility checking
+- Export star ambiguity detection and warning
+- Import resolution failure detection
+
+**Performance Optimizations**:
+- Step 5 runs in parallel across all files using worker thread pool
+- Symbol table mutations are batched to avoid memory allocations
+- Dependency graph updates use pre-allocated capacity
+- Export star cycle detection prevents infinite loops
+
+This function is the foundation of Bun's module compatibility system, ensuring that mixed ES6/CommonJS codebases work correctly while enabling optimal bundling strategies.
 
 #### `doStep5.zig`
 

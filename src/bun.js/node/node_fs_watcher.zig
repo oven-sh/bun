@@ -134,7 +134,10 @@ pub const FSWatcher = struct {
             // if false is closed or detached (can still contain valid refs but will not create a new one)
             if (this.ctx.refTask()) {
                 var that = FSWatchTask.new(this.*);
+                // Clear the count before enqueueing to avoid double processing
+                const saved_count = this.count;
                 this.count = 0;
+                that.count = saved_count;
                 that.concurrent_task.task = JSC.Task.init(that);
                 this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
                 return;

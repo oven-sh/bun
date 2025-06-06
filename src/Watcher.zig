@@ -103,16 +103,15 @@ pub fn start(this: *Watcher) !void {
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
     if (this.watchloop_handle != null) {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.close_descriptors = close_descriptors;
-        this.running = false;
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.close_descriptors = close_descriptors;
+            this.running = false;
+        }
 
-        // Unlock the mutex before joining to avoid deadlock
-        this.mutex.unlock();
-        // Wait for the watcher thread to finish
+        // Wait for the watcher thread to finish (mutex is unlocked here)
         this.thread.join();
-        this.mutex.lock();
     } else {
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);

@@ -59,19 +59,23 @@ pub const PathWatcherManager = struct {
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        const should_deinit = brk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-        const pending_task_count = this.pending_tasks;
-        bun.debugAssert(pending_task_count > 0);
-        this.pending_tasks = pending_task_count - 1;
+            const pending_task_count = this.pending_tasks;
+            bun.debugAssert(pending_task_count > 0);
+            this.pending_tasks = pending_task_count - 1;
 
-        if (pending_task_count == 1) {
-            this.has_pending_tasks.store(false, .release);
-
-            if (this.deinit_on_last_task) {
-                this.deinit();
+            if (pending_task_count == 1) {
+                this.has_pending_tasks.store(false, .release);
+                break :brk this.deinit_on_last_task;
             }
+            break :brk false;
+        };
+
+        if (should_deinit) {
+            this.deinit();
         }
     }
 
@@ -504,6 +508,9 @@ pub const PathWatcherManager = struct {
                                 }
                             }
                         }
+                    } else {
+                        // EOF reached
+                        break;
                     },
                 }
             }
@@ -630,43 +637,46 @@ pub const PathWatcherManager = struct {
 
     // unregister is always called form main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        const should_deinit = brk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-        var watchers = this.watchers.slice();
-        defer {
-            if (this.deinit_on_last_watcher and this.watcher_count == 0) {
-                this.deinit();
-            }
-        }
+            var watchers = this.watchers.slice();
 
-        for (watchers, 0..) |w, i| {
-            if (w) |item| {
-                if (item == watcher) {
-                    watchers[i] = null;
-                    // if is the last one just pop
-                    if (i == watchers.len - 1) {
-                        this.watchers.len -= 1;
-                    }
-                    this.watcher_count -= 1;
-
-                    this._decrementPathRefNoLock(watcher.path.path);
-                    if (comptime Environment.isMac) {
-                        if (watcher.fsevents_watcher != null) {
-                            break;
+            for (watchers, 0..) |w, i| {
+                if (w) |item| {
+                    if (item == watcher) {
+                        watchers[i] = null;
+                        // if is the last one just pop
+                        if (i == watchers.len - 1) {
+                            this.watchers.len -= 1;
                         }
-                    }
+                        this.watcher_count -= 1;
 
-                    {
-                        watcher.mutex.lock();
-                        defer watcher.mutex.unlock();
-                        while (watcher.file_paths.pop()) |file_path| {
-                            this._decrementPathRefNoLock(file_path);
+                        this._decrementPathRefNoLock(watcher.path.path);
+                        if (comptime Environment.isMac) {
+                            if (watcher.fsevents_watcher != null) {
+                                break;
+                            }
                         }
+
+                        {
+                            watcher.mutex.lock();
+                            defer watcher.mutex.unlock();
+                            while (watcher.file_paths.pop()) |file_path| {
+                                this._decrementPathRefNoLock(file_path);
+                            }
+                        }
+                        break;
                     }
-                    break;
                 }
             }
+
+            break :brk this.deinit_on_last_watcher and this.watcher_count == 0;
+        };
+
+        if (should_deinit) {
+            this.deinit();
         }
     }
 
@@ -853,16 +863,18 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.pending_directories -= 1;
-        if (this.pending_directories == 0) {
-            this.has_pending_directories.store(false, .release);
-            if (this.closed.load(.acquire)) {
-                this.mutex.unlock();
-                this.deinit();
-                return;
+        const should_deinit = brk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.pending_directories -= 1;
+            if (this.pending_directories == 0) {
+                this.has_pending_directories.store(false, .release);
             }
+            break :brk this.pending_directories == 0 and this.closed.load(.acquire);
+        };
+
+        if (should_deinit) {
+            this.deinit();
         }
     }
 

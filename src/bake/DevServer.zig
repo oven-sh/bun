@@ -760,6 +760,9 @@ pub fn deinit(dev: *DevServer) void {
             .html_routes_hard_affected = dev.incremental_result.html_routes_hard_affected.deinit(allocator),
         }),
         .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |*hack| {
+            for (hack.keys()) |key| {
+                allocator.free(key);
+            }
             hack.deinit(allocator);
         },
         .directory_watchers = {
@@ -2411,9 +2414,14 @@ pub fn finalizeBundle(
         if (dev.has_tailwind_plugin_hack) |*map| {
             const first_1024 = code.buffer[0..@min(code.buffer.len, 1024)];
             if (std.mem.indexOf(u8, first_1024, "tailwind") != null) {
-                try map.put(dev.allocator, key, {});
+                const entry = try map.getOrPut(dev.allocator, key);
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = try dev.allocator.dupe(u8, key);
+                }
             } else {
-                _ = map.swapRemove(key);
+                if (map.fetchSwapRemove(key)) |entry| {
+                    dev.allocator.free(entry.key);
+                }
             }
         }
 

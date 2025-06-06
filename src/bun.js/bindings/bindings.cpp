@@ -2797,14 +2797,6 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-static JSC::Identifier jsValueToModuleKey(JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC::JSValue value)
-{
-    if (value.isSymbol())
-        return JSC::Identifier::fromUid(JSC::jsCast<JSC::Symbol*>(value)->privateName());
-    return JSC::asString(value)->toIdentifier(lexicalGlobalObject);
-}
-
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

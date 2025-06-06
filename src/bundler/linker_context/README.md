@@ -17,6 +17,7 @@ The LinkerContext operates in several main phases:
 **Purpose**: Initializes the LinkerContext with bundle data and prepares the graph for linking.
 
 **What it does**:
+
 - Sets up the parse graph reference
 - Configures code splitting and logging
 - Loads entry points and reachable files into the graph
@@ -25,6 +26,7 @@ The LinkerContext operates in several main phases:
 - Configures module/exports references for different output formats (CJS, IIFE)
 
 **Key responsibilities**:
+
 - Graph initialization and configuration
 - Runtime symbol setup
 - Entry point processing
@@ -35,6 +37,7 @@ The LinkerContext operates in several main phases:
 **Purpose**: The main linking orchestrator that coordinates all bundling phases.
 
 **What it does**:
+
 1. Calls `load()` to initialize the context
 2. Computes source map data if needed
 3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
@@ -44,6 +47,7 @@ The LinkerContext operates in several main phases:
 7. Follows symbol references to ensure consistency
 
 **Key responsibilities**:
+
 - Orchestrates the entire linking pipeline
 - Error handling at each phase
 - Memory corruption checks (in debug builds)
@@ -54,6 +58,7 @@ The LinkerContext operates in several main phases:
 **Purpose**: Generates the final output files from chunks using parallel processing.
 
 **What it does**:
+
 1. **Symbol Renaming Phase**: Renames symbols in each chunk in parallel to avoid conflicts
 2. **Source Map Processing**: Handles line offset calculations for source maps
 3. **CSS Preparation**: Processes CSS chunks, removing duplicate rules in serial order
@@ -65,6 +70,7 @@ The LinkerContext operates in several main phases:
 6. **Output Phase**: Either writes files to disk or returns in-memory results
 
 **Key responsibilities**:
+
 - Parallel processing coordination
 - Final code generation
 - Source map finalization
@@ -75,19 +81,23 @@ The LinkerContext operates in several main phases:
 ### Core Analysis Phase
 
 #### `scanImportsAndExports.zig`
+
 **Purpose**: Analyzes all import/export relationships across the module graph.
 
 **Key functions**:
+
 - Determines which modules must be CommonJS
 - Processes CSS imports and assets
 - Resolves import/export statements
 - Handles dynamic imports
 - Sets up wrapper functions for different module formats
 
-#### `doStep5.zig` 
+#### `doStep5.zig`
+
 **Purpose**: Creates namespace exports for every file.
 
 **Key functions**:
+
 - Generates namespace exports for CommonJS files
 - Handles import star statements
 - Resolves ambiguous re-exports
@@ -96,9 +106,11 @@ The LinkerContext operates in several main phases:
 ### Optimization Phase
 
 #### `renameSymbolsInChunk.zig`
+
 **Purpose**: Renames symbols within chunks to avoid naming conflicts and enable minification.
 
 **Key functions**:
+
 - Computes reserved names to avoid conflicts
 - Handles cross-chunk import renaming
 - Implements identifier minification when enabled
@@ -107,9 +119,11 @@ The LinkerContext operates in several main phases:
 ### Chunk Computation Phase
 
 #### `computeChunks.zig`
+
 **Purpose**: Determines the final chunk structure based on entry points and code splitting.
 
 **Key functions**:
+
 - Creates separate chunks for each entry point
 - Groups related files into chunks
 - Handles CSS chunking strategies
@@ -117,35 +131,43 @@ The LinkerContext operates in several main phases:
 - Assigns unique keys and templates to chunks
 
 #### `computeCrossChunkDependencies.zig`
+
 **Purpose**: Resolves dependencies between different chunks.
 
 **Key functions**:
+
 - Analyzes imports between chunks
 - Sets up cross-chunk binding code
 - Handles dynamic imports across chunks
 - Manages chunk metadata for dependency resolution
 
 #### `findAllImportedPartsInJSOrder.zig`
+
 **Purpose**: Determines the order of parts within JavaScript chunks.
 
 **Key functions**:
+
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
 - Manages import precedence
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.zig`
+
 **Purpose**: Determines CSS file ordering for JavaScript chunks that import CSS.
 
 **Key functions**:
+
 - Orders CSS imports within JS chunks
 - Handles CSS dependency resolution
 - Manages CSS-in-JS import patterns
 
 #### `findImportedFilesInCSSOrder.zig`
+
 **Purpose**: Determines the import order for CSS files.
 
 **Key functions**:
+
 - Processes CSS @import statements
 - Handles CSS dependency chains
 - Manages CSS asset imports
@@ -153,78 +175,99 @@ The LinkerContext operates in several main phases:
 ### Code Generation Phase
 
 #### `generateCodeForFileInChunkJS.zig`
+
 **Purpose**: Generates JavaScript code for a specific file within a chunk.
 
 **Key functions**:
+
 - Converts AST statements to code
 - Handles different module formats (ESM, CJS, IIFE)
 - Manages HMR (Hot Module Replacement) code generation
 - Processes wrapper functions and runtime calls
 
 #### `generateCompileResultForJSChunk.zig`
+
 **Purpose**: Worker function that generates compile results for JavaScript chunks in parallel.
 
 **Key functions**:
+
 - Thread-safe chunk compilation
 - Memory management for worker threads
 - Error handling in parallel context
 - Integration with thread pool
 
 #### `generateCompileResultForCssChunk.zig`
+
 **Purpose**: Worker function that generates compile results for CSS chunks in parallel.
 
 **Key functions**:
+
 - CSS printing and minification
 - Asset URL resolution
 - CSS import processing
 - Thread-safe CSS compilation
 
 #### `generateCompileResultForHtmlChunk.zig`
+
 **Purpose**: Worker function that generates compile results for HTML chunks.
 
 **Key functions**:
+
 - HTML processing and transformation
 - Asset reference resolution
 - HTML minification
 - Script/stylesheet injection
 
 #### `generateCodeForLazyExport.zig`
+
 **Purpose**: Generates code for expression-style loaders that defer code generation until linking.
 
 **Key functions**:
+
 - Deferred code generation for expression-style loaders
-- CSS modules export object creation with local scope names  
+- CSS modules export object creation with local scope names
 - Handles CSS `composes` property resolution across files
 - Converts lazy export statements to proper module exports (CJS or ESM)
 
 **What are expression-style loaders?**: These are file loaders (like JSON, CSS, text, NAPI, etc.) that generate a JavaScript expression to represent the file content rather than executing imperative code. The expression is wrapped in a lazy export statement during parsing, and actual code generation is deferred until linking when the final export format is known.
 
 **Example - JSON/Text files**: When you import `data.json` containing `{"name": "example"}`, the expression-style loader creates a lazy export with the expression `{name: "example"}`. During linking, `generateCodeForLazyExport` converts this to:
+
 ```javascript
 // For ESM output:
-var data_default = {name: "example"};
+var data_default = { name: "example" };
 
-// For CJS output:  
-module.exports = {name: "example"};
+// For CJS output:
+module.exports = { name: "example" };
 ```
 
 **Example - CSS Modules**: For a CSS module file `styles.module.css` with:
+
 ```css
-.container { background: blue; }
-.button { composes: container; border: none; }
+.container {
+  background: blue;
+}
+.button {
+  composes: container;
+  border: none;
+}
 ```
+
 The function generates:
+
 ```javascript
 var styles_module_default = {
   container: "container_-MSaAA",
-  button: "container_-MSaAA button_-MSaAA"  // includes composed classes
+  button: "container_-MSaAA button_-MSaAA", // includes composed classes
 };
 ```
+
 The function resolves `composes` relationships by visiting the referenced classes and building template literals that combine the scoped class names.
 
 ### Statement Processing
 
 #### `convertStmtsForChunk.zig`
+
 **Purpose**: Converts and transforms AST statements for final inclusion in output chunks, handling the critical process of adapting module-level statements for different output formats and wrapper contexts.
 
 **Why this function is necessary**:
@@ -235,6 +278,7 @@ When bundling modules, Bun often needs to wrap module code in runtime functions 
 1. **Module Wrapper Management**: Determines which statements can be placed inside wrapper functions vs. which must remain at the top level
 
 2. **Import/Export Statement Processing**: Transforms import/export syntax based on output format and bundling context
+
    - Converts `export * from 'path'` to import statements when needed
    - Strips export keywords when bundling (since internal modules don't need exports)
    - Handles re-export runtime function calls
@@ -250,6 +294,7 @@ When bundling modules, Bun often needs to wrap module code in runtime functions 
 **Key transformation patterns**:
 
 **Pattern 1: Export Stripping**
+
 ```javascript
 // Input (when bundling):
 export function greet() { return 'hello'; }
@@ -264,54 +309,62 @@ var default = 42;
 
 **Pattern 2: Import/Export Statement Extraction**
 When a module needs wrapping (due to namespace preservation), import/export statements are extracted to the top level:
+
 ```javascript
 // Input module that needs wrapping:
-import * as utils from './utils.js';
+import * as utils from "./utils.js";
 export const data = utils.process();
 
 // Output with wrapper:
-import * as utils from './utils.js';  // ← extracted to outside_wrapper_prefix
-var init_module = __esm(() => {      // ← wrapper function
-  const data = utils.process();       // ← inside wrapper
+import * as utils from "./utils.js"; // ← extracted to outside_wrapper_prefix
+var init_module = __esm(() => {
+  // ← wrapper function
+  const data = utils.process(); // ← inside wrapper
 });
 ```
 
 **Pattern 3: Re-export Runtime Handling**
+
 ```javascript
 // Input:
-export * from './external-module';
+export * from "./external-module";
 
 // Output (when external module needs runtime re-export):
-import * as ns from './external-module';  // ← outside_wrapper_prefix
-__reExport(exports, ns, module.exports);  // ← inside_wrapper_prefix (runtime call)
+import * as ns from "./external-module"; // ← outside_wrapper_prefix
+__reExport(exports, ns, module.exports); // ← inside_wrapper_prefix (runtime call)
 ```
 
 **Pattern 4: CommonJS Entry Point Dual Exports**
 For CommonJS entry points, the function creates dual export objects:
+
 ```javascript
 // Internal ESM export object (no __esModule marker):
 var exports = {};
 
 // External CommonJS export object (with __esModule marker):
-__reExport(exports, targetModule, module.exports);  // module.exports gets __esModule
+__reExport(exports, targetModule, module.exports); // module.exports gets __esModule
 ```
 
 **Example: Complex Module Transformation**
 
 Input file with mixed imports/exports:
+
 ```javascript
 // demo.js
-import * as utils from './utils.js';
-export * from './constants.js';
-export const greeting = 'hello';
-export default function() { return utils.format(greeting); }
+import * as utils from "./utils.js";
+export * from "./constants.js";
+export const greeting = "hello";
+export default function () {
+  return utils.format(greeting);
+}
 
 // When utils namespace is accessed dynamically elsewhere:
-const prop = 'format';
-utils[prop]('test');  // Forces namespace preservation
+const prop = "format";
+utils[prop]("test"); // Forces namespace preservation
 ```
 
 After `convertStmtsForChunk` processing with wrapping enabled:
+
 ```javascript
 // outside_wrapper_prefix (top-level):
 import * as utils from './utils.js';
@@ -329,6 +382,7 @@ var init_demo = __esm(() => {
 ```
 
 **Statement processing algorithm**:
+
 1. **Analyze context**: Determine if wrapping is needed and if exports should be stripped
 2. **Process each statement**:
    - Import statements → Extract to `outside_wrapper_prefix` if wrapping
@@ -338,6 +392,7 @@ var init_demo = __esm(() => {
 3. **Handle special cases**: Default exports, re-exports, CommonJS compatibility
 
 **Critical edge cases handled**:
+
 - **Export star from external modules**: Converted to import + runtime re-export call
 - **Dynamic namespace access**: Preserves namespace objects when static analysis can't determine access patterns
 - **Mixed module formats**: Handles ESM → CJS conversion while preserving semantics
@@ -346,9 +401,11 @@ var init_demo = __esm(() => {
 This function is essential for maintaining JavaScript module semantics across different output formats while enabling optimal bundling strategies.
 
 #### `convertStmtsForChunkForDevServer.zig`
+
 **Purpose**: Special statement conversion for development server (HMR).
 
 **Key functions**:
+
 - HMR-specific code generation
 - Development-time optimizations
 - Live reload integration
@@ -356,35 +413,43 @@ This function is essential for maintaining JavaScript module semantics across di
 ### Post-Processing Phase
 
 #### `prepareCssAstsForChunk.zig`
+
 **Purpose**: Prepares CSS ASTs before final processing.
 
 **Key functions**:
+
 - CSS rule deduplication
 - CSS optimization passes
 - Asset reference resolution
 
 #### `postProcessJSChunk.zig`
+
 **Purpose**: Final processing of JavaScript chunks after code generation.
 
 **Key functions**:
+
 - Cross-chunk binding code generation
 - Final minification passes
 - Source map integration
 - Output formatting
 
 #### `postProcessCSSChunk.zig`
+
 **Purpose**: Final processing of CSS chunks.
 
 **Key functions**:
+
 - CSS rule optimization
 - Asset URL finalization
 - CSS minification
 - Source map generation
 
 #### `postProcessHTMLChunk.zig`
+
 **Purpose**: Final processing of HTML chunks.
 
 **Key functions**:
+
 - HTML optimization
 - Asset reference injection
 - Script/stylesheet linking
@@ -393,9 +458,11 @@ This function is essential for maintaining JavaScript module semantics across di
 ### Output Phase
 
 #### `writeOutputFilesToDisk.zig`
+
 **Purpose**: Writes all generated chunks and assets to the filesystem.
 
 **Key functions**:
+
 - File system operations
 - Directory creation
 - Chunk serialization

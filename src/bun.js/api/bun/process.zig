@@ -250,7 +250,7 @@ pub const Process = struct {
             this.poller = .{ .detached = {} };
         }
         this.onWaitPid(waitpid_result, rusage);
-        if (this.hasExited()) this.deref();
+        this.deref();
     }
 
     pub fn onWaitPidFromEventLoopTask(this: *Process) void {
@@ -258,7 +258,7 @@ pub const Process = struct {
             @compileError("not implemented on this platform");
         }
         this.wait(false);
-        if (this.hasExited()) this.deref();
+        this.deref();
     }
 
     fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
@@ -374,11 +374,16 @@ pub const Process = struct {
         }
 
         if (this.poller == .fd) {
-            return this.poller.fd.register(
+            const maybe = this.poller.fd.register(
                 this.event_loop.loop(),
                 .process,
                 true,
             );
+            switch (maybe) {
+                .err => {},
+                .result => this.ref(),
+            }
+            return maybe;
         } else {
             @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }

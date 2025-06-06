@@ -2416,7 +2416,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
                 typeValue = JSC::jsAtomString(vm, makeAtomString("INTEGER"_s));
                 break;
             case SQLITE_FLOAT:
-                typeValue = JSC::jsNontrivialString(vm, "FLOAT"_s);
+                typeValue = JSC::jsAtomString(vm, makeAtomString("FLOAT"_s));
                 break;
             case SQLITE3_TEXT:
                 typeValue = JSC::jsNontrivialString(vm, "TEXT"_s);
